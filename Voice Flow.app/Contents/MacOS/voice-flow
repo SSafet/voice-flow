@@ -20,6 +20,9 @@ export PYTHONHOME="__PYTHON_HOME__"
 export PYTHONPATH="$VENV/lib/python__PYTHON_VER__/site-packages:$PROJECT"
 export PATH="$VENV/bin:$PATH"
 
-# exec the Python binary inside this .app bundle — since it lives
-# inside Voice Flow.app, macOS attributes permissions to Voice Flow
-exec "$(dirname "$0")/VoiceFlow-python" -m voice_flow.app
+# Run Python as a child process (NOT exec) — the shell stays alive as the
+# "responsible process" for macOS TCC. Since Voice Flow.app has Accessibility
+# granted, child processes inherit that permission. Using exec would replace
+# the shell with a binary that has a different code identity, losing TCC.
+"$(dirname "$0")/VoiceFlow-python" -m voice_flow.app
+exit $?

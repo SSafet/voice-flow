@@ -14,7 +14,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal, QSize
 from PyQt6.QtGui import (
     QPainter, QColor, QBrush, QPainterPath, QIcon, QPixmap,
-    QShortcut, QKeySequence, QLinearGradient, QPen, QFont,
+    QShortcut, QKeySequence, QPen,
 )
 
 _ASSETS = Path(__file__).parent.parent / "assets"
@@ -146,51 +146,110 @@ def _make_dot_icon(color: QColor) -> QIcon:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
-def _create_template_nsimage():
-    """Create a proper template NSImage: pure black wave+dots on transparent.
+def _create_menubar_nsimage():
+    """Create a template NSImage for the menu bar.
 
-    macOS template images MUST be pure black shapes on a transparent
-    background. macOS then automatically tints them for light/dark mode.
+    Template images are pure black on transparent -- macOS automatically
+    tints them white on dark menu bars, black on light ones, matching
+    all other system icons.
+
+    Strategy 1: Load pre-made StatusBarIconTemplate@2x.png via
+    initWithContentsOfFile_ (eager loading -- pixels are available
+    immediately, unlike initByReferencingFile_ which defers).
+    Strategy 2: Convert icon_symbol_512.png to a template via QPixmap.
+    Strategy 3: Draw a waveform programmatically.
     """
-    from AppKit import NSImage, NSBezierPath, NSColor, NSGraphicsContext
-    from Foundation import NSSize, NSRect, NSPoint, NSMakeRect
+    from Foundation import NSSize
+    from AppKit import NSImage
 
-    size = NSSize(18, 18)
-    img = NSImage.alloc().initWithSize_(size)
-    img.lockFocus()
+    # ── Strategy 1: load the pre-made template file (eager) ──
+    for name in ("StatusBarIconTemplate@2x.png", "StatusBarIconTemplate.png"):
+        path = _ASSETS / name
+        if path.exists():
+            img = NSImage.alloc().initWithContentsOfFile_(str(path))
+            if img and img.isValid():
+                # Force pixel data to load by accessing representations
+                reps = img.representations()
+                if reps and reps[0].pixelsWide() > 0:
+                    img.setSize_(NSSize(18, 18))
+                    img.setTemplate_(True)
+                    print(f"[voice-flow] menu bar: {name} -> template NSImage OK")
+                    return img
+            print(f"[voice-flow] menu bar: {name} failed to load, trying next")
 
-    NSColor.blackColor().setFill()
+    # ── Strategy 2: convert icon_symbol_512.png to template ──
+    from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
+    from Foundation import NSData
 
-    # Draw three dots with connecting wave curves
-    path = NSBezierPath.bezierPath()
+    for name in ("icon_symbol_512.png", "icon_app_512.png"):
+        src = QPixmap(str(_ASSETS / name))
+        if not src.isNull():
+            scaled = src.scaled(
+                36, 36,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            template = QPixmap(scaled.size())
+            template.fill(Qt.GlobalColor.transparent)
+            p = QPainter(template)
+            p.drawPixmap(0, 0, scaled)
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            p.fillRect(template.rect(), QColor(0, 0, 0))
+            p.end()
 
-    # Dot positions (matching the icon motif)
-    dots = [(3.5, 9), (9, 9), (14.5, 9)]
-    r = 2.0
+            ba = QByteArray()
+            buf = QBuffer(ba)
+            buf.open(QIODevice.OpenModeFlag.WriteOnly)
+            template.save(buf, "PNG")
+            buf.close()
 
-    # Draw dots
-    for x, y in dots:
-        dot_rect = NSMakeRect(x - r, y - r, r * 2, r * 2)
-        path.appendBezierPathWithOvalInRect_(dot_rect)
+            ns_data = NSData.dataWithBytes_length_(bytes(ba), len(ba))
+            img = NSImage.alloc().initWithData_(ns_data)
+            if img:
+                img.setSize_(NSSize(18, 18))
+                img.setTemplate_(True)
+                print(f"[voice-flow] menu bar: {name} -> template NSImage OK")
+                return img
 
-    # Draw wave connecting lines
-    wave = NSBezierPath.bezierPath()
-    wave.setLineWidth_(1.5)
-    wave.moveToPoint_(NSPoint(3.5, 9))
-    wave.curveToPoint_controlPoint1_controlPoint2_(
-        NSPoint(9, 9), NSPoint(5.5, 4), NSPoint(7, 4)
-    )
-    wave.curveToPoint_controlPoint1_controlPoint2_(
-        NSPoint(14.5, 9), NSPoint(11, 14), NSPoint(12.5, 14)
-    )
+    # ── Strategy 3: draw a wave programmatically ──
+    size = 36  # 18pt @2x
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(0, 0, 0, 255))
+    pen.setWidthF(3.0)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    path = QPainterPath()
+    cx, cy = size / 2.0, size / 2.0
+    bar_x = [cx - 10, cx - 5, cx, cx + 5, cx + 10]
+    bar_h = [5, 10, 14, 10, 5]
+    for bx, bh in zip(bar_x, bar_h):
+        path.moveTo(bx, cy - bh / 2.0)
+        path.lineTo(bx, cy + bh / 2.0)
+    p.drawPath(path)
+    p.end()
 
-    NSColor.blackColor().setStroke()
-    wave.stroke()
-    path.fill()
+    from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
+    from Foundation import NSData
 
-    img.unlockFocus()
-    img.setTemplate_(True)
-    return img
+    ba = QByteArray()
+    buf = QBuffer(ba)
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    pm.save(buf, "PNG")
+    buf.close()
+
+    ns_data = NSData.dataWithBytes_length_(bytes(ba), len(ba))
+    img = NSImage.alloc().initWithData_(ns_data)
+    if img:
+        img.setSize_(NSSize(18, 18))
+        img.setTemplate_(True)
+        print("[voice-flow] menu bar: programmatic wave -> template NSImage OK")
+        return img
+
+    print("[voice-flow] menu bar: all strategies failed, using text fallback")
+    return None
 
 
 class MenuBarIcon:
@@ -199,60 +258,115 @@ class MenuBarIcon:
     def __init__(self):
         self._native = False
         self._qt_tray = None
-        self.history_action = None
-        self.settings_action = None
         self._status_action = None
+        self._pending_state = None
+        self._last_state = None
+        self._status_item = None
+        self._delegate = None
 
+        # Pre-create signal proxies so app.py can wire .connect() immediately
+        class _SignalProxy:
+            def __init__(self):
+                self._callbacks = []
+            def connect(self, cb):
+                self._callbacks.append(cb)
+            def disconnect(self):
+                self._callbacks.clear()
+
+        self.history_action = type('obj', (object,), {'triggered': _SignalProxy()})()
+        self.settings_action = type('obj', (object,), {'triggered': _SignalProxy()})()
+
+        # Defer native init to first event loop iteration so the Cocoa
+        # run loop is active when NSStatusBar APIs are called
+        QTimer.singleShot(0, self._deferred_init)
+
+    def _deferred_init(self):
         try:
-            self._init_native()
+            self._setup_delegate()
+            self._build_status_item()
+            self._native = True
+            print("[voice-flow] native menu bar icon active")
         except Exception as e:
             print(f"[voice-flow] native menu bar failed ({e}), using Qt fallback")
+            import traceback; traceback.print_exc()
             self._init_qt_fallback()
+        if self._pending_state:
+            self.set_state(self._pending_state)
 
-    def _init_native(self):
-        from AppKit import (
-            NSStatusBar, NSVariableStatusItemLength,
-            NSMenu, NSMenuItem,
-        )
+    def _setup_delegate(self):
+        """Create ObjC delegate for menu actions. Called once."""
         from Foundation import NSObject
         import objc
 
-        bar = NSStatusBar.systemStatusBar()
-        self._status_item = bar.statusItemWithLength_(NSVariableStatusItemLength)
-
-        # Create proper template image programmatically
-        try:
-            img = _create_template_nsimage()
-            self._status_item.button().setImage_(img)
-            self._status_item.button().setTitle_("")
-        except Exception as e:
-            print(f"[voice-flow] template image failed ({e}), using text")
-            self._status_item.button().setTitle_("\u2022\u2022\u2022")
-
-        # Build native menu
-        menu = NSMenu.alloc().init()
-
-        self._ns_status_item = menu.addItemWithTitle_action_keyEquivalent_(
-            "Voice Flow \u2014 Loading\u2026", None, ""
-        )
-        self._ns_status_item.setEnabled_(False)
-
-        menu.addItem_(NSMenuItem.separatorItem())
-
-        class _Delegate(NSObject):
+        class _MenuDelegate(NSObject):
             _callbacks = {}
 
             @objc.python_method
             def register(self, name, callback):
-                self._callbacks[name] = callback
+                _MenuDelegate._callbacks[name] = callback
 
             def menuAction_(self, sender):
                 title = sender.title()
-                cb = self._callbacks.get(title)
+                cb = _MenuDelegate._callbacks.get(title)
                 if cb:
                     cb()
 
-        self._delegate = _Delegate.alloc().init()
+        self._delegate = _MenuDelegate.alloc().init()
+
+        # Wire signal proxies to delegate callbacks
+        def _on_history():
+            for cb in self.history_action.triggered._callbacks:
+                cb()
+
+        def _on_settings():
+            for cb in self.settings_action.triggered._callbacks:
+                cb()
+
+        self._delegate.register("Show History", _on_history)
+        self._delegate.register("Settings\u2026", _on_settings)
+        self._delegate.register("Quit Voice Flow", lambda: QApplication.quit())
+
+    def _build_status_item(self):
+        """Create/rebuild the NSStatusBar item, button, image, and menu."""
+        from AppKit import (
+            NSStatusBar, NSVariableStatusItemLength,
+            NSMenu, NSMenuItem,
+        )
+
+        bar = NSStatusBar.systemStatusBar()
+        self._status_item = bar.statusItemWithLength_(NSVariableStatusItemLength)
+
+        # Set icon — image preferred, emoji as fallback
+        btn = self._status_item.button()
+        img = _create_menubar_nsimage()
+        if img:
+            btn.setImage_(img)
+            btn.setTitle_("")
+        else:
+            btn.setTitle_("\U0001f3a4")
+        print(f"[voice-flow] menu bar button: image={img is not None}")
+
+        # Build native menu
+        menu = NSMenu.alloc().init()
+
+        status_text = "Voice Flow \u2014 Ready"
+        if self._last_state:
+            _labels = {
+                State.IDLE: "Voice Flow \u2014 Ready",
+                State.LOADING: "Voice Flow \u2014 Loading\u2026",
+                State.RECORDING: "Voice Flow \u2014 Recording",
+                State.PROCESSING: "Voice Flow \u2014 Processing\u2026",
+                State.DONE: "Voice Flow \u2014 Done",
+                State.HANDS_FREE: "Voice Flow \u2014 Hands-Free",
+            }
+            status_text = _labels.get(self._last_state, "Voice Flow")
+
+        self._ns_status_item = menu.addItemWithTitle_action_keyEquivalent_(
+            status_text, None, ""
+        )
+        self._ns_status_item.setEnabled_(False)
+
+        menu.addItem_(NSMenuItem.separatorItem())
 
         for title in ("Show History", "Settings\u2026"):
             item = menu.addItemWithTitle_action_keyEquivalent_(
@@ -266,33 +380,8 @@ class MenuBarIcon:
             "Quit Voice Flow", "menuAction:", ""
         )
         quit_item.setTarget_(self._delegate)
-        self._delegate.register("Quit Voice Flow", lambda: QApplication.quit())
 
         self._status_item.setMenu_(menu)
-        self._native = True
-
-        # Signal proxies for compatibility with app.py wiring
-        class _SignalProxy:
-            def __init__(self):
-                self._callbacks = []
-            def connect(self, cb):
-                self._callbacks.append(cb)
-            def disconnect(self):
-                self._callbacks.clear()
-
-        self.history_action = type('obj', (object,), {'triggered': _SignalProxy()})()
-        self.settings_action = type('obj', (object,), {'triggered': _SignalProxy()})()
-
-        def _on_history():
-            for cb in self.history_action.triggered._callbacks:
-                cb()
-
-        def _on_settings():
-            for cb in self.settings_action.triggered._callbacks:
-                cb()
-
-        self._delegate.register("Show History", _on_history)
-        self._delegate.register("Settings\u2026", _on_settings)
 
     def _init_qt_fallback(self):
         self._qt_tray = QSystemTrayIcon()
@@ -319,13 +408,15 @@ class MenuBarIcon:
 
     def show(self):
         if self._native:
-            print("[voice-flow] native menu bar icon active")
+            pass  # already active, logged in _deferred_init
         elif self._qt_tray:
             self._qt_tray.setVisible(True)
             self._qt_tray.show()
             print(f"[voice-flow] tray icon visible: {self._qt_tray.isVisible()}")
+        # else: deferred init hasn't completed yet — will show automatically
 
     def set_state(self, state: str):
+        self._last_state = state
         labels = {
             State.IDLE: "Voice Flow \u2014 Ready",
             State.LOADING: "Voice Flow \u2014 Loading\u2026",
@@ -341,6 +432,9 @@ class MenuBarIcon:
             self._qt_tray.setIcon(self._icons.get(state, self._icons[State.IDLE]))
             if self._status_action:
                 self._status_action.setText(label)
+        else:
+            # Deferred init not done yet — remember for later
+            self._pending_state = state
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -655,27 +749,6 @@ class FloatingIndicator(QWidget):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
-def _set_dock_visible(visible: bool):
-    """Show/hide dock icon by toggling activation policy.
-
-    Only switch TO regular (show dock). Never switch back to accessory
-    because that kills the NSStatusBar item. LSUIElement=true in
-    Info.plist handles the initial dock-hidden state.
-    """
-    if not visible:
-        return  # let LSUIElement handle hiding; don't kill status bar
-    try:
-        from AppKit import (
-            NSApplication,
-            NSApplicationActivationPolicyRegular,
-        )
-        NSApplication.sharedApplication().setActivationPolicy_(
-            NSApplicationActivationPolicyRegular
-        )
-    except Exception:
-        pass
-
-
 class HistoryEntry(QFrame):
     """Single dictation card."""
 
@@ -974,7 +1047,166 @@ def _qcolor_to_rgb(hex_color: str) -> str:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  4. SETTINGS DIALOG
+#  4. ACCESSIBILITY ONBOARDING DIALOG
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class AccessibilityDialog(QWidget):
+    """Shown at first launch when Accessibility permission is not granted.
+
+    Displays clear instructions with buttons to open System Settings,
+    restart the app (after granting), or skip.
+    Auto-closes if the polling in app.py detects the permission.
+    """
+
+    restart_requested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Voice Flow — Setup Required")
+        self.setFixedSize(480, 380)
+        self.setStyleSheet(
+            f"QWidget {{ background: {_BG}; color: {_TEXT};"
+            "  font-family: 'Helvetica Neue', sans-serif; }"
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 24, 32, 20)
+        layout.setSpacing(10)
+
+        # Icon
+        icon_lbl = QLabel()
+        icon_lbl.setPixmap(_make_logo_pixmap(56))
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_lbl.setStyleSheet("border: none; background: transparent;")
+        layout.addWidget(icon_lbl)
+
+        # Title
+        title = QLabel("Accessibility Permission Required")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet(
+            f"color: {_ACCENT}; font-size: 17px; font-weight: 700;"
+            " border: none; background: transparent;"
+        )
+        layout.addWidget(title)
+
+        # Explanation
+        explanation = QLabel(
+            "Voice Flow needs Accessibility permission to detect\n"
+            "your hotkey and enable speech-to-text dictation."
+        )
+        explanation.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        explanation.setWordWrap(True)
+        explanation.setStyleSheet(
+            f"color: {_TEXT2}; font-size: 13px;"
+            " border: none; background: transparent;"
+        )
+        layout.addWidget(explanation)
+
+        layout.addSpacing(4)
+
+        # Steps
+        steps = QLabel(
+            "1.  Click <b>Open System Settings</b> below\n"
+            "2.  Find <b>VoiceFlow-python</b> (or <b>Voice Flow</b>) in the list\n"
+            "3.  Toggle it <b>ON</b>\n"
+            "4.  Click <b>Restart Voice Flow</b>"
+        )
+        steps.setWordWrap(True)
+        steps.setStyleSheet(
+            f"color: {_TEXT}; font-size: 13px;"
+            " border: none; padding: 8px 12px;"
+            f" background: {_CARD}; border: 1px solid {_BORDER};"
+            " border-radius: 8px;"
+        )
+        layout.addWidget(steps)
+
+        layout.addSpacing(6)
+
+        _BTN_STYLE = (
+            "QPushButton {{"
+            "  background: {bg}; color: {fg};"
+            "  border: {border}; border-radius: 8px;"
+            "  font-size: 13px; font-weight: 600;"
+            "  padding: 0 16px;"
+            "}}"
+            "QPushButton:hover {{"
+            "  background: {hover_bg}; color: {hover_fg};"
+            "}}"
+        )
+
+        # Button: Open System Settings
+        open_btn = QPushButton("Open System Settings")
+        open_btn.setFixedHeight(34)
+        open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_btn.setStyleSheet(_BTN_STYLE.format(
+            bg=_ACCENT, fg=_BG, border="none",
+            hover_bg=_ACCENT_DIM, hover_fg="#fff",
+        ))
+        open_btn.clicked.connect(self._open_settings)
+        layout.addWidget(open_btn)
+
+        # Button row: Restart + Skip
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        restart_btn = QPushButton("Restart Voice Flow")
+        restart_btn.setFixedHeight(34)
+        restart_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        restart_btn.setStyleSheet(_BTN_STYLE.format(
+            bg="transparent", fg=_ACCENT,
+            border=f"1px solid {_ACCENT_DIM}",
+            hover_bg=_ACCENT_DIM, hover_fg="#fff",
+        ))
+        restart_btn.clicked.connect(self._restart)
+        btn_row.addWidget(restart_btn)
+
+        skip_btn = QPushButton("Skip for now")
+        skip_btn.setFixedHeight(34)
+        skip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        skip_btn.setStyleSheet(_BTN_STYLE.format(
+            bg="transparent", fg=_TEXT3,
+            border=f"1px solid {_BORDER}",
+            hover_bg=_CARD_HOVER, hover_fg=_TEXT2,
+        ))
+        skip_btn.clicked.connect(self.close)
+        btn_row.addWidget(skip_btn)
+
+        layout.addLayout(btn_row)
+
+        # Status line
+        self._status = QLabel("Grant permission, then restart to activate hotkeys.")
+        self._status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._status.setStyleSheet(
+            f"color: {_TEXT3}; font-size: 11px;"
+            " border: none; background: transparent;"
+        )
+        layout.addWidget(self._status)
+
+    def _open_settings(self):
+        import subprocess
+        subprocess.Popen(
+            ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self._status.setText("System Settings opened — toggle it ON, then click Restart")
+        self._status.setStyleSheet(
+            f"color: {_ACCENT}; font-size: 11px;"
+            " border: none; background: transparent;"
+        )
+
+    def _restart(self):
+        """Quit and relaunch the app so the new permission takes effect."""
+        import subprocess
+        subprocess.Popen(
+            ["open", "/Applications/Voice Flow.app"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        QApplication.quit()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  5. SETTINGS DIALOG
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 

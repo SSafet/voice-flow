@@ -6,54 +6,61 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="Voice Flow"
 APP_DEST="/Applications/$APP_NAME.app"
 VENV="$PROJECT_DIR/.venv"
-VENV_PYTHON="$VENV/bin/python"
 
 echo "Installing $APP_NAME..."
 
-# Preflight
+# ── preflight ──────────────────────────────────────────
 if [ ! -d "$VENV" ]; then
     echo "Error: No .venv found. Run 'cd $PROJECT_DIR && uv sync' first."
     exit 1
 fi
 
-# Discover Python paths
-PYTHON_HOME="$("$VENV_PYTHON" -c "import sys; print(sys.base_prefix)")"
-PYTHON_VER="$("$VENV_PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")"
-
-# Find the ACTUAL binary that runs (not the stub that re-execs through Python.app)
-# ps shows this as: .../Python.app/Contents/MacOS/Python
-GUI_PYTHON="$PYTHON_HOME/Resources/Python.app/Contents/MacOS/Python"
-if [ ! -f "$GUI_PYTHON" ]; then
-    # Fallback: use the regular binary
-    GUI_PYTHON="$(realpath "$VENV_PYTHON")"
+if ! command -v swiftc &>/dev/null; then
+    echo "Error: swiftc not found. Install Xcode Command Line Tools:"
+    echo "  xcode-select --install"
+    exit 1
 fi
 
-echo "  Python GUI binary: $GUI_PYTHON"
-echo "  Python home:       $PYTHON_HOME"
-echo "  Python version:    $PYTHON_VER"
-
-# Remove old installation
+# ── remove old installation ────────────────────────────
 rm -rf "$APP_DEST"
 
-# Copy the .app template
+# ── copy the .app template ─────────────────────────────
 cp -R "$PROJECT_DIR/$APP_NAME.app" "$APP_DEST"
 
-# Copy the REAL Python GUI binary into the .app bundle (not a symlink!)
-# macOS identifies processes by the binary's location — inside Voice Flow.app,
-# permissions will be attributed to "Voice Flow" instead of "python3.11"
-cp "$GUI_PYTHON" "$APP_DEST/Contents/MacOS/VoiceFlow-python"
+# Remove the old bash launcher (replaced by compiled Swift binary)
+rm -f "$APP_DEST/Contents/MacOS/voice-flow"
 
-# Ad-hoc codesign (required on Apple Silicon for copied binaries)
-codesign --force --sign - "$APP_DEST/Contents/MacOS/VoiceFlow-python"
+# ── copy assets into bundle Resources ──────────────────
+cp "$PROJECT_DIR/assets/StatusBarIconTemplate@2x.png" "$APP_DEST/Contents/Resources/" 2>/dev/null || true
+cp "$PROJECT_DIR/assets/StatusBarIconTemplate.png"     "$APP_DEST/Contents/Resources/" 2>/dev/null || true
+cp "$PROJECT_DIR/assets/icon.icns"                     "$APP_DEST/Contents/Resources/" 2>/dev/null || true
 
-# Bake paths into the launcher
-sed -i '' "s|__PROJECT_DIR__|$PROJECT_DIR|g"   "$APP_DEST/Contents/MacOS/voice-flow"
-sed -i '' "s|__PYTHON_HOME__|$PYTHON_HOME|g"   "$APP_DEST/Contents/MacOS/voice-flow"
-sed -i '' "s|__PYTHON_VER__|$PYTHON_VER|g"     "$APP_DEST/Contents/MacOS/voice-flow"
+# Write project directory path into bundle for BackendBridge
+echo -n "$PROJECT_DIR" > "$APP_DEST/Contents/Resources/project_dir.txt"
+
+# ── compile Swift ──────────────────────────────────────
+echo "  Compiling Swift..."
+SDK="$(xcrun --show-sdk-path)"
+
+swiftc -o "$APP_DEST/Contents/MacOS/voice-flow" \
+    "$PROJECT_DIR"/swift/*.swift \
+    -framework Cocoa \
+    -framework AVFoundation \
+    -framework CoreGraphics \
+    -framework ApplicationServices \
+    -sdk "$SDK" \
+    -O \
+    -suppress-warnings
+
 chmod +x "$APP_DEST/Contents/MacOS/voice-flow"
+echo "  ✓ Swift binary compiled"
+
+# ── codesign ───────────────────────────────────────────
+codesign --force --sign - --identifier "com.voiceflow.app" \
+    "$APP_DEST/Contents/MacOS/voice-flow"
+codesign --force --deep --sign - "$APP_DEST"
 
 echo ""
 echo "✓ Installed to $APP_DEST"
 echo ""
 echo "Launch: open /Applications/Voice\\ Flow.app"
-echo "   or:  Spotlight → Voice Flow"

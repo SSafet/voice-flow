@@ -23,6 +23,7 @@ from voice_flow.transcriber import Transcriber
 from voice_flow.cleaner import Cleaner
 from voice_flow.paster import paste_text
 from voice_flow.ui import (
+    AccessibilityDialog,
     MenuBarIcon,
     FloatingIndicator,
     AppWindow,
@@ -272,50 +273,59 @@ class HotkeyListener:
 # ── main ────────────────────────────────────────────────
 
 
-def _check_accessibility():
-    """Check if we have Accessibility permission (non-blocking).
+def _is_accessible() -> bool:
+    """Check if this process has Accessibility permission.
 
-    Only shows the macOS prompt if permission is NOT yet granted.
+    With the compiled native launcher, this process IS the
+    CFBundleExecutable, so AXIsProcessTrustedWithOptions checks the
+    correct code identity — the same one TCC recorded when the user
+    granted Voice Flow accessibility.
     """
     try:
         from ApplicationServices import AXIsProcessTrustedWithOptions
         from Foundation import NSDictionary
+        opts = NSDictionary.dictionaryWithObject_forKey_(
+            False, "AXTrustedCheckOptionPrompt"
+        )
+        return bool(AXIsProcessTrustedWithOptions(opts))
+    except Exception:
+        pass
+    return False
 
-        # First check WITHOUT prompting
-        opts_quiet = NSDictionary.dictionaryWithObject_forKey_(False, "AXTrustedCheckOptionPrompt")
-        trusted = AXIsProcessTrustedWithOptions(opts_quiet)
-        if trusted:
-            print("[voice-flow] accessibility permission OK")
-            return True
 
-        # Not trusted — now prompt the user
-        opts_prompt = NSDictionary.dictionaryWithObject_forKey_(True, "AXTrustedCheckOptionPrompt")
-        AXIsProcessTrustedWithOptions(opts_prompt)
-        print("[voice-flow] accessibility not granted — macOS should prompt you")
-        return False
+def _request_accessibility() -> bool:
+    """Check + prompt for Accessibility. Returns True if already granted."""
+    import os
+    print(f"[voice-flow] process binary: {sys.executable}")
+    print(f"[voice-flow] PID: {os.getpid()}")
+
+    if _is_accessible():
+        print("[voice-flow] accessibility permission OK")
+        return True
+
+    # Not trusted — prompt (adds this binary to the System Settings list)
+    try:
+        from ApplicationServices import AXIsProcessTrustedWithOptions
+        from Foundation import NSDictionary
+        prompt_opts = NSDictionary.dictionaryWithObject_forKey_(
+            True, "AXTrustedCheckOptionPrompt"
+        )
+        AXIsProcessTrustedWithOptions(prompt_opts)
+        print("[voice-flow] accessibility NOT granted — prompted user")
     except Exception as e:
-        print(f"[voice-flow] could not check accessibility: {e}")
-        return True  # assume OK if we can't check
+        print(f"[voice-flow] could not prompt accessibility: {e}")
+
+    return False
 
 
 def main():
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     from pathlib import Path
+    from PyQt6.QtCore import QTimer
     icon_path = Path(__file__).parent.parent / "assets" / "icon_app_512.png"
 
-    try:
-        from AppKit import NSApplication, NSImage
-        ns_app = NSApplication.sharedApplication()
-        # Do NOT call setActivationPolicy_ — any policy transition kills
-        # the NSStatusBar item. LSUIElement=true in Info.plist handles dock.
-        if icon_path.exists():
-            ns_icon = NSImage.alloc().initByReferencingFile_(str(icon_path))
-            ns_app.setApplicationIconImage_(ns_icon)
-    except ImportError:
-        pass
-
-    _check_accessibility()
+    has_accessibility = _request_accessibility()
 
     app = QApplication(sys.argv)
     app.setApplicationName("Voice Flow")
@@ -324,6 +334,30 @@ def main():
     from PyQt6.QtGui import QIcon
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
+
+    # Set native app icon + Cmd+Q menu AFTER QApplication.
+    try:
+        from AppKit import NSApplication, NSImage, NSMenu, NSMenuItem
+        ns_app = NSApplication.sharedApplication()
+        if icon_path.exists():
+            ns_icon = NSImage.alloc().initWithContentsOfFile_(str(icon_path))
+            if ns_icon:
+                ns_app.setApplicationIconImage_(ns_icon)
+
+        # Native Cmd+Q: install a hidden mainMenu so macOS routes the
+        # key equivalent even for LSUIElement apps.
+        main_menu = NSMenu.alloc().init()
+        app_menu = NSMenu.alloc().initWithTitle_("Voice Flow")
+        quit_item = app_menu.addItemWithTitle_action_keyEquivalent_(
+            "Quit Voice Flow", "terminate:", "q"
+        )
+        app_menu_item = NSMenuItem.alloc().init()
+        app_menu_item.setSubmenu_(app_menu)
+        main_menu.addItem_(app_menu_item)
+        ns_app.setMainMenu_(main_menu)
+        print("[voice-flow] native Cmd+Q menu installed")
+    except Exception as e:
+        print(f"[voice-flow] native setup failed: {e}")
 
     # ── UI components ───────────────────────────────────
 
@@ -348,18 +382,6 @@ def main():
 
     indicator.clicked.connect(toggle_app_window)
     menu_bar.history_action.triggered.connect(toggle_app_window)
-
-    # ── wiring: settings dialog ─────────────────────────
-
-    def open_settings():
-        dlg = SettingsDialog()
-        if dlg.exec():
-            # Settings saved — update status text
-            key = _KEY_LABELS.get(Settings.get().hotkey, Settings.get().hotkey)
-            print(f"[voice-flow] settings saved — hotkey: {key} (restart to apply hotkey change)")
-
-    menu_bar.settings_action.triggered.connect(open_settings)
-    app_window.settings_btn.clicked.connect(open_settings)
 
     # ── engine ──────────────────────────────────────────
 
@@ -388,24 +410,50 @@ def main():
         on_release=engine.stop_recording,
         on_hands_free=engine.set_hands_free,
     )
-    hotkey.start()
 
-    # ── re-wire settings to apply hotkey live ──────────
+    # ── accessibility gate ─────────────────────────────
 
-    _orig_open_settings = open_settings
+    if not has_accessibility:
+        print("[voice-flow] waiting for accessibility permission…")
+        dlg = AccessibilityDialog()
+        dlg.show()
 
-    def open_settings_live():
+        # Poll every 1 s — once granted, close the dialog and continue
+        acc_timer = QTimer()
+        def _check_acc():
+            if _is_accessible():
+                acc_timer.stop()
+                dlg.close()
+                print("[voice-flow] accessibility permission OK (granted)")
+                hotkey.start()
+                print("[voice-flow] hotkey listener started")
+        acc_timer.timeout.connect(_check_acc)
+        acc_timer.start(1000)
+
+        # "Restart" and "Skip" buttons
+        def _on_restart():
+            import subprocess, os
+            subprocess.Popen(["open", "/Applications/Voice Flow.app"])
+            app.quit()
+        dlg.restart_requested.connect(_on_restart)
+    else:
+        hotkey.start()
+        print("[voice-flow] hotkey listener started")
+
+    # ── wiring: settings dialog (with live hotkey update) ──
+
+    def open_settings():
         old_key = Settings.get().hotkey
         dlg = SettingsDialog()
         if dlg.exec():
             new_key = Settings.get().hotkey
             if new_key != old_key:
                 hotkey.update_key(new_key)
+            key_label = _KEY_LABELS.get(new_key, new_key)
+            print(f"[voice-flow] settings saved -- hotkey: {key_label}")
 
-    menu_bar.settings_action.triggered.disconnect()
-    app_window.settings_btn.clicked.disconnect()
-    menu_bar.settings_action.triggered.connect(open_settings_live)
-    app_window.settings_btn.clicked.connect(open_settings_live)
+    menu_bar.settings_action.triggered.connect(open_settings)
+    app_window.settings_btn.clicked.connect(open_settings)
 
     sys.exit(app.exec())
 
