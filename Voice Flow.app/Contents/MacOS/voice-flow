@@ -1,0 +1,25 @@
+#!/bin/bash
+# Voice Flow launcher
+# Placeholders replaced at install time:
+#   __PROJECT_DIR__   → project root
+#   __PYTHON_HOME__   → Python framework prefix (for stdlib)
+#   __PYTHON_VER__    → e.g. 3.11
+
+PROJECT="__PROJECT_DIR__"
+VENV="$PROJECT/.venv"
+
+if [ ! -d "$VENV" ]; then
+    osascript -e "display alert \"Voice Flow\" message \"Virtual environment not found.\nPlease run: cd $PROJECT && uv sync\" as critical"
+    exit 1
+fi
+
+cd "$PROJECT"
+
+# Tell the copied Python where to find stdlib and venv packages
+export PYTHONHOME="__PYTHON_HOME__"
+export PYTHONPATH="$VENV/lib/python__PYTHON_VER__/site-packages:$PROJECT"
+export PATH="$VENV/bin:$PATH"
+
+# exec the Python binary inside this .app bundle — since it lives
+# inside Voice Flow.app, macOS attributes permissions to Voice Flow
+exec "$(dirname "$0")/VoiceFlow-python" -m voice_flow.app

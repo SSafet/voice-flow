@@ -1,0 +1,20 @@
+[project]
+name = "voice-flow"
+version = "0.1.0"
+description = "Local speech-to-text dictation with LLM cleanup"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "mlx-audio>=0.1.0",
+    "mlx-lm>=0.1.0",
+    "PyQt6>=6.6.0",
+    "sounddevice>=0.4.6",
+    "pynput>=1.7.6",
+    "numpy>=1.24.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+voice-flow = "voice_flow.app:main"
