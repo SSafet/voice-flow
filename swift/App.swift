@@ -17,6 +17,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var backend: BackendBridge!
     var paster: Paster!
 
+    // Foundry capture
+    var screenCapture: ScreenCapture!
+    var captureScheduler: CaptureScheduler!
+    var captureHotkeyManager: HotkeyManager!
+    var foundryClient: FoundryClient!
+    var conversationManager: ConversationManager!
+    private var isCapturing = false
+    private var lastCaptureData: Data?
+    private let diffThreshold: Double = 0.01
+
     private var state: AppState = .loading {
         didSet {
             DispatchQueue.main.async { [self] in
@@ -28,30 +38,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Hide dock icon (LSUIElement backup)
         NSApp.setActivationPolicy(.accessory)
-
-        // ── settings ────────────────────────────────────
         UserSettings.shared.load()
 
         // ── UI ──────────────────────────────────────────
         menuBar = MenuBarManager()
         menuBar.onShowHistory = { [weak self] in self?.toggleHistory() }
         menuBar.onShowSettings = { [weak self] in self?.showSettings() }
+        menuBar.onToggleCapture = { [weak self] in self?.toggleCapture() }
         menuBar.onQuit = { NSApp.terminate(nil) }
 
         indicator = FloatingIndicator()
         indicator.onClick = { [weak self] in self?.toggleHistory() }
         indicator.onShowHistory = { [weak self] in self?.toggleHistory() }
+        indicator.onToggleCapture = { [weak self] in self?.toggleCapture() }
         indicator.onQuit = { NSApp.terminate(nil) }
         indicator.show()
 
         historyWindow = HistoryWindowController()
         historyWindow.onSettings = { [weak self] in self?.showSettings() }
+        historyWindow.onToggleCapture = { [weak self] in self?.toggleCapture() }
         historyWindow.onWindowClosed = { [weak self] in self?.hideDockIfNoWindows() }
+
         settingsWindow = SettingsWindowController()
         settingsWindow.onHotkeyChanged = { [weak self] key in
             self?.hotkeyManager.updateKey(key)
+        }
+        settingsWindow.onCaptureHotkeyChanged = { [weak self] key in
+            self?.captureHotkeyManager.updateKey(key)
+        }
+        settingsWindow.onSettingsChanged = { [weak self] in
+            guard let self else { return }
+            self.captureScheduler.interval = TimeInterval(UserSettings.shared.captureIntervalSeconds)
         }
         settingsWindow.onWindowClosed = { [weak self] in self?.hideDockIfNoWindows() }
 
@@ -83,14 +101,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         backend.onResult = { [weak self] raw, cleaned in
             self?.handleResult(raw: raw, cleaned: cleaned)
         }
-        backend.onError = { msg in
-            vflog("backend error: \(msg)")
-        }
-        backend.onStatus = { msg in
-            vflog(msg)
+        backend.onError = { msg in vflog("backend error: \(msg)") }
+        backend.onStatus = { msg in vflog(msg) }
+
+        // ── screen capture ──────────────────────────────
+        screenCapture = ScreenCapture()
+        captureScheduler = CaptureScheduler(
+            screenCapture: screenCapture,
+            interval: TimeInterval(UserSettings.shared.captureIntervalSeconds)
+        )
+        captureScheduler.onCapture = { [weak self] imageData in
+            self?.handleScreenCapture(imageData)
         }
 
-        // ── hotkey ──────────────────────────────────────
+        // ── foundry gateway ─────────────────────────────
+        foundryClient = FoundryClient()
+        conversationManager = ConversationManager()
+
+        foundryClient.onMessage = { [weak self] msg in
+            self?.conversationManager.handleFoundryMessage(msg)
+        }
+        foundryClient.onStreamDelta = { [weak self] streamId, content in
+            self?.conversationManager.handleStreamDelta(streamId, content)
+        }
+        foundryClient.onStreamEnd = { [weak self] streamId in
+            self?.conversationManager.handleStreamEnd(streamId)
+        }
+        foundryClient.onConnectionStateChanged = { [weak self] state in
+            DispatchQueue.main.async {
+                self?.historyWindow.setFoundryState(state)
+            }
+        }
+        foundryClient.onSessionReset = { [weak self] in
+            self?.conversationManager.clear()
+        }
+        foundryClient.onError = { [weak self] msg in
+            vflog("foundry error: \(msg)")
+            self?.conversationManager.addError(msg)
+        }
+
+        conversationManager.onMessagesChanged = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.historyWindow.updateConversation(self.conversationManager.displayMessages)
+            }
+        }
+
+        // ── hotkeys ───────────────────────────────────
         hotkeyManager = HotkeyManager(keyName: UserSettings.shared.hotkey)
         hotkeyManager.onPress = { [weak self] in self?.startRecording() }
         hotkeyManager.onRelease = { [weak self] in self?.stopRecording() }
@@ -98,35 +155,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if active { self?.state = .handsFree }
         }
 
-        // ── accessibility + hotkey start ─────────────────
+        captureHotkeyManager = HotkeyManager(keyName: UserSettings.shared.captureHotkey)
+        captureHotkeyManager.onPress = { [weak self] in self?.toggleCapture() }
+
         startHotkeyWithAccessibilityCheck()
 
         // ── launch backend ──────────────────────────────
         state = .loading
         backend.start()
-
         vflog("app started")
     }
 
     private func startHotkeyWithAccessibilityCheck() {
         if checkAccessibility() {
             hotkeyManager.start()
+            captureHotkeyManager.start()
             return
         }
-        // Prompt for accessibility
         requestAccessibility()
-        // Poll until granted (user is in System Settings)
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
             if self.checkAccessibility() {
                 timer.invalidate()
                 self.hotkeyManager.start()
-                vflog("accessibility granted — hotkey active")
+                self.captureHotkeyManager.start()
+                vflog("accessibility granted — hotkeys active")
             }
         }
     }
 
-    // ── accessibility ───────────────────────────────────
     private func checkAccessibility() -> Bool {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false] as CFDictionary
         return AXIsProcessTrustedWithOptions(opts)
@@ -147,21 +204,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func stopRecording() {
         guard recorder.isRecording else { return }
-        recorder.stop { [weak self] wavPath in
-            guard let self, let wavPath else {
+        recorder.stop { [weak self] pcmData in
+            guard let self, let pcmData else {
                 self?.state = .idle
                 return
             }
             self.state = .processing
-            self.backend.transcribe(audioPath: wavPath)
+            let skipCleanup = !UserSettings.shared.llmCleanupEnabled
+            self.backend.transcribe(pcmData: pcmData, sampleRate: 16000, skipCleanup: skipCleanup)
         }
     }
 
     private func handleResult(raw: String, cleaned: String) {
-        if cleaned.isEmpty {
-            state = .idle
-            return
-        }
+        if cleaned.isEmpty { state = .idle; return }
         vflog("raw: \(raw)")
         vflog("cleaned: \(cleaned)")
         paster.paste(cleaned)
@@ -171,6 +226,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async {
             self.historyWindow.addEntry(text: cleaned, time: ts)
         }
+
+        // Send voice to Foundry when capturing
+        if isCapturing && foundryClient.connectionState == .subscribed {
+            conversationManager.addUserMessage(cleaned)
+            foundryClient.sendMessage(cleaned)
+        }
+
         state = .done
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             if self.state == .done { self.state = .idle }
@@ -186,6 +248,51 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
         return f.string(from: Date())
+    }
+
+    // ── capture ─────────────────────────────────────────
+    func toggleCapture() {
+        if isCapturing { stopCapture() } else { startCapture() }
+    }
+
+    private func startCapture() {
+        isCapturing = true
+        captureScheduler.start()
+        foundryClient.connect()
+        indicator.setCapturing(true)
+        menuBar.setCapturing(true)
+        historyWindow.setCapturing(true)
+        vflog("capture started")
+    }
+
+    private func stopCapture() {
+        isCapturing = false
+        captureScheduler.stop()
+        foundryClient.disconnect()
+        lastCaptureData = nil
+        indicator.setCapturing(false)
+        menuBar.setCapturing(false)
+        historyWindow.setCapturing(false)
+        vflog("capture stopped")
+    }
+
+    private func handleScreenCapture(_ imageData: Data) {
+        if let previous = lastCaptureData {
+            let diff = ImageUtils.difference(previous, imageData)
+            if diff < diffThreshold {
+                vflog("screen unchanged — skipping (diff=\(String(format: "%.4f", diff)))")
+                return
+            }
+        }
+        lastCaptureData = imageData
+
+        if foundryClient.connectionState == .subscribed {
+            conversationManager.addCaptureMarker()
+            foundryClient.sendScreenCapture(imageData, prompt: "Here is a screenshot of what I'm currently doing. Analyze what you see and remember the context.")
+            vflog("screen capture sent to Foundry")
+        } else {
+            vflog("screen capture skipped — Foundry not connected (\(foundryClient.connectionState.rawValue))")
+        }
     }
 
     // ── window toggles ──────────────────────────────────
@@ -208,9 +315,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func showDock() {
-        NSApp.setActivationPolicy(.regular)
-    }
+    private func showDock() { NSApp.setActivationPolicy(.regular) }
 
     private func hideDockIfNoWindows() {
         let historyVisible = historyWindow.window?.isVisible == true
@@ -220,4 +325,3 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 }
-

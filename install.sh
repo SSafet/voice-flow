@@ -48,6 +48,8 @@ swiftc -o "$APP_DEST/Contents/MacOS/voice-flow" \
     -framework AVFoundation \
     -framework CoreGraphics \
     -framework ApplicationServices \
+    -framework Accelerate \
+    -framework ScreenCaptureKit \
     -sdk "$SDK" \
     -O \
     -suppress-warnings

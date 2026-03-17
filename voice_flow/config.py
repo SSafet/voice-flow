@@ -43,6 +43,7 @@ _DEFAULTS = {
     "hotkey": "alt_r",
     "sounds_enabled": True,
     "double_tap_ms": 400,
+    "llm_cleanup_enabled": True,
 }
 
 
@@ -55,6 +56,7 @@ class Settings:
         self.hotkey: str = _DEFAULTS["hotkey"]
         self.sounds_enabled: bool = _DEFAULTS["sounds_enabled"]
         self.double_tap_ms: int = _DEFAULTS["double_tap_ms"]
+        self.llm_cleanup_enabled: bool = _DEFAULTS["llm_cleanup_enabled"]
         self._load()
 
     @classmethod
@@ -71,6 +73,7 @@ class Settings:
                     "hotkey": self.hotkey,
                     "sounds_enabled": self.sounds_enabled,
                     "double_tap_ms": self.double_tap_ms,
+                    "llm_cleanup_enabled": self.llm_cleanup_enabled,
                 },
                 indent=2,
             )

@@ -1,6 +1,7 @@
 import Cocoa
 import AVFoundation
 import CoreGraphics
+import Accelerate
 
 func vflog(_ msg: String) {
     let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(msg)\n"
@@ -27,6 +28,18 @@ class UserSettings {
     var hotkey: String = "alt_r"
     var soundsEnabled: Bool = true
     var doubleTapMs: Int = 400
+    var llmCleanupEnabled: Bool = true
+
+    // Foundry gateway
+    var captureIntervalSeconds: Int = 30
+    var captureHotkey: String = "f6"
+    var gatewayHost: String = "127.0.0.1"
+    var gatewayWSPort: Int = 8789
+    var gatewayHTTPPort: Int = 8791
+    var tenantId: String = "local"
+    var userId: String = "safet"
+    var agentType: String = "eyes"
+    var sessionLabel: String = "eyes-session"
 
     private let url: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
@@ -41,6 +54,16 @@ class UserSettings {
         if let v = dict["hotkey"] as? String { hotkey = v }
         if let v = dict["sounds_enabled"] as? Bool { soundsEnabled = v }
         if let v = dict["double_tap_ms"] as? Int { doubleTapMs = v }
+        if let v = dict["llm_cleanup_enabled"] as? Bool { llmCleanupEnabled = v }
+        if let v = dict["capture_interval"] as? Int { captureIntervalSeconds = v }
+        if let v = dict["capture_hotkey"] as? String { captureHotkey = v }
+        if let v = dict["gateway_host"] as? String { gatewayHost = v }
+        if let v = dict["gateway_ws_port"] as? Int { gatewayWSPort = v }
+        if let v = dict["gateway_http_port"] as? Int { gatewayHTTPPort = v }
+        if let v = dict["tenant_id"] as? String { tenantId = v }
+        if let v = dict["user_id"] as? String { userId = v }
+        if let v = dict["agent_type"] as? String { agentType = v }
+        if let v = dict["session_label"] as? String { sessionLabel = v }
     }
 
     func save() {
@@ -48,6 +71,16 @@ class UserSettings {
             "hotkey": hotkey,
             "sounds_enabled": soundsEnabled,
             "double_tap_ms": doubleTapMs,
+            "llm_cleanup_enabled": llmCleanupEnabled,
+            "capture_interval": captureIntervalSeconds,
+            "capture_hotkey": captureHotkey,
+            "gateway_host": gatewayHost,
+            "gateway_ws_port": gatewayWSPort,
+            "gateway_http_port": gatewayHTTPPort,
+            "tenant_id": tenantId,
+            "user_id": userId,
+            "agent_type": agentType,
+            "session_label": sessionLabel,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted) {
             try? data.write(to: url)
@@ -191,41 +224,117 @@ class HotkeyManager {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  Audio Recorder (AVAudioEngine → WAV)
+//  Audio Recorder (AVAudioEngine → PCM int16)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class AudioRecorder {
     private var engine: AVAudioEngine?
     private var audioData = Data()
     private(set) var isRecording = false
+    private(set) var clippingDetected = false
     private let sampleRate: Double = 16000
 
+    // ── High-pass filter state (2nd-order Butterworth @ 80Hz) ──
+    // Pre-computed coefficients for 80Hz cutoff at 16kHz sample rate
+    // Using bilinear transform of s-domain Butterworth
+    private var hpX1: Float = 0, hpX2: Float = 0
+    private var hpY1: Float = 0, hpY2: Float = 0
+    private let hpB0: Float =  0.9837613  // numerator coefficients
+    private let hpB1: Float = -1.9675226
+    private let hpB2: Float =  0.9837613
+    private let hpA1: Float = -1.9674474  // denominator coefficients (a0=1)
+    private let hpA2: Float =  0.9675978
+
+    // ── Pre-emphasis coefficient (~+6dB above 2kHz) ──
+    private var preEmphPrev: Float = 0
+    private let preEmphCoeff: Float = 0.97
+
+    // ── Silence trimming ──
+    // Low threshold to preserve whispered speech (~-60dBFS)
+    private let silenceThresholdRMS: Float = 0.001
+
     func start() {
-        audioData = Data()
+        // Pre-allocate for up to 60 seconds of 16kHz int16 audio
+        audioData = Data(capacity: Int(sampleRate) * 2 * 60)
         isRecording = true
+        clippingDetected = false
+
+        // Reset filter state
+        hpX1 = 0; hpX2 = 0; hpY1 = 0; hpY2 = 0
+        preEmphPrev = 0
 
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
 
-        // 16kHz mono int16
-        let desiredFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true)!
+        // Target format: 16kHz mono float32 (process in float, convert to int16 at end)
+        let desiredFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
         let hwFormat = inputNode.outputFormat(forBus: 0)
 
-        // Install tap on hardware format, convert ourselves
+        // Install tap with converter — smaller buffer (1024) for lower tail latency
         let converter = AVAudioConverter(from: hwFormat, to: desiredFormat)
+        converter?.sampleRateConverterQuality = AVAudioQuality.medium.rawValue
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFormat) { [weak self] buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: hwFormat) { [weak self] buffer, _ in
             guard let self, let converter else { return }
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * self.sampleRate / hwFormat.sampleRate)
-            guard let converted = AVAudioPCMBuffer(pcmFormat: desiredFormat, frameCapacity: capacity) else { return }
+            guard capacity > 0,
+                  let converted = AVAudioPCMBuffer(pcmFormat: desiredFormat, frameCapacity: capacity) else { return }
             var error: NSError?
             converter.convert(to: converted, error: &error) { _, outStatus in
                 outStatus.pointee = .haveData
                 return buffer
             }
-            if let ptr = converted.int16ChannelData {
-                let byteCount = Int(converted.frameLength) * 2
-                self.audioData.append(UnsafeBufferPointer(start: ptr[0], count: Int(converted.frameLength)))
+            guard let floatData = converted.floatChannelData else { return }
+            let frameCount = Int(converted.frameLength)
+            let ptr = floatData[0]
+
+            // ── 1. High-pass filter (80Hz, removes rumble/HVAC) ──
+            for i in 0..<frameCount {
+                let x = ptr[i]
+                let y = self.hpB0 * x + self.hpB1 * self.hpX1 + self.hpB2 * self.hpX2
+                      - self.hpA1 * self.hpY1 - self.hpA2 * self.hpY2
+                self.hpX2 = self.hpX1; self.hpX1 = x
+                self.hpY2 = self.hpY1; self.hpY1 = y
+                ptr[i] = y
+            }
+
+            // ── 2. Pre-emphasis filter (+6dB/oct above ~2kHz for consonant clarity) ──
+            for i in 0..<frameCount {
+                let x = ptr[i]
+                ptr[i] = x - self.preEmphCoeff * self.preEmphPrev
+                self.preEmphPrev = x
+            }
+
+            // ── 3. RMS check — skip near-silent buffers (trim leading/trailing silence) ──
+            var sumSq: Float = 0
+            vDSP_measqv(ptr, 1, &sumSq, vDSP_Length(frameCount))
+            let rms = sqrtf(sumSq)
+            let isSilent = rms < self.silenceThresholdRMS
+
+            // Only skip if we haven't accumulated any speech yet (leading silence)
+            if isSilent && self.audioData.isEmpty {
+                return
+            }
+
+            // ── 4. Clipping detection ──
+            var maxVal: Float = 0
+            vDSP_maxmgv(ptr, 1, &maxVal, vDSP_Length(frameCount))
+            if maxVal >= 0.99 {
+                self.clippingDetected = true
+            }
+
+            // ── 5. Clamp to [-1,1] (pre-emphasis can exceed), convert float32 → int16, accumulate ──
+            var clampLo: Float = -1.0, clampHi: Float = 1.0
+            vDSP_vclip(ptr, 1, &clampLo, &clampHi, ptr, 1, vDSP_Length(frameCount))
+
+            var scale: Float = 32767.0
+            var int16Buf = [Int16](repeating: 0, count: frameCount)
+            var scaled = [Float](repeating: 0, count: frameCount)
+            vDSP_vsmul(ptr, 1, &scale, &scaled, 1, vDSP_Length(frameCount))
+            vDSP_vfix16(scaled, 1, &int16Buf, 1, vDSP_Length(frameCount))
+
+            int16Buf.withUnsafeBufferPointer { bufPtr in
+                self.audioData.append(bufPtr)
             }
         }
 
@@ -239,45 +348,66 @@ class AudioRecorder {
         }
     }
 
-    func stop(completion: @escaping (String?) -> Void) {
+    func stop(completion: @escaping (Data?) -> Void) {
         isRecording = false
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
+
+        if clippingDetected {
+            vflog("warning: clipping detected in recording")
+        }
 
         guard audioData.count > 3200 else { // < 100ms at 16kHz int16
             completion(nil)
             return
         }
 
-        // Write WAV file
-        let path = NSTemporaryDirectory() + "voice-flow-\(UUID().uuidString).wav"
-        writeWAV(path: path, data: audioData, sampleRate: UInt32(sampleRate))
-        completion(path)
+        // Trim trailing silence
+        let trimmed = trimTrailingSilence(audioData, sampleRate: Int(sampleRate))
+
+        guard trimmed.count > 3200 else {
+            completion(nil)
+            return
+        }
+
+        completion(trimmed)
     }
 
-    private func writeWAV(path: String, data: Data, sampleRate: UInt32) {
-        var header = Data()
-        let dataSize = UInt32(data.count)
-        let fileSize = dataSize + 36
+    /// Remove trailing silent samples (below threshold) from int16 PCM data.
+    private func trimTrailingSilence(_ data: Data, sampleRate: Int) -> Data {
+        let sampleCount = data.count / 2
+        guard sampleCount > 0 else { return data }
 
-        header.append("RIFF".data(using: .ascii)!)
-        header.append(withUnsafeBytes(of: fileSize.littleEndian) { Data($0) })
-        header.append("WAVE".data(using: .ascii)!)
-        header.append("fmt ".data(using: .ascii)!)
-        header.append(withUnsafeBytes(of: UInt32(16).littleEndian) { Data($0) })   // chunk size
-        header.append(withUnsafeBytes(of: UInt16(1).littleEndian) { Data($0) })    // PCM
-        header.append(withUnsafeBytes(of: UInt16(1).littleEndian) { Data($0) })    // mono
-        header.append(withUnsafeBytes(of: sampleRate.littleEndian) { Data($0) })   // sample rate
-        header.append(withUnsafeBytes(of: (sampleRate * 2).littleEndian) { Data($0) }) // byte rate
-        header.append(withUnsafeBytes(of: UInt16(2).littleEndian) { Data($0) })    // block align
-        header.append(withUnsafeBytes(of: UInt16(16).littleEndian) { Data($0) })   // bits per sample
-        header.append("data".data(using: .ascii)!)
-        header.append(withUnsafeBytes(of: dataSize.littleEndian) { Data($0) })
+        // Work in chunks of 10ms from the end
+        let chunkSamples = sampleRate / 100  // 160 samples at 16kHz
+        let threshold: Int16 = Int16(silenceThresholdRMS * 32767)
 
-        var fileData = header
-        fileData.append(data)
-        try? fileData.write(to: URL(fileURLWithPath: path))
+        return data.withUnsafeBytes { rawBuf -> Data in
+            let samples = rawBuf.bindMemory(to: Int16.self)
+            var lastSpeechSample = sampleCount
+
+            // Walk backwards in chunks
+            var chunkEnd = sampleCount
+            while chunkEnd > 0 {
+                let chunkStart = max(0, chunkEnd - chunkSamples)
+                var maxAbs: Int16 = 0
+                for i in chunkStart..<chunkEnd {
+                    let abs = samples[i] < 0 ? -samples[i] : samples[i]
+                    if abs > maxAbs { maxAbs = abs }
+                }
+                if maxAbs > threshold {
+                    lastSpeechSample = chunkEnd
+                    break
+                }
+                chunkEnd = chunkStart
+            }
+
+            if lastSpeechSample == 0 {
+                return Data()  // All silence
+            }
+            return Data(rawBuf.prefix(lastSpeechSample * 2))
+        }
     }
 }
 
@@ -293,6 +423,7 @@ class BackendBridge {
 
     private var process: Process?
     private var stdin: FileHandle?
+    private var readyReceived = false
 
     func start() {
         let projectDir = Self.projectDir()
@@ -335,17 +466,23 @@ class BackendBridge {
         do {
             try proc.run()
             self.process = proc
-            // Send load command after ready
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
-                self.send(["cmd": "load"])
-            }
+            // load command is sent when we receive the "ready" event (see handleLine)
         } catch {
             vflog("failed to start backend: \(error)")
         }
     }
 
-    func transcribe(audioPath: String) {
-        send(["cmd": "transcribe", "audio_path": audioPath])
+    func transcribe(pcmData: Data, sampleRate: Int, skipCleanup: Bool = false) {
+        let b64 = pcmData.base64EncodedString()
+        var msg: [String: Any] = [
+            "cmd": "transcribe",
+            "audio_b64": b64,
+            "sample_rate": sampleRate,
+        ]
+        if skipCleanup {
+            msg["skip_cleanup"] = true
+        }
+        send(msg)
     }
 
     private func send(_ dict: [String: Any]) {
@@ -362,6 +499,10 @@ class BackendBridge {
 
         DispatchQueue.main.async { [self] in
             switch event {
+            case "ready":
+                readyReceived = true
+                vflog("backend ready — sending load")
+                send(["cmd": "load"])
             case "loaded":
                 onLoaded?()
             case "result":
