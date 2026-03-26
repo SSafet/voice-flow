@@ -37,13 +37,13 @@ final class FoundryClient {
 
         Task {
             do {
+                let config = UserSettings.shared.foundryConfig
                 NSLog("[VF] Fetching Foundry auth token...")
-                let token = try await fetchToken()
+                let token = try await fetchToken(config: config)
                 self.accessToken = token
                 NSLog("[VF] Got token: %@...", String(token.prefix(20)))
 
-                let settings = UserSettings.shared
-                let wsURL = URL(string: "ws://\(settings.gatewayHost):\(settings.gatewayWSPort)")!
+                let wsURL = URL(string: "ws://\(config.gatewayHost):\(config.gatewayWSPort)")!
                 NSLog("[VF] Connecting WebSocket to %@", wsURL.absoluteString)
                 urlSession = URLSession(configuration: .default)
                 webSocket = urlSession?.webSocketTask(with: wsURL)
@@ -77,19 +77,20 @@ final class FoundryClient {
         }
     }
 
-    private func fetchToken() async throws -> String {
-        let settings = UserSettings.shared
-        let url = URL(string: "http://\(settings.gatewayHost):\(settings.gatewayHTTPPort)")!
+    private func fetchToken(config: FoundryGatewayConfig) async throws -> String {
+        let url = URL(string: "http://\(config.gatewayHost):\(config.gatewayHTTPPort)")!
             .appendingPathComponent("auth/token")
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(config.appId, forHTTPHeaderField: "X-Foundry-App-Id")
+        request.setValue(config.userId, forHTTPHeaderField: "X-Foundry-User-Id")
         request.timeoutInterval = 10
 
         let body: [String: Any] = [
-            "tenant_id": settings.tenantId,
-            "user_id": settings.userId,
+            "tenant_id": config.tenantId,
+            "user_id": config.userId,
             "ttl_hours": 12
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -123,13 +124,22 @@ final class FoundryClient {
     // MARK: - Subscribe
 
     private func subscribe() {
-        let settings = UserSettings.shared
-        NSLog("[VF] subscribe() — label: %@, agent_type: %@", settings.sessionLabel, settings.agentType)
+        let config = UserSettings.shared.foundryConfig
+        NSLog(
+            "[VF] subscribe() — tenant=%@ app=%@ user=%@ label=%@ agent_type=%@",
+            config.tenantId,
+            config.appId,
+            config.userId,
+            config.sessionLabel,
+            config.agentType
+        )
         let msg: [String: Any] = [
             "type": "subscribe",
             "session": [
-                "label": settings.sessionLabel,
-                "agent_type": settings.agentType,
+                "label": config.sessionLabel,
+                "agent_type": config.agentType,
+                "app_id": config.appId,
+                "runtime_scope_context": runtimeScopeContext(for: config),
             ]
         ]
         send(msg)
@@ -181,13 +191,20 @@ final class FoundryClient {
         }
         NSLog("[VF] Compressed image: %d bytes", compressed.count)
 
-        let settings = UserSettings.shared
-        let url = URL(string: "http://\(settings.gatewayHost):\(settings.gatewayHTTPPort)")!
+        guard let accessToken else {
+            throw FoundryError.notConnected
+        }
+
+        let config = UserSettings.shared.foundryConfig
+        let url = URL(string: "http://\(config.gatewayHost):\(config.gatewayHTTPPort)")!
             .appendingPathComponent("api/upload")
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(config.appId, forHTTPHeaderField: "X-Foundry-App-Id")
+        request.setValue(config.userId, forHTTPHeaderField: "X-Foundry-User-Id")
 
         let boundary = UUID().uuidString
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -215,9 +232,11 @@ final class FoundryClient {
 
     func deleteSession() {
         guard let sessionId else { return }
+        let config = UserSettings.shared.foundryConfig
         let msg: [String: Any] = [
             "type": "delete_session",
             "session_id": sessionId,
+            "app_id": config.appId,
         ]
         send(msg)
         self.sessionId = nil
@@ -386,6 +405,27 @@ final class FoundryClient {
             self?.webSocket?.send(.string("{\"type\":\"ping\"}")) { _ in }
         }
     }
+
+    private func runtimeScopeContext(for config: FoundryGatewayConfig) -> [String: Any] {
+        let identity: [String: String] = [
+            "tenant_id": config.tenantId,
+            "app_id": config.appId,
+            "user_id": config.userId,
+            "session_id": config.canonicalSessionId,
+        ]
+
+        return [
+            "version": 1,
+            "identity": identity,
+            "scope_stack": [
+                ["key": "session", "kind": "session", "id": config.canonicalSessionId, "ephemeral": true],
+                ["key": "user", "kind": "user", "id": config.userId, "ephemeral": false],
+                ["key": "app", "kind": "app", "id": config.appId, "ephemeral": false],
+                ["key": "tenant", "kind": "tenant", "id": config.tenantId, "ephemeral": false],
+            ],
+            "artifacts": [:],
+        ]
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -467,13 +507,34 @@ final class ConversationManager {
         }
     }
 
-    func addUserMessage(_ text: String) {
-        displayMessages.append(DisplayMessage(role: .user, content: text))
+    func addUserMessage(_ text: String, isPending: Bool = false) {
+        displayMessages.append(DisplayMessage(role: .user, content: text, isPending: isPending))
         onMessagesChanged?()
     }
 
-    func addCaptureMarker() {
-        displayMessages.append(DisplayMessage(role: .user, content: "[Screen capture sent]"))
+    func addCaptureMarker(isPending: Bool = false) {
+        let label = isPending ? "[Screenshot captured — pending]" : "[Screen capture sent]"
+        displayMessages.append(DisplayMessage(role: .user, content: label, isPending: isPending))
+        onMessagesChanged?()
+    }
+
+    /// Mark all pending messages as "sending..."
+    func markAllPendingSending() {
+        for i in displayMessages.indices where displayMessages[i].isPending {
+            displayMessages[i] = DisplayMessage(
+                id: displayMessages[i].id,
+                role: displayMessages[i].role,
+                content: displayMessages[i].content.replacingOccurrences(of: "pending", with: "sending..."),
+                isPending: true
+            )
+        }
+        onMessagesChanged?()
+    }
+
+    /// Replace all pending items with the final combined message that was sent
+    func replacePendingWithSent(_ combinedPrompt: String) {
+        displayMessages.removeAll { $0.isPending }
+        displayMessages.append(DisplayMessage(role: .user, content: combinedPrompt))
         onMessagesChanged?()
     }
 
@@ -529,21 +590,24 @@ struct DisplayMessage: Identifiable {
     let content: String
     let timestamp: Date
     var isStreaming: Bool
+    var isPending: Bool
 
-    init(role: MessageRole, content: String, isStreaming: Bool = false) {
+    init(role: MessageRole, content: String, isStreaming: Bool = false, isPending: Bool = false) {
         self.id = UUID()
         self.role = role
         self.content = content
         self.timestamp = Date()
         self.isStreaming = isStreaming
+        self.isPending = isPending
     }
 
-    init(id: UUID, role: MessageRole, content: String, isStreaming: Bool = false) {
+    init(id: UUID, role: MessageRole, content: String, isStreaming: Bool = false, isPending: Bool = false) {
         self.id = id
         self.role = role
         self.content = content
         self.timestamp = Date()
         self.isStreaming = isStreaming
+        self.isPending = isPending
     }
 }
 

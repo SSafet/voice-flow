@@ -35,8 +35,11 @@ cp "$PROJECT_DIR/assets/StatusBarIconTemplate@2x.png" "$APP_DEST/Contents/Resour
 cp "$PROJECT_DIR/assets/StatusBarIconTemplate.png"     "$APP_DEST/Contents/Resources/" 2>/dev/null || true
 cp "$PROJECT_DIR/assets/icon.icns"                     "$APP_DEST/Contents/Resources/" 2>/dev/null || true
 
-# Write project directory path into bundle for BackendBridge
+# Write project directory path into bundle (used to locate .venv)
 echo -n "$PROJECT_DIR" > "$APP_DEST/Contents/Resources/project_dir.txt"
+
+# Bundle Python source so the app is self-contained
+cp -R "$PROJECT_DIR/voice_flow" "$APP_DEST/Contents/Resources/voice_flow"
 
 # ── compile Swift ──────────────────────────────────────
 echo "  Compiling Swift..."
@@ -49,6 +52,7 @@ swiftc -o "$APP_DEST/Contents/MacOS/voice-flow" \
     -framework CoreGraphics \
     -framework ApplicationServices \
     -framework Accelerate \
+    -framework Security \
     -framework ScreenCaptureKit \
     -sdk "$SDK" \
     -O \
@@ -66,3 +70,4 @@ echo ""
 echo "✓ Installed to $APP_DEST"
 echo ""
 echo "Launch: open /Applications/Voice\\ Flow.app"
+echo "Uninstall: $PROJECT_DIR/uninstall.sh"

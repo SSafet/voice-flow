@@ -56,6 +56,7 @@ extension NSColor {
 class MenuBarManager: NSObject {
     var onShowHistory: (() -> Void)?
     var onShowSettings: (() -> Void)?
+    var onShowPermissions: (() -> Void)?
     var onToggleCapture: (() -> Void)?
     var onQuit: (() -> Void)?
 
@@ -87,6 +88,7 @@ class MenuBarManager: NSObject {
         captureMenuItem.target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show History", action: #selector(historyAction), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Permissions…", action: #selector(permissionsAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(settingsAction), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Voice Flow", action: #selector(quitAction), keyEquivalent: "").target = self
@@ -103,6 +105,7 @@ class MenuBarManager: NSObject {
     }
 
     @objc private func historyAction() { onShowHistory?() }
+    @objc private func permissionsAction() { onShowPermissions?() }
     @objc private func settingsAction() { onShowSettings?() }
     @objc private func toggleCaptureAction() { onToggleCapture?() }
     @objc private func quitAction() { onQuit?() }
@@ -118,13 +121,14 @@ class FloatingIndicator: NSObject {
     var onShowHistory: (() -> Void)?
     var onToggleCapture: (() -> Void)?
 
-    private let W: CGFloat = 48, H: CGFloat = 22
+    private let W: CGFloat = 48, H: CGFloat = 16
     private let DOT_R: CGFloat = 3, DOT_SP: CGFloat = 10
     private var panel: NSPanel!
     private var pillLayer: CALayer!
     private var dotLayers: [CALayer] = []
     private var state: AppState = .idle
     private var isCapturing = false
+    private var ttsSnapshot: TTSStatusSnapshot?
 
     func show() {
         let screen = NSScreen.main!.frame
@@ -152,7 +156,7 @@ class FloatingIndicator: NSObject {
         // Pill background
         pillLayer = CALayer()
         pillLayer.frame = CGRect(x: 0.5, y: 0.5, width: W - 1, height: H - 1)
-        pillLayer.cornerRadius = 11.0
+        pillLayer.cornerRadius = H / 2
         pillLayer.borderWidth = 1.0
         root.addSublayer(pillLayer)
 
@@ -160,7 +164,7 @@ class FloatingIndicator: NSObject {
         let spec = CALayer()
         let specH = H * 0.42
         spec.frame = CGRect(x: 1.5, y: H - 1.0 - specH, width: W - 3, height: specH)
-        spec.cornerRadius = 10.0
+        spec.cornerRadius = H / 2 - 1
         spec.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10).cgColor
         root.addSublayer(spec)
 
@@ -196,12 +200,22 @@ class FloatingIndicator: NSObject {
         applyState()
     }
 
+    func setTTSStatus(_ snapshot: TTSStatusSnapshot) {
+        ttsSnapshot = snapshot
+        applyState()
+    }
+
     private func applyState() {
         pillLayer?.removeAllAnimations()
         dotLayers.forEach { $0.removeAllAnimations() }
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+
+        if state == .idle, !isCapturing, let snapshot = ttsSnapshot, applyTTSVisual(snapshot) {
+            CATransaction.commit()
+            return
+        }
 
         switch state {
         case .recording:
@@ -255,6 +269,34 @@ class FloatingIndicator: NSObject {
         }
     }
 
+    private func applyTTSVisual(_ snapshot: TTSStatusSnapshot) -> Bool {
+        let isPaused = snapshot.message == "Paused"
+
+        switch snapshot.phase {
+        case .playing:
+            pillLayer.backgroundColor = NSColor(r: 44, g: 84, b: 68, a: 125).cgColor
+            pillLayer.borderColor = NSColor(r: 130, g: 220, b: 176, a: 60).cgColor
+            dotLayers.forEach { $0.backgroundColor = NSColor(r: 228, g: 255, b: 244, a: 195).cgColor }
+            addPulse(duration: 1.25)
+            addDotFadeSweep(cycle: 1.0)
+            return true
+        case .generating:
+            pillLayer.backgroundColor = NSColor(r: 62, g: 78, b: 54, a: 115).cgColor
+            pillLayer.borderColor = NSColor(r: 190, g: 220, b: 132, a: 46).cgColor
+            dotLayers.forEach { $0.backgroundColor = NSColor(r: 244, g: 255, b: 215, a: 185).cgColor }
+            addPulse(duration: 1.5)
+            addDotFadeSweep(cycle: 1.25)
+            return true
+        case .ready where isPaused:
+            pillLayer.backgroundColor = NSColor(r: 42, g: 60, b: 54, a: 96).cgColor
+            pillLayer.borderColor = NSColor(r: 140, g: 206, b: 182, a: 34).cgColor
+            dotLayers.forEach { $0.backgroundColor = NSColor(r: 214, g: 236, b: 226, a: 145).cgColor }
+            return true
+        default:
+            return false
+        }
+    }
+
     private func addCapturePulse() {
         let a = CABasicAnimation(keyPath: "borderColor")
         a.fromValue = NSColor(r: 220, g: 60, b: 50, a: 180).cgColor
@@ -299,6 +341,20 @@ class FloatingIndicator: NSObject {
         }
     }
 
+    private func addDotFadeSweep(cycle: Double) {
+        let ease = CAMediaTimingFunction(name: .easeInEaseOut)
+        for (i, dot) in dotLayers.enumerated() {
+            let a = CAKeyframeAnimation(keyPath: "opacity")
+            a.values = [0.35, 1.0, 0.45]
+            a.keyTimes = [0.0, 0.45, 1.0]
+            a.timingFunctions = [ease, ease]
+            a.duration = cycle
+            a.repeatCount = .infinity
+            a.timeOffset = Double(i) * cycle / 4.0
+            dot.add(a, forKey: "fadeSweep")
+        }
+    }
+
     private func showContextMenu(in view: NSView, at point: NSPoint) {
         let menu = NSMenu()
         let captureItem = menu.addItem(
@@ -335,10 +391,19 @@ struct HistoryEntry {
     let time: String
 }
 
+enum HistoryTab: Int {
+    case dictations = 0
+    case chat = 1
+    case tts = 2
+}
+
 class HistoryWindowController: NSWindowController, NSWindowDelegate {
     var onSettings: (() -> Void)?
     var onWindowClosed: (() -> Void)?
     var onToggleCapture: (() -> Void)?
+    var onTTSSpeak: ((TTSRequest) -> Void)?
+    var onTTSSeek: ((Double) -> Void)?
+    var onTTSStop: (() -> Void)?
 
     // Dictations tab
     private var entries: [HistoryEntry] = []
@@ -355,6 +420,21 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
     private var conversationScrollView: NSScrollView!
     private var conversationEmptyView: NSView!
     private var foundryStateLabel: NSTextField!
+
+    // TTS tab
+    private var ttsContainer: NSView!
+    private var ttsStatusLabel: NSTextField!
+    private var ttsServerLabel: NSTextField!
+    private var ttsVoicePopup: NSPopUpButton!
+    private var ttsStylePresetPopup: NSPopUpButton!
+    private var ttsSpeedSlider: NSSlider!
+    private var ttsSpeedValueLabel: NSTextField!
+    private var ttsTimelineSlider: NSSlider!
+    private var ttsTimelineValueLabel: NSTextField!
+    private var ttsInstructionsField: NSTextField!
+    private var ttsTextView: NSTextView!
+    private var ttsSpeakButton: NSButton!
+    private var ttsTimelineIsUpdating = false
 
     // Shared
     private var statusPill: NSTextField!
@@ -503,7 +583,7 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
         segContainer.translatesAutoresizingMaskIntoConstraints = false
         segContainer.heightAnchor.constraint(equalToConstant: 40).isActive = true
 
-        segmentControl = NSSegmentedControl(labels: ["Dictations", "Chat"], trackingMode: .selectOne,
+        segmentControl = NSSegmentedControl(labels: ["Dictations", "Chat", "TTS"], trackingMode: .selectOne,
                                             target: self, action: #selector(tabChanged))
         segmentControl.selectedSegment = 0
         segmentControl.translatesAutoresizingMaskIntoConstraints = false
@@ -611,11 +691,167 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
             conversationContentStack.widthAnchor.constraint(equalTo: conversationScrollView.widthAnchor),
         ])
 
-        // ── add both tabs to a content wrapper ────────
+        // ── tts tab ───────────────────────────────────
+        ttsContainer = NSView()
+        ttsContainer.translatesAutoresizingMaskIntoConstraints = false
+        ttsContainer.isHidden = true
+
+        let ttsHeader = NSStackView()
+        ttsHeader.orientation = .horizontal
+        ttsHeader.spacing = 8
+        ttsHeader.translatesAutoresizingMaskIntoConstraints = false
+
+        let ttsLabel = NSTextField(labelWithString: "TEXT TO SPEECH")
+        ttsLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        ttsLabel.textColor = Theme.text3
+
+        let ttsHeaderSpacer = NSView()
+        ttsHeaderSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        ttsStatusLabel = NSTextField(labelWithString: "Idle")
+        ttsStatusLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        ttsStatusLabel.textColor = Theme.text3
+
+        ttsHeader.addArrangedSubview(ttsLabel)
+        ttsHeader.addArrangedSubview(ttsHeaderSpacer)
+        ttsHeader.addArrangedSubview(ttsStatusLabel)
+
+        ttsVoicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for voice in OpenAITTSVoices {
+            ttsVoicePopup.addItem(withTitle: voice)
+        }
+        ttsVoicePopup.selectItem(withTitle: UserSettings.shared.ttsVoice)
+        ttsVoicePopup.target = self
+        ttsVoicePopup.action = #selector(ttsControlsChanged)
+
+        ttsStylePresetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        ttsStylePresetPopup.addItem(withTitle: "Quick styles…")
+        for preset in OpenAITTSStylePresets {
+            ttsStylePresetPopup.addItem(withTitle: preset.title)
+        }
+        ttsStylePresetPopup.selectItem(at: 0)
+        ttsStylePresetPopup.target = self
+        ttsStylePresetPopup.action = #selector(ttsStylePresetChanged)
+
+        ttsSpeedSlider = NSSlider(value: UserSettings.shared.ttsSpeed, minValue: 0.25, maxValue: 4.0, target: self, action: #selector(ttsControlsChanged))
+        ttsSpeedSlider.numberOfTickMarks = 16
+        ttsSpeedSlider.allowsTickMarkValuesOnly = false
+
+        ttsSpeedValueLabel = NSTextField(labelWithString: "")
+        ttsSpeedValueLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        ttsSpeedValueLabel.textColor = Theme.text2
+
+        ttsTimelineSlider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: self, action: #selector(ttsTimelineChanged))
+        ttsTimelineSlider.isEnabled = false
+        ttsTimelineSlider.isContinuous = true
+
+        ttsTimelineValueLabel = NSTextField(labelWithString: "00:00 / 00:00")
+        ttsTimelineValueLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        ttsTimelineValueLabel.textColor = Theme.text2
+
+        ttsSpeakButton = NSButton(title: "Speak", target: self, action: #selector(ttsSpeakClicked))
+        ttsSpeakButton.bezelStyle = .rounded
+
+        let ttsStopButton = NSButton(title: "Stop", target: self, action: #selector(ttsStopClicked))
+        ttsStopButton.bezelStyle = .rounded
+
+        let ttsClearButton = NSButton(title: "Clear", target: self, action: #selector(ttsClearClicked))
+        ttsClearButton.bezelStyle = .rounded
+
+        let controlsRow = NSGridView(numberOfColumns: 2, rows: 0)
+        controlsRow.rowSpacing = 10
+        controlsRow.columnSpacing = 10
+
+        let speedRow = NSStackView(views: [ttsSpeedSlider, ttsSpeedValueLabel])
+        speedRow.orientation = .horizontal
+        speedRow.spacing = 8
+
+        let timelineRow = NSStackView(views: [ttsTimelineSlider, ttsTimelineValueLabel])
+        timelineRow.orientation = .horizontal
+        timelineRow.spacing = 8
+
+        let buttonRow = NSStackView(views: [ttsSpeakButton, ttsStopButton, ttsClearButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = 8
+
+        ttsInstructionsField = NSTextField(frame: .zero)
+        ttsInstructionsField.stringValue = UserSettings.shared.ttsInstructions
+        ttsInstructionsField.placeholderString = DefaultTTSInstructions
+        ttsInstructionsField.target = self
+        ttsInstructionsField.action = #selector(ttsControlsChanged)
+        controlsRow.addRow(with: [gridLabel("Voice:"), ttsVoicePopup])
+        controlsRow.addRow(with: [gridLabel("Preset:"), ttsStylePresetPopup])
+        controlsRow.addRow(with: [gridLabel("Speed:"), speedRow])
+        controlsRow.addRow(with: [gridLabel("Style:"), ttsInstructionsField])
+        controlsRow.addRow(with: [gridLabel("Actions:"), buttonRow])
+        controlsRow.addRow(with: [gridLabel("Timeline:"), timelineRow])
+        controlsRow.translatesAutoresizingMaskIntoConstraints = false
+
+        ttsServerLabel = NSTextField(labelWithString: "Local API: starting…")
+        ttsServerLabel.font = .systemFont(ofSize: 11)
+        ttsServerLabel.textColor = Theme.text3
+        ttsServerLabel.lineBreakMode = .byWordWrapping
+        ttsServerLabel.maximumNumberOfLines = 0
+        ttsServerLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let textScroll = NSScrollView()
+        textScroll.drawsBackground = false
+        textScroll.hasVerticalScroller = true
+        textScroll.scrollerStyle = .overlay
+        textScroll.translatesAutoresizingMaskIntoConstraints = false
+
+        ttsTextView = NSTextView(frame: .zero)
+        ttsTextView.isRichText = false
+        ttsTextView.isAutomaticQuoteSubstitutionEnabled = false
+        ttsTextView.isAutomaticDashSubstitutionEnabled = false
+        ttsTextView.isAutomaticTextCompletionEnabled = false
+        ttsTextView.font = .systemFont(ofSize: 13)
+        ttsTextView.textColor = Theme.text
+        ttsTextView.backgroundColor = Theme.bgLighter
+        ttsTextView.insertionPointColor = Theme.accent
+        ttsTextView.isHorizontallyResizable = false
+        ttsTextView.isVerticallyResizable = true
+        ttsTextView.minSize = NSSize(width: 0, height: 0)
+        ttsTextView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        ttsTextView.textContainer?.widthTracksTextView = true
+        ttsTextView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        ttsTextView.string = ""
+        ttsTextView.textContainerInset = NSSize(width: 12, height: 12)
+        textScroll.documentView = ttsTextView
+        textScroll.contentView.postsBoundsChangedNotifications = true
+
+        ttsContainer.addSubview(ttsHeader)
+        ttsContainer.addSubview(controlsRow)
+        ttsContainer.addSubview(ttsServerLabel)
+        ttsContainer.addSubview(textScroll)
+
+        NSLayoutConstraint.activate([
+            ttsHeader.topAnchor.constraint(equalTo: ttsContainer.topAnchor, constant: 14),
+            ttsHeader.leadingAnchor.constraint(equalTo: ttsContainer.leadingAnchor, constant: 16),
+            ttsHeader.trailingAnchor.constraint(equalTo: ttsContainer.trailingAnchor, constant: -16),
+
+            controlsRow.topAnchor.constraint(equalTo: ttsHeader.bottomAnchor, constant: 12),
+            controlsRow.leadingAnchor.constraint(equalTo: ttsContainer.leadingAnchor, constant: 16),
+            controlsRow.trailingAnchor.constraint(equalTo: ttsContainer.trailingAnchor, constant: -16),
+
+            ttsServerLabel.topAnchor.constraint(equalTo: controlsRow.bottomAnchor, constant: 12),
+            ttsServerLabel.leadingAnchor.constraint(equalTo: ttsContainer.leadingAnchor, constant: 16),
+            ttsServerLabel.trailingAnchor.constraint(equalTo: ttsContainer.trailingAnchor, constant: -16),
+
+            textScroll.topAnchor.constraint(equalTo: ttsServerLabel.bottomAnchor, constant: 10),
+            textScroll.leadingAnchor.constraint(equalTo: ttsContainer.leadingAnchor, constant: 12),
+            textScroll.trailingAnchor.constraint(equalTo: ttsContainer.trailingAnchor, constant: -12),
+            textScroll.bottomAnchor.constraint(equalTo: ttsContainer.bottomAnchor, constant: -12),
+        ])
+
+        updateTTSSpeedLabel()
+
+        // ── add all tabs to a content wrapper ─────────
         let contentArea = NSView()
         contentArea.translatesAutoresizingMaskIntoConstraints = false
         contentArea.addSubview(dictationsContainer)
         contentArea.addSubview(conversationContainer)
+        contentArea.addSubview(ttsContainer)
 
         NSLayoutConstraint.activate([
             dictationsContainer.topAnchor.constraint(equalTo: contentArea.topAnchor),
@@ -626,6 +862,10 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
             conversationContainer.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
             conversationContainer.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
             conversationContainer.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
+            ttsContainer.topAnchor.constraint(equalTo: contentArea.topAnchor),
+            ttsContainer.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
+            ttsContainer.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
+            ttsContainer.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
         ])
 
         root.addArrangedSubview(contentArea)
@@ -667,6 +907,13 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
         v.addArrangedSubview(h)
 
         return v
+    }
+
+    private func gridLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = Theme.text2
+        return label
     }
 
     func setState(_ state: AppState) {
@@ -814,9 +1061,15 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
 
     // ── tab switching ─────────────────────────────────
     @objc private func tabChanged() {
-        let seg = segmentControl.selectedSegment
-        dictationsContainer.isHidden = seg != 0
-        conversationContainer.isHidden = seg != 1
+        let tab = HistoryTab(rawValue: segmentControl.selectedSegment) ?? .dictations
+        dictationsContainer.isHidden = tab != .dictations
+        conversationContainer.isHidden = tab != .chat
+        ttsContainer.isHidden = tab != .tts
+    }
+
+    func selectTab(_ tab: HistoryTab) {
+        segmentControl.selectedSegment = tab.rawValue
+        tabChanged()
     }
 
     // ── conversation (chat) tab ─────────────────────
@@ -886,9 +1139,12 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
             ? NSColor(r: 212, g: 168, b: 83, a: 30).cgColor
             : NSColor(r: 100, g: 140, b: 200, a: 30).cgColor
 
-        let roleLabel = NSTextField(labelWithString: isUser ? "You" : "Agent")
+        let roleSuffix = msg.isPending ? "  (pending)" : ""
+        let roleLabel = NSTextField(labelWithString: (isUser ? "You" : "Agent") + roleSuffix)
         roleLabel.font = .systemFont(ofSize: 10, weight: .semibold)
-        roleLabel.textColor = isUser ? Theme.accent : NSColor(r: 130, g: 170, b: 220)
+        roleLabel.textColor = msg.isPending
+            ? NSColor(r: 180, g: 160, b: 100)
+            : (isUser ? Theme.accent : NSColor(r: 130, g: 170, b: 220))
 
         let contentLabel = NSTextField(wrappingLabelWithString: msg.content)
         contentLabel.font = .systemFont(ofSize: 12)
@@ -942,6 +1198,113 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
     func setCapturing(_ active: Bool) {
         // Capture state reflected via Foundry state label
     }
+
+    func currentTTSRequest() -> TTSRequest {
+        TTSRequest(
+            text: ttsTextView?.string ?? "",
+            voice: ttsVoicePopup?.selectedItem?.title ?? UserSettings.shared.ttsVoice,
+            speed: ttsSpeedSlider?.doubleValue ?? UserSettings.shared.ttsSpeed,
+            instructions: ttsInstructionsField?.stringValue ?? UserSettings.shared.ttsInstructions
+        ).normalized()
+    }
+
+    func applyTTSRequest(_ request: TTSRequest) {
+        let normalized = request.normalized()
+        ttsTextView?.string = normalized.text
+        ttsVoicePopup?.selectItem(withTitle: normalized.voice)
+        ttsSpeedSlider?.doubleValue = normalized.speed
+        ttsInstructionsField?.stringValue = normalized.instructions
+        updateTTSSpeedLabel()
+        persistTTSControls()
+    }
+
+    func setTTSStatus(_ snapshot: TTSStatusSnapshot) {
+        ttsStatusLabel?.stringValue = snapshot.message
+        switch snapshot.phase {
+        case .idle:
+            ttsStatusLabel?.textColor = Theme.text3
+        case .generating:
+            ttsStatusLabel?.textColor = Theme.accent
+        case .ready:
+            ttsStatusLabel?.textColor = Theme.text2
+        case .playing:
+            ttsStatusLabel?.textColor = NSColor(r: 120, g: 180, b: 100)
+        case .error:
+            ttsStatusLabel?.textColor = NSColor(r: 220, g: 90, b: 70)
+        }
+
+        ttsTimelineIsUpdating = true
+        let duration = max(snapshot.duration, 0)
+        ttsTimelineSlider?.minValue = 0
+        ttsTimelineSlider?.maxValue = max(duration, 1)
+        ttsTimelineSlider?.doubleValue = min(snapshot.currentTime, duration)
+        ttsTimelineSlider?.isEnabled = snapshot.hasAudio && duration > 0
+        ttsTimelineIsUpdating = false
+        ttsTimelineValueLabel?.stringValue = "\(formatPlaybackTime(snapshot.currentTime)) / \(formatPlaybackTime(duration))"
+
+        let hasText = !(ttsTextView?.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        if snapshot.phase == .playing || snapshot.phase == .generating {
+            ttsSpeakButton?.title = "Pause"
+        } else if snapshot.hasAudio || hasText {
+            ttsSpeakButton?.title = "Play"
+        } else {
+            ttsSpeakButton?.title = "Speak"
+        }
+    }
+
+    func setTTSServerLabel(_ text: String) {
+        ttsServerLabel?.stringValue = text
+    }
+
+    private func updateTTSSpeedLabel() {
+        ttsSpeedValueLabel?.stringValue = String(format: "%.2fx", ttsSpeedSlider?.doubleValue ?? UserSettings.shared.ttsSpeed)
+    }
+
+    private func formatPlaybackTime(_ value: Double) -> String {
+        let totalSeconds = max(Int(value.rounded(.down)), 0)
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+
+    private func persistTTSControls() {
+        let settings = UserSettings.shared
+        settings.ttsVoice = ttsVoicePopup?.selectedItem?.title ?? settings.ttsVoice
+        settings.ttsSpeed = ttsSpeedSlider?.doubleValue ?? settings.ttsSpeed
+        settings.ttsInstructions = ttsInstructionsField?.stringValue ?? settings.ttsInstructions
+        settings.save()
+    }
+
+    @objc private func ttsControlsChanged() {
+        updateTTSSpeedLabel()
+        persistTTSControls()
+    }
+
+    @objc private func ttsStylePresetChanged() {
+        let index = ttsStylePresetPopup?.indexOfSelectedItem ?? 0
+        guard index > 0, index - 1 < OpenAITTSStylePresets.count else { return }
+        let preset = OpenAITTSStylePresets[index - 1]
+        ttsInstructionsField?.stringValue = preset.instructions
+        ttsStylePresetPopup?.selectItem(at: 0)
+        persistTTSControls()
+    }
+
+    @objc private func ttsTimelineChanged() {
+        guard !ttsTimelineIsUpdating else { return }
+        onTTSSeek?(ttsTimelineSlider?.doubleValue ?? 0)
+    }
+
+    @objc private func ttsSpeakClicked() {
+        onTTSSpeak?(currentTTSRequest())
+    }
+
+    @objc private func ttsStopClicked() {
+        onTTSStop?()
+    }
+
+    @objc private func ttsClearClicked() {
+        ttsTextView?.string = ""
+    }
 }
 
 class HoverCardView: NSView {
@@ -969,34 +1332,487 @@ class FlippedClipView: NSClipView {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Key Recorder Button (click → press any key/combo)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class KeyRecorderButton: NSButton {
+    var currentSpec: HotkeySpec?
+    var onRecorded: ((HotkeySpec) -> Void)?
+
+    private var isRecording = false
+    private var eventMonitor: Any?
+    private var recordingPrompt: String?
+    private var pendingCommitSpec: HotkeySpec?
+    private var pendingCommitKeyCode: UInt16?
+    private var pressedModifierKeyCodes: Set<UInt16> = []
+
+    private static let modifierKeyCodes: Set<UInt16> = [54, 55, 56, 58, 59, 60, 61, 62, 63]
+
+    init(spec: HotkeySpec?) {
+        super.init(frame: .zero)
+        self.currentSpec = spec
+        self.bezelStyle = .rounded
+        self.target = self
+        self.action = #selector(startRecording)
+        self.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        updateTitle()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func updateTitle() {
+        title = isRecording ? (recordingPrompt ?? "Hold modifiers, then press key") : (currentSpec?.label ?? "Click to set")
+    }
+
+    @objc private func startRecording() {
+        stopRecording()
+        isRecording = true
+        recordingPrompt = "Hold modifiers, then press key"
+        pendingCommitSpec = nil
+        pendingCommitKeyCode = nil
+        pressedModifierKeyCodes.removeAll()
+        window?.makeFirstResponder(nil)
+        updateTitle()
+
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
+            guard let self else { return event }
+
+            if let pendingKeyCode = self.pendingCommitKeyCode {
+                if event.keyCode == pendingKeyCode {
+                    if event.type == .keyUp {
+                        self.commitPendingRecording()
+                    } else if event.type == .flagsChanged,
+                              !self.isModifierKeyDown(CGKeyCode(pendingKeyCode), flags: event.modifierFlags) {
+                        self.commitPendingRecording()
+                    }
+                }
+                return nil
+            }
+
+            guard self.isRecording else { return event }
+
+            if event.type == .keyDown {
+                return self.handleKeyDown(event)
+            } else if event.type == .keyUp {
+                return self.handleKeyUp(event)
+            } else if event.type == .flagsChanged {
+                return self.handleFlagsChanged(event)
+            }
+            return event
+        }
+    }
+
+    private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+        let kc = CGKeyCode(event.keyCode)
+        if kc == 53 {
+            stopRecording()
+            return nil
+        }
+        if event.isARepeat {
+            return nil
+        }
+        guard !Self.modifierKeyCodes.contains(event.keyCode) else {
+            return nil
+        }
+
+        let mods = recordingModifiers(from: event.modifierFlags)
+        let label = HotkeySpec.buildLabel(keyCode: kc, modifiers: mods)
+        armPendingRecording(
+            HotkeySpec(keyCode: kc, modifiers: mods, label: label),
+            commitOnReleaseOf: event.keyCode
+        )
+        return nil
+    }
+
+    private func handleKeyUp(_ event: NSEvent) -> NSEvent? {
+        if pendingCommitKeyCode == event.keyCode {
+            commitPendingRecording()
+            return nil
+        }
+        if pendingCommitKeyCode != nil {
+            return nil
+        }
+        return event
+    }
+
+    private func handleFlagsChanged(_ event: NSEvent) -> NSEvent? {
+        let kc = CGKeyCode(event.keyCode)
+        guard Self.modifierKeyCodes.contains(event.keyCode) else { return event }
+
+        let flags = event.modifierFlags
+        let mods = recordingModifiers(from: flags)
+        let isDown = isModifierKeyDown(kc, flags: flags)
+
+        if isDown {
+            pressedModifierKeyCodes.insert(event.keyCode)
+            updateRecordingPrompt(with: mods)
+            return nil
+        }
+
+        let wasPressed = pressedModifierKeyCodes.contains(event.keyCode)
+        pressedModifierKeyCodes.remove(event.keyCode)
+
+        if pendingCommitKeyCode == event.keyCode {
+            commitPendingRecording()
+            return nil
+        }
+        if pendingCommitKeyCode != nil {
+            return nil
+        }
+
+        guard wasPressed else { return nil }
+
+        let label = HotkeySpec.buildLabel(keyCode: kc, modifiers: mods)
+        let spec = HotkeySpec(
+            keyCode: kc,
+            modifiers: mods,
+            label: mods.isEmpty ? HotkeySpec.keyCodeName(kc) : label
+        )
+        finishRecording(spec)
+        return nil
+    }
+
+    private func armPendingRecording(_ spec: HotkeySpec, commitOnReleaseOf keyCode: UInt16) {
+        pendingCommitSpec = spec
+        pendingCommitKeyCode = keyCode
+        recordingPrompt = "Release to save \(spec.label)"
+        updateTitle()
+    }
+
+    private func commitPendingRecording() {
+        guard let spec = pendingCommitSpec else {
+            stopRecording()
+            return
+        }
+        pendingCommitSpec = nil
+        pendingCommitKeyCode = nil
+        finishRecording(spec)
+    }
+
+    private func finishRecording(_ spec: HotkeySpec) {
+        currentSpec = spec
+        recordingPrompt = nil
+        pendingCommitSpec = nil
+        pendingCommitKeyCode = nil
+        pressedModifierKeyCodes.removeAll()
+        stopRecording()
+        onRecorded?(spec)
+    }
+
+    private func stopRecording() {
+        isRecording = false
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
+        }
+        recordingPrompt = nil
+        pendingCommitSpec = nil
+        pendingCommitKeyCode = nil
+        pressedModifierKeyCodes.removeAll()
+        updateTitle()
+    }
+
+    private func updateRecordingPrompt(with modifiers: CGEventFlags) {
+        if modifiers.isEmpty {
+            recordingPrompt = "Hold modifiers, then press key"
+        } else {
+            recordingPrompt = "Release to save \(modifierLabel(for: modifiers))"
+        }
+        updateTitle()
+    }
+
+    private func recordingModifiers(from flags: NSEvent.ModifierFlags) -> CGEventFlags {
+        var mods = CGEventFlags()
+        if flags.contains(.control)  { mods.insert(.maskControl) }
+        if flags.contains(.option)   { mods.insert(.maskAlternate) }
+        if flags.contains(.shift)    { mods.insert(.maskShift) }
+        if flags.contains(.command)  { mods.insert(.maskCommand) }
+        if flags.contains(.function) { mods.insert(.maskSecondaryFn) }
+        return mods
+    }
+
+    private func modifierLabel(for modifiers: CGEventFlags) -> String {
+        var parts: [String] = []
+        if modifiers.contains(.maskControl) { parts.append("⌃") }
+        if modifiers.contains(.maskAlternate) { parts.append("⌥") }
+        if modifiers.contains(.maskShift) { parts.append("⇧") }
+        if modifiers.contains(.maskCommand) { parts.append("⌘") }
+        if modifiers.contains(.maskSecondaryFn) { parts.append("Fn") }
+        return parts.joined()
+    }
+
+    private func isModifierKeyDown(_ keyCode: CGKeyCode, flags: NSEvent.ModifierFlags) -> Bool {
+        switch keyCode {
+        case 54, 55:
+            return flags.contains(.command)
+        case 56, 60:
+            return flags.contains(.shift)
+        case 58, 61:
+            return flags.contains(.option)
+        case 59, 62:
+            return flags.contains(.control)
+        case 63:
+            return flags.contains(.function)
+        default:
+            return false
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Permissions Window
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+struct PermissionViewState {
+    let statusText: String
+    let statusColor: NSColor
+    let actionTitle: String
+    let actionEnabled: Bool
+}
+
+class PermissionsWindowController: NSWindowController, NSWindowDelegate {
+    var onRequestMicrophone: (() -> Void)?
+    var onRequestScreenCapture: (() -> Void)?
+    var onRequestAccessibility: (() -> Void)?
+    var onRefresh: (() -> Void)?
+    var onWindowClosed: (() -> Void)?
+
+    private var introLabel: NSTextField!
+    private var microphoneStatusLabel: NSTextField!
+    private var microphoneButton: NSButton!
+    private var screenCaptureStatusLabel: NSTextField!
+    private var screenCaptureButton: NSButton!
+    private var accessibilityStatusLabel: NSTextField!
+    private var accessibilityButton: NSButton!
+
+    init() {
+        let w = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 360),
+            styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        w.title = "Permissions"
+        w.center()
+        w.backgroundColor = Theme.bg
+        w.appearance = NSAppearance(named: .darkAqua)
+        w.titlebarAppearsTransparent = true
+        w.isReleasedWhenClosed = false
+        w.minSize = NSSize(width: 520, height: 320)
+        super.init(window: w)
+        w.delegate = self
+        setupUI()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        onWindowClosed?()
+        return false
+    }
+
+    func update(
+        microphone: PermissionViewState,
+        screenCapture: PermissionViewState,
+        accessibility: PermissionViewState,
+        allGranted: Bool
+    ) {
+        introLabel.stringValue = allGranted
+            ? "All required permissions are granted. You can close this window."
+            : "Grant permissions one at a time. If macOS opens System Settings, approve the permission there and return here. Use Refresh if a status lags."
+
+        apply(state: microphone, to: microphoneStatusLabel, button: microphoneButton)
+        apply(state: screenCapture, to: screenCaptureStatusLabel, button: screenCaptureButton)
+        apply(state: accessibility, to: accessibilityStatusLabel, button: accessibilityButton)
+    }
+
+    private func setupUI() {
+        let content = window!.contentView!
+
+        let root = NSStackView()
+        root.orientation = .vertical
+        root.spacing = 16
+        root.edgeInsets = NSEdgeInsets(top: 22, left: 22, bottom: 22, right: 22)
+        root.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(root)
+
+        NSLayoutConstraint.activate([
+            root.topAnchor.constraint(equalTo: content.topAnchor),
+            root.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            root.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            root.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+        ])
+
+        let titleLabel = NSTextField(labelWithString: "Permissions")
+        titleLabel.font = .boldSystemFont(ofSize: 18)
+        titleLabel.textColor = Theme.accent
+
+        introLabel = NSTextField(labelWithString: "")
+        introLabel.font = .systemFont(ofSize: 12)
+        introLabel.textColor = Theme.text2
+        introLabel.lineBreakMode = .byWordWrapping
+        introLabel.maximumNumberOfLines = 0
+
+        root.addArrangedSubview(titleLabel)
+        root.addArrangedSubview(introLabel)
+        root.addArrangedSubview(makeDivider())
+
+        let microphoneRow = makePermissionRow(
+            title: "Microphone",
+            detail: "Needed for dictation input.",
+            action: #selector(requestMicrophonePermission)
+        )
+        microphoneStatusLabel = microphoneRow.statusLabel
+        microphoneButton = microphoneRow.button
+        root.addArrangedSubview(microphoneRow.view)
+
+        let screenCaptureRow = makePermissionRow(
+            title: "Screen Recording",
+            detail: "Needed for activity capture screenshots.",
+            action: #selector(requestScreenCapturePermission)
+        )
+        screenCaptureStatusLabel = screenCaptureRow.statusLabel
+        screenCaptureButton = screenCaptureRow.button
+        root.addArrangedSubview(screenCaptureRow.view)
+
+        let accessibilityRow = makePermissionRow(
+            title: "Accessibility",
+            detail: "Needed for global hotkeys and paste automation.",
+            action: #selector(requestAccessibilityPermission)
+        )
+        accessibilityStatusLabel = accessibilityRow.statusLabel
+        accessibilityButton = accessibilityRow.button
+        root.addArrangedSubview(accessibilityRow.view)
+
+        root.addArrangedSubview(makeDivider())
+
+        let refreshButton = NSButton(title: "Refresh", target: self, action: #selector(refreshPermissions))
+        refreshButton.bezelStyle = .rounded
+
+        let closeButton = NSButton(title: "Close", target: self, action: #selector(closeWindow))
+        closeButton.bezelStyle = .rounded
+
+        let buttonSpacer = NSView()
+        buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let footer = NSStackView(views: [buttonSpacer, refreshButton, closeButton])
+        footer.orientation = .horizontal
+        footer.spacing = 8
+        root.addArrangedSubview(footer)
+    }
+
+    private func makePermissionRow(title: String, detail: String, action: Selector) -> (view: NSView, statusLabel: NSTextField, button: NSButton) {
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.textColor = Theme.text
+
+        let detailLabel = NSTextField(labelWithString: detail)
+        detailLabel.font = .systemFont(ofSize: 12)
+        detailLabel.textColor = Theme.text3
+
+        let statusLabel = NSTextField(labelWithString: "Checking…")
+        statusLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        statusLabel.textColor = Theme.text2
+        statusLabel.lineBreakMode = .byWordWrapping
+        statusLabel.maximumNumberOfLines = 0
+
+        let textStack = NSStackView(views: [titleLabel, detailLabel, statusLabel])
+        textStack.orientation = .vertical
+        textStack.spacing = 4
+        textStack.alignment = .leading
+
+        let button = NSButton(title: "Request", target: self, action: action)
+        button.bezelStyle = .rounded
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let row = NSStackView(views: [textStack, spacer, button])
+        row.orientation = .horizontal
+        row.spacing = 12
+        row.alignment = .top
+
+        return (row, statusLabel, button)
+    }
+
+    private func makeDivider() -> NSView {
+        let divider = NSView()
+        divider.wantsLayer = true
+        divider.layer?.backgroundColor = Theme.border.cgColor
+        divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        return divider
+    }
+
+    private func apply(state: PermissionViewState, to label: NSTextField, button: NSButton) {
+        label.stringValue = state.statusText
+        label.textColor = state.statusColor
+        button.title = state.actionTitle
+        button.isEnabled = state.actionEnabled
+    }
+
+    @objc private func requestMicrophonePermission() {
+        onRequestMicrophone?()
+    }
+
+    @objc private func requestScreenCapturePermission() {
+        onRequestScreenCapture?()
+    }
+
+    @objc private func requestAccessibilityPermission() {
+        onRequestAccessibility?()
+    }
+
+    @objc private func refreshPermissions() {
+        onRefresh?()
+    }
+
+    @objc private func closeWindow() {
+        window?.performClose(nil)
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Settings Window
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class SettingsWindowController: NSWindowController, NSWindowDelegate {
-    var onHotkeyChanged: ((String) -> Void)?
-    var onCaptureHotkeyChanged: ((String) -> Void)?
-    var onSettingsChanged: (() -> Void)?
+    var onHotkeyChanged: ((HotkeySpec) -> Void)?
+    var onHandsFreeHotkeyChanged: ((HotkeySpec) -> Void)?
+    var onTTSHotkeyChanged: ((HotkeySpec) -> Void)?
+    var onCaptureHotkeyChanged: ((HotkeySpec) -> Void)?
+    var onCaptureNoteHotkeyChanged: ((HotkeySpec) -> Void)?
+    var onSettingsChanged: ((Bool) -> Void)?
     var onWindowClosed: (() -> Void)?
 
-    private var hotkeyPopup: NSPopUpButton!
+    private var providerPopup: NSPopUpButton!
+    private var hotkeyRecorder: KeyRecorderButton!
+    private var handsFreeHotkeyRecorder: KeyRecorderButton!
+    private var ttsHotkeyRecorder: KeyRecorderButton!
+    private var openAIKeyField: NSSecureTextField!
+    private var openAIKeyStatusLabel: NSTextField!
+    private var removeOpenAIKeyButton: NSButton!
     private var soundsCheck: NSButton!
     private var doubleTapField: NSTextField!
     private var llmCleanupCheck: NSButton!
 
     // Activity capture settings
     private var captureIntervalField: NSTextField!
-    private var captureHotkeyPopup: NSPopUpButton!
+    private var captureHotkeyRecorder: KeyRecorderButton!
+    private var captureNoteHotkeyRecorder: KeyRecorderButton!
 
     // Foundry gateway settings
     private var gatewayHostField: NSTextField!
     private var gatewayWSPortField: NSTextField!
     private var gatewayHTTPPortField: NSTextField!
+    private var tenantIdField: NSTextField!
+    private var appIdField: NSTextField!
+    private var userIdField: NSTextField!
     private var agentTypeField: NSTextField!
     private var sessionLabelField: NSTextField!
 
     init() {
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 580),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 720),
             styleMask: [.titled, .closable],
             backing: .buffered, defer: false
         )
@@ -1006,6 +1822,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         w.appearance = NSAppearance(named: .darkAqua)
         w.titlebarAppearsTransparent = true
         w.isReleasedWhenClosed = false
+        w.minSize = NSSize(width: 520, height: 540)
         super.init(window: w)
         w.delegate = self
         setupUI()
@@ -1020,22 +1837,65 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func setupUI() {
         let s = UserSettings.shared
+        let foundry = s.foundryConfig
         let grid = NSGridView(numberOfColumns: 2, rows: 0)
-        grid.rowSpacing = 12; grid.columnSpacing = 12
+        grid.rowSpacing = 12
+        grid.columnSpacing = 16
+        grid.translatesAutoresizingMaskIntoConstraints = false
 
         // ── Dictation section ──
         let dictHeader = lbl("── Dictation ──")
         dictHeader.textColor = Theme.accent
         grid.addRow(with: [dictHeader, NSView()])
 
-        hotkeyPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        let keys = ["alt_r", "alt_l", "ctrl_r", "ctrl_l", "fn", "f5", "f6", "f7", "f8"]
-        for k in keys {
-            hotkeyPopup.addItem(withTitle: HotkeyManager.keyLabels[k] ?? k)
-            hotkeyPopup.lastItem?.representedObject = k
+        providerPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for provider in DictationProvider.allCases {
+            providerPopup.addItem(withTitle: provider.label)
+            providerPopup.lastItem?.representedObject = provider.rawValue
         }
-        hotkeyPopup.selectItem(withTitle: HotkeyManager.keyLabels[s.hotkey] ?? s.hotkey)
-        grid.addRow(with: [lbl("Hotkey:"), hotkeyPopup])
+        if let item = providerPopup.itemArray.first(where: {
+            ($0.representedObject as? String) == s.dictationProvider.rawValue
+        }) {
+            providerPopup.select(item)
+        }
+        providerPopup.target = self
+        providerPopup.action = #selector(dictationProviderChanged)
+        providerPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 240).isActive = true
+        grid.addRow(with: [lbl("Provider:"), providerPopup])
+
+        hotkeyRecorder = KeyRecorderButton(spec: s.hotkey)
+        hotkeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        grid.addRow(with: [lbl("Hold Key:"), hotkeyRecorder])
+
+        handsFreeHotkeyRecorder = KeyRecorderButton(spec: s.handsFreeHotkey)
+        handsFreeHotkeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        grid.addRow(with: [lbl("Double-Press:"), handsFreeHotkeyRecorder])
+
+        ttsHotkeyRecorder = KeyRecorderButton(spec: s.ttsHotkey)
+        ttsHotkeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        grid.addRow(with: [lbl("Speak Text:"), ttsHotkeyRecorder])
+
+        openAIKeyField = NSSecureTextField(frame: .zero)
+        openAIKeyField.stringValue = ""
+        openAIKeyField.placeholderString = "sk-..."
+        openAIKeyField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        openAIKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+
+        removeOpenAIKeyButton = NSButton(title: "Remove Saved Key", target: self, action: #selector(removeOpenAIKey))
+        removeOpenAIKeyButton.bezelStyle = .rounded
+
+        let keyRow = NSStackView(views: [openAIKeyField, removeOpenAIKeyButton])
+        keyRow.orientation = .horizontal
+        keyRow.spacing = 8
+        keyRow.alignment = .centerY
+        grid.addRow(with: [lbl("OpenAI Key:"), keyRow])
+
+        openAIKeyStatusLabel = NSTextField(labelWithString: "")
+        openAIKeyStatusLabel.textColor = Theme.text2
+        openAIKeyStatusLabel.font = .systemFont(ofSize: 11)
+        openAIKeyStatusLabel.maximumNumberOfLines = 0
+        openAIKeyStatusLabel.lineBreakMode = .byWordWrapping
+        grid.addRow(with: [NSView(), openAIKeyStatusLabel])
 
         soundsCheck = NSButton(checkboxWithTitle: "Play sounds", target: nil, action: nil)
         soundsCheck.state = s.soundsEnabled ? .on : .off
@@ -1043,9 +1903,11 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         doubleTapField = NSTextField()
         doubleTapField.integerValue = s.doubleTapMs
+        doubleTapField.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
         let dtRow = NSStackView(views: [doubleTapField, lbl("ms")])
         dtRow.orientation = .horizontal
-        grid.addRow(with: [lbl("Double-tap:"), dtRow])
+        dtRow.alignment = .centerY
+        grid.addRow(with: [lbl("Double Window:"), dtRow])
 
         llmCleanupCheck = NSButton(checkboxWithTitle: "LLM text cleanup", target: nil, action: nil)
         llmCleanupCheck.state = s.llmCleanupEnabled ? .on : .off
@@ -1057,43 +1919,70 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         grid.addRow(with: [foundryHeader, NSView()])
 
         gatewayHostField = NSTextField()
-        gatewayHostField.stringValue = s.gatewayHost
+        gatewayHostField.stringValue = foundry.gatewayHost
         gatewayHostField.placeholderString = "127.0.0.1"
+        gatewayHostField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
         grid.addRow(with: [lbl("Host:"), gatewayHostField])
 
         gatewayWSPortField = NSTextField()
-        gatewayWSPortField.integerValue = s.gatewayWSPort
+        gatewayWSPortField.integerValue = foundry.gatewayWSPort
+        gatewayWSPortField.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
         let wsRow = NSStackView(views: [gatewayWSPortField, lbl("WS")])
         wsRow.orientation = .horizontal
+        wsRow.alignment = .centerY
         grid.addRow(with: [lbl("WS Port:"), wsRow])
 
         gatewayHTTPPortField = NSTextField()
-        gatewayHTTPPortField.integerValue = s.gatewayHTTPPort
+        gatewayHTTPPortField.integerValue = foundry.gatewayHTTPPort
+        gatewayHTTPPortField.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
         let httpRow = NSStackView(views: [gatewayHTTPPortField, lbl("HTTP")])
         httpRow.orientation = .horizontal
+        httpRow.alignment = .centerY
         grid.addRow(with: [lbl("HTTP Port:"), httpRow])
 
+        tenantIdField = NSTextField()
+        tenantIdField.stringValue = foundry.tenantId
+        tenantIdField.placeholderString = "local"
+        tenantIdField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+        grid.addRow(with: [lbl("Tenant ID:"), tenantIdField])
+
+        appIdField = NSTextField()
+        appIdField.stringValue = foundry.appId
+        appIdField.placeholderString = "voice-flow"
+        appIdField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+        grid.addRow(with: [lbl("App ID:"), appIdField])
+
+        userIdField = NSTextField()
+        userIdField.stringValue = foundry.userId
+        userIdField.placeholderString = "current app user"
+        userIdField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+        grid.addRow(with: [lbl("User ID:"), userIdField])
+
         agentTypeField = NSTextField()
-        agentTypeField.stringValue = s.agentType
+        agentTypeField.stringValue = foundry.agentType
+        agentTypeField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
         grid.addRow(with: [lbl("Agent Type:"), agentTypeField])
 
         sessionLabelField = NSTextField()
-        sessionLabelField.stringValue = s.sessionLabel
-        grid.addRow(with: [lbl("Session:"), sessionLabelField])
+        sessionLabelField.stringValue = foundry.sessionLabel
+        sessionLabelField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+        grid.addRow(with: [lbl("Session Label:"), sessionLabelField])
 
         captureIntervalField = NSTextField()
         captureIntervalField.integerValue = s.captureIntervalSeconds
+        captureIntervalField.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
         let intRow = NSStackView(views: [captureIntervalField, lbl("sec")])
         intRow.orientation = .horizontal
+        intRow.alignment = .centerY
         grid.addRow(with: [lbl("Interval:"), intRow])
 
-        captureHotkeyPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        for k in keys {
-            captureHotkeyPopup.addItem(withTitle: HotkeyManager.keyLabels[k] ?? k)
-            captureHotkeyPopup.lastItem?.representedObject = k
-        }
-        captureHotkeyPopup.selectItem(withTitle: HotkeyManager.keyLabels[s.captureHotkey] ?? s.captureHotkey)
-        grid.addRow(with: [lbl("Capture Key:"), captureHotkeyPopup])
+        captureHotkeyRecorder = KeyRecorderButton(spec: s.captureHotkey)
+        captureHotkeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        grid.addRow(with: [lbl("Capture Key:"), captureHotkeyRecorder])
+
+        captureNoteHotkeyRecorder = KeyRecorderButton(spec: s.captureNoteHotkey)
+        captureNoteHotkeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        grid.addRow(with: [lbl("Note Key:"), captureNoteHotkeyRecorder])
 
         // Save button
         let saveBtn = NSButton(title: "Save", target: self, action: #selector(save))
@@ -1101,28 +1990,149 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         grid.addRow(with: [NSView(), saveBtn])
 
         let content = window!.contentView!
-        content.addSubview(grid)
-        grid.translatesAutoresizingMaskIntoConstraints = false
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.scrollerStyle = .overlay
+
+        let docView = FlippedView()
+        docView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = docView
+
+        content.addSubview(scrollView)
+        docView.addSubview(grid)
+
+        if grid.numberOfColumns >= 2 {
+            grid.column(at: 0).xPlacement = .trailing
+            grid.column(at: 1).xPlacement = .fill
+        }
+
         NSLayoutConstraint.activate([
-            grid.centerXAnchor.constraint(equalTo: content.centerXAnchor),
-            grid.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            scrollView.topAnchor.constraint(equalTo: content.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+
+            docView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            docView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            docView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            docView.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor),
+            docView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+
+            grid.topAnchor.constraint(equalTo: docView.topAnchor, constant: 22),
+            grid.leadingAnchor.constraint(equalTo: docView.leadingAnchor, constant: 22),
+            grid.trailingAnchor.constraint(equalTo: docView.trailingAnchor, constant: -22),
+            grid.bottomAnchor.constraint(equalTo: docView.bottomAnchor, constant: -22),
         ])
+
+        refreshOpenAIKeyUI()
+        refreshDictationUI()
+        fitWindowToContent(grid)
     }
 
     private func lbl(_ text: String) -> NSTextField {
         let l = NSTextField(labelWithString: text)
-        l.textColor = Theme.text; l.font = .systemFont(ofSize: 13)
+        l.textColor = Theme.text
+        l.font = .systemFont(ofSize: 13)
+        l.setContentCompressionResistancePriority(.required, for: .horizontal)
         return l
+    }
+
+    private func fitWindowToContent(_ grid: NSGridView) {
+        guard let window, let content = window.contentView else { return }
+
+        content.layoutSubtreeIfNeeded()
+
+        let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 900)
+        let preferredWidth = min(max(560, grid.fittingSize.width + 64), visibleFrame.width * 0.8)
+        let preferredHeight = min(max(640, grid.fittingSize.height + 64), visibleFrame.height * 0.85)
+
+        window.setContentSize(NSSize(width: preferredWidth, height: preferredHeight))
+        window.minSize = NSSize(width: min(preferredWidth, 560), height: 540)
+    }
+
+    private func selectedDictationProvider() -> DictationProvider {
+        guard let raw = providerPopup.selectedItem?.representedObject as? String,
+              let provider = DictationProvider(rawValue: raw) else {
+            return .local
+        }
+        return provider
+    }
+
+    private func refreshDictationUI() {
+        let isLocal = selectedDictationProvider() == .local
+        llmCleanupCheck.isEnabled = isLocal
+        llmCleanupCheck.alphaValue = isLocal ? 1.0 : 0.5
+    }
+
+    private func refreshOpenAIKeyUI(statusMessage: String? = nil) {
+        let hasKey = KeychainStore.shared.hasOpenAIAPIKey
+        openAIKeyField.stringValue = ""
+        openAIKeyField.placeholderString = hasKey
+            ? "••••••••••••••••"
+            : "sk-..."
+        openAIKeyStatusLabel.stringValue = statusMessage ?? (
+            hasKey
+                ? "Saved in macOS Keychain. Enter a new key only if you want to replace it."
+                : "Stored securely in macOS Keychain when you save."
+        )
+        removeOpenAIKeyButton.isEnabled = hasKey
+    }
+
+    @objc private func dictationProviderChanged() {
+        refreshDictationUI()
+    }
+
+    @objc private func removeOpenAIKey() {
+        guard KeychainStore.shared.removeOpenAIAPIKey() else {
+            NSSound.beep()
+            refreshOpenAIKeyUI(statusMessage: "Failed to remove the saved OpenAI key.")
+            return
+        }
+        openAIKeyField.stringValue = ""
+        refreshOpenAIKeyUI(statusMessage: "Saved OpenAI key removed from macOS Keychain.")
     }
 
     @objc private func save() {
         let s = UserSettings.shared
-        let oldKey = s.hotkey
-        let oldCaptureKey = s.captureHotkey
+        let previousFoundryConfig = s.foundryConfig
 
-        if let newKey = hotkeyPopup.selectedItem?.representedObject as? String {
-            s.hotkey = newKey
-            if newKey != oldKey { onHotkeyChanged?(newKey) }
+        let provider = selectedDictationProvider()
+        s.dictationProvider = provider
+
+        let newOpenAIKey = openAIKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !newOpenAIKey.isEmpty {
+            guard KeychainStore.shared.saveOpenAIAPIKey(newOpenAIKey) else {
+                NSSound.beep()
+                refreshOpenAIKeyUI(statusMessage: "Failed to save the OpenAI key to Keychain.")
+                return
+            }
+            openAIKeyField.stringValue = ""
+            refreshOpenAIKeyUI(statusMessage: "OpenAI key updated in macOS Keychain.")
+        } else if provider == .openai && !KeychainStore.shared.hasOpenAIAPIKey {
+            NSSound.beep()
+            refreshOpenAIKeyUI(statusMessage: "Enter an OpenAI API key or switch back to Local.")
+            return
+        }
+
+        if let spec = hotkeyRecorder.currentSpec {
+            if spec.keyCode != s.hotkey.keyCode || spec.modifiers != s.hotkey.modifiers {
+                s.hotkey = spec
+                onHotkeyChanged?(spec)
+            }
+        }
+        if let spec = handsFreeHotkeyRecorder.currentSpec {
+            if spec.keyCode != s.handsFreeHotkey.keyCode || spec.modifiers != s.handsFreeHotkey.modifiers {
+                s.handsFreeHotkey = spec
+                onHandsFreeHotkeyChanged?(spec)
+            }
+        }
+        if let spec = ttsHotkeyRecorder.currentSpec {
+            if spec.keyCode != s.ttsHotkey.keyCode || spec.modifiers != s.ttsHotkey.modifiers {
+                s.ttsHotkey = spec
+                onTTSHotkeyChanged?(spec)
+            }
         }
         s.soundsEnabled = soundsCheck.state == .on
         s.doubleTapMs = doubleTapField.integerValue
@@ -1132,16 +2142,27 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         s.gatewayHost = gatewayHostField.stringValue
         s.gatewayWSPort = max(1, gatewayWSPortField.integerValue)
         s.gatewayHTTPPort = max(1, gatewayHTTPPortField.integerValue)
+        s.tenantId = tenantIdField.stringValue
+        s.appId = appIdField.stringValue
+        s.userId = userIdField.stringValue
         s.agentType = agentTypeField.stringValue
         s.sessionLabel = sessionLabelField.stringValue
         s.captureIntervalSeconds = max(5, captureIntervalField.integerValue)
-        if let newKey = captureHotkeyPopup.selectedItem?.representedObject as? String {
-            s.captureHotkey = newKey
-            if newKey != oldCaptureKey { onCaptureHotkeyChanged?(newKey) }
+        if let spec = captureHotkeyRecorder.currentSpec {
+            if spec.keyCode != s.captureHotkey.keyCode || spec.modifiers != s.captureHotkey.modifiers {
+                s.captureHotkey = spec
+                onCaptureHotkeyChanged?(spec)
+            }
+        }
+        if let spec = captureNoteHotkeyRecorder.currentSpec {
+            if spec.keyCode != s.captureNoteHotkey.keyCode || spec.modifiers != s.captureNoteHotkey.modifiers {
+                s.captureNoteHotkey = spec
+                onCaptureNoteHotkeyChanged?(spec)
+            }
         }
 
         s.save()
-        onSettingsChanged?()
+        onSettingsChanged?(previousFoundryConfig != s.foundryConfig)
         window?.close()
     }
 }
