@@ -125,6 +125,7 @@ class FloatingIndicator: NSObject {
     private let DOT_R: CGFloat = 3, DOT_SP: CGFloat = 10
     private var panel: NSPanel!
     private var pillLayer: CALayer!
+    private var captureOutlineLayer: CALayer!
     private var dotLayers: [CALayer] = []
     private var state: AppState = .idle
     private var isCapturing = false
@@ -159,6 +160,17 @@ class FloatingIndicator: NSObject {
         pillLayer.cornerRadius = H / 2
         pillLayer.borderWidth = 1.0
         root.addSublayer(pillLayer)
+
+        captureOutlineLayer = CALayer()
+        captureOutlineLayer.frame = pillLayer.frame
+        captureOutlineLayer.cornerRadius = pillLayer.cornerRadius
+        captureOutlineLayer.backgroundColor = NSColor.clear.cgColor
+        captureOutlineLayer.borderColor = NSColor(r: 220, g: 60, b: 50, a: 190).cgColor
+        captureOutlineLayer.borderWidth = 0
+        captureOutlineLayer.opacity = 0
+        captureOutlineLayer.shadowColor = NSColor(r: 255, g: 96, b: 86, a: 255).cgColor
+        captureOutlineLayer.shadowOffset = .zero
+        root.addSublayer(captureOutlineLayer)
 
         // Specular highlight
         let spec = CALayer()
@@ -207,10 +219,18 @@ class FloatingIndicator: NSObject {
 
     private func applyState() {
         pillLayer?.removeAllAnimations()
+        captureOutlineLayer?.removeAllAnimations()
         dotLayers.forEach { $0.removeAllAnimations() }
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+
+        pillLayer?.borderWidth = 1.0
+        captureOutlineLayer?.borderColor = NSColor(r: 220, g: 60, b: 50, a: 190).cgColor
+        captureOutlineLayer?.borderWidth = isCapturing ? 1.5 : 0
+        captureOutlineLayer?.opacity = isCapturing ? 1.0 : 0.0
+        captureOutlineLayer?.shadowOpacity = 0.0
+        captureOutlineLayer?.shadowRadius = 0.0
 
         if state == .idle, !isCapturing, let snapshot = ttsSnapshot, applyTTSVisual(snapshot) {
             CATransaction.commit()
@@ -254,19 +274,6 @@ class FloatingIndicator: NSObject {
             dotLayers.forEach { $0.backgroundColor = NSColor(r: 255, g: 240, b: 220, a: 110).cgColor }
             CATransaction.commit()
         }
-
-        // Capture state: red pulsing border overlay
-        if isCapturing && state == .idle {
-            pillLayer.borderColor = NSColor(r: 220, g: 60, b: 50, a: 180).cgColor
-            pillLayer.borderWidth = 1.5
-            addCapturePulse()
-        } else if isCapturing {
-            // Other states keep their colors, but still mark the border red
-            pillLayer.borderColor = NSColor(r: 220, g: 60, b: 50, a: 120).cgColor
-            pillLayer.borderWidth = 1.5
-        } else {
-            pillLayer.borderWidth = 1.0
-        }
     }
 
     private func applyTTSVisual(_ snapshot: TTSStatusSnapshot) -> Bool {
@@ -297,13 +304,34 @@ class FloatingIndicator: NSObject {
         }
     }
 
-    private func addCapturePulse() {
-        let a = CABasicAnimation(keyPath: "borderColor")
-        a.fromValue = NSColor(r: 220, g: 60, b: 50, a: 180).cgColor
-        a.toValue = NSColor(r: 220, g: 60, b: 50, a: 60).cgColor
-        a.duration = 1.5; a.autoreverses = true; a.repeatCount = .infinity
-        a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        pillLayer.add(a, forKey: "capturePulse")
+    func flashCapturePulse() {
+        guard isCapturing, let captureOutlineLayer else { return }
+
+        captureOutlineLayer.removeAnimation(forKey: "captureFlash")
+
+        let ease = CAMediaTimingFunction(name: .easeInEaseOut)
+
+        let width = CAKeyframeAnimation(keyPath: "borderWidth")
+        width.values = [1.5, 4.0, 1.5]
+        width.keyTimes = [0.0, 0.45, 1.0]
+        width.timingFunctions = [ease, ease]
+
+        let shadowOpacity = CAKeyframeAnimation(keyPath: "shadowOpacity")
+        shadowOpacity.values = [0.0, 0.85, 0.0]
+        shadowOpacity.keyTimes = [0.0, 0.45, 1.0]
+        shadowOpacity.timingFunctions = [ease, ease]
+
+        let shadowRadius = CAKeyframeAnimation(keyPath: "shadowRadius")
+        shadowRadius.values = [0.0, 7.0, 0.0]
+        shadowRadius.keyTimes = [0.0, 0.45, 1.0]
+        shadowRadius.timingFunctions = [ease, ease]
+
+        let flash = CAAnimationGroup()
+        flash.animations = [width, shadowOpacity, shadowRadius]
+        flash.duration = 0.42
+        flash.isRemovedOnCompletion = true
+
+        captureOutlineLayer.add(flash, forKey: "captureFlash")
     }
 
     private func addPulse(duration: Double) {
@@ -1794,6 +1822,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var soundsCheck: NSButton!
     private var doubleTapField: NSTextField!
     private var llmCleanupCheck: NSButton!
+    private var vocabularyField: NSTextField!
 
     // Activity capture settings
     private var captureIntervalField: NSTextField!
@@ -1912,6 +1941,17 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         llmCleanupCheck = NSButton(checkboxWithTitle: "LLM text cleanup", target: nil, action: nil)
         llmCleanupCheck.state = s.llmCleanupEnabled ? .on : .off
         grid.addRow(with: [lbl("Cleanup:"), llmCleanupCheck])
+
+        vocabularyField = NSTextField()
+        vocabularyField.stringValue = s.customVocabulary.joined(separator: ", ")
+        vocabularyField.placeholderString = "Claude, Anthropic, GPT-4o, ..."
+        vocabularyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 240).isActive = true
+        grid.addRow(with: [lbl("Vocabulary:"), vocabularyField])
+
+        let vocabHint = NSTextField(labelWithString: "Comma-separated words the transcriber should recognize")
+        vocabHint.textColor = Theme.text2
+        vocabHint.font = .systemFont(ofSize: 11)
+        grid.addRow(with: [NSView(), vocabHint])
 
         // ── Foundry Gateway section ──
         let foundryHeader = lbl("── Foundry Gateway ──")
@@ -2137,6 +2177,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         s.soundsEnabled = soundsCheck.state == .on
         s.doubleTapMs = doubleTapField.integerValue
         s.llmCleanupEnabled = llmCleanupCheck.state == .on
+        s.customVocabulary = vocabularyField.stringValue
+            .components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
 
         // Foundry gateway settings
         s.gatewayHost = gatewayHostField.stringValue
@@ -2147,7 +2191,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         s.userId = userIdField.stringValue
         s.agentType = agentTypeField.stringValue
         s.sessionLabel = sessionLabelField.stringValue
-        s.captureIntervalSeconds = max(5, captureIntervalField.integerValue)
+        s.captureIntervalSeconds = max(1, captureIntervalField.integerValue)
         if let spec = captureHotkeyRecorder.currentSpec {
             if spec.keyCode != s.captureHotkey.keyCode || spec.modifiers != s.captureHotkey.modifiers {
                 s.captureHotkey = spec

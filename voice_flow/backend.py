@@ -69,6 +69,7 @@ def main():
             skip_cleanup = cmd.get("skip_cleanup", False)
             provider = cmd.get("provider", "local")
             openai_api_key = cmd.get("openai_api_key", "")
+            vocabulary = cmd.get("vocabulary") or []
             try:
                 # Prefer base64 PCM (no file I/O), fall back to WAV path
                 if audio_b64:
@@ -89,6 +90,7 @@ def main():
                         audio,
                         api_key=openai_api_key,
                         sample_rate=sample_rate,
+                        vocabulary=vocabulary or None,
                     )
                 else:
                     if not transcriber.is_loaded:
@@ -109,7 +111,7 @@ def main():
                 else:
                     if not cleaner.is_loaded:
                         _send({"event": "status", "message": "Loading cleanup LLM..."})
-                    cleaned = cleaner.clean(raw)
+                    cleaned = cleaner.clean(raw, vocabulary=vocabulary or None)
 
                 _send({"event": "result", "raw": raw, "cleaned": cleaned})
             except Exception as e:

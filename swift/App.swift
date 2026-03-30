@@ -31,6 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var foundryClient: FoundryClient!
     var conversationManager: ConversationManager!
     private var isCapturing = false
+    private var isScreenCaptureActive = false
     private var lastCaptureData: Data?
     private let diffThreshold: Double = 0.01
 
@@ -248,7 +249,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             interval: TimeInterval(UserSettings.shared.captureIntervalSeconds)
         )
         captureScheduler.onCapture = { [weak self] imageData in
-            self?.handleScreenCapture(imageData)
+            DispatchQueue.main.async {
+                guard let self, self.isScreenCaptureActive else { return }
+                self.indicator.flashCapturePulse()
+                self.handleScreenCapture(imageData)
+            }
         }
 
         // ── foundry gateway ─────────────────────────────
@@ -545,14 +550,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func startCaptureNoteRecording() {
         guard !recorder.isRecording else { return }
         recordingIsCaptureNote = true
+        isScreenCaptureActive = true
         pendingScreenshots.removeAll()
         pendingDictations.removeAll()
         lastCaptureData = nil
         conversationManager.clear()
 
         // Start screenshot capture (takes one immediately + periodic)
-        captureScheduler.start()
         indicator.setCapturing(true)
+        captureScheduler.start()
 
         playSound("Tink")
         state = .recording
@@ -562,8 +568,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func stopCaptureNoteRecording() {
         // Stop screenshots
-        captureScheduler.stop()
+        isScreenCaptureActive = false
         indicator.setCapturing(false)
+        captureScheduler.stop()
 
         // Stop audio → triggers transcription → handleResult
         stopRecording()
@@ -601,7 +608,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     sampleRate: 16000,
                     provider: provider,
                     skipCleanup: skipCleanup,
-                    openAIAPIKey: openAIAPIKey
+                    openAIAPIKey: openAIAPIKey,
+                    vocabulary: settings.customVocabulary
                 )
             } else if self.recordingIsCaptureNote {
                 // No audio but we have screenshots — send them anyway
@@ -680,23 +688,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startCapture() {
         isCapturing = true
+        isScreenCaptureActive = true
         pendingScreenshots.removeAll()
         pendingDictations.removeAll()
         conversationManager.clear()
-        captureScheduler.start()
         indicator.setCapturing(true)
         menuBar.setCapturing(true)
         historyWindow.setCapturing(true)
+        captureScheduler.start()
         vflog("capture started — buffering until stop (no Foundry connection yet)")
     }
 
     private func stopCapture() {
         isCapturing = false
-        captureScheduler.stop()
+        isScreenCaptureActive = false
         lastCaptureData = nil
         indicator.setCapturing(false)
         menuBar.setCapturing(false)
         historyWindow.setCapturing(false)
+        captureScheduler.stop()
 
         let screenshots = pendingScreenshots
         let dictations = pendingDictations

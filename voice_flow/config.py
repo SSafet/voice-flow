@@ -1,6 +1,7 @@
 """
 Voice Flow configuration — persisted settings + model constants.
 """
+from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -49,6 +50,7 @@ _DEFAULTS = {
     "sounds_enabled": True,
     "double_tap_ms": 400,
     "llm_cleanup_enabled": True,
+    "custom_vocabulary": [],
 }
 
 
@@ -62,6 +64,7 @@ class Settings:
         self.sounds_enabled: bool = _DEFAULTS["sounds_enabled"]
         self.double_tap_ms: int = _DEFAULTS["double_tap_ms"]
         self.llm_cleanup_enabled: bool = _DEFAULTS["llm_cleanup_enabled"]
+        self.custom_vocabulary: list[str] = list(_DEFAULTS["custom_vocabulary"])
         self._load()
 
     @classmethod
@@ -79,6 +82,7 @@ class Settings:
                     "sounds_enabled": self.sounds_enabled,
                     "double_tap_ms": self.double_tap_ms,
                     "llm_cleanup_enabled": self.llm_cleanup_enabled,
+                    "custom_vocabulary": self.custom_vocabulary,
                 },
                 indent=2,
             )
@@ -91,6 +95,12 @@ class Settings:
                 for k, v in data.items():
                     if hasattr(self, k):
                         setattr(self, k, v)
+                # Ensure custom_vocabulary is always a list of strings
+                if not isinstance(self.custom_vocabulary, list):
+                    self.custom_vocabulary = []
+                self.custom_vocabulary = [
+                    str(w) for w in self.custom_vocabulary if str(w).strip()
+                ]
             except Exception:
                 pass
 

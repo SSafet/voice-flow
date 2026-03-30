@@ -142,9 +142,10 @@ class UserSettings {
     var ttsVoice: String = "alloy"
     var ttsSpeed: Double = 1.0
     var ttsInstructions: String = DefaultTTSInstructions
+    var customVocabulary: [String] = []
 
     // Foundry gateway
-    var captureIntervalSeconds: Int = 30
+    var captureIntervalSeconds: Int = 1
     var captureHotkey = HotkeySpec(keyCode: 61, modifiers: [], label: "Right ⌥")
     var captureNoteHotkey = HotkeySpec(keyCode: 98, modifiers: [], label: "F7")
     var gatewayHost: String = "127.0.0.1"
@@ -219,7 +220,7 @@ class UserSettings {
         if !hadTTSInstructions || ttsInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             ttsInstructions = DefaultTTSInstructions
         }
-        if let v = dict["capture_interval"] as? Int { captureIntervalSeconds = v }
+        if let v = dict["capture_interval"] as? Int { captureIntervalSeconds = max(1, v) }
         if let v = dict["gateway_host"] as? String { gatewayHost = v }
         if let v = dict["gateway_ws_port"] as? Int { gatewayWSPort = v }
         if let v = dict["gateway_http_port"] as? Int { gatewayHTTPPort = v }
@@ -228,6 +229,10 @@ class UserSettings {
         if let v = dict["user_id"] as? String { userId = v }
         if let v = dict["agent_type"] as? String { agentType = v }
         if let v = dict["session_label"] as? String { sessionLabel = v }
+        if let v = dict["custom_vocabulary"] as? [String] {
+            customVocabulary = v.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
     }
 
     func save() {
@@ -263,6 +268,7 @@ class UserSettings {
             "user_id": foundry.userId,
             "agent_type": foundry.agentType,
             "session_label": foundry.sessionLabel,
+            "custom_vocabulary": customVocabulary,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted) {
             try? data.write(to: url)
@@ -1021,7 +1027,8 @@ class BackendBridge {
         sampleRate: Int,
         provider: DictationProvider,
         skipCleanup: Bool = false,
-        openAIAPIKey: String? = nil
+        openAIAPIKey: String? = nil,
+        vocabulary: [String] = []
     ) {
         let b64 = pcmData.base64EncodedString()
         var msg: [String: Any] = [
@@ -1035,6 +1042,9 @@ class BackendBridge {
         }
         if let openAIAPIKey, !openAIAPIKey.isEmpty {
             msg["openai_api_key"] = openAIAPIKey
+        }
+        if !vocabulary.isEmpty {
+            msg["vocabulary"] = vocabulary
         }
         send(msg)
     }

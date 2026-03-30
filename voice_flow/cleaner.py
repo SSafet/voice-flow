@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 
 from voice_flow.config import LLM_MODEL, CLEANUP_SYSTEM_PROMPT
@@ -17,7 +19,7 @@ class Cleaner:
         self.model, self.tokenizer = load(self.model_name)
         self._loaded = True
 
-    def clean(self, raw_text: str) -> str:
+    def clean(self, raw_text: str, vocabulary: list[str] | None = None) -> str:
         if not self._loaded:
             self.load()
         if not raw_text.strip():
@@ -35,8 +37,16 @@ class Cleaner:
 
         from mlx_lm import generate
 
+        system_prompt = CLEANUP_SYSTEM_PROMPT
+        if vocabulary:
+            vocab_str = ", ".join(vocabulary)
+            system_prompt += (
+                "\n10. Use these correct spellings for names and terms "
+                f"(fix any phonetic misspellings): {vocab_str}"
+            )
+
         messages = [
-            {"role": "system", "content": CLEANUP_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"[DICTATION]: {raw_text}"},
         ]
 

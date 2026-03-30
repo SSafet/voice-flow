@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 import json
 import uuid
@@ -16,18 +18,28 @@ class OpenAITranscriber:
     def __init__(self, model_name: str = OPENAI_STT_MODEL):
         self.model_name = model_name
 
-    def transcribe(self, audio: np.ndarray, api_key: str, sample_rate: int = SAMPLE_RATE) -> str:
+    def transcribe(
+        self,
+        audio: np.ndarray,
+        api_key: str,
+        sample_rate: int = SAMPLE_RATE,
+        vocabulary: list[str] | None = None,
+    ) -> str:
         if not api_key.strip():
             raise ValueError("Missing OpenAI API key")
         if len(audio) == 0:
             return ""
 
         wav_bytes = _audio_to_wav_bytes(audio, sample_rate)
+        fields: dict[str, str] = {
+            "model": self.model_name,
+            "response_format": "json",
+        }
+        if vocabulary:
+            fields["prompt"] = "Correct spellings: " + ", ".join(vocabulary)
+
         body, content_type = _build_multipart_body(
-            fields={
-                "model": self.model_name,
-                "response_format": "json",
-            },
+            fields=fields,
             file_field="file",
             file_name="dictation.wav",
             file_bytes=wav_bytes,
