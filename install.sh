@@ -22,7 +22,7 @@ if ! command -v swiftc &>/dev/null; then
 fi
 
 # ── remove old installation ────────────────────────────
-rm -rf "$APP_DEST"
+"$PROJECT_DIR/uninstall.sh"
 
 # ── copy the .app template ─────────────────────────────
 cp -R "$PROJECT_DIR/$APP_NAME.app" "$APP_DEST"
