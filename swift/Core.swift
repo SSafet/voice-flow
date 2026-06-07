@@ -939,18 +939,12 @@ class AudioRecorder {
             return
         }
 
-        // Trim trailing silence: use speech detection endpoint if available,
-        // with 500ms padding to avoid cutting off word endings.
-        // Falls back to RMS-based trimming if no speech was detected.
-        let trimmed: Data
-        let padding = Int(sampleRate) * 2  // 500ms of int16 samples = 16000 bytes
-        if lastSpeechDataLength > 0 {
-            let cutoff = min(audioData.count, lastSpeechDataLength + padding)
-            trimmed = audioData.prefix(cutoff)
-            vflog("trimmed silence: \(audioData.count / 2) → \(trimmed.count / 2) samples (speech-based)")
-        } else {
-            trimmed = trimTrailingSilence(audioData, sampleRate: Int(sampleRate))
-        }
+        let snapshot = audioLock.sync { Data(audioData) }
+
+        // Trim only true trailing silence. The higher live-speech threshold is
+        // too aggressive for final dictation because quiet word endings can sit
+        // below it.
+        let trimmed = trimTrailingSilence(snapshot, sampleRate: Int(sampleRate))
 
         guard trimmed.count > 3200 else {
             completion(nil)
@@ -968,6 +962,7 @@ class AudioRecorder {
         // Work in chunks of 50ms from the end (larger chunks prevent
         // brief quiet moments from being mistaken for trailing silence)
         let chunkSamples = sampleRate / 20  // 800 samples at 16kHz
+        let tailPaddingSamples = sampleRate / 4
         let threshold: Int16 = Int16(silenceThresholdRMS * 32767)
 
         return data.withUnsafeBytes { rawBuf -> Data in
@@ -993,7 +988,8 @@ class AudioRecorder {
             if lastSpeechSample == 0 {
                 return Data()  // All silence
             }
-            return Data(rawBuf.prefix(lastSpeechSample * 2))
+            let paddedSpeechSample = min(sampleCount, lastSpeechSample + tailPaddingSamples)
+            return Data(rawBuf.prefix(paddedSpeechSample * 2))
         }
     }
 }

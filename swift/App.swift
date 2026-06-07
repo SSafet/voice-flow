@@ -555,16 +555,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard !recorder.isRecording else { return }
         recordingIsCaptureNote = false
         paster.capturePasteTarget()
-        streamingViaAX = paster.captureStreamTarget()
+        streamingViaAX = false
         hadPartialStream = false
         playSound("Tink")
         state = .recording
         recorder.start()
-        startPartialTranscriptionTimer()
-        if !streamingViaAX {
-            transcriptPanel.show()
-            transcriptPanel.setText("")
-        }
     }
 
     private func startCaptureNoteRecording() {
@@ -602,7 +597,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard recorder.isRecording else { return }
         partialTimer?.invalidate()
         partialTimer = nil
-        if !streamingViaAX { transcriptPanel.hide() }
+        transcriptPanel.hide()
         recorder.stop { [weak self] pcmData in
             guard let self else { return }
             if let pcmData {
