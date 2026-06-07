@@ -3,6 +3,7 @@ import AVFoundation
 import CoreGraphics
 import Accelerate
 import Security
+import ApplicationServices
 
 func vflog(_ msg: String) {
     let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(msg)\n"
@@ -779,6 +780,7 @@ class AudioRecorder {
     private(set) var isRecording = false
     private(set) var clippingDetected = false
     private let sampleRate: Double = 16000
+    private let audioLock = DispatchQueue(label: "com.voiceflow.audioData")
 
     // Drain state — wait for engine to flush after stop()
     private var drainCompletion: ((Data?) -> Void)?
@@ -799,11 +801,18 @@ class AudioRecorder {
     // Very low threshold to preserve whispered/quiet speech (~-66dBFS)
     private let silenceThresholdRMS: Float = 0.0005
 
+    // ── Speech detection (for streaming) ──
+    private let speechThreshold: Float = 0.01  // ~-40dBFS, above background noise
+    private var speechSinceLastPartial = false
+    private var lastSpeechDataLength: Int = 0  // audioData.count at last speech buffer
+
     func start() {
         // Pre-allocate for up to 60 seconds of 16kHz int16 audio
         audioData = Data(capacity: Int(sampleRate) * 2 * 60)
         isRecording = true
         clippingDetected = false
+        speechSinceLastPartial = false
+        lastSpeechDataLength = 0
 
         // Reset filter state
         hpX1 = 0; hpX2 = 0; hpY1 = 0; hpY2 = 0
@@ -850,6 +859,11 @@ class AudioRecorder {
                 self.clippingDetected = true
             }
 
+            // ── 2b. Speech detection (gate partial transcription + trim silence) ──
+            if maxVal >= self.speechThreshold {
+                self.speechSinceLastPartial = true
+            }
+
             // ── 3. Convert float32 → int16, accumulate ──
             var scale: Float = 32767.0
             var int16Buf = [Int16](repeating: 0, count: frameCount)
@@ -857,8 +871,14 @@ class AudioRecorder {
             vDSP_vsmul(ptr, 1, &scale, &scaled, 1, vDSP_Length(frameCount))
             vDSP_vfix16(scaled, 1, &int16Buf, 1, vDSP_Length(frameCount))
 
-            int16Buf.withUnsafeBufferPointer { bufPtr in
-                self.audioData.append(bufPtr)
+            self.audioLock.sync {
+                int16Buf.withUnsafeBufferPointer { bufPtr in
+                    self.audioData.append(bufPtr)
+                }
+                if maxVal >= self.speechThreshold {
+                    // Mark end of speech region (+ this buffer) for trimming
+                    self.lastSpeechDataLength = self.audioData.count
+                }
             }
 
             // If we're draining (stop was called), this buffer confirms
@@ -888,6 +908,18 @@ class AudioRecorder {
         }
     }
 
+    /// Returns a thread-safe copy of all accumulated PCM data and whether new speech occurred since last call.
+    /// Returns nil if too short or not recording.
+    func currentAudioSnapshot() -> (data: Data, hasNewSpeech: Bool)? {
+        guard isRecording else { return nil }
+        return audioLock.sync {
+            guard audioData.count > 3200 else { return nil }  // >100ms at 16kHz int16
+            let hasNew = speechSinceLastPartial
+            speechSinceLastPartial = false
+            return (Data(audioData), hasNew)
+        }
+    }
+
     private func finishStop() {
         guard let completion = drainCompletion else { return }
         drainCompletion = nil
@@ -907,8 +939,18 @@ class AudioRecorder {
             return
         }
 
-        // Trim trailing silence
-        let trimmed = trimTrailingSilence(audioData, sampleRate: Int(sampleRate))
+        // Trim trailing silence: use speech detection endpoint if available,
+        // with 500ms padding to avoid cutting off word endings.
+        // Falls back to RMS-based trimming if no speech was detected.
+        let trimmed: Data
+        let padding = Int(sampleRate) * 2  // 500ms of int16 samples = 16000 bytes
+        if lastSpeechDataLength > 0 {
+            let cutoff = min(audioData.count, lastSpeechDataLength + padding)
+            trimmed = audioData.prefix(cutoff)
+            vflog("trimmed silence: \(audioData.count / 2) → \(trimmed.count / 2) samples (speech-based)")
+        } else {
+            trimmed = trimTrailingSilence(audioData, sampleRate: Int(sampleRate))
+        }
 
         guard trimmed.count > 3200 else {
             completion(nil)
@@ -963,6 +1005,7 @@ class AudioRecorder {
 class BackendBridge {
     var onReady: (() -> Void)?
     var onResult: ((String, String) -> Void)?
+    var onPartialResult: ((String, Int) -> Void)?
     var onError: ((String) -> Void)?
     var onStatus: ((String) -> Void)?
 
@@ -1049,6 +1092,31 @@ class BackendBridge {
         send(msg)
     }
 
+    func partialTranscribe(
+        pcmData: Data,
+        sampleRate: Int,
+        provider: DictationProvider,
+        requestId: Int,
+        openAIAPIKey: String? = nil,
+        vocabulary: [String] = []
+    ) {
+        let b64 = pcmData.base64EncodedString()
+        var msg: [String: Any] = [
+            "cmd": "partial_transcribe",
+            "audio_b64": b64,
+            "sample_rate": sampleRate,
+            "provider": provider.rawValue,
+            "request_id": requestId,
+        ]
+        if let openAIAPIKey, !openAIAPIKey.isEmpty {
+            msg["openai_api_key"] = openAIAPIKey
+        }
+        if !vocabulary.isEmpty {
+            msg["vocabulary"] = vocabulary
+        }
+        send(msg)
+    }
+
     private func send(_ dict: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
               let str = String(data: data, encoding: .utf8) else { return }
@@ -1073,6 +1141,10 @@ class BackendBridge {
                 let raw = dict["raw"] as? String ?? ""
                 let cleaned = dict["cleaned"] as? String ?? ""
                 onResult?(raw, cleaned)
+            case "partial_result":
+                let text = dict["text"] as? String ?? ""
+                let reqId = dict["request_id"] as? Int ?? 0
+                onPartialResult?(text, reqId)
             case "error":
                 let msg = dict["message"] as? String ?? "unknown"
                 onError?(msg)
@@ -1104,6 +1176,11 @@ class BackendBridge {
 
 class Paster {
     private var pasteTargetApp: NSRunningApplication?
+    private let placeholderSuffixCharacterSet = CharacterSet(charactersIn: ".:…")
+
+    // AX streaming state
+    private var streamElement: AXUIElement?
+    private var streamPrefix: String = ""
 
     func capturePasteTarget() {
         pasteTargetApp = NSWorkspace.shared.frontmostApplication
@@ -1112,6 +1189,81 @@ class Paster {
         } else {
             vflog("captured paste target: none")
         }
+    }
+
+    /// Capture the focused AX text element for streaming. Returns true if the element supports direct value setting.
+    func captureStreamTarget() -> Bool {
+        streamElement = nil
+        streamPrefix = ""
+
+        let systemWide = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(systemWide, "AXFocusedUIElement" as CFString, &focused) == .success else {
+            vflog("stream: no focused element")
+            return false
+        }
+
+        let element = focused as! AXUIElement
+        var settable: DarwinBoolean = false
+        guard AXUIElementIsAttributeSettable(element, "AXValue" as CFString, &settable) == .success,
+              settable.boolValue else {
+            vflog("stream: focused element does not support AXValue setting")
+            return false
+        }
+
+        // Preserve any text already in the field, but ignore placeholder text
+        var value: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, "AXValue" as CFString, &value) == .success {
+            let currentValue = accessibilityString(from: value) ?? ""
+
+            // Some apps (e.g. messaging apps) report placeholder text like "Reply"
+            // as AXValue when the field is empty. Compare against the placeholder
+            // attribute and AX metadata to detect this, including variants like
+            // "Reply..." or "Reply…".
+            var placeholder: CFTypeRef?
+            let hasPlaceholder = AXUIElementCopyAttributeValue(element, "AXPlaceholderValue" as CFString, &placeholder) == .success
+            let placeholderValue = accessibilityString(from: placeholder)
+
+            if hasPlaceholder, isPlaceholderValue(currentValue, placeholder: placeholderValue) {
+                // The "value" is just the placeholder — field is actually empty
+                streamPrefix = ""
+            } else if currentValue.isEmpty {
+                streamPrefix = ""
+            } else {
+                // Check number of characters to catch apps that report placeholder
+                // in AXValue but correctly report 0 characters
+                var charCount: CFTypeRef?
+                if AXUIElementCopyAttributeValue(element, "AXNumberOfCharacters" as CFString, &charCount) == .success,
+                   let count = accessibilityInt(from: charCount), count == 0 {
+                    streamPrefix = ""
+                } else {
+                    streamPrefix = currentValue
+                }
+            }
+        }
+
+        streamElement = element
+        vflog("stream: AX target captured (prefix=\(streamPrefix.count) chars)")
+        return true
+    }
+
+    /// Set the text field value atomically via Accessibility API and move cursor to end.
+    func streamText(_ text: String) {
+        guard let element = streamElement else { return }
+        let fullText = streamPrefix + text
+        AXUIElementSetAttributeValue(element, "AXValue" as CFString, fullText as CFTypeRef)
+
+        // Move cursor to end
+        let pos = (fullText as NSString).length
+        var range = CFRange(location: pos, length: 0)
+        if let rangeValue = AXValueCreate(.cfRange, &range) {
+            AXUIElementSetAttributeValue(element, "AXSelectedTextRange" as CFString, rangeValue)
+        }
+    }
+
+    func clearStreamTarget() {
+        streamElement = nil
+        streamPrefix = ""
     }
 
     func paste(_ text: String) {
@@ -1147,11 +1299,13 @@ class Paster {
             usleep(10_000)
         }
 
-        let text = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let copied: String? = pb.changeCount != originalChangeCount
+            ? pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            : nil
         restorePasteboard(snapshot, to: pb)
 
-        guard let text, !text.isEmpty else { return nil }
-        return text
+        guard let copied, !copied.isEmpty else { return nil }
+        return copied
     }
 
     private func pressCommandKey(_ keyCode: CGKeyCode) {
@@ -1183,5 +1337,51 @@ class Paster {
         if !items.isEmpty {
             pasteboard.writeObjects(items)
         }
+    }
+
+    private func accessibilityString(from value: CFTypeRef?) -> String? {
+        switch value {
+        case let string as String:
+            return string
+        case let attributed as NSAttributedString:
+            return attributed.string
+        default:
+            return nil
+        }
+    }
+
+    private func accessibilityInt(from value: CFTypeRef?) -> Int? {
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        return nil
+    }
+
+    private func isPlaceholderValue(_ currentValue: String, placeholder: String?) -> Bool {
+        guard let placeholder else { return false }
+
+        let normalizedCurrent = normalizePlaceholderCandidate(currentValue)
+        let normalizedPlaceholder = normalizePlaceholderCandidate(placeholder)
+
+        guard !normalizedCurrent.isEmpty, !normalizedPlaceholder.isEmpty else { return false }
+
+        if normalizedCurrent.caseInsensitiveCompare(normalizedPlaceholder) == .orderedSame {
+            return true
+        }
+
+        guard normalizedCurrent.count > normalizedPlaceholder.count,
+              normalizedCurrent.lowercased().hasPrefix(normalizedPlaceholder.lowercased()) else {
+            return false
+        }
+
+        let suffix = normalizedCurrent.dropFirst(normalizedPlaceholder.count)
+        return suffix.unicodeScalars.allSatisfy(placeholderSuffixCharacterSet.contains)
+    }
+
+    private func normalizePlaceholderCandidate(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "…", with: "...")
+            .trimmingCharacters(in: placeholderSuffixCharacterSet)
     }
 }

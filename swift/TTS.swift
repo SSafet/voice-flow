@@ -4,7 +4,7 @@ import Darwin
 import CryptoKit
 
 let OpenAITTSModel = "gpt-4o-mini-tts"
-let OpenAITTSVoices = ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"]
+let OpenAITTSVoices = ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse", "marin", "cedar"]
 let DefaultTTSInstructions = "Speak with bright, alert energy. Conversational and crisp. Keep a steady forward pace, clear emphasis, and short pauses. Avoid sleepy or drawn-out delivery."
 
 struct TTSStylePreset {
@@ -84,7 +84,6 @@ struct TTSStatusSnapshot {
 enum TTSError: LocalizedError {
     case emptyText
     case missingAPIKey
-    case textTooLong
     case requestFailed(String)
     case invalidAudio
 
@@ -94,8 +93,6 @@ enum TTSError: LocalizedError {
             return "Text is empty."
         case .missingAPIKey:
             return "OpenAI API key is not configured."
-        case .textTooLong:
-            return "Text is too long for a single TTS request."
         case .requestFailed(let message):
             return message
         case .invalidAudio:
@@ -115,6 +112,8 @@ private let TTSChannels: AVAudioChannelCount = 1
 private let TTSBytesPerFrame = 2
 private let TTSLiveChunkFrames: AVAudioFrameCount = 4_800
 private let TTSLiveStartupFrames: AVAudioFramePosition = 12_000
+private let OpenAITTSInputCharacterLimit = 4_096
+private let OpenAITTSChunkTargetCharacterLimit = 3_900
 
 private final class TTSPCMStreamSession: NSObject, URLSessionDataDelegate {
     let requestID: UUID
@@ -237,9 +236,14 @@ final class TTSController: NSObject {
     private var currentAudioSource: TTSAudioSource = .none
     private var currentPCMData = Data()
     private var pendingPCMData = Data()
+    private var speechChunks: [String] = []
+    private var activeSpeechChunkIndex = 0
+    private var speechCacheURL: URL?
+    private var speechAPIKey = ""
     private var playbackTimer: Timer?
     private var scheduledBufferCount = 0
     private var streamCompleted = false
+    private var livePlaybackStarted = false
     private var isPlaybackPaused = false
     private var playbackBaseFrameOffset: AVAudioFramePosition = 0
     private var cachedTotalFrames: AVAudioFramePosition = 0
@@ -271,9 +275,6 @@ final class TTSController: NSObject {
         guard !normalized.text.isEmpty else {
             throw TTSError.emptyText
         }
-        guard normalized.text.count <= 4096 else {
-            throw TTSError.textTooLong
-        }
         guard let apiKey = KeychainStore.shared.loadOpenAIAPIKey(), !apiKey.isEmpty else {
             throw TTSError.missingAPIKey
         }
@@ -303,8 +304,32 @@ final class TTSController: NSObject {
             return
         }
 
-        let urlRequest = try makeOpenAIURLRequest(for: normalized, apiKey: apiKey)
-        let session = TTSPCMStreamSession(requestID: requestID, request: urlRequest)
+        speechChunks = splitSpeechInput(normalized.text)
+        activeSpeechChunkIndex = 0
+        speechCacheURL = cacheURL
+        speechAPIKey = apiKey
+        try startSpeechChunk(at: 0)
+    }
+
+    private func startSpeechChunk(at index: Int) throws {
+        guard let currentRequest,
+              index >= 0,
+              index < speechChunks.count,
+              let cacheURL = speechCacheURL,
+              !speechAPIKey.isEmpty else {
+            throw TTSError.invalidAudio
+        }
+
+        activeSpeechChunkIndex = index
+        let chunkRequest = TTSRequest(
+            text: speechChunks[index],
+            voice: currentRequest.voice,
+            speed: currentRequest.speed,
+            instructions: currentRequest.instructions
+        )
+
+        let urlRequest = try makeOpenAIURLRequest(for: chunkRequest, apiKey: speechAPIKey)
+        let session = TTSPCMStreamSession(requestID: activeRequestID, request: urlRequest)
         session.onPCMData = { [weak self] requestID, data in
             self?.appendLivePCM(requestID: requestID, data: data)
         }
@@ -322,7 +347,7 @@ final class TTSController: NSObject {
         currentStreamSession = session
         currentAudioSource = .live
         try ensureAudioEngineStarted()
-        setStatus(.generating, "Streaming speech…")
+        refreshPlaybackStatus()
         session.start()
     }
 
@@ -365,6 +390,7 @@ final class TTSController: NSObject {
             activeRequestID = UUID()
             currentStreamSession?.cancel()
             currentStreamSession = nil
+            clearSpeechPlan()
             stopPlaybackTimer()
             playerNode.stop()
             playerNode.reset()
@@ -394,6 +420,7 @@ final class TTSController: NSObject {
             currentAudioSource = .none
             currentPCMData.removeAll()
             pendingPCMData.removeAll()
+            clearSpeechPlan()
             streamCompleted = false
             cachedTotalFrames = 0
             isPlaybackPaused = false
@@ -417,6 +444,7 @@ final class TTSController: NSObject {
             currentAudioSource = .none
             currentPCMData.removeAll()
             pendingPCMData.removeAll()
+            clearSpeechPlan()
             streamCompleted = false
             cachedTotalFrames = 0
             setStatus(.idle, "Stopped")
@@ -444,21 +472,22 @@ final class TTSController: NSObject {
         }
         schedulePendingLiveAudioIfPossible()
 
-        if !playerNode.isPlaying && scheduledBufferCount > 0 && canStartLivePlayback() {
+        let canStart = livePlaybackStarted || canStartLivePlayback()
+        if !playerNode.isPlaying && scheduledBufferCount > 0 && canStart {
+            livePlaybackStarted = true
             playerNode.play()
             startPlaybackTimer()
             setStatus(.playing, playbackMessage())
         } else if playerNode.isPlaying {
             setStatus(.playing, playbackMessage())
         } else {
-            setStatus(.generating, "Streaming speech…")
+            setStatus(.generating, generationMessage())
         }
     }
 
     private func finishLiveStream(requestID: UUID, cacheURL: URL) {
         guard requestID == activeRequestID else { return }
         currentStreamSession = nil
-        streamCompleted = true
         if !isPlaybackPaused {
             schedulePendingLiveAudioIfPossible(flushAll: true)
         }
@@ -468,6 +497,19 @@ final class TTSController: NSObject {
             return
         }
 
+        let nextIndex = activeSpeechChunkIndex + 1
+        if nextIndex < speechChunks.count {
+            do {
+                try startSpeechChunk(at: nextIndex)
+            } catch {
+                fail(requestID: requestID, message: error.localizedDescription)
+            }
+            return
+        }
+
+        streamCompleted = true
+        speechAPIKey = ""
+        speechCacheURL = nil
         do {
             let wavData = makeWAVData(from: currentPCMData)
             try FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -581,9 +623,9 @@ final class TTSController: NSObject {
         } else if playerNode.isPlaying {
             phase = .playing
             message = playbackMessage()
-        } else if currentStreamSession != nil && scheduledBufferCount == 0 {
+        } else if currentStreamSession != nil {
             phase = .generating
-            message = "Streaming speech…"
+            message = generationMessage()
         } else {
             phase = hasAudio ? .ready : .idle
             message = hasAudio ? "Ready" : "Idle"
@@ -604,6 +646,7 @@ final class TTSController: NSObject {
         guard requestID == activeRequestID else { return }
         currentStreamSession?.cancel()
         currentStreamSession = nil
+        clearSpeechPlan()
         stopPlaybackTimer()
         playerNode.stop()
         playerNode.reset()
@@ -640,7 +683,8 @@ final class TTSController: NSObject {
             throw TTSError.invalidAudio
         }
 
-        if scheduledBufferCount > 0 && canStartLivePlayback() {
+        if scheduledBufferCount > 0 && (livePlaybackStarted || canStartLivePlayback()) {
+            livePlaybackStarted = true
             playerNode.play()
             startPlaybackTimer()
         }
@@ -650,12 +694,64 @@ final class TTSController: NSObject {
     private func playbackMessage() -> String {
         switch currentAudioSource {
         case .live:
+            if speechChunks.count > 1 {
+                return "Speaking \(activeSpeechChunkIndex + 1)/\(speechChunks.count)"
+            }
             return "Speaking live stream"
         case .cache:
             return "Speaking cached audio"
         case .none:
             return "Speaking"
         }
+    }
+
+    private func generationMessage() -> String {
+        if speechChunks.count > 1 {
+            return "Streaming speech \(activeSpeechChunkIndex + 1)/\(speechChunks.count)…"
+        }
+        return "Streaming speech…"
+    }
+
+    private func splitSpeechInput(_ text: String) -> [String] {
+        var remaining = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard remaining.count > OpenAITTSInputCharacterLimit else {
+            return remaining.isEmpty ? [] : [remaining]
+        }
+
+        var chunks: [String] = []
+        while remaining.count > OpenAITTSInputCharacterLimit {
+            let targetOffset = min(OpenAITTSChunkTargetCharacterLimit, remaining.count)
+            let targetIndex = remaining.index(remaining.startIndex, offsetBy: targetOffset)
+            let splitIndex = bestSpeechSplitIndex(in: remaining, before: targetIndex)
+            let chunk = String(remaining[..<splitIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !chunk.isEmpty {
+                chunks.append(chunk)
+            }
+            remaining = String(remaining[splitIndex...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if !remaining.isEmpty {
+            chunks.append(remaining)
+        }
+        return chunks
+    }
+
+    private func bestSpeechSplitIndex(in text: String, before targetIndex: String.Index) -> String.Index {
+        let minimumOffset = min(OpenAITTSChunkTargetCharacterLimit / 2, max(text.count - 1, 0))
+        let minimumIndex = text.index(text.startIndex, offsetBy: minimumOffset)
+        let preferredRange = minimumIndex..<targetIndex
+        let separators = ["\n\n", "\n", ". ", "! ", "? ", "; ", ": ", ", "]
+
+        for separator in separators {
+            if let range = text.range(of: separator, options: .backwards, range: preferredRange) {
+                return range.upperBound
+            }
+        }
+
+        if let range = text.range(of: " ", options: .backwards, range: text.startIndex..<targetIndex) {
+            return range.upperBound
+        }
+        return targetIndex
     }
 
     private func canStartLivePlayback() -> Bool {
@@ -721,6 +817,7 @@ final class TTSController: NSObject {
     private func discardCurrentAudio() {
         currentStreamSession?.cancel()
         currentStreamSession = nil
+        clearSpeechPlan()
         stopPlaybackTimer()
         playerNode.stop()
         playerNode.reset()
@@ -730,9 +827,17 @@ final class TTSController: NSObject {
         currentPCMData.removeAll()
         pendingPCMData.removeAll()
         streamCompleted = false
+        livePlaybackStarted = false
         isPlaybackPaused = false
         playbackBaseFrameOffset = 0
         cachedTotalFrames = 0
+    }
+
+    private func clearSpeechPlan() {
+        speechChunks.removeAll()
+        activeSpeechChunkIndex = 0
+        speechCacheURL = nil
+        speechAPIKey = ""
     }
 
     private func currentPCMFrameCount() -> AVAudioFramePosition {

@@ -124,6 +124,39 @@ def main():
                     except OSError:
                         pass
 
+        elif action == "partial_transcribe":
+            audio_b64 = cmd.get("audio_b64", "")
+            sample_rate = int(cmd.get("sample_rate", SAMPLE_RATE) or SAMPLE_RATE)
+            provider = cmd.get("provider", "local")
+            openai_api_key = cmd.get("openai_api_key", "")
+            request_id = cmd.get("request_id", 0)
+            vocabulary = cmd.get("vocabulary") or []
+            try:
+                if not audio_b64:
+                    _send({"event": "partial_result", "text": "", "request_id": request_id})
+                    continue
+
+                audio = _decode_b64_pcm(audio_b64)
+                if len(audio) < 800:
+                    _send({"event": "partial_result", "text": "", "request_id": request_id})
+                    continue
+
+                if provider == "openai":
+                    raw = openai_transcriber.transcribe(
+                        audio,
+                        api_key=openai_api_key,
+                        sample_rate=sample_rate,
+                        vocabulary=vocabulary or None,
+                    )
+                else:
+                    if not transcriber.is_loaded:
+                        _send({"event": "status", "message": "Loading STT model..."})
+                    raw = transcriber.transcribe(audio, sample_rate=sample_rate)
+
+                _send({"event": "partial_result", "text": raw or "", "request_id": request_id})
+            except Exception:
+                _send({"event": "partial_result", "text": "", "request_id": request_id})
+
         elif action == "ping":
             _send({"event": "pong"})
 

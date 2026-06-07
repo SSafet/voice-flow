@@ -43,6 +43,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var recordingIsCaptureNote = false
     private var initialPermissionsRequested = false
 
+    // Streaming partial transcription
+    var transcriptPanel: FloatingTranscriptPanel!
+    private var partialTimer: Timer?
+    private var partialRequestId: Int = 0
+    private var latestDisplayedPartialId: Int = 0
+    private var streamingViaAX = false
+    private var hadPartialStream = false
+
     private var state: AppState = .loading {
         didSet {
             DispatchQueue.main.async { [self] in
@@ -71,6 +79,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.onToggleCapture = { [weak self] in self?.toggleCapture() }
         indicator.onQuit = { NSApp.terminate(nil) }
         indicator.show()
+
+        transcriptPanel = FloatingTranscriptPanel()
 
         historyWindow = HistoryWindowController()
         historyWindow.onSettings = { [weak self] in self?.showSettings() }
@@ -169,6 +179,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         backend.onResult = { [weak self] raw, cleaned in
             self?.handleResult(raw: raw, cleaned: cleaned)
+        }
+        backend.onPartialResult = { [weak self] text, requestId in
+            self?.handlePartialResult(text: text, requestId: requestId)
         }
         backend.onError = { [weak self] msg in
             vflog("backend error: \(msg)")
@@ -542,9 +555,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard !recorder.isRecording else { return }
         recordingIsCaptureNote = false
         paster.capturePasteTarget()
+        streamingViaAX = paster.captureStreamTarget()
+        hadPartialStream = false
         playSound("Tink")
         state = .recording
         recorder.start()
+        startPartialTranscriptionTimer()
+        if !streamingViaAX {
+            transcriptPanel.show()
+            transcriptPanel.setText("")
+        }
     }
 
     private func startCaptureNoteRecording() {
@@ -560,6 +580,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.setCapturing(true)
         captureScheduler.start()
 
+        streamingViaAX = false
+        hadPartialStream = false
         playSound("Tink")
         state = .recording
         recorder.start()
@@ -578,6 +600,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func stopRecording() {
         guard recorder.isRecording else { return }
+        partialTimer?.invalidate()
+        partialTimer = nil
+        if !streamingViaAX { transcriptPanel.hide() }
         recorder.stop { [weak self] pcmData in
             guard let self else { return }
             if let pcmData {
@@ -620,16 +645,100 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // ── streaming partial transcription ───────────────
+
+    private func startPartialTranscriptionTimer() {
+        partialRequestId = 0
+        latestDisplayedPartialId = 0
+        partialTimer?.invalidate()
+        partialTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.sendPartialTranscription()
+        }
+    }
+
+    private func sendPartialTranscription() {
+        guard recorder.isRecording,
+              let (snapshot, hasNewSpeech) = recorder.currentAudioSnapshot(),
+              hasNewSpeech else { return }
+
+        partialRequestId += 1
+        vflog("partial: sending request \(partialRequestId) (\(snapshot.count) bytes)")
+        let settings = UserSettings.shared
+        let provider = settings.dictationProvider
+
+        let openAIAPIKey: String?
+        if provider == .openai {
+            openAIAPIKey = KeychainStore.shared.loadOpenAIAPIKey()
+        } else {
+            openAIAPIKey = nil
+        }
+
+        backend.partialTranscribe(
+            pcmData: snapshot,
+            sampleRate: 16000,
+            provider: provider,
+            requestId: partialRequestId,
+            openAIAPIKey: openAIAPIKey,
+            vocabulary: settings.customVocabulary
+        )
+    }
+
+    private func handlePartialResult(text: String, requestId: Int) {
+        vflog("partial result \(requestId): \"\(text)\" (state=\(state.rawValue))")
+        guard requestId > latestDisplayedPartialId else { return }
+        latestDisplayedPartialId = requestId
+        guard state == .recording || state == .handsFree else { return }
+        guard !text.isEmpty else { return }
+
+        if streamingViaAX {
+            vflog("partial: streaming \(text.count) chars via AX")
+            paster.streamText(text)
+            hadPartialStream = true
+        } else {
+            vflog("partial: showing in panel")
+            transcriptPanel.setText(text)
+        }
+    }
+
+    // ── final result ────────────────────────────────────
+
     private func handleResult(raw: String, cleaned: String) {
-        if cleaned.isEmpty && !recordingIsCaptureNote { state = .idle; return }
+        if cleaned.isEmpty && !recordingIsCaptureNote {
+            if hadPartialStream {
+                // Clear the partial text we streamed
+                paster.streamText("")
+            }
+            paster.clearStreamTarget()
+            hadPartialStream = false
+            state = .idle
+            return
+        }
         vflog("raw: \(raw)")
         vflog("cleaned: \(cleaned)")
         vflog("isCaptureNote=\(recordingIsCaptureNote)")
 
         if recordingIsCaptureNote {
+            paster.clearStreamTarget()
+            hadPartialStream = false
             finishCaptureNote(text: cleaned.isEmpty ? nil : cleaned)
+        } else if hadPartialStream {
+            // Partial text is in the field via AX — do final update with cleaned text
+            vflog("final AX update with cleaned text")
+            paster.streamText(cleaned)
+            paster.clearStreamTarget()
+            hadPartialStream = false
+            playSound("Pop")
+            let ts = Self.timestamp()
+            DispatchQueue.main.async {
+                self.historyWindow.addEntry(text: cleaned, time: ts)
+            }
+            state = .done
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if self.state == .done { self.state = .idle }
+            }
         } else {
-            // Regular dictation — paste into active app
+            // No streaming (short recording or AX unsupported) — paste normally
+            paster.clearStreamTarget()
             vflog("pasting text...")
             paster.paste(cleaned)
             playSound("Pop")
@@ -780,13 +889,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 for (i, text) in dictations.enumerated() {
                     parts.append("\(i + 1). \(text)")
                 }
+            } else {
+                parts.append("No voice note was captured. Treat this as a silent context capture, not an instruction to type or paste.")
             }
 
             if !attachments.isEmpty {
                 parts.append("\(attachments.count) screenshot(s) of what I was doing are attached.")
             }
 
-            parts.append("Please analyze everything together and provide your response.")
+            if dictations.isEmpty {
+                parts.append("If the intended text or action is not unambiguous from the screenshot(s), do not paste or type anything. Ask for clarification instead.")
+            } else {
+                parts.append("Please analyze everything together and provide your response.")
+            }
 
             let prompt = parts.joined(separator: "\n")
 

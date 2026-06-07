@@ -39,6 +39,7 @@ cp "$PROJECT_DIR/assets/icon.icns"                     "$APP_DEST/Contents/Resou
 echo -n "$PROJECT_DIR" > "$APP_DEST/Contents/Resources/project_dir.txt"
 
 # Bundle Python source so the app is self-contained
+rm -rf "$APP_DEST/Contents/Resources/voice_flow"
 cp -R "$PROJECT_DIR/voice_flow" "$APP_DEST/Contents/Resources/voice_flow"
 
 # ── compile Swift ──────────────────────────────────────

@@ -132,9 +132,9 @@ class FloatingIndicator: NSObject {
     private var ttsSnapshot: TTSStatusSnapshot?
 
     func show() {
-        let screen = NSScreen.main!.frame
-        let x = (screen.width - W) / 2
-        let y: CGFloat = 4  // 4px from bottom edge
+        let screen = (NSScreen.screens.first ?? NSScreen.main!).frame
+        let x = screen.minX + (screen.width - W) / 2
+        let y = screen.minY + 4  // 4px from bottom edge of primary screen
 
         panel = NSPanel(
             contentRect: NSRect(x: x, y: y, width: W, height: H),
@@ -417,6 +417,106 @@ class IndicatorView: NSView {
 struct HistoryEntry {
     let text: String
     let time: String
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Floating Transcript Panel (fallback for non-AX apps)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class FloatingTranscriptPanel {
+    private var panel: NSPanel?
+    private var textLabel: NSTextField!
+    private let maxW: CGFloat = 500
+    private let padding: CGFloat = 12
+    private let radius: CGFloat = 10
+
+    func show() {
+        if panel != nil { panel?.orderFront(nil); return }
+
+        let screen = NSScreen.main!.frame
+        let initialW: CGFloat = 200
+        let initialH: CGFloat = 40
+        let x = (screen.width - initialW) / 2
+        let y: CGFloat = 28
+
+        let p = NSPanel(
+            contentRect: NSRect(x: x, y: y, width: initialW, height: initialH),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false
+        )
+        p.level = .floating
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.hasShadow = true
+        p.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        p.ignoresMouseEvents = true
+        p.alphaValue = 0
+
+        let bg = NSView(frame: NSRect(x: 0, y: 0, width: initialW, height: initialH))
+        bg.wantsLayer = true
+        bg.layer?.backgroundColor = NSColor(r: 28, g: 26, b: 24, a: 220).cgColor
+        bg.layer?.cornerRadius = radius
+        bg.layer?.borderWidth = 1
+        bg.layer?.borderColor = NSColor(r: 255, g: 220, b: 180, a: 25).cgColor
+
+        textLabel = NSTextField(wrappingLabelWithString: "")
+        textLabel.font = NSFont.systemFont(ofSize: 13, weight: .regular)
+        textLabel.textColor = Theme.text
+        textLabel.backgroundColor = .clear
+        textLabel.isBordered = false
+        textLabel.isEditable = false
+        textLabel.isSelectable = false
+        textLabel.maximumNumberOfLines = 6
+        textLabel.lineBreakMode = .byWordWrapping
+        textLabel.preferredMaxLayoutWidth = maxW - padding * 2
+        textLabel.frame = NSRect(x: padding, y: padding / 2, width: initialW - padding * 2, height: initialH - padding)
+
+        bg.addSubview(textLabel)
+        p.contentView = bg
+
+        panel = p
+        p.orderFront(nil)
+
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.15
+            p.animator().alphaValue = 1
+        }
+    }
+
+    func setText(_ text: String) {
+        guard let panel, let textLabel else { return }
+        if text.isEmpty {
+            textLabel.stringValue = "Listening…"
+            textLabel.textColor = Theme.text3
+        } else {
+            textLabel.stringValue = text
+            textLabel.textColor = Theme.text
+        }
+
+        let maxTextW = maxW - padding * 2
+        let size = textLabel.sizeThatFits(NSSize(width: maxTextW, height: CGFloat.greatestFiniteMagnitude))
+        let newW = min(maxW, max(200, size.width + padding * 2))
+        let newH = max(40, size.height + padding)
+
+        textLabel.frame = NSRect(x: padding, y: padding / 2, width: newW - padding * 2, height: size.height)
+        panel.contentView?.frame = NSRect(x: 0, y: 0, width: newW, height: newH)
+
+        let screen = NSScreen.main!.frame
+        let x = (screen.width - newW) / 2
+        panel.setFrame(NSRect(x: x, y: 28, width: newW, height: newH), display: true)
+    }
+
+    func hide() {
+        guard let p = panel else { return }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.15
+            p.animator().alphaValue = 0
+        }, completionHandler: {
+            p.orderOut(nil)
+            self.panel = nil
+            self.textLabel = nil
+        })
+    }
 }
 
 enum HistoryTab: Int {
