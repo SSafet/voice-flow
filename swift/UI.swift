@@ -2195,7 +2195,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func selectedDictationProvider() -> DictationProvider {
         guard let raw = providerPopup.selectedItem?.representedObject as? String,
               let provider = DictationProvider(rawValue: raw) else {
-            return .local
+            return .openai
         }
         return provider
     }

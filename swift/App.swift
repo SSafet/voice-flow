@@ -605,6 +605,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let settings = UserSettings.shared
                 let provider = settings.dictationProvider
                 let skipCleanup = provider != .local || !settings.llmCleanupEnabled
+                vflog("final dictation provider=\(provider.rawValue)")
 
                 let openAIAPIKey: String?
                 if provider == .openai {

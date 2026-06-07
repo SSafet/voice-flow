@@ -133,7 +133,7 @@ enum DictationProvider: String, CaseIterable {
 
 class UserSettings {
     static let shared = UserSettings()
-    var dictationProvider: DictationProvider = .local
+    var dictationProvider: DictationProvider = .openai
     var hotkey = HotkeySpec(keyCode: 63, modifiers: [], label: "Fn")
     var handsFreeHotkey = HotkeySpec(keyCode: 97, modifiers: [], label: "F6")
     var ttsHotkey = HotkeySpec(keyCode: 100, modifiers: [], label: "F8")
@@ -1055,7 +1055,6 @@ class BackendBridge {
         do {
             try proc.run()
             self.process = proc
-            // load command is sent when we receive the "ready" event (see handleLine)
         } catch {
             vflog("failed to start backend: \(error)")
         }

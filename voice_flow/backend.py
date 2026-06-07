@@ -67,7 +67,7 @@ def main():
             audio_b64 = cmd.get("audio_b64", "")
             sample_rate = int(cmd.get("sample_rate", SAMPLE_RATE) or SAMPLE_RATE)
             skip_cleanup = cmd.get("skip_cleanup", False)
-            provider = cmd.get("provider", "local")
+            provider = cmd.get("provider", "openai")
             openai_api_key = cmd.get("openai_api_key", "")
             vocabulary = cmd.get("vocabulary") or []
             try:
@@ -127,7 +127,7 @@ def main():
         elif action == "partial_transcribe":
             audio_b64 = cmd.get("audio_b64", "")
             sample_rate = int(cmd.get("sample_rate", SAMPLE_RATE) or SAMPLE_RATE)
-            provider = cmd.get("provider", "local")
+            provider = cmd.get("provider", "openai")
             openai_api_key = cmd.get("openai_api_key", "")
             request_id = cmd.get("request_id", 0)
             vocabulary = cmd.get("vocabulary") or []
