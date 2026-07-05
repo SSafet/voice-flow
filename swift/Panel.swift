@@ -19,6 +19,7 @@ enum ChatTab: Int {
 }
 
 final class ChatPanel {
+    var onShown: (() -> Void)?
     var onSendText: ((String) -> Void)?
     var onSnap: (() -> Void)?
     var onToggleSession: (() -> Void)?
@@ -58,6 +59,7 @@ final class ChatPanel {
     private var voiceRepliesOn = false
     private var controlOn = false
     private var sessionActive = false
+    private var clickOutsideMonitor: Any?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -84,16 +86,38 @@ final class ChatPanel {
             panel.makeKey()
             panel.makeFirstResponder(inputField)
         }
+        installClickOutsideMonitor()
+        onShown?()
     }
 
     func hide() {
         vflog("chat panel: hide()")
+        removeClickOutsideMonitor()
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.14
             panel.animator().alphaValue = 0
         }, completionHandler: {
             self.panel.orderOut(nil)
         })
+    }
+
+    // A mouse-down anywhere outside the panel dismisses it. A *global* monitor
+    // only sees clicks headed to other apps or the desktop — never our own panel
+    // or pill — so clicks inside keep it open and the pill keeps its toggle.
+    private func installClickOutsideMonitor() {
+        guard clickOutsideMonitor == nil else { return }
+        clickOutsideMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            self?.hide()
+        }
+    }
+
+    private func removeClickOutsideMonitor() {
+        if let monitor = clickOutsideMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickOutsideMonitor = nil
+        }
     }
 
     func toggle() {
