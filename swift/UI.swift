@@ -140,6 +140,9 @@ class FloatingIndicator: NSObject {
     private var sessionActive = false
     private var agentActivity: AgentActivity = .idle
     private var ttsSnapshot: TTSStatusSnapshot?
+    private var recordingPurpose: RecordingPurpose = .dictation
+    private var appliedVisual: Visual?
+    private var appliedRing: Bool?
 
     func show() {
         panel = NSPanel(
@@ -211,11 +214,11 @@ class FloatingIndicator: NSObject {
 
     @objc private func screenChanged() {
         recenter()
-        applyState()
+        applyState(force: true)
     }
 
     @objc private func wokeUp() {
-        applyState()
+        applyState(force: true)
     }
 
     private func recenter() {
@@ -228,8 +231,9 @@ class FloatingIndicator: NSObject {
 
     // ── State inputs ────────────────────────────────────
 
-    func setState(_ newState: AppState) {
+    func setState(_ newState: AppState, recordingFor purpose: RecordingPurpose = .dictation) {
         state = newState
+        recordingPurpose = purpose
         applyState()
         if newState == .done {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
@@ -255,35 +259,85 @@ class FloatingIndicator: NSObject {
 
     // ── Rendering ───────────────────────────────────────
     // Priority when dictation is idle: agent activity > TTS > plain idle.
+    //
+    // Everything the pill can show is reduced to one Visual value; applyState()
+    // re-paints (and restarts the repeating animations) only when that value
+    // changes. Status churn — the 10 Hz TTS playback snapshots, repeated agent
+    // activity emissions — must not reset a running loop to its first frame.
 
-    private func applyState() {
+    private enum Visual: Equatable {
+        case idle, handsFree, processing, done
+        case recording(RecordingPurpose)
+        case agent(AgentActivity)
+        case ttsPlaying, ttsGenerating, ttsPaused
+    }
+
+    private func resolveVisual() -> Visual {
+        switch state {
+        case .recording: return .recording(recordingPurpose)
+        case .handsFree: return .handsFree
+        case .processing, .loading: return .processing
+        case .done: return .done
+        case .idle: break
+        }
+        if agentActivity != .idle { return .agent(agentActivity) }
+        if let snapshot = ttsSnapshot {
+            switch snapshot.phase {
+            case .playing: return .ttsPlaying
+            case .generating: return .ttsGenerating
+            case .ready where snapshot.message == "Paused": return .ttsPaused
+            default: break
+            }
+        }
+        return .idle
+    }
+
+    private func applyState(force: Bool = false) {
         guard pillLayer != nil else { return }
+
+        // The session ring is orthogonal to the pill visual — updating it
+        // alone must not restart the pill/dot loops.
+        if force || appliedRing != sessionActive {
+            appliedRing = sessionActive
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            sessionRingLayer.borderWidth = sessionActive ? 1.5 : 0
+            sessionRingLayer.opacity = sessionActive ? 1.0 : 0.0
+            CATransaction.commit()
+        }
+
+        let visual = resolveVisual()
+        if !force, visual == appliedVisual { return }
+        appliedVisual = visual
+
         pillLayer.removeAllAnimations()
-        sessionRingLayer.removeAllAnimations()
         dotLayers.forEach { $0.removeAllAnimations() }
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         pillLayer.borderWidth = 1.0
-        sessionRingLayer.borderWidth = sessionActive ? 1.5 : 0
-        sessionRingLayer.opacity = sessionActive ? 1.0 : 0.0
-        sessionRingLayer.shadowOpacity = 0
-        sessionRingLayer.shadowRadius = 0
+        pillLayer.shadowOpacity = 0
+        pillLayer.shadowRadius = 0
         CATransaction.commit()
 
-        if state == .idle, agentActivity != .idle {
-            applyAgentVisual(agentActivity)
-            return
-        }
-        if state == .idle, let snapshot = ttsSnapshot, applyTTSVisual(snapshot) {
-            return
-        }
-
-        switch state {
-        case .recording:
-            paint(bg: NSColor(r: 110, g: 50, b: 45, a: 115),
-                  border: NSColor(r: 220, g: 160, b: 140, a: 45),
-                  dots: NSColor(r: 255, g: 240, b: 220, a: 180))
+        switch visual {
+        case .recording(let purpose):
+            // Hue says where the words are going; the pulse+scale motion is
+            // the shared "mic is live" signature.
+            switch purpose {
+            case .dictation, .session:
+                paint(bg: NSColor(r: 110, g: 50, b: 45, a: 115),
+                      border: NSColor(r: 220, g: 160, b: 140, a: 45),
+                      dots: NSColor(r: 255, g: 240, b: 220, a: 180))
+            case .talk:
+                paint(bg: NSColor(r: 72, g: 52, b: 100, a: 130),
+                      border: NSColor(r: 176, g: 140, b: 240, a: 60),
+                      dots: NSColor(r: 232, g: 222, b: 255, a: 200))
+            case .snapTalk:
+                paint(bg: NSColor(r: 34, g: 74, b: 94, a: 130),
+                      border: NSColor(r: 110, g: 205, b: 235, a: 60),
+                      dots: NSColor(r: 222, g: 244, b: 255, a: 200))
+            }
             addPulse(duration: 1.45)
             addDotScale(cycle: 2.4)
 
@@ -294,7 +348,7 @@ class FloatingIndicator: NSObject {
             addPulse(duration: 1.6)
             addDotScale(cycle: 2.8)
 
-        case .processing, .loading:
+        case .processing:
             paint(bg: NSColor(r: 100, g: 80, b: 40, a: 110),
                   border: NSColor(r: 212, g: 168, b: 83, a: 45),
                   dots: NSColor(r: 255, g: 240, b: 200, a: 170))
@@ -305,6 +359,28 @@ class FloatingIndicator: NSObject {
             paint(bg: NSColor(r: 60, g: 90, b: 50, a: 120),
                   border: NSColor(r: 160, g: 210, b: 140, a: 50),
                   dots: NSColor(r: 255, g: 245, b: 220, a: 190))
+
+        case .agent(let activity):
+            applyAgentVisual(activity)
+
+        case .ttsPlaying:
+            paint(bg: NSColor(r: 44, g: 84, b: 68, a: 125),
+                  border: NSColor(r: 130, g: 220, b: 176, a: 60),
+                  dots: NSColor(r: 228, g: 255, b: 244, a: 195))
+            addPulse(duration: 1.25)
+            addDotFadeSweep(cycle: 1.0)
+
+        case .ttsGenerating:
+            paint(bg: NSColor(r: 62, g: 78, b: 54, a: 115),
+                  border: NSColor(r: 190, g: 220, b: 132, a: 46),
+                  dots: NSColor(r: 244, g: 255, b: 215, a: 185))
+            addPulse(duration: 1.5)
+            addDotFadeSweep(cycle: 1.25)
+
+        case .ttsPaused:
+            paint(bg: NSColor(r: 42, g: 60, b: 54, a: 96),
+                  border: NSColor(r: 140, g: 206, b: 182, a: 34),
+                  dots: NSColor(r: 214, g: 236, b: 226, a: 145))
 
         case .idle:
             paint(bg: NSColor(r: 55, g: 48, b: 40, a: 90),
@@ -332,40 +408,17 @@ class FloatingIndicator: NSObject {
                   dots: NSColor(r: 255, g: 230, b: 220, a: 210))
             addPulse(duration: 0.9)
             addDotScale(cycle: 1.4)
+            // Danger glow on the pill itself (the session ring is invisible
+            // outside a session, so its shadow can't carry this).
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            sessionRingLayer.shadowOpacity = 0.8
-            sessionRingLayer.shadowRadius = 5
+            pillLayer.shadowColor = NSColor(r: 255, g: 130, b: 100, a: 255).cgColor
+            pillLayer.shadowOffset = .zero
+            pillLayer.shadowOpacity = 0.8
+            pillLayer.shadowRadius = 5
             CATransaction.commit()
         case .idle:
             break
-        }
-    }
-
-    private func applyTTSVisual(_ snapshot: TTSStatusSnapshot) -> Bool {
-        let isPaused = snapshot.message == "Paused"
-        switch snapshot.phase {
-        case .playing:
-            paint(bg: NSColor(r: 44, g: 84, b: 68, a: 125),
-                  border: NSColor(r: 130, g: 220, b: 176, a: 60),
-                  dots: NSColor(r: 228, g: 255, b: 244, a: 195))
-            addPulse(duration: 1.25)
-            addDotFadeSweep(cycle: 1.0)
-            return true
-        case .generating:
-            paint(bg: NSColor(r: 62, g: 78, b: 54, a: 115),
-                  border: NSColor(r: 190, g: 220, b: 132, a: 46),
-                  dots: NSColor(r: 244, g: 255, b: 215, a: 185))
-            addPulse(duration: 1.5)
-            addDotFadeSweep(cycle: 1.25)
-            return true
-        case .ready where isPaused:
-            paint(bg: NSColor(r: 42, g: 60, b: 54, a: 96),
-                  border: NSColor(r: 140, g: 206, b: 182, a: 34),
-                  dots: NSColor(r: 214, g: 236, b: 226, a: 145))
-            return true
-        default:
-            return false
         }
     }
 
@@ -1182,6 +1235,9 @@ class KeyRecorderButton: NSButton {
     @objc private func startRecording() {
         stopRecording()
         isRecording = true
+        // Park the global hotkeys: they must neither fire nor swallow the
+        // keys the user is trying to record.
+        HotkeyManager.isCapturingHotkey = true
         recordingPrompt = "Hold modifiers, then press key"
         pendingCommitSpec = nil
         pendingCommitKeyCode = nil
@@ -1316,6 +1372,7 @@ class KeyRecorderButton: NSButton {
 
     private func stopRecording() {
         isRecording = false
+        HotkeyManager.isCapturingHotkey = false
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
             eventMonitor = nil

@@ -12,6 +12,7 @@ final class SettingsStore: ObservableObject {
     var onTTSHotkeyChanged: ((HotkeySpec) -> Void)?
     var onSessionHotkeyChanged: ((HotkeySpec) -> Void)?
     var onTalkHotkeyChanged: ((HotkeySpec) -> Void)?
+    var onSnapTalkHotkeyChanged: ((HotkeySpec) -> Void)?
     var onAnnotateHotkeyChanged: ((HotkeySpec) -> Void)?
     var onSettingsChanged: (() -> Void)?
 
@@ -39,6 +40,7 @@ final class SettingsStore: ObservableObject {
     @Published var ttsHotkey: HotkeySpec
     @Published var sessionHotkey: HotkeySpec
     @Published var talkHotkey: HotkeySpec
+    @Published var snapTalkHotkey: HotkeySpec
     @Published var annotateHotkey: HotkeySpec
 
     private var loaded = false
@@ -61,6 +63,7 @@ final class SettingsStore: ObservableObject {
         ttsHotkey = s.ttsHotkey
         sessionHotkey = s.sessionHotkey
         talkHotkey = s.talkHotkey
+        snapTalkHotkey = s.snapTalkHotkey
         annotateHotkey = s.annotateHotkey
         loaded = true
     }
@@ -88,7 +91,7 @@ final class SettingsStore: ObservableObject {
         onSettingsChanged?()
     }
 
-    enum HotkeyKind { case dictate, handsFree, tts, session, talk, annotate }
+    enum HotkeyKind { case dictate, handsFree, tts, session, talk, snapTalk, annotate }
 
     func setHotkey(_ kind: HotkeyKind, _ spec: HotkeySpec) {
         let s = UserSettings.shared
@@ -108,6 +111,9 @@ final class SettingsStore: ObservableObject {
         case .talk:
             guard spec.keyCode != s.talkHotkey.keyCode || spec.modifiers != s.talkHotkey.modifiers else { return }
             s.talkHotkey = spec; talkHotkey = spec; onTalkHotkeyChanged?(spec)
+        case .snapTalk:
+            guard spec.keyCode != s.snapTalkHotkey.keyCode || spec.modifiers != s.snapTalkHotkey.modifiers else { return }
+            s.snapTalkHotkey = spec; snapTalkHotkey = spec; onSnapTalkHotkeyChanged?(spec)
         case .annotate:
             guard spec.keyCode != s.annotateHotkey.keyCode || spec.modifiers != s.annotateHotkey.modifiers else { return }
             s.annotateHotkey = spec; annotateHotkey = spec; onAnnotateHotkeyChanged?(spec)
@@ -452,7 +458,7 @@ private struct ShortcutsSettingsView: View {
                             subtitle: "Press twice quickly to start, once to stop",
                             spec: store.handsFreeHotkey) { store.setHotkey(.handsFree, $0) }
                 ShortcutRow(title: "Read aloud",
-                            subtitle: "Speaks the text you've selected",
+                            subtitle: "Speaks the selected text — press again to stop speaking",
                             spec: store.ttsHotkey) { store.setHotkey(.tts, $0) }
             } header: {
                 Text("Dictation")
@@ -461,14 +467,17 @@ private struct ShortcutsSettingsView: View {
             }
 
             Section("Assistant") {
-                ShortcutRow(title: "Start or stop a session",
-                            subtitle: "Opens the assistant panel",
-                            spec: store.sessionHotkey) { store.setHotkey(.session, $0) }
                 ShortcutRow(title: "Talk to the assistant",
-                            subtitle: "Hold to speak instead of typing",
+                            subtitle: "Hold to speak — your words become the prompt",
                             spec: store.talkHotkey) { store.setHotkey(.talk, $0) }
+                ShortcutRow(title: "Talk + snap the screen",
+                            subtitle: "Hold to speak and send one screenshot with it",
+                            spec: store.snapTalkHotkey) { store.setHotkey(.snapTalk, $0) }
+                ShortcutRow(title: "Start or stop a session",
+                            subtitle: "Records your voice and screen while you work, then sends it all when you stop",
+                            spec: store.sessionHotkey) { store.setHotkey(.session, $0) }
                 ShortcutRow(title: "Draw on the screen",
-                            subtitle: "Circle or mark things to show the assistant",
+                            subtitle: "Circle or write on the screen — Esc or the same key exits",
                             spec: store.annotateHotkey) { store.setHotkey(.annotate, $0) }
             }
         }
@@ -484,6 +493,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var onTTSHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onTTSHotkeyChanged = onTTSHotkeyChanged } }
     var onSessionHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onSessionHotkeyChanged = onSessionHotkeyChanged } }
     var onTalkHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onTalkHotkeyChanged = onTalkHotkeyChanged } }
+    var onSnapTalkHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onSnapTalkHotkeyChanged = onSnapTalkHotkeyChanged } }
     var onAnnotateHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onAnnotateHotkeyChanged = onAnnotateHotkeyChanged } }
     var onSettingsChanged: (() -> Void)? { didSet { store.onSettingsChanged = onSettingsChanged } }
     var onWindowClosed: (() -> Void)?

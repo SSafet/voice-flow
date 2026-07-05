@@ -7,6 +7,14 @@ enum AppState: String {
     case idle, loading, recording, processing, done, handsFree
 }
 
+// What the microphone is currently recording for.
+enum RecordingPurpose {
+    case dictation   // paste into the focused app
+    case talk        // voice note → agent, no screenshot
+    case snapTalk    // voice note → agent + one fresh screenshot
+    case session     // continuous session audio, bundled at session end
+}
+
 // ── App Delegate ────────────────────────────────────────
 class AppDelegate: NSObject, NSApplicationDelegate {
     var menuBar: MenuBarManager!
@@ -20,12 +28,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var ttsHotkeyManager: HotkeyManager!
     var sessionHotkeyManager: HotkeyManager!
     var talkHotkeyManager: HotkeyManager!
+    var snapTalkHotkeyManager: HotkeyManager!
     var annotateHotkeyManager: HotkeyManager!
     var recorder: AudioRecorder!
     var backend: BackendBridge!
     var paster: Paster!
     var ttsController: TTSController!
     var localAPIServer: LocalAPIServer!
+    var replyBubble: ReplyBubble!
+    var replySpeaker: AgentReplySpeaker!
 
     // Agent session
     var screenCapture: ScreenCapture!
@@ -35,12 +46,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastCaptureData: Data?
     private let diffThreshold: Double = 0.01
     private var ambientScreenshots: [Data] = []
-    private let maxAmbientScreenshots = 2
+    private let maxAmbientScreenshots = 7
+    // Frames collected during a session, waiting for the end-of-session send.
+    private var pendingSessionShots: [Data] = []
     private var escapeMonitor: Any?
 
-    // Tracks whether the current recording is a voice note for the agent
-    // (buffer + send) vs regular dictation (paste into the focused app).
-    private var recordingForAgent = false
+    private var recordingPurpose: RecordingPurpose = .dictation
     private var initialPermissionsRequested = false
 
     // Streaming partial transcription
@@ -55,7 +66,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         didSet {
             DispatchQueue.main.async { [self] in
                 menuBar?.setState(state)
-                indicator?.setState(state)
+                indicator?.setState(state, recordingFor: recordingPurpose)
             }
         }
     }
@@ -115,10 +126,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         annotationOverlay = AnnotationOverlay()
         annotationOverlay.onEditingChanged = { [weak self] editing in
-            self?.chatPanel.setAnnotating(editing)
+            guard let self else { return }
+            self.chatPanel.setAnnotating(editing)
+            // A finished drawing is part of the session story — capture it
+            // (after a beat so the toolbar has faded out).
+            if !editing, self.sessionActive {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    guard self.sessionActive else { return }
+                    Task { @MainActor in
+                        if let shot = try? await self.screenCapture.captureScreen() {
+                            self.lastCaptureData = shot
+                            self.appendSessionShot(shot)
+                        }
+                    }
+                }
+            }
         }
 
+        replyBubble = ReplyBubble()
+
         chatPanel = ChatPanel()
+        chatPanel.onShown = { [weak self] in self?.replyBubble.hide() }
         chatPanel.onSendText = { [weak self] text in self?.sendTypedMessage(text) }
         chatPanel.onSnap = { [weak self] in self?.snapAndSend() }
         chatPanel.onToggleSession = { [weak self] in self?.toggleSession() }
@@ -130,7 +158,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         chatPanel.onToggleControl = { [weak self] on in
             self?.agent.allowControl = on
         }
-        chatPanel.onStop = { [weak self] in self?.agent.interrupt() }
+        chatPanel.onStop = { [weak self] in
+            self?.agent.interrupt()
+            self?.stopSpeechPlayback()
+        }
         chatPanel.onClear = { [weak self] in
             self?.agent.reset()
             self?.chatPanel.clearConversation()
@@ -165,6 +196,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         settingsWindow.onTalkHotkeyChanged = { [weak self] spec in
             self?.talkHotkeyManager.updateSpec(spec)
+        }
+        settingsWindow.onSnapTalkHotkeyChanged = { [weak self] spec in
+            self?.snapTalkHotkeyManager.updateSpec(spec)
         }
         settingsWindow.onAnnotateHotkeyChanged = { [weak self] spec in
             self?.annotateHotkeyManager.updateSpec(spec)
@@ -223,6 +257,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.chatPanel.setTTSStatus(snapshot)
             }
         }
+        replySpeaker = AgentReplySpeaker(tts: ttsController)
 
         backend = BackendBridge()
         backend.onReady = { [weak self] in
@@ -238,12 +273,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         backend.onError = { [weak self] msg in
             vflog("backend error: \(msg)")
             guard let self else { return }
-            if self.recordingForAgent {
-                self.recordingForAgent = false
-                self.state = .idle
+            let purpose = self.recordingPurpose
+            self.recordingPurpose = .dictation
+            self.state = .idle
+            switch purpose {
+            case .talk, .snapTalk:
                 self.chatPanel.addNote("Couldn't transcribe that — try again.")
-            } else {
-                self.state = .idle
+                if !self.chatPanel.isVisible {
+                    self.replyBubble.showNote("Couldn't transcribe that — try again.")
+                }
+            case .session:
+                self.chatPanel.addNote("Couldn't transcribe the session audio — sending the screenshots on their own.")
+                self.sendSessionBundle(transcript: nil)
+            case .dictation:
+                break
             }
         }
         backend.onStatus = { msg in vflog(msg) }
@@ -275,29 +318,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         agent = AgentSession(screenCapture: screenCapture)
         agent.onActivityChanged = { [weak self] activity in
-            self?.indicator.setAgentActivity(activity)
-            self?.chatPanel.setActivity(activity)
+            guard let self else { return }
+            self.indicator.setAgentActivity(activity)
+            self.chatPanel.setActivity(activity)
+            switch activity {
+            case .idle:
+                // Safety net: turns that end without a final text (interrupt,
+                // tool-only turns) must still release the live speech feed.
+                self.replySpeaker.finish()
+                self.replyBubble.setStatus("")
+            case .thinking:
+                self.replyBubble.setStatus("Thinking…")
+            case .responding:
+                self.replyBubble.setStatus("Replying…")
+            case .acting:
+                self.replyBubble.setStatus("Working on your screen…")
+            }
         }
         agent.onAssistantStart = { [weak self] in
-            self?.chatPanel.beginAssistantMessage()
+            guard let self else { return }
+            self.chatPanel.beginAssistantMessage()
+            if !self.chatPanel.isVisible {
+                self.replyBubble.beginStreaming()
+            }
+            if UserSettings.shared.voiceRepliesEnabled {
+                self.replySpeaker.begin()
+            }
         }
         agent.onAssistantDelta = { [weak self] delta in
             self?.chatPanel.appendAssistantDelta(delta)
+            self?.replyBubble.appendDelta(delta)
+            self?.replySpeaker.append(delta)
         }
         agent.onAssistantDone = { [weak self] text in
             guard let self else { return }
             self.chatPanel.finishAssistantMessage(text)
-            if UserSettings.shared.voiceRepliesEnabled {
-                self.speakAgentReply(text)
-            }
+            self.replyBubble.finishStreaming(text)
+            self.replySpeaker.finish()
         }
         agent.onToolActivity = { [weak self] detail in
             self?.chatPanel.setToolDetail(detail)
+            self?.replyBubble.setStatus(detail)
         }
         agent.onError = { [weak self] message in
-            self?.chatPanel.addNote(message)
-            if self?.chatPanel.isVisible == false {
-                self?.chatPanel.show(focusInput: false)
+            guard let self else { return }
+            self.chatPanel.addNote(message)
+            self.replySpeaker.finish()
+            if !self.chatPanel.isVisible {
+                self.replyBubble.showNote(message)
             }
         }
 
@@ -305,6 +373,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.keyCode == 53, self.agent.activity == .acting else { return }
             self.agent.interrupt()
+            self.stopSpeechPlayback()
             self.chatPanel.addNote("Stopped by Escape")
         }
     }
@@ -328,14 +397,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         ttsHotkeyManager = HotkeyManager(spec: UserSettings.shared.ttsHotkey)
-        ttsHotkeyManager.onPress = { [weak self] in self?.speakSelectedText() }
+        ttsHotkeyManager.onPress = { [weak self] in self?.speakSelectedTextOrStop() }
 
         sessionHotkeyManager = HotkeyManager(spec: UserSettings.shared.sessionHotkey)
         sessionHotkeyManager.onPress = { [weak self] in self?.toggleSession() }
 
         talkHotkeyManager = HotkeyManager(spec: UserSettings.shared.talkHotkey)
-        talkHotkeyManager.onPress = { [weak self] in self?.startTalkRecording() }
+        talkHotkeyManager.onPress = { [weak self] in self?.startTalkRecording(purpose: .talk) }
         talkHotkeyManager.onRelease = { [weak self] in self?.stopTalkRecording() }
+
+        snapTalkHotkeyManager = HotkeyManager(spec: UserSettings.shared.snapTalkHotkey)
+        snapTalkHotkeyManager.onPress = { [weak self] in self?.startTalkRecording(purpose: .snapTalk) }
+        snapTalkHotkeyManager.onRelease = { [weak self] in self?.stopTalkRecording() }
 
         annotateHotkeyManager = HotkeyManager(spec: UserSettings.shared.annotateHotkey)
         annotateHotkeyManager.onPress = { [weak self] in self?.annotationOverlay.toggleEditing() }
@@ -362,6 +435,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ttsHotkeyManager.start()
         sessionHotkeyManager.start()
         talkHotkeyManager.start()
+        snapTalkHotkeyManager.start()
         annotateHotkeyManager.start()
     }
 
@@ -384,19 +458,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             showSettings()
             return
         }
+        guard !recorder.isRecording else {
+            chatPanel.addNote("Finish the current recording, then start a session.")
+            return
+        }
+        stopSpeechPlayback()
         sessionActive = true
         ambientScreenshots.removeAll()
+        pendingSessionShots.removeAll()
         lastCaptureData = nil
         captureScheduler.interval = TimeInterval(max(1, UserSettings.shared.captureIntervalSeconds))
         captureScheduler.start()
 
+        // The whole session is one long voice note — transcribed and sent
+        // together with the collected screenshots when the session ends.
+        recordingPurpose = .session
+        recorder.start()
+
         indicator.setSessionActive(true)
         menuBar.setSessionActive(true)
         chatPanel.setSessionActive(true)
-        if !chatPanel.isVisible {
-            chatPanel.show(focusInput: false)
-        }
-        chatPanel.addNote("Session started — I can see your screen when you talk, type, or snap.")
+        chatPanel.addNote("Session started — I'm listening and watching. Stop the session to send everything to the agent.")
         playSound("Tink")
         vflog("session started")
     }
@@ -405,20 +487,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard sessionActive else { return }
         sessionActive = false
         captureScheduler.stop()
+        pendingSessionShots.append(contentsOf: ambientScreenshots)
         ambientScreenshots.removeAll()
         lastCaptureData = nil
-        if agent.isRunning {
-            agent.interrupt()
-        }
 
         indicator.setSessionActive(false)
-        indicator.setAgentActivity(.idle)
         menuBar.setSessionActive(false)
         chatPanel.setSessionActive(false)
-        chatPanel.setActivity(.idle)
-        chatPanel.addNote("Session ended")
         playSound("Pop")
         vflog("session ended")
+
+        Task { @MainActor in
+            // Final frame: how the screen looks the moment the session ends.
+            if let fresh = try? await screenCapture.captureScreen() {
+                pendingSessionShots.append(fresh)
+            }
+            if recorder.isRecording, recordingPurpose == .session {
+                stopRecording()   // → transcribe → handleResult(.session) → sendSessionBundle
+            } else {
+                recordingPurpose = .dictation
+                sendSessionBundle(transcript: nil)
+            }
+        }
     }
 
     /// Ambient screenshots build quiet context while a session runs —
@@ -429,6 +519,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if diff < diffThreshold { return }
         }
         lastCaptureData = imageData
+        appendSessionShot(imageData)
+    }
+
+    private func appendSessionShot(_ imageData: Data) {
         indicator.flashCapturePulse()
         ambientScreenshots.append(imageData)
         if ambientScreenshots.count > maxAmbientScreenshots {
@@ -439,11 +533,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // ── Sending to the agent ────────────────────────────
 
     private func sendTypedMessage(_ text: String) {
-        if sessionActive {
-            sendToAgent(text: text, includeFreshScreenshot: true)
-        } else {
-            sendToAgent(text: text, includeFreshScreenshot: false)
-        }
+        sendToAgent(text: text, includeFreshScreenshot: sessionActive)
     }
 
     private func snapAndSend() {
@@ -452,15 +542,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func sendToAgent(text: String?, includeFreshScreenshot: Bool, forceScreenshot: Bool = false) {
         if !chatPanel.isVisible {
-            chatPanel.show(focusInput: false)
+            replyBubble.showThinking(echo: text)
         }
 
         Task { @MainActor in
             var screenshots: [Data] = []
-            if sessionActive {
-                screenshots.append(contentsOf: ambientScreenshots)
-                ambientScreenshots.removeAll()
-            }
             if includeFreshScreenshot || forceScreenshot {
                 if let fresh = try? await screenCapture.captureScreen() {
                     screenshots.append(fresh)
@@ -468,34 +554,75 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
 
-            let note: String?
-            if screenshots.isEmpty {
-                note = nil
-            } else if screenshots.count == 1 {
-                note = "📎 1 screenshot"
-            } else {
-                note = "📎 \(screenshots.count) screenshots"
-            }
-            self.chatPanel.addUserMessage(text ?? "", attachmentNote: note)
+            self.chatPanel.addUserMessage(text ?? "", attachmentNote: Self.attachmentNote(count: screenshots.count))
             self.agent.send(text: text, screenshots: screenshots)
+        }
+    }
+
+    /// Everything gathered between session start and stop, sent as one turn.
+    private func sendSessionBundle(transcript: String?) {
+        var shots = pendingSessionShots
+        pendingSessionShots.removeAll()
+        let maxShots = 8   // matches the agent's image-history budget
+        if shots.count > maxShots {
+            shots = Array(shots.suffix(maxShots))
+        }
+
+        let trimmed = transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty || !shots.isEmpty else {
+            chatPanel.addNote("Session ended — nothing captured.")
+            return
+        }
+
+        let preamble = "I just finished a screen session. The screenshots show what I was doing, in order — annotations I drew are part of the message."
+        let agentText = trimmed.isEmpty
+            ? preamble
+            : "\(preamble) My spoken notes while working: \(trimmed)"
+
+        if !chatPanel.isVisible {
+            replyBubble.showThinking(echo: trimmed.isEmpty ? "Session recap" : trimmed)
+        }
+        chatPanel.addUserMessage(trimmed, attachmentNote: Self.attachmentNote(count: shots.count))
+        deliverToAgent(agentText, screenshots: shots, retriesLeft: 2)
+    }
+
+    /// The agent may still be finishing an earlier turn when the session
+    /// bundle is ready — interrupt it and retry briefly rather than lose it.
+    private func deliverToAgent(_ text: String, screenshots: [Data], retriesLeft: Int) {
+        if agent.isRunning, retriesLeft > 0 {
+            agent.interrupt()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                self?.deliverToAgent(text, screenshots: screenshots, retriesLeft: retriesLeft - 1)
+            }
+            return
+        }
+        agent.send(text: text, screenshots: screenshots)
+    }
+
+    private static func attachmentNote(count: Int) -> String? {
+        switch count {
+        case 0: return nil
+        case 1: return "📎 1 screenshot"
+        default: return "📎 \(count) screenshots"
         }
     }
 
     // ── Talk to the agent (hold-to-record) ─────────────
 
-    private func startTalkRecording() {
+    private func startTalkRecording(purpose: RecordingPurpose) {
         guard !recorder.isRecording else { return }
-        recordingForAgent = true
+        stopSpeechPlayback()   // barge-in: don't record the agent's own voice
+        recordingPurpose = purpose
         streamingViaAX = false
         hadPartialStream = false
         playSound("Tink")
         state = .recording
         recorder.start()
-        vflog("talk-to-agent recording started")
+        vflog("talk-to-agent recording started (\(purpose))")
     }
 
     private func stopTalkRecording() {
-        guard recordingForAgent else { return }
+        guard recordingPurpose == .talk || recordingPurpose == .snapTalk else { return }
         stopRecording()
     }
 
@@ -505,7 +632,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startRecording() {
         guard !recorder.isRecording else { return }
-        recordingForAgent = false
+        stopSpeechPlayback()
+        recordingPurpose = .dictation
         paster.capturePasteTarget()
         streamingViaAX = false
         hadPartialStream = false
@@ -534,11 +662,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     if openAIAPIKey == nil {
                         vflog("OpenAI dictation selected, but no API key is saved")
                         self.state = .idle
-                        if self.recordingForAgent {
-                            self.recordingForAgent = false
-                            self.chatPanel.addNote("Add your OpenAI key in Settings to transcribe voice notes.")
-                        } else {
+                        let purpose = self.recordingPurpose
+                        self.recordingPurpose = .dictation
+                        switch purpose {
+                        case .dictation:
                             self.showSettings()
+                        case .talk, .snapTalk:
+                            self.chatPanel.addNote("Add your OpenAI key in Settings to transcribe voice notes.")
+                        case .session:
+                            self.chatPanel.addNote("No OpenAI key — sending the session screenshots without a transcript.")
+                            self.sendSessionBundle(transcript: nil)
                         }
                         return
                     }
@@ -554,11 +687,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     openAIAPIKey: openAIAPIKey,
                     vocabulary: settings.customVocabulary
                 )
-            } else if self.recordingForAgent {
-                self.recordingForAgent = false
-                self.state = .idle
             } else {
+                let purpose = self.recordingPurpose
+                self.recordingPurpose = .dictation
                 self.state = .idle
+                if purpose == .session {
+                    self.sendSessionBundle(transcript: nil)
+                }
             }
         }
     }
@@ -624,16 +759,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         vflog("raw: \(raw)")
         vflog("cleaned: \(cleaned)")
 
-        // Voice note for the agent — never pasted anywhere.
-        if recordingForAgent {
-            recordingForAgent = false
+        // Voice destined for the agent — never pasted anywhere.
+        if recordingPurpose != .dictation {
+            let purpose = recordingPurpose
+            recordingPurpose = .dictation
             paster.clearStreamTarget()
             hadPartialStream = false
             state = .idle
-            let note = cleaned.isEmpty ? raw : cleaned
-            guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            playSound("Pop")
-            sendToAgent(text: note, includeFreshScreenshot: true)
+            let note = (cleaned.isEmpty ? raw : cleaned).trimmingCharacters(in: .whitespacesAndNewlines)
+            switch purpose {
+            case .talk:
+                guard !note.isEmpty else { return }
+                playSound("Pop")
+                sendToAgent(text: note, includeFreshScreenshot: false)
+            case .snapTalk:
+                guard !note.isEmpty else { return }
+                playSound("Pop")
+                sendToAgent(text: note, includeFreshScreenshot: true, forceScreenshot: true)
+            case .session:
+                playSound("Pop")
+                sendSessionBundle(transcript: note)
+            case .dictation:
+                break
+            }
             return
         }
 
@@ -685,17 +833,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     //  Voice replies
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private func speakAgentReply(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, KeychainStore.shared.hasOpenAIAPIKey else { return }
-        let settings = UserSettings.shared
-        let request = TTSRequest(
-            text: trimmed,
-            voice: settings.ttsVoice,
-            speed: settings.ttsSpeed,
-            instructions: settings.ttsInstructions
-        )
-        try? ttsController.speak(request: request.normalized())
+    /// Silence any in-flight speech (streamed reply or read-aloud).
+    private func stopSpeechPlayback() {
+        replySpeaker.cancel()
+        let phase = ttsController.status.phase
+        if phase == .playing || phase == .generating {
+            ttsController.stop()
+        }
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -910,7 +1054,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     //  TTS (hotkey + local API)
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private func speakSelectedText() {
+    /// The read-aloud hotkey doubles as a stop button while anything is speaking.
+    private func speakSelectedTextOrStop() {
+        let phase = ttsController.status.phase
+        if phase == .playing || phase == .generating {
+            stopSpeechPlayback()
+            vflog("tts hotkey: stopped speech")
+            return
+        }
+
         guard let selectedText = paster.copySelectedText() else {
             NSSound.beep()
             vflog("tts hotkey: no selected text available")

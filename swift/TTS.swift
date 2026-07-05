@@ -240,6 +240,11 @@ final class TTSController: NSObject {
     private var activeSpeechChunkIndex = 0
     private var speechCacheURL: URL?
     private var speechAPIKey = ""
+    // Live feed: text arrives incrementally (agent replies) — chunks are
+    // appended while earlier ones fetch/play, and completion waits for
+    // endLiveSpeech() instead of the last queued chunk.
+    private var liveFeedActive = false
+    private var awaitingLiveText = false
     private var playbackTimer: Timer?
     private var scheduledBufferCount = 0
     private var streamCompleted = false
@@ -315,11 +320,11 @@ final class TTSController: NSObject {
         guard let currentRequest,
               index >= 0,
               index < speechChunks.count,
-              let cacheURL = speechCacheURL,
               !speechAPIKey.isEmpty else {
             throw TTSError.invalidAudio
         }
 
+        let cacheURL = speechCacheURL  // nil for live-fed speech (not cacheable)
         activeSpeechChunkIndex = index
         let chunkRequest = TTSRequest(
             text: speechChunks[index],
@@ -485,16 +490,11 @@ final class TTSController: NSObject {
         }
     }
 
-    private func finishLiveStream(requestID: UUID, cacheURL: URL) {
+    private func finishLiveStream(requestID: UUID, cacheURL: URL?) {
         guard requestID == activeRequestID else { return }
         currentStreamSession = nil
         if !isPlaybackPaused {
             schedulePendingLiveAudioIfPossible(flushAll: true)
-        }
-
-        guard !currentPCMData.isEmpty else {
-            setStatus(.error, TTSError.invalidAudio.localizedDescription)
-            return
         }
 
         let nextIndex = activeSpeechChunkIndex + 1
@@ -507,23 +507,97 @@ final class TTSController: NSObject {
             return
         }
 
+        // Live feed still open — keep the plan alive and wait for more text.
+        if liveFeedActive {
+            awaitingLiveText = true
+            refreshPlaybackStatus()
+            return
+        }
+
+        guard !currentPCMData.isEmpty else {
+            setStatus(.error, TTSError.invalidAudio.localizedDescription)
+            return
+        }
+
         streamCompleted = true
         speechAPIKey = ""
         speechCacheURL = nil
-        do {
-            let wavData = makeWAVData(from: currentPCMData)
-            try FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try wavData.write(to: cacheURL, options: .atomic)
-            currentCacheURL = cacheURL
-            cachedTotalFrames = AVAudioFramePosition(currentPCMData.count / TTSBytesPerFrame)
-            refreshPlaybackStatus()
-        } catch {
-            vflog("tts cache write failed: \(error)")
+        if let cacheURL {
+            do {
+                let wavData = makeWAVData(from: currentPCMData)
+                try FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try wavData.write(to: cacheURL, options: .atomic)
+                currentCacheURL = cacheURL
+                cachedTotalFrames = AVAudioFramePosition(currentPCMData.count / TTSBytesPerFrame)
+                refreshPlaybackStatus()
+            } catch {
+                vflog("tts cache write failed: \(error)")
+            }
         }
 
         if scheduledBufferCount == 0 {
             stopPlaybackTimer()
             setStatus(.ready, isPlaybackPaused ? "Paused" : "Ready")
+        }
+    }
+
+    // ── Live-fed speech (speak an agent reply while it streams) ──
+
+    /// Prepare the engine to speak text that will arrive incrementally via
+    /// `feedLiveSpeech`. Playback starts as soon as the first chunk's audio
+    /// arrives; call `endLiveSpeech()` once the text source is done.
+    func beginLiveSpeech(voice: String, speed: Double, instructions: String) throws {
+        guard let apiKey = KeychainStore.shared.loadOpenAIAPIKey(), !apiKey.isEmpty else {
+            throw TTSError.missingAPIKey
+        }
+        activeRequestID = UUID()
+        discardCurrentAudio()
+        currentRequest = TTSRequest(text: " ", voice: voice, speed: speed, instructions: instructions).normalized()
+        playbackBaseFrameOffset = 0
+        speechChunks = []
+        activeSpeechChunkIndex = 0
+        speechCacheURL = nil
+        speechAPIKey = apiKey
+        liveFeedActive = true
+        awaitingLiveText = true
+        currentAudioSource = .live
+        setStatus(.generating, "Waiting for reply…")
+    }
+
+    func feedLiveSpeech(_ text: String) {
+        guard liveFeedActive else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        speechChunks.append(trimmed)
+        if awaitingLiveText, currentStreamSession == nil {
+            awaitingLiveText = false
+            do {
+                try startSpeechChunk(at: speechChunks.count - 1)
+            } catch {
+                fail(requestID: activeRequestID, message: error.localizedDescription)
+            }
+        }
+    }
+
+    func endLiveSpeech() {
+        guard liveFeedActive else { return }
+        liveFeedActive = false
+        // If a chunk is still fetching, finishLiveStream finalizes when it ends.
+        guard awaitingLiveText, currentStreamSession == nil else { return }
+        awaitingLiveText = false
+        speechAPIKey = ""
+        guard !currentPCMData.isEmpty else {
+            currentRequest = nil
+            currentAudioSource = .none
+            setStatus(.idle, "Idle")
+            return
+        }
+        streamCompleted = true
+        if scheduledBufferCount == 0 {
+            stopPlaybackTimer()
+            setStatus(.ready, isPlaybackPaused ? "Paused" : "Ready")
+        } else {
+            refreshPlaybackStatus()
         }
     }
 
@@ -838,6 +912,8 @@ final class TTSController: NSObject {
         activeSpeechChunkIndex = 0
         speechCacheURL = nil
         speechAPIKey = ""
+        liveFeedActive = false
+        awaitingLiveText = false
     }
 
     private func currentPCMFrameCount() -> AVAudioFramePosition {
@@ -928,6 +1004,103 @@ final class TTSController: NSObject {
             .appendingPathComponent("tts", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Agent Reply Speaker — speaks a streaming reply as it arrives
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Buffers assistant deltas and cuts them at sentence boundaries so the
+//  TTS engine can start talking long before the full reply exists.
+
+final class AgentReplySpeaker {
+    private let tts: TTSController
+    private var buffer = ""
+    private(set) var isActive = false
+
+    // A chunk must be at least this long before we cut at a sentence end —
+    // sub-clause fragments make the voice sound choppy.
+    private let minChunkLength = 25
+    // Without any sentence boundary, cut at the last space past this point.
+    private let maxChunkLength = 360
+
+    init(tts: TTSController) {
+        self.tts = tts
+    }
+
+    func begin() {
+        guard !isActive else { return }
+        buffer = ""
+        let settings = UserSettings.shared
+        do {
+            try tts.beginLiveSpeech(
+                voice: settings.ttsVoice,
+                speed: settings.ttsSpeed,
+                instructions: settings.ttsInstructions
+            )
+            isActive = true
+        } catch {
+            vflog("live reply speech unavailable: \(error.localizedDescription)")
+        }
+    }
+
+    func append(_ delta: String) {
+        guard isActive else { return }
+        buffer += delta
+        while let chunk = nextChunk() {
+            tts.feedLiveSpeech(chunk)
+        }
+    }
+
+    func finish() {
+        guard isActive else { return }
+        let rest = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !rest.isEmpty {
+            tts.feedLiveSpeech(rest)
+        }
+        buffer = ""
+        isActive = false
+        tts.endLiveSpeech()
+    }
+
+    func cancel() {
+        guard isActive else { return }
+        buffer = ""
+        isActive = false
+        tts.stop()
+    }
+
+    /// Pop the next speakable chunk off the buffer, or nil to wait for more text.
+    private func nextChunk() -> String? {
+        var count = 0
+        var index = buffer.startIndex
+        while index < buffer.endIndex {
+            let ch = buffer[index]
+            let next = buffer.index(after: index)
+            count += 1
+            if ch == "\n", count >= minChunkLength {
+                return popChunk(upTo: next)
+            }
+            if ".!?".contains(ch), count >= minChunkLength,
+               next < buffer.endIndex, buffer[next] == " " || buffer[next] == "\n" {
+                return popChunk(upTo: next)
+            }
+            index = next
+        }
+
+        if buffer.count >= maxChunkLength {
+            if let lastSpace = buffer.lastIndex(of: " "), lastSpace > buffer.startIndex {
+                return popChunk(upTo: lastSpace)
+            }
+            return popChunk(upTo: buffer.endIndex)
+        }
+        return nil
+    }
+
+    private func popChunk(upTo index: String.Index) -> String? {
+        let chunk = String(buffer[..<index]).trimmingCharacters(in: .whitespacesAndNewlines)
+        buffer.removeSubrange(..<index)
+        return chunk.isEmpty ? nil : chunk
     }
 }
 

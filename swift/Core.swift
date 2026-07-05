@@ -149,6 +149,7 @@ class UserSettings {
     var captureIntervalSeconds: Int = 2
     var sessionHotkey = HotkeySpec(keyCode: 61, modifiers: [], label: "Right ⌥")
     var talkHotkey = HotkeySpec(keyCode: 98, modifiers: [], label: "F7")
+    var snapTalkHotkey = HotkeySpec(keyCode: 101, modifiers: [], label: "F9")
     var annotateHotkey = HotkeySpec(keyCode: 96, modifiers: [], label: "F5")
     var agentModel: String = DefaultAgentModel
     var agentBaseURL: String = DefaultAgentBaseURL
@@ -188,6 +189,7 @@ class UserSettings {
                                    fallback: loadHotkey(dict, key: "capture_hotkey", fallback: sessionHotkey))
         talkHotkey = loadHotkey(dict, key: "talk_hotkey",
                                 fallback: loadHotkey(dict, key: "capture_note_hotkey", fallback: talkHotkey))
+        snapTalkHotkey = loadHotkey(dict, key: "snap_talk_hotkey", fallback: snapTalkHotkey)
         annotateHotkey = loadHotkey(dict, key: "annotate_hotkey", fallback: annotateHotkey)
         if let v = dict["sounds_enabled"] as? Bool { soundsEnabled = v }
         if let v = dict["double_tap_ms"] as? Int { doubleTapMs = v }
@@ -228,6 +230,7 @@ class UserSettings {
             "capture_interval": captureIntervalSeconds,
             "session_hotkey": sessionHotkey.toDict(),
             "talk_hotkey": talkHotkey.toDict(),
+            "snap_talk_hotkey": snapTalkHotkey.toDict(),
             "annotate_hotkey": annotateHotkey.toDict(),
             "agent_model": agentModel,
             "agent_base_url": agentBaseURL,
@@ -379,12 +382,43 @@ class HotkeyManager {
     private var doubleTapExactDown = false
     private var doubleTapSessionActive = false
     private var doubleTapContaminated = false
+    private var eventTap: CFMachPort?
+
+    /// While the settings key recorder is capturing a new shortcut, hotkeys
+    /// neither fire nor swallow events — the recorder must see every key.
+    static var isCapturingHotkey = false
 
     private static let interestingModifiers: CGEventFlags = [
         .maskCommand, .maskShift, .maskAlternate, .maskControl, .maskSecondaryFn
     ]
     private static let chordResolutionDelay: TimeInterval = 0.12
     private static var registry: [WeakHotkeyManagerRef] = []
+    private static let ownPID = Int64(ProcessInfo.processInfo.processIdentifier)
+
+    // All taps live on one dedicated thread. Active taps make every keystroke
+    // wait for the callback — if that ran on the main run loop, any busy or
+    // sleeping moment on the main thread (paste()'s usleeps most of all)
+    // would stall typing system-wide and deliver our own synthesized Cmd+V
+    // only after paste() had already restored the old clipboard.
+    private static let tapRunLoop: CFRunLoop = {
+        let ready = DispatchSemaphore(value: 0)
+        var runLoop: CFRunLoop!
+        let thread = Thread {
+            runLoop = CFRunLoopGetCurrent()
+            // Park a far-future timer so the loop always has a source to run.
+            let keepAlive = Timer(timeInterval: .greatestFiniteMagnitude, repeats: true) { _ in }
+            RunLoop.current.add(keepAlive, forMode: .default)
+            ready.signal()
+            while true {
+                CFRunLoopRun()
+            }
+        }
+        thread.name = "vf-hotkey-tap"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+        ready.wait()
+        return runLoop
+    }()
 
     init(spec: HotkeySpec) {
         self.keyCode = spec.keyCode
@@ -394,18 +428,23 @@ class HotkeyManager {
     }
 
     func updateSpec(_ spec: HotkeySpec) {
-        keyCode = spec.keyCode
-        requiredModifiers = spec.modifiers
-        pressed = false
-        handsFree = false
-        pendingRelease = false
-        pendingTimer?.invalidate()
-        pendingTimer = nil
-        pendingActivation = false
-        pendingActivationTimer?.invalidate()
-        pendingActivationTimer = nil
-        pressedModifierKeyCodes.removeAll()
-        resetDoubleTapState()
+        // All hotkey state (and its timers) lives on the tap thread.
+        CFRunLoopPerformBlock(Self.tapRunLoop, CFRunLoopMode.defaultMode.rawValue) { [weak self] in
+            guard let self else { return }
+            self.keyCode = spec.keyCode
+            self.requiredModifiers = spec.modifiers
+            self.pressed = false
+            self.handsFree = false
+            self.pendingRelease = false
+            self.pendingTimer?.invalidate()
+            self.pendingTimer = nil
+            self.pendingActivation = false
+            self.pendingActivationTimer?.invalidate()
+            self.pendingActivationTimer = nil
+            self.pressedModifierKeyCodes.removeAll()
+            self.resetDoubleTapState()
+        }
+        CFRunLoopWakeUp(Self.tapRunLoop)
     }
 
     func start() {
@@ -413,14 +452,28 @@ class HotkeyManager {
             | (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.keyUp.rawValue)
 
+        // An active (.defaultTap) tap so matched hotkey presses — including
+        // their autorepeats while held — are swallowed instead of hammering
+        // the frontmost app (which beeps on every unhandled repeat).
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .listenOnly,
+            options: .defaultTap,
             eventsOfInterest: eventMask,
-            callback: { _, _, event, refcon -> Unmanaged<CGEvent>? in
+            callback: { _, type, event, refcon -> Unmanaged<CGEvent>? in
                 let mgr = Unmanaged<HotkeyManager>.fromOpaque(refcon!).takeUnretainedValue()
-                mgr.handleEvent(event)
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    mgr.reenableTap()
+                    return Unmanaged.passUnretained(event)
+                }
+                // Never touch events we synthesized ourselves — the paste
+                // Cmd+V and read-aloud Cmd+C must sail through untouched.
+                if event.getIntegerValueField(.eventSourceUnixProcessID) == HotkeyManager.ownPID {
+                    return Unmanaged.passUnretained(event)
+                }
+                if mgr.handleEvent(event) {
+                    return nil  // consumed by the hotkey
+                }
                 return Unmanaged.passUnretained(event)
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
@@ -429,16 +482,26 @@ class HotkeyManager {
             return
         }
 
+        eventTap = tap
         runLoopSource = CFMachPortCreateRunLoopSource(nil, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        CFRunLoopAddSource(Self.tapRunLoop, runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         vflog("hotkey listener started (keyCode=\(keyCode), mods=\(requiredModifiers.rawValue))")
     }
 
-    private func handleEvent(_ event: CGEvent) {
+    private func reenableTap() {
+        guard let eventTap else { return }
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+        vflog("hotkey tap re-enabled after system disable")
+    }
+
+    /// Returns true when the event belongs to this hotkey and must not
+    /// reach other apps. Modifier-only triggers ride on flagsChanged, which
+    /// is never consumed.
+    private func handleEvent(_ event: CGEvent) -> Bool {
+        if Self.isCapturingHotkey { return false }
         if allowsHandsFreeDoublePress {
-            handleDoublePressEvent(event)
-            return
+            return handleDoublePressEvent(event)
         }
 
         let kc = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
@@ -447,7 +510,7 @@ class HotkeyManager {
         if type == .flagsChanged {
             updateModifierState(for: kc, flags: event.flags)
 
-            guard let triggerModifier = HotkeySpec.modifierFlag(for: keyCode) else { return }
+            guard let triggerModifier = HotkeySpec.modifierFlag(for: keyCode) else { return false }
             let expected = normalizeModifiers(requiredModifiers).union(triggerModifier)
             let held = normalizeModifiers(event.flags)
             let primaryDown = pressedModifierKeyCodes.contains(keyCode)
@@ -457,16 +520,21 @@ class HotkeyManager {
                 cancelPendingActivation()
                 handleRelease()
             }
+            return false
         } else if type == .keyDown || type == .keyUp {
-            guard HotkeySpec.modifierFlag(for: keyCode) == nil else { return }
-            guard kc == keyCode else { return }
-            if type == .keyDown && event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return }
+            guard HotkeySpec.modifierFlag(for: keyCode) == nil else { return false }
+            guard kc == keyCode else { return false }
             let held = normalizeModifiers(event.flags)
             let required = normalizeModifiers(requiredModifiers)
-            guard held == required else { return }
+            if type == .keyDown && event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+                return held == required  // swallow held-key repeats
+            }
+            guard held == required else { return false }
             cancelPendingActivation()
             if type == .keyDown { handlePress() } else { handleRelease() }
+            return true
         }
+        return false
     }
 
     private func handlePress() {
@@ -535,7 +603,7 @@ class HotkeyManager {
             pendingTimer = Timer.scheduledTimer(withTimeInterval: threshold / 1000.0, repeats: false) { [weak self] _ in
                 guard let self, self.pendingRelease else { return }
                 self.pendingRelease = false
-                self.onRelease?()
+                DispatchQueue.main.async { self.onRelease?() }
             }
         } else {
             DispatchQueue.main.async { self.onRelease?() }
@@ -585,7 +653,7 @@ class HotkeyManager {
         pendingTimer = Timer.scheduledTimer(withTimeInterval: threshold / 1000.0, repeats: false) { [weak self] _ in
             guard let self, self.pendingRelease else { return }
             self.pendingRelease = false
-            self.onRelease?()
+            DispatchQueue.main.async { self.onRelease?() }
         }
     }
 
@@ -636,12 +704,12 @@ class HotkeyManager {
         }
     }
 
-    private func handleDoublePressEvent(_ event: CGEvent) {
+    private func handleDoublePressEvent(_ event: CGEvent) -> Bool {
         if HotkeySpec.modifierFlag(for: keyCode) != nil {
             handleModifierDoublePressEvent(event)
-        } else {
-            handleKeyDoublePressEvent(event)
+            return false
         }
+        return handleKeyDoublePressEvent(event)
     }
 
     private func handleModifierDoublePressEvent(_ event: CGEvent) {
@@ -686,25 +754,30 @@ class HotkeyManager {
         }
     }
 
-    private func handleKeyDoublePressEvent(_ event: CGEvent) {
+    private func handleKeyDoublePressEvent(_ event: CGEvent) -> Bool {
+        guard event.type == .keyDown || event.type == .keyUp else { return false }
         let kc = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        guard kc == keyCode else { return }
+        guard kc == keyCode else { return false }
 
         let held = normalizeModifiers(event.flags)
         let required = normalizeModifiers(requiredModifiers)
 
         if event.type == .keyDown {
-            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return }
-            guard held == required else { return }
+            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+                return held == required  // swallow held-key repeats
+            }
+            guard held == required else { return false }
             doubleTapExactDown = true
-            return
+            return true
         }
 
-        guard event.type == .keyUp else { return }
         if doubleTapExactDown && held == required {
             completeDoubleTap()
+            doubleTapExactDown = false
+            return true
         }
         doubleTapExactDown = false
+        return held == required
     }
 
     private func completeDoubleTap() {

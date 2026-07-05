@@ -1,0 +1,215 @@
+import Cocoa
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Reply Bubble — the agent answers without opening the panel
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  When the ChatPanel is closed, agent replies stream into this small
+//  bubble anchored above the pill. It stays until dismissed with ✕.
+
+final class ReplyBubble {
+    private let width: CGFloat = 400
+    private let maxTextHeight: CGFloat = 240
+    private let headerHeight: CGFloat = 28
+    private let bottomInset: CGFloat = 12
+
+    private var panel: NSPanel?
+    private var textView: NSTextView!
+    private var scrollView: NSScrollView!
+    private var statusLabel: NSTextField!
+    private var closeButton: NSButton!
+    private var streaming = false
+    private var suppressed = false
+
+    var isVisible: Bool { panel?.isVisible ?? false }
+
+    private var textAttributes: [NSAttributedString.Key: Any] {
+        [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: Theme.text]
+    }
+
+    private var echoAttributes: [NSAttributedString.Key: Any] {
+        [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: Theme.text3]
+    }
+
+    /// A new request is on its way — allow the bubble to appear again even
+    /// if the user dismissed the previous reply.
+    func resetSuppression() {
+        suppressed = false
+    }
+
+    /// Show the bubble with a dim echo of what the user just asked.
+    func showThinking(echo: String?) {
+        suppressed = false
+        ensurePanel()
+        streaming = false
+        if let echo, !echo.isEmpty {
+            setText("You: \(echo)", attributes: echoAttributes)
+        } else {
+            setText("", attributes: textAttributes)
+        }
+        statusLabel.stringValue = "Thinking…"
+        reveal()
+    }
+
+    func beginStreaming() {
+        guard !suppressed else { return }
+        ensurePanel()
+        streaming = true
+        setText("", attributes: textAttributes)
+        statusLabel.stringValue = "Replying…"
+        reveal()
+    }
+
+    func appendDelta(_ delta: String) {
+        guard streaming, isVisible else { return }
+        textView.textStorage?.append(NSAttributedString(string: delta, attributes: textAttributes))
+        relayout()
+        textView.scrollToEndOfDocument(nil)
+    }
+
+    func finishStreaming(_ fullText: String) {
+        guard streaming, isVisible else { streaming = false; return }
+        streaming = false
+        setText(fullText, attributes: textAttributes)
+        statusLabel.stringValue = ""
+        relayout()
+    }
+
+    func showNote(_ text: String) {
+        ensurePanel()
+        streaming = false
+        setText(text, attributes: echoAttributes)
+        statusLabel.stringValue = ""
+        reveal()
+    }
+
+    func setStatus(_ text: String) {
+        guard isVisible else { return }
+        statusLabel.stringValue = text
+    }
+
+    func hide() {
+        streaming = false
+        guard let panel, panel.isVisible else { return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.14
+            panel.animator().alphaValue = 0
+        }, completionHandler: {
+            panel.orderOut(nil)
+        })
+    }
+
+    // ── Internals ───────────────────────────────────────
+
+    private func setText(_ text: String, attributes: [NSAttributedString.Key: Any]) {
+        textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: attributes))
+        relayout()
+    }
+
+    private func reveal() {
+        guard let panel else { return }
+        relayout()
+        if panel.isVisible {
+            panel.orderFront(nil)
+            return
+        }
+        panel.alphaValue = 0
+        panel.orderFront(nil)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            panel.animator().alphaValue = 1
+        }
+    }
+
+    @objc private func closeTapped() {
+        suppressed = true
+        hide()
+    }
+
+    private func relayout() {
+        guard let panel, let container = textView.textContainer,
+              let layoutManager = textView.layoutManager else { return }
+        layoutManager.ensureLayout(for: container)
+        let used = layoutManager.usedRect(for: container).height
+        let textHeight = min(max(used + 8, 24), maxTextHeight)
+        let totalHeight = headerHeight + textHeight + bottomInset
+
+        guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
+        let frame = screen.frame
+        let x = frame.midX - width / 2
+        let y = frame.minY + 30  // just above the pill, same anchor as the panel
+        panel.setFrame(NSRect(x: x, y: y, width: width, height: totalHeight), display: true)
+
+        scrollView.frame = NSRect(x: 12, y: bottomInset, width: width - 24, height: textHeight)
+        statusLabel.frame = NSRect(x: 16, y: totalHeight - headerHeight + 5, width: width - 60, height: 16)
+        closeButton.frame = NSRect(x: width - 32, y: totalHeight - headerHeight + 3, width: 20, height: 20)
+    }
+
+    private func ensurePanel() {
+        if panel != nil { return }
+
+        let newPanel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: width, height: 120),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false
+        )
+        newPanel.level = .floating + 1
+        newPanel.isOpaque = false
+        newPanel.backgroundColor = .clear
+        newPanel.hasShadow = true
+        newPanel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        newPanel.isReleasedWhenClosed = false
+
+        let root = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width, height: 120))
+        root.material = .hudWindow
+        root.state = .active
+        root.appearance = NSAppearance(named: .darkAqua)
+        root.wantsLayer = true
+        root.layer?.cornerRadius = 14
+        root.layer?.masksToBounds = true
+        root.layer?.borderWidth = 1
+        root.layer?.borderColor = Theme.border.cgColor
+        root.autoresizingMask = [.width, .height]
+
+        statusLabel = NSTextField(labelWithString: "")
+        statusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        statusLabel.textColor = Theme.accent
+        statusLabel.lineBreakMode = .byTruncatingTail
+        root.addSubview(statusLabel)
+
+        closeButton = BubbleCloseButton(
+            image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Dismiss")?
+                .withSymbolConfiguration(.init(pointSize: 13, weight: .medium)) ?? NSImage(),
+            target: self, action: #selector(closeTapped)
+        )
+        closeButton.isBordered = false
+        closeButton.contentTintColor = Theme.text2
+        closeButton.toolTip = "Dismiss"
+        root.addSubview(closeButton)
+
+        textView = NSTextView(frame: NSRect(x: 0, y: 0, width: width - 24, height: 24))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.textContainerInset = NSSize(width: 2, height: 2)
+        textView.textContainer?.widthTracksTextView = true
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+
+        scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.documentView = textView
+        root.addSubview(scrollView)
+
+        newPanel.contentView = root
+        panel = newPanel
+    }
+}
+
+private final class BubbleCloseButton: NSButton {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}

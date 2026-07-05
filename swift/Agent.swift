@@ -532,7 +532,8 @@ final class AgentSession {
 
     /// Keep only the most recent screenshots in history — old frames burn
     /// context without adding much. Replaced with a short text marker.
-    private func pruneOldImages(keep: Int = 5) {
+    /// 8 accommodates a full session bundle (buffered frames + final shot).
+    private func pruneOldImages(keep: Int = 8) {
         var seen = 0
         for index in stride(from: messages.count - 1, through: 0, by: -1) {
             guard (messages[index]["role"] as? String) == "user",
