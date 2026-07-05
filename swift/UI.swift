@@ -57,12 +57,14 @@ class MenuBarManager: NSObject {
     var onShowHistory: (() -> Void)?
     var onShowSettings: (() -> Void)?
     var onShowPermissions: (() -> Void)?
-    var onToggleCapture: (() -> Void)?
+    var onToggleSession: (() -> Void)?
+    var onToggleAnnotate: (() -> Void)?
+    var onShowChat: (() -> Void)?
     var onQuit: (() -> Void)?
 
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
-    private var captureMenuItem: NSMenuItem!
+    private var sessionMenuItem: NSMenuItem!
 
     override init() {
         super.init()
@@ -84,10 +86,12 @@ class MenuBarManager: NSObject {
         statusMenuItem = menu.addItem(withTitle: "Voice Flow — Loading…", action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
         menu.addItem(.separator())
-        captureMenuItem = menu.addItem(withTitle: "Start Activity Capture", action: #selector(toggleCaptureAction), keyEquivalent: "")
-        captureMenuItem.target = self
+        sessionMenuItem = menu.addItem(withTitle: "Start Session", action: #selector(toggleSessionAction), keyEquivalent: "")
+        sessionMenuItem.target = self
+        menu.addItem(withTitle: "Annotate Screen", action: #selector(annotateAction), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Show Chat", action: #selector(chatAction), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Show History", action: #selector(historyAction), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Dictation History", action: #selector(historyAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Permissions…", action: #selector(permissionsAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(settingsAction), keyEquivalent: "").target = self
         menu.addItem(.separator())
@@ -99,15 +103,17 @@ class MenuBarManager: NSObject {
         statusMenuItem?.title = "Voice Flow — \(Theme.stateLabel(state))"
     }
 
-    func setCapturing(_ active: Bool) {
-        captureMenuItem?.title = active ? "Stop Activity Capture" : "Start Activity Capture"
-        captureMenuItem?.state = active ? .on : .off
+    func setSessionActive(_ active: Bool) {
+        sessionMenuItem?.title = active ? "End Session" : "Start Session"
+        sessionMenuItem?.state = active ? .on : .off
     }
 
     @objc private func historyAction() { onShowHistory?() }
     @objc private func permissionsAction() { onShowPermissions?() }
     @objc private func settingsAction() { onShowSettings?() }
-    @objc private func toggleCaptureAction() { onToggleCapture?() }
+    @objc private func toggleSessionAction() { onToggleSession?() }
+    @objc private func annotateAction() { onToggleAnnotate?() }
+    @objc private func chatAction() { onShowChat?() }
     @objc private func quitAction() { onQuit?() }
 }
 
@@ -119,25 +125,25 @@ class FloatingIndicator: NSObject {
     var onClick: (() -> Void)?
     var onQuit: (() -> Void)?
     var onShowHistory: (() -> Void)?
-    var onToggleCapture: (() -> Void)?
+    var onToggleSession: (() -> Void)?
+    var onToggleAnnotate: (() -> Void)?
 
-    private let W: CGFloat = 48, H: CGFloat = 16
-    private let DOT_R: CGFloat = 3, DOT_SP: CGFloat = 10
+    private let W: CGFloat = 52, H: CGFloat = 18
+    private let DOT_R: CGFloat = 3, DOT_SP: CGFloat = 11
+
     private var panel: NSPanel!
     private var pillLayer: CALayer!
-    private var captureOutlineLayer: CALayer!
+    private var sessionRingLayer: CALayer!
     private var dotLayers: [CALayer] = []
+
     private var state: AppState = .idle
-    private var isCapturing = false
+    private var sessionActive = false
+    private var agentActivity: AgentActivity = .idle
     private var ttsSnapshot: TTSStatusSnapshot?
 
     func show() {
-        let screen = (NSScreen.screens.first ?? NSScreen.main!).frame
-        let x = screen.minX + (screen.width - W) / 2
-        let y = screen.minY + 4  // 4px from bottom edge of primary screen
-
         panel = NSPanel(
-            contentRect: NSRect(x: x, y: y, width: W, height: H),
+            contentRect: NSRect(x: 0, y: 0, width: W, height: H),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false
         )
@@ -145,47 +151,41 @@ class FloatingIndicator: NSObject {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.ignoresMouseEvents = false
+        panel.isReleasedWhenClosed = false
 
         let rootView = IndicatorView(frame: NSRect(x: 0, y: 0, width: W, height: H))
         rootView.onClick = { [weak self] in self?.onClick?() }
-        rootView.onRightClick = { [weak self] view, pt in self?.showContextMenu(in: view, at: pt) }
+        rootView.onRightClick = { [weak self] view, point in self?.showContextMenu(in: view, at: point) }
         rootView.wantsLayer = true
         let root = rootView.layer!
 
-        // Pill background
+        // Pill background — inset by 1pt so the session ring has room.
         pillLayer = CALayer()
-        pillLayer.frame = CGRect(x: 0.5, y: 0.5, width: W - 1, height: H - 1)
-        pillLayer.cornerRadius = H / 2
+        pillLayer.frame = CGRect(x: 1, y: 1, width: W - 2, height: H - 2)
+        pillLayer.cornerRadius = (H - 2) / 2
         pillLayer.borderWidth = 1.0
         root.addSublayer(pillLayer)
 
-        captureOutlineLayer = CALayer()
-        captureOutlineLayer.frame = pillLayer.frame
-        captureOutlineLayer.cornerRadius = pillLayer.cornerRadius
-        captureOutlineLayer.backgroundColor = NSColor.clear.cgColor
-        captureOutlineLayer.borderColor = NSColor(r: 220, g: 60, b: 50, a: 190).cgColor
-        captureOutlineLayer.borderWidth = 0
-        captureOutlineLayer.opacity = 0
-        captureOutlineLayer.shadowColor = NSColor(r: 255, g: 96, b: 86, a: 255).cgColor
-        captureOutlineLayer.shadowOffset = .zero
-        root.addSublayer(captureOutlineLayer)
+        // Session ring — visible while a session is live.
+        sessionRingLayer = CALayer()
+        sessionRingLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
+        sessionRingLayer.cornerRadius = H / 2
+        sessionRingLayer.backgroundColor = NSColor.clear.cgColor
+        sessionRingLayer.borderColor = NSColor(r: 255, g: 128, b: 96, a: 200).cgColor
+        sessionRingLayer.borderWidth = 0
+        sessionRingLayer.opacity = 0
+        sessionRingLayer.shadowColor = NSColor(r: 255, g: 128, b: 96, a: 255).cgColor
+        sessionRingLayer.shadowOffset = .zero
+        root.addSublayer(sessionRingLayer)
 
-        // Specular highlight
-        let spec = CALayer()
-        let specH = H * 0.42
-        spec.frame = CGRect(x: 1.5, y: H - 1.0 - specH, width: W - 3, height: specH)
-        spec.cornerRadius = H / 2 - 1
-        spec.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10).cgColor
-        root.addSublayer(spec)
-
-        // 3 dots
+        // 3 dots, centered as a group on the pill
         let cy = H / 2.0
-        let sx = (W - 2 * DOT_SP) / 2.0
+        let firstDotX = W / 2.0 - DOT_SP
         for i in 0..<3 {
             let dot = CALayer()
-            let x = sx + CGFloat(i) * DOT_SP
+            let x = firstDotX + CGFloat(i) * DOT_SP
             dot.frame = CGRect(x: x - DOT_R, y: cy - DOT_R, width: DOT_R * 2, height: DOT_R * 2)
             dot.cornerRadius = DOT_R
             root.addSublayer(dot)
@@ -193,22 +193,58 @@ class FloatingIndicator: NSObject {
         }
 
         panel.contentView = rootView
+        recenter()
         panel.orderFront(nil)
+        applyState()
+
+        // Screen layout changes and sleep/wake both silently kill CA
+        // animations or move the pill — reapply on both.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(screenChanged),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(wokeUp),
+            name: NSWorkspace.didWakeNotification, object: nil
+        )
+    }
+
+    @objc private func screenChanged() {
+        recenter()
         applyState()
     }
 
-    func setState(_ s: AppState) {
-        state = s
+    @objc private func wokeUp() {
         applyState()
-        if s == .done {
+    }
+
+    private func recenter() {
+        guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
+        let frame = screen.frame
+        let x = (frame.minX + (frame.width - W) / 2).rounded()
+        let y = (frame.minY + 5).rounded()
+        panel.setFrame(NSRect(x: x, y: y, width: W, height: H), display: true)
+    }
+
+    // ── State inputs ────────────────────────────────────
+
+    func setState(_ newState: AppState) {
+        state = newState
+        applyState()
+        if newState == .done {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 if self.state == .done { self.state = .idle; self.applyState() }
             }
         }
     }
 
-    func setCapturing(_ active: Bool) {
-        isCapturing = active
+    func setSessionActive(_ active: Bool) {
+        sessionActive = active
+        applyState()
+    }
+
+    func setAgentActivity(_ activity: AgentActivity) {
+        agentActivity = activity
         applyState()
     }
 
@@ -217,122 +253,161 @@ class FloatingIndicator: NSObject {
         applyState()
     }
 
+    // ── Rendering ───────────────────────────────────────
+    // Priority when dictation is idle: agent activity > TTS > plain idle.
+
     private func applyState() {
-        pillLayer?.removeAllAnimations()
-        captureOutlineLayer?.removeAllAnimations()
+        guard pillLayer != nil else { return }
+        pillLayer.removeAllAnimations()
+        sessionRingLayer.removeAllAnimations()
         dotLayers.forEach { $0.removeAllAnimations() }
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        pillLayer.borderWidth = 1.0
+        sessionRingLayer.borderWidth = sessionActive ? 1.5 : 0
+        sessionRingLayer.opacity = sessionActive ? 1.0 : 0.0
+        sessionRingLayer.shadowOpacity = 0
+        sessionRingLayer.shadowRadius = 0
+        CATransaction.commit()
 
-        pillLayer?.borderWidth = 1.0
-        captureOutlineLayer?.borderColor = NSColor(r: 220, g: 60, b: 50, a: 190).cgColor
-        captureOutlineLayer?.borderWidth = isCapturing ? 1.5 : 0
-        captureOutlineLayer?.opacity = isCapturing ? 1.0 : 0.0
-        captureOutlineLayer?.shadowOpacity = 0.0
-        captureOutlineLayer?.shadowRadius = 0.0
-
-        if state == .idle, !isCapturing, let snapshot = ttsSnapshot, applyTTSVisual(snapshot) {
-            CATransaction.commit()
+        if state == .idle, agentActivity != .idle {
+            applyAgentVisual(agentActivity)
+            return
+        }
+        if state == .idle, let snapshot = ttsSnapshot, applyTTSVisual(snapshot) {
             return
         }
 
         switch state {
         case .recording:
-            pillLayer.backgroundColor = NSColor(r: 110, g: 50, b: 45, a: 115).cgColor
-            pillLayer.borderColor = NSColor(r: 220, g: 160, b: 140, a: 45).cgColor
-            dotLayers.forEach { $0.backgroundColor = NSColor(r: 255, g: 240, b: 220, a: 180).cgColor }
-            CATransaction.commit()
+            paint(bg: NSColor(r: 110, g: 50, b: 45, a: 115),
+                  border: NSColor(r: 220, g: 160, b: 140, a: 45),
+                  dots: NSColor(r: 255, g: 240, b: 220, a: 180))
             addPulse(duration: 1.45)
             addDotScale(cycle: 2.4)
 
         case .handsFree:
-            pillLayer.backgroundColor = NSColor(r: 100, g: 75, b: 30, a: 120).cgColor
-            pillLayer.borderColor = NSColor(r: 230, g: 190, b: 100, a: 50).cgColor
-            dotLayers.forEach { $0.backgroundColor = NSColor(r: 255, g: 240, b: 200, a: 190).cgColor }
-            CATransaction.commit()
+            paint(bg: NSColor(r: 100, g: 75, b: 30, a: 120),
+                  border: NSColor(r: 230, g: 190, b: 100, a: 50),
+                  dots: NSColor(r: 255, g: 240, b: 200, a: 190))
             addPulse(duration: 1.6)
             addDotScale(cycle: 2.8)
 
         case .processing, .loading:
-            pillLayer.backgroundColor = NSColor(r: 100, g: 80, b: 40, a: 110).cgColor
-            pillLayer.borderColor = NSColor(r: 212, g: 168, b: 83, a: 45).cgColor
-            dotLayers.forEach { $0.backgroundColor = NSColor(r: 255, g: 240, b: 200, a: 170).cgColor }
-            CATransaction.commit()
+            paint(bg: NSColor(r: 100, g: 80, b: 40, a: 110),
+                  border: NSColor(r: 212, g: 168, b: 83, a: 45),
+                  dots: NSColor(r: 255, g: 240, b: 200, a: 170))
             addPulse(duration: 1.8)
             addDotBounce(cycle: 2.1)
 
         case .done:
-            pillLayer.backgroundColor = NSColor(r: 60, g: 90, b: 50, a: 120).cgColor
-            pillLayer.borderColor = NSColor(r: 160, g: 210, b: 140, a: 50).cgColor
-            dotLayers.forEach { $0.backgroundColor = NSColor(r: 255, g: 245, b: 220, a: 190).cgColor }
-            CATransaction.commit()
+            paint(bg: NSColor(r: 60, g: 90, b: 50, a: 120),
+                  border: NSColor(r: 160, g: 210, b: 140, a: 50),
+                  dots: NSColor(r: 255, g: 245, b: 220, a: 190))
 
         case .idle:
-            pillLayer.backgroundColor = NSColor(r: 55, g: 48, b: 40, a: 80).cgColor
-            pillLayer.borderColor = NSColor(r: 255, g: 220, b: 180, a: 14).cgColor
-            dotLayers.forEach { $0.backgroundColor = NSColor(r: 255, g: 240, b: 220, a: 110).cgColor }
+            paint(bg: NSColor(r: 55, g: 48, b: 40, a: 90),
+                  border: NSColor(r: 255, g: 220, b: 180, a: 16),
+                  dots: NSColor(r: 255, g: 240, b: 220, a: 110))
+        }
+    }
+
+    private func applyAgentVisual(_ activity: AgentActivity) {
+        switch activity {
+        case .thinking:
+            paint(bg: NSColor(r: 58, g: 60, b: 92, a: 130),
+                  border: NSColor(r: 140, g: 150, b: 235, a: 60),
+                  dots: NSColor(r: 220, g: 226, b: 255, a: 190))
+            addPulse(duration: 1.6)
+            addDotFadeSweep(cycle: 1.2)
+        case .responding:
+            paint(bg: NSColor(r: 46, g: 66, b: 92, a: 130),
+                  border: NSColor(r: 120, g: 175, b: 240, a: 60),
+                  dots: NSColor(r: 216, g: 236, b: 255, a: 200))
+            addDotFadeSweep(cycle: 0.9)
+        case .acting:
+            paint(bg: NSColor(r: 112, g: 52, b: 40, a: 150),
+                  border: NSColor(r: 255, g: 130, b: 100, a: 90),
+                  dots: NSColor(r: 255, g: 230, b: 220, a: 210))
+            addPulse(duration: 0.9)
+            addDotScale(cycle: 1.4)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            sessionRingLayer.shadowOpacity = 0.8
+            sessionRingLayer.shadowRadius = 5
             CATransaction.commit()
+        case .idle:
+            break
         }
     }
 
     private func applyTTSVisual(_ snapshot: TTSStatusSnapshot) -> Bool {
         let isPaused = snapshot.message == "Paused"
-
         switch snapshot.phase {
         case .playing:
-            pillLayer.backgroundColor = NSColor(r: 44, g: 84, b: 68, a: 125).cgColor
-            pillLayer.borderColor = NSColor(r: 130, g: 220, b: 176, a: 60).cgColor
-            dotLayers.forEach { $0.backgroundColor = NSColor(r: 228, g: 255, b: 244, a: 195).cgColor }
+            paint(bg: NSColor(r: 44, g: 84, b: 68, a: 125),
+                  border: NSColor(r: 130, g: 220, b: 176, a: 60),
+                  dots: NSColor(r: 228, g: 255, b: 244, a: 195))
             addPulse(duration: 1.25)
             addDotFadeSweep(cycle: 1.0)
             return true
         case .generating:
-            pillLayer.backgroundColor = NSColor(r: 62, g: 78, b: 54, a: 115).cgColor
-            pillLayer.borderColor = NSColor(r: 190, g: 220, b: 132, a: 46).cgColor
-            dotLayers.forEach { $0.backgroundColor = NSColor(r: 244, g: 255, b: 215, a: 185).cgColor }
+            paint(bg: NSColor(r: 62, g: 78, b: 54, a: 115),
+                  border: NSColor(r: 190, g: 220, b: 132, a: 46),
+                  dots: NSColor(r: 244, g: 255, b: 215, a: 185))
             addPulse(duration: 1.5)
             addDotFadeSweep(cycle: 1.25)
             return true
         case .ready where isPaused:
-            pillLayer.backgroundColor = NSColor(r: 42, g: 60, b: 54, a: 96).cgColor
-            pillLayer.borderColor = NSColor(r: 140, g: 206, b: 182, a: 34).cgColor
-            dotLayers.forEach { $0.backgroundColor = NSColor(r: 214, g: 236, b: 226, a: 145).cgColor }
+            paint(bg: NSColor(r: 42, g: 60, b: 54, a: 96),
+                  border: NSColor(r: 140, g: 206, b: 182, a: 34),
+                  dots: NSColor(r: 214, g: 236, b: 226, a: 145))
             return true
         default:
             return false
         }
     }
 
-    func flashCapturePulse() {
-        guard isCapturing, let captureOutlineLayer else { return }
+    private func paint(bg: NSColor, border: NSColor, dots: NSColor) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        pillLayer.backgroundColor = bg.cgColor
+        pillLayer.borderColor = border.cgColor
+        dotLayers.forEach { $0.backgroundColor = dots.cgColor }
+        CATransaction.commit()
+    }
 
-        captureOutlineLayer.removeAnimation(forKey: "captureFlash")
+    func flashCapturePulse() {
+        guard sessionActive, let sessionRingLayer else { return }
+        sessionRingLayer.removeAnimation(forKey: "captureFlash")
 
         let ease = CAMediaTimingFunction(name: .easeInEaseOut)
-
         let width = CAKeyframeAnimation(keyPath: "borderWidth")
-        width.values = [1.5, 4.0, 1.5]
+        width.values = [1.5, 3.5, 1.5]
         width.keyTimes = [0.0, 0.45, 1.0]
         width.timingFunctions = [ease, ease]
 
-        let shadowOpacity = CAKeyframeAnimation(keyPath: "shadowOpacity")
-        shadowOpacity.values = [0.0, 0.85, 0.0]
-        shadowOpacity.keyTimes = [0.0, 0.45, 1.0]
-        shadowOpacity.timingFunctions = [ease, ease]
+        let glow = CAKeyframeAnimation(keyPath: "shadowOpacity")
+        glow.values = [0.0, 0.85, 0.0]
+        glow.keyTimes = [0.0, 0.45, 1.0]
+        glow.timingFunctions = [ease, ease]
 
-        let shadowRadius = CAKeyframeAnimation(keyPath: "shadowRadius")
-        shadowRadius.values = [0.0, 7.0, 0.0]
-        shadowRadius.keyTimes = [0.0, 0.45, 1.0]
-        shadowRadius.timingFunctions = [ease, ease]
+        let radius = CAKeyframeAnimation(keyPath: "shadowRadius")
+        radius.values = [0.0, 6.0, 0.0]
+        radius.keyTimes = [0.0, 0.45, 1.0]
+        radius.timingFunctions = [ease, ease]
 
         let flash = CAAnimationGroup()
-        flash.animations = [width, shadowOpacity, shadowRadius]
-        flash.duration = 0.42
+        flash.animations = [width, glow, radius]
+        flash.duration = 0.4
         flash.isRemovedOnCompletion = true
-
-        captureOutlineLayer.add(flash, forKey: "captureFlash")
+        sessionRingLayer.add(flash, forKey: "captureFlash")
     }
+
+    // ── Animations ─────────────────────────────────────
+    // All repeating animations use beginTime (not timeOffset) so phase
+    // shifts land correctly and the loops stay smooth.
 
     private func addPulse(duration: Double) {
         let a = CABasicAnimation(keyPath: "opacity")
@@ -344,19 +419,21 @@ class FloatingIndicator: NSObject {
 
     private func addDotScale(cycle: Double) {
         let ease = CAMediaTimingFunction(name: .easeInEaseOut)
+        let now = CACurrentMediaTime()
         for (i, dot) in dotLayers.enumerated() {
             let a = CAKeyframeAnimation(keyPath: "transform.scale")
             a.values = [1.0, 1.35, 1.0]
             a.keyTimes = [0.0, 0.5, 1.0]
             a.timingFunctions = [ease, ease]
             a.duration = cycle; a.repeatCount = .infinity
-            a.timeOffset = Double(2 - i) * cycle / 3.0
+            a.beginTime = now - Double(i) * cycle / 3.0
             dot.add(a, forKey: "scale")
         }
     }
 
     private func addDotBounce(cycle: Double) {
         let ease = CAMediaTimingFunction(name: .easeInEaseOut)
+        let now = CACurrentMediaTime()
         let cy = H / 2.0
         for (i, dot) in dotLayers.enumerated() {
             let a = CAKeyframeAnimation(keyPath: "position.y")
@@ -364,13 +441,14 @@ class FloatingIndicator: NSObject {
             a.keyTimes = [0.0, 0.5, 1.0]
             a.timingFunctions = [ease, ease]
             a.duration = cycle; a.repeatCount = .infinity
-            a.timeOffset = Double(2 - i) * cycle / 3.0
+            a.beginTime = now - Double(i) * cycle / 3.0
             dot.add(a, forKey: "bounce")
         }
     }
 
     private func addDotFadeSweep(cycle: Double) {
         let ease = CAMediaTimingFunction(name: .easeInEaseOut)
+        let now = CACurrentMediaTime()
         for (i, dot) in dotLayers.enumerated() {
             let a = CAKeyframeAnimation(keyPath: "opacity")
             a.values = [0.35, 1.0, 0.45]
@@ -378,24 +456,26 @@ class FloatingIndicator: NSObject {
             a.timingFunctions = [ease, ease]
             a.duration = cycle
             a.repeatCount = .infinity
-            a.timeOffset = Double(i) * cycle / 4.0
+            a.beginTime = now - Double(i) * cycle / 4.0
             dot.add(a, forKey: "fadeSweep")
         }
     }
 
     private func showContextMenu(in view: NSView, at point: NSPoint) {
         let menu = NSMenu()
-        let captureItem = menu.addItem(
-            withTitle: isCapturing ? "Stop Activity Capture" : "Start Activity Capture",
-            action: #selector(ctxToggleCapture), keyEquivalent: "")
-        captureItem.target = self
+        let sessionItem = menu.addItem(
+            withTitle: sessionActive ? "End Session" : "Start Session",
+            action: #selector(ctxToggleSession), keyEquivalent: "")
+        sessionItem.target = self
+        menu.addItem(withTitle: "Annotate Screen", action: #selector(ctxAnnotate), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Show History", action: #selector(ctxHistory), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Dictation History", action: #selector(ctxHistory), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Voice Flow", action: #selector(ctxQuit), keyEquivalent: "").target = self
         menu.popUp(positioning: nil, at: point, in: view)
     }
-    @objc private func ctxToggleCapture() { onToggleCapture?() }
+    @objc private func ctxToggleSession() { onToggleSession?() }
+    @objc private func ctxAnnotate() { onToggleAnnotate?() }
     @objc private func ctxHistory() { onShowHistory?() }
     @objc private func ctxQuit() { onQuit?() }
 }
@@ -404,6 +484,7 @@ class IndicatorView: NSView {
     var onClick: (() -> Void)?
     var onRightClick: ((NSView, NSPoint) -> Void)?
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { onClick?() }
     override func rightMouseDown(with event: NSEvent) {
         onRightClick?(self, convert(event.locationInWindow, from: nil))
@@ -521,14 +602,12 @@ class FloatingTranscriptPanel {
 
 enum HistoryTab: Int {
     case dictations = 0
-    case chat = 1
-    case tts = 2
+    case tts = 1
 }
 
 class HistoryWindowController: NSWindowController, NSWindowDelegate {
     var onSettings: (() -> Void)?
     var onWindowClosed: (() -> Void)?
-    var onToggleCapture: (() -> Void)?
     var onTTSSpeak: ((TTSRequest) -> Void)?
     var onTTSSeek: ((Double) -> Void)?
     var onTTSStop: (() -> Void)?
@@ -541,13 +620,6 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
     private var emptyView: NSView!
     private var scrollView: NSScrollView!
     private var lastDay: String = ""
-
-    // Conversation (Chat) tab
-    private var conversationContainer: NSView!
-    private var conversationContentStack: NSView!
-    private var conversationScrollView: NSScrollView!
-    private var conversationEmptyView: NSView!
-    private var foundryStateLabel: NSTextField!
 
     // TTS tab
     private var ttsContainer: NSView!
@@ -648,7 +720,7 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
         let titleLabel = NSTextField(labelWithString: "Voice Flow")
         titleLabel.font = .boldSystemFont(ofSize: 17)
         titleLabel.textColor = Theme.accent
-        let subtitleLabel = NSTextField(labelWithString: "Local speech-to-text dictation")
+        let subtitleLabel = NSTextField(labelWithString: "Dictation history & text to speech")
         subtitleLabel.font = .systemFont(ofSize: 11)
         subtitleLabel.textColor = Theme.text3
         titleBlock.addArrangedSubview(titleLabel)
@@ -711,7 +783,7 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
         segContainer.translatesAutoresizingMaskIntoConstraints = false
         segContainer.heightAnchor.constraint(equalToConstant: 40).isActive = true
 
-        segmentControl = NSSegmentedControl(labels: ["Dictations", "Chat", "TTS"], trackingMode: .selectOne,
+        segmentControl = NSSegmentedControl(labels: ["Dictations", "Text to Speech"], trackingMode: .selectOne,
                                             target: self, action: #selector(tabChanged))
         segmentControl.selectedSegment = 0
         segmentControl.translatesAutoresizingMaskIntoConstraints = false
@@ -760,63 +832,6 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
             scrollView.trailingAnchor.constraint(equalTo: dictationsContainer.trailingAnchor, constant: -12),
             scrollView.bottomAnchor.constraint(equalTo: dictationsContainer.bottomAnchor, constant: -12),
             contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-        ])
-
-        // ── conversation (chat) tab ───────────────────
-        conversationContainer = NSView()
-        conversationContainer.translatesAutoresizingMaskIntoConstraints = false
-        conversationContainer.isHidden = true
-
-        let chatHeader = NSStackView()
-        chatHeader.orientation = .horizontal
-        chatHeader.spacing = 8
-        chatHeader.translatesAutoresizingMaskIntoConstraints = false
-
-        let chatLabel = NSTextField(labelWithString: "FOUNDRY CHAT")
-        chatLabel.font = .systemFont(ofSize: 10, weight: .semibold)
-        chatLabel.textColor = Theme.text3
-
-        foundryStateLabel = NSTextField(labelWithString: "Disconnected")
-        foundryStateLabel.font = .systemFont(ofSize: 10, weight: .medium)
-        foundryStateLabel.textColor = Theme.text3
-
-        let chatSpacer = NSView()
-        chatSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        chatHeader.addArrangedSubview(chatLabel)
-        chatHeader.addArrangedSubview(chatSpacer)
-        chatHeader.addArrangedSubview(foundryStateLabel)
-
-        conversationContentStack = FlippedView()
-        conversationContentStack.translatesAutoresizingMaskIntoConstraints = false
-
-        conversationEmptyView = makeConversationEmptyState()
-        conversationEmptyView.translatesAutoresizingMaskIntoConstraints = false
-        conversationContentStack.addSubview(conversationEmptyView)
-        NSLayoutConstraint.activate([
-            conversationEmptyView.topAnchor.constraint(equalTo: conversationContentStack.topAnchor, constant: 60),
-            conversationEmptyView.centerXAnchor.constraint(equalTo: conversationContentStack.centerXAnchor),
-        ])
-
-        conversationScrollView = NSScrollView()
-        conversationScrollView.hasVerticalScroller = true
-        conversationScrollView.drawsBackground = false
-        conversationScrollView.scrollerStyle = .overlay
-        conversationScrollView.documentView = conversationContentStack
-
-        conversationContainer.addSubview(chatHeader)
-        conversationContainer.addSubview(conversationScrollView)
-        conversationScrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        NSLayoutConstraint.activate([
-            chatHeader.topAnchor.constraint(equalTo: conversationContainer.topAnchor, constant: 14),
-            chatHeader.leadingAnchor.constraint(equalTo: conversationContainer.leadingAnchor, constant: 16),
-            chatHeader.trailingAnchor.constraint(equalTo: conversationContainer.trailingAnchor, constant: -16),
-            conversationScrollView.topAnchor.constraint(equalTo: chatHeader.bottomAnchor, constant: 8),
-            conversationScrollView.leadingAnchor.constraint(equalTo: conversationContainer.leadingAnchor, constant: 12),
-            conversationScrollView.trailingAnchor.constraint(equalTo: conversationContainer.trailingAnchor, constant: -12),
-            conversationScrollView.bottomAnchor.constraint(equalTo: conversationContainer.bottomAnchor, constant: -12),
-            conversationContentStack.widthAnchor.constraint(equalTo: conversationScrollView.widthAnchor),
         ])
 
         // ── tts tab ───────────────────────────────────
@@ -978,7 +993,6 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
         let contentArea = NSView()
         contentArea.translatesAutoresizingMaskIntoConstraints = false
         contentArea.addSubview(dictationsContainer)
-        contentArea.addSubview(conversationContainer)
         contentArea.addSubview(ttsContainer)
 
         NSLayoutConstraint.activate([
@@ -986,10 +1000,6 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
             dictationsContainer.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
             dictationsContainer.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
             dictationsContainer.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
-            conversationContainer.topAnchor.constraint(equalTo: contentArea.topAnchor),
-            conversationContainer.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
-            conversationContainer.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
-            conversationContainer.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
             ttsContainer.topAnchor.constraint(equalTo: contentArea.topAnchor),
             ttsContainer.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
             ttsContainer.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
@@ -1191,140 +1201,12 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
     @objc private func tabChanged() {
         let tab = HistoryTab(rawValue: segmentControl.selectedSegment) ?? .dictations
         dictationsContainer.isHidden = tab != .dictations
-        conversationContainer.isHidden = tab != .chat
         ttsContainer.isHidden = tab != .tts
     }
 
     func selectTab(_ tab: HistoryTab) {
         segmentControl.selectedSegment = tab.rawValue
         tabChanged()
-    }
-
-    // ── conversation (chat) tab ─────────────────────
-    func setFoundryState(_ state: FoundryClient.ConnectionState) {
-        let labels: [FoundryClient.ConnectionState: String] = [
-            .disconnected: "Disconnected",
-            .connecting: "Connecting…",
-            .connected: "Connected",
-            .subscribed: "Ready",
-        ]
-        foundryStateLabel?.stringValue = labels[state] ?? state.rawValue
-        foundryStateLabel?.textColor = state == .subscribed ? Theme.accent : Theme.text3
-    }
-
-    func updateConversation(_ messages: [DisplayMessage]) {
-        conversationContentStack.subviews.forEach { $0.removeFromSuperview() }
-
-        if messages.isEmpty {
-            conversationEmptyView.translatesAutoresizingMaskIntoConstraints = false
-            conversationContentStack.addSubview(conversationEmptyView)
-            NSLayoutConstraint.activate([
-                conversationEmptyView.topAnchor.constraint(equalTo: conversationContentStack.topAnchor, constant: 60),
-                conversationEmptyView.centerXAnchor.constraint(equalTo: conversationContentStack.centerXAnchor),
-            ])
-            return
-        }
-
-        var topAnchor = conversationContentStack.topAnchor
-
-        for msg in messages {
-            let card = makeConversationBubble(msg)
-            card.translatesAutoresizingMaskIntoConstraints = false
-            conversationContentStack.addSubview(card)
-            NSLayoutConstraint.activate([
-                card.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-                card.leadingAnchor.constraint(equalTo: conversationContentStack.leadingAnchor),
-                card.trailingAnchor.constraint(equalTo: conversationContentStack.trailingAnchor),
-            ])
-            topAnchor = card.bottomAnchor
-        }
-
-        let bottom = topAnchor.constraint(equalTo: conversationContentStack.bottomAnchor, constant: -12)
-        bottom.priority = .defaultLow
-        bottom.isActive = true
-
-        // Scroll to bottom
-        DispatchQueue.main.async {
-            let docH = self.conversationContentStack.frame.height
-            let clipH = self.conversationScrollView.contentSize.height
-            if docH > clipH {
-                self.conversationContentStack.scroll(NSPoint(x: 0, y: docH - clipH))
-            }
-        }
-    }
-
-    private func makeConversationBubble(_ msg: DisplayMessage) -> NSView {
-        let card = NSView()
-        card.wantsLayer = true
-        card.layer?.cornerRadius = 8
-
-        let isUser = msg.role == .user
-        card.layer?.backgroundColor = isUser
-            ? NSColor(r: 60, g: 50, b: 35, a: 80).cgColor
-            : NSColor(r: 40, g: 45, b: 55, a: 80).cgColor
-        card.layer?.borderWidth = 1
-        card.layer?.borderColor = isUser
-            ? NSColor(r: 212, g: 168, b: 83, a: 30).cgColor
-            : NSColor(r: 100, g: 140, b: 200, a: 30).cgColor
-
-        let roleSuffix = msg.isPending ? "  (pending)" : ""
-        let roleLabel = NSTextField(labelWithString: (isUser ? "You" : "Agent") + roleSuffix)
-        roleLabel.font = .systemFont(ofSize: 10, weight: .semibold)
-        roleLabel.textColor = msg.isPending
-            ? NSColor(r: 180, g: 160, b: 100)
-            : (isUser ? Theme.accent : NSColor(r: 130, g: 170, b: 220))
-
-        let contentLabel = NSTextField(wrappingLabelWithString: msg.content)
-        contentLabel.font = .systemFont(ofSize: 12)
-        contentLabel.textColor = Theme.text
-        contentLabel.maximumNumberOfLines = 0
-        contentLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let streamingSuffix = msg.isStreaming ? " ▍" : ""
-        if msg.isStreaming {
-            contentLabel.stringValue = msg.content + streamingSuffix
-        }
-
-        card.addSubview(roleLabel)
-        card.addSubview(contentLabel)
-        roleLabel.translatesAutoresizingMaskIntoConstraints = false
-        contentLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        NSLayoutConstraint.activate([
-            roleLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
-            roleLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            contentLabel.topAnchor.constraint(equalTo: roleLabel.bottomAnchor, constant: 3),
-            contentLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            contentLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
-            contentLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
-        ])
-
-        return card
-    }
-
-    private func makeConversationEmptyState() -> NSView {
-        let v = NSStackView()
-        v.orientation = .vertical
-        v.alignment = .centerX
-        v.spacing = 8
-
-        let t = NSTextField(labelWithString: "No conversation yet")
-        t.font = .systemFont(ofSize: 14, weight: .medium)
-        t.textColor = Theme.text2
-        t.alignment = .center
-        v.addArrangedSubview(t)
-
-        let h = NSTextField(labelWithString: "Start capture to connect to Foundry")
-        h.font = .systemFont(ofSize: 12)
-        h.textColor = Theme.text3
-        h.alignment = .center
-        v.addArrangedSubview(h)
-
-        return v
-    }
-
-    func setCapturing(_ active: Bool) {
-        // Capture state reflected via Foundry state label
     }
 
     func currentTTSRequest() -> TTSRequest {
@@ -1684,629 +1566,5 @@ class KeyRecorderButton: NSButton {
         default:
             return false
         }
-    }
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  Permissions Window
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-struct PermissionViewState {
-    let statusText: String
-    let statusColor: NSColor
-    let actionTitle: String
-    let actionEnabled: Bool
-}
-
-class PermissionsWindowController: NSWindowController, NSWindowDelegate {
-    var onRequestMicrophone: (() -> Void)?
-    var onRequestScreenCapture: (() -> Void)?
-    var onRequestAccessibility: (() -> Void)?
-    var onRefresh: (() -> Void)?
-    var onWindowClosed: (() -> Void)?
-
-    private var introLabel: NSTextField!
-    private var microphoneStatusLabel: NSTextField!
-    private var microphoneButton: NSButton!
-    private var screenCaptureStatusLabel: NSTextField!
-    private var screenCaptureButton: NSButton!
-    private var accessibilityStatusLabel: NSTextField!
-    private var accessibilityButton: NSButton!
-
-    init() {
-        let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 360),
-            styleMask: [.titled, .closable],
-            backing: .buffered, defer: false
-        )
-        w.title = "Permissions"
-        w.center()
-        w.backgroundColor = Theme.bg
-        w.appearance = NSAppearance(named: .darkAqua)
-        w.titlebarAppearsTransparent = true
-        w.isReleasedWhenClosed = false
-        w.minSize = NSSize(width: 520, height: 320)
-        super.init(window: w)
-        w.delegate = self
-        setupUI()
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        sender.orderOut(nil)
-        onWindowClosed?()
-        return false
-    }
-
-    func update(
-        microphone: PermissionViewState,
-        screenCapture: PermissionViewState,
-        accessibility: PermissionViewState,
-        allGranted: Bool
-    ) {
-        introLabel.stringValue = allGranted
-            ? "All required permissions are granted. You can close this window."
-            : "Grant permissions one at a time. If macOS opens System Settings, approve the permission there and return here. Use Refresh if a status lags."
-
-        apply(state: microphone, to: microphoneStatusLabel, button: microphoneButton)
-        apply(state: screenCapture, to: screenCaptureStatusLabel, button: screenCaptureButton)
-        apply(state: accessibility, to: accessibilityStatusLabel, button: accessibilityButton)
-    }
-
-    private func setupUI() {
-        let content = window!.contentView!
-
-        let root = NSStackView()
-        root.orientation = .vertical
-        root.spacing = 16
-        root.edgeInsets = NSEdgeInsets(top: 22, left: 22, bottom: 22, right: 22)
-        root.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(root)
-
-        NSLayoutConstraint.activate([
-            root.topAnchor.constraint(equalTo: content.topAnchor),
-            root.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            root.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-        ])
-
-        let titleLabel = NSTextField(labelWithString: "Permissions")
-        titleLabel.font = .boldSystemFont(ofSize: 18)
-        titleLabel.textColor = Theme.accent
-
-        introLabel = NSTextField(labelWithString: "")
-        introLabel.font = .systemFont(ofSize: 12)
-        introLabel.textColor = Theme.text2
-        introLabel.lineBreakMode = .byWordWrapping
-        introLabel.maximumNumberOfLines = 0
-
-        root.addArrangedSubview(titleLabel)
-        root.addArrangedSubview(introLabel)
-        root.addArrangedSubview(makeDivider())
-
-        let microphoneRow = makePermissionRow(
-            title: "Microphone",
-            detail: "Needed for dictation input.",
-            action: #selector(requestMicrophonePermission)
-        )
-        microphoneStatusLabel = microphoneRow.statusLabel
-        microphoneButton = microphoneRow.button
-        root.addArrangedSubview(microphoneRow.view)
-
-        let screenCaptureRow = makePermissionRow(
-            title: "Screen Recording",
-            detail: "Needed for activity capture screenshots.",
-            action: #selector(requestScreenCapturePermission)
-        )
-        screenCaptureStatusLabel = screenCaptureRow.statusLabel
-        screenCaptureButton = screenCaptureRow.button
-        root.addArrangedSubview(screenCaptureRow.view)
-
-        let accessibilityRow = makePermissionRow(
-            title: "Accessibility",
-            detail: "Needed for global hotkeys and paste automation.",
-            action: #selector(requestAccessibilityPermission)
-        )
-        accessibilityStatusLabel = accessibilityRow.statusLabel
-        accessibilityButton = accessibilityRow.button
-        root.addArrangedSubview(accessibilityRow.view)
-
-        root.addArrangedSubview(makeDivider())
-
-        let refreshButton = NSButton(title: "Refresh", target: self, action: #selector(refreshPermissions))
-        refreshButton.bezelStyle = .rounded
-
-        let closeButton = NSButton(title: "Close", target: self, action: #selector(closeWindow))
-        closeButton.bezelStyle = .rounded
-
-        let buttonSpacer = NSView()
-        buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let footer = NSStackView(views: [buttonSpacer, refreshButton, closeButton])
-        footer.orientation = .horizontal
-        footer.spacing = 8
-        root.addArrangedSubview(footer)
-    }
-
-    private func makePermissionRow(title: String, detail: String, action: Selector) -> (view: NSView, statusLabel: NSTextField, button: NSButton) {
-        let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
-        titleLabel.textColor = Theme.text
-
-        let detailLabel = NSTextField(labelWithString: detail)
-        detailLabel.font = .systemFont(ofSize: 12)
-        detailLabel.textColor = Theme.text3
-
-        let statusLabel = NSTextField(labelWithString: "Checking…")
-        statusLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        statusLabel.textColor = Theme.text2
-        statusLabel.lineBreakMode = .byWordWrapping
-        statusLabel.maximumNumberOfLines = 0
-
-        let textStack = NSStackView(views: [titleLabel, detailLabel, statusLabel])
-        textStack.orientation = .vertical
-        textStack.spacing = 4
-        textStack.alignment = .leading
-
-        let button = NSButton(title: "Request", target: self, action: action)
-        button.bezelStyle = .rounded
-        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let row = NSStackView(views: [textStack, spacer, button])
-        row.orientation = .horizontal
-        row.spacing = 12
-        row.alignment = .top
-
-        return (row, statusLabel, button)
-    }
-
-    private func makeDivider() -> NSView {
-        let divider = NSView()
-        divider.wantsLayer = true
-        divider.layer?.backgroundColor = Theme.border.cgColor
-        divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        return divider
-    }
-
-    private func apply(state: PermissionViewState, to label: NSTextField, button: NSButton) {
-        label.stringValue = state.statusText
-        label.textColor = state.statusColor
-        button.title = state.actionTitle
-        button.isEnabled = state.actionEnabled
-    }
-
-    @objc private func requestMicrophonePermission() {
-        onRequestMicrophone?()
-    }
-
-    @objc private func requestScreenCapturePermission() {
-        onRequestScreenCapture?()
-    }
-
-    @objc private func requestAccessibilityPermission() {
-        onRequestAccessibility?()
-    }
-
-    @objc private func refreshPermissions() {
-        onRefresh?()
-    }
-
-    @objc private func closeWindow() {
-        window?.performClose(nil)
-    }
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  Settings Window
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-class SettingsWindowController: NSWindowController, NSWindowDelegate {
-    var onHotkeyChanged: ((HotkeySpec) -> Void)?
-    var onHandsFreeHotkeyChanged: ((HotkeySpec) -> Void)?
-    var onTTSHotkeyChanged: ((HotkeySpec) -> Void)?
-    var onCaptureHotkeyChanged: ((HotkeySpec) -> Void)?
-    var onCaptureNoteHotkeyChanged: ((HotkeySpec) -> Void)?
-    var onSettingsChanged: ((Bool) -> Void)?
-    var onWindowClosed: (() -> Void)?
-
-    private var providerPopup: NSPopUpButton!
-    private var hotkeyRecorder: KeyRecorderButton!
-    private var handsFreeHotkeyRecorder: KeyRecorderButton!
-    private var ttsHotkeyRecorder: KeyRecorderButton!
-    private var openAIKeyField: NSSecureTextField!
-    private var openAIKeyStatusLabel: NSTextField!
-    private var removeOpenAIKeyButton: NSButton!
-    private var soundsCheck: NSButton!
-    private var doubleTapField: NSTextField!
-    private var llmCleanupCheck: NSButton!
-    private var vocabularyField: NSTextField!
-
-    // Activity capture settings
-    private var captureIntervalField: NSTextField!
-    private var captureHotkeyRecorder: KeyRecorderButton!
-    private var captureNoteHotkeyRecorder: KeyRecorderButton!
-
-    // Foundry gateway settings
-    private var gatewayHostField: NSTextField!
-    private var gatewayWSPortField: NSTextField!
-    private var gatewayHTTPPortField: NSTextField!
-    private var tenantIdField: NSTextField!
-    private var appIdField: NSTextField!
-    private var userIdField: NSTextField!
-    private var agentTypeField: NSTextField!
-    private var sessionLabelField: NSTextField!
-
-    init() {
-        let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 720),
-            styleMask: [.titled, .closable],
-            backing: .buffered, defer: false
-        )
-        w.title = "Settings"
-        w.center()
-        w.backgroundColor = Theme.bg
-        w.appearance = NSAppearance(named: .darkAqua)
-        w.titlebarAppearsTransparent = true
-        w.isReleasedWhenClosed = false
-        w.minSize = NSSize(width: 520, height: 540)
-        super.init(window: w)
-        w.delegate = self
-        setupUI()
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        sender.orderOut(nil)
-        onWindowClosed?()
-        return false
-    }
-
-    private func setupUI() {
-        let s = UserSettings.shared
-        let foundry = s.foundryConfig
-        let grid = NSGridView(numberOfColumns: 2, rows: 0)
-        grid.rowSpacing = 12
-        grid.columnSpacing = 16
-        grid.translatesAutoresizingMaskIntoConstraints = false
-
-        // ── Dictation section ──
-        let dictHeader = lbl("── Dictation ──")
-        dictHeader.textColor = Theme.accent
-        grid.addRow(with: [dictHeader, NSView()])
-
-        providerPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        for provider in DictationProvider.allCases {
-            providerPopup.addItem(withTitle: provider.label)
-            providerPopup.lastItem?.representedObject = provider.rawValue
-        }
-        if let item = providerPopup.itemArray.first(where: {
-            ($0.representedObject as? String) == s.dictationProvider.rawValue
-        }) {
-            providerPopup.select(item)
-        }
-        providerPopup.target = self
-        providerPopup.action = #selector(dictationProviderChanged)
-        providerPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 240).isActive = true
-        grid.addRow(with: [lbl("Provider:"), providerPopup])
-
-        hotkeyRecorder = KeyRecorderButton(spec: s.hotkey)
-        hotkeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        grid.addRow(with: [lbl("Hold Key:"), hotkeyRecorder])
-
-        handsFreeHotkeyRecorder = KeyRecorderButton(spec: s.handsFreeHotkey)
-        handsFreeHotkeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        grid.addRow(with: [lbl("Double-Press:"), handsFreeHotkeyRecorder])
-
-        ttsHotkeyRecorder = KeyRecorderButton(spec: s.ttsHotkey)
-        ttsHotkeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        grid.addRow(with: [lbl("Speak Text:"), ttsHotkeyRecorder])
-
-        openAIKeyField = NSSecureTextField(frame: .zero)
-        openAIKeyField.stringValue = ""
-        openAIKeyField.placeholderString = "sk-..."
-        openAIKeyField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        openAIKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
-
-        removeOpenAIKeyButton = NSButton(title: "Remove Saved Key", target: self, action: #selector(removeOpenAIKey))
-        removeOpenAIKeyButton.bezelStyle = .rounded
-
-        let keyRow = NSStackView(views: [openAIKeyField, removeOpenAIKeyButton])
-        keyRow.orientation = .horizontal
-        keyRow.spacing = 8
-        keyRow.alignment = .centerY
-        grid.addRow(with: [lbl("OpenAI Key:"), keyRow])
-
-        openAIKeyStatusLabel = NSTextField(labelWithString: "")
-        openAIKeyStatusLabel.textColor = Theme.text2
-        openAIKeyStatusLabel.font = .systemFont(ofSize: 11)
-        openAIKeyStatusLabel.maximumNumberOfLines = 0
-        openAIKeyStatusLabel.lineBreakMode = .byWordWrapping
-        grid.addRow(with: [NSView(), openAIKeyStatusLabel])
-
-        soundsCheck = NSButton(checkboxWithTitle: "Play sounds", target: nil, action: nil)
-        soundsCheck.state = s.soundsEnabled ? .on : .off
-        grid.addRow(with: [lbl("Sounds:"), soundsCheck])
-
-        doubleTapField = NSTextField()
-        doubleTapField.integerValue = s.doubleTapMs
-        doubleTapField.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        let dtRow = NSStackView(views: [doubleTapField, lbl("ms")])
-        dtRow.orientation = .horizontal
-        dtRow.alignment = .centerY
-        grid.addRow(with: [lbl("Double Window:"), dtRow])
-
-        llmCleanupCheck = NSButton(checkboxWithTitle: "LLM text cleanup", target: nil, action: nil)
-        llmCleanupCheck.state = s.llmCleanupEnabled ? .on : .off
-        grid.addRow(with: [lbl("Cleanup:"), llmCleanupCheck])
-
-        vocabularyField = NSTextField()
-        vocabularyField.stringValue = s.customVocabulary.joined(separator: ", ")
-        vocabularyField.placeholderString = "Claude, Anthropic, GPT-4o, ..."
-        vocabularyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 240).isActive = true
-        grid.addRow(with: [lbl("Vocabulary:"), vocabularyField])
-
-        let vocabHint = NSTextField(labelWithString: "Comma-separated words the transcriber should recognize")
-        vocabHint.textColor = Theme.text2
-        vocabHint.font = .systemFont(ofSize: 11)
-        grid.addRow(with: [NSView(), vocabHint])
-
-        // ── Foundry Gateway section ──
-        let foundryHeader = lbl("── Foundry Gateway ──")
-        foundryHeader.textColor = Theme.accent
-        grid.addRow(with: [foundryHeader, NSView()])
-
-        gatewayHostField = NSTextField()
-        gatewayHostField.stringValue = foundry.gatewayHost
-        gatewayHostField.placeholderString = "127.0.0.1"
-        gatewayHostField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
-        grid.addRow(with: [lbl("Host:"), gatewayHostField])
-
-        gatewayWSPortField = NSTextField()
-        gatewayWSPortField.integerValue = foundry.gatewayWSPort
-        gatewayWSPortField.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
-        let wsRow = NSStackView(views: [gatewayWSPortField, lbl("WS")])
-        wsRow.orientation = .horizontal
-        wsRow.alignment = .centerY
-        grid.addRow(with: [lbl("WS Port:"), wsRow])
-
-        gatewayHTTPPortField = NSTextField()
-        gatewayHTTPPortField.integerValue = foundry.gatewayHTTPPort
-        gatewayHTTPPortField.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
-        let httpRow = NSStackView(views: [gatewayHTTPPortField, lbl("HTTP")])
-        httpRow.orientation = .horizontal
-        httpRow.alignment = .centerY
-        grid.addRow(with: [lbl("HTTP Port:"), httpRow])
-
-        tenantIdField = NSTextField()
-        tenantIdField.stringValue = foundry.tenantId
-        tenantIdField.placeholderString = "local"
-        tenantIdField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
-        grid.addRow(with: [lbl("Tenant ID:"), tenantIdField])
-
-        appIdField = NSTextField()
-        appIdField.stringValue = foundry.appId
-        appIdField.placeholderString = "voice-flow"
-        appIdField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
-        grid.addRow(with: [lbl("App ID:"), appIdField])
-
-        userIdField = NSTextField()
-        userIdField.stringValue = foundry.userId
-        userIdField.placeholderString = "current app user"
-        userIdField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
-        grid.addRow(with: [lbl("User ID:"), userIdField])
-
-        agentTypeField = NSTextField()
-        agentTypeField.stringValue = foundry.agentType
-        agentTypeField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
-        grid.addRow(with: [lbl("Agent Type:"), agentTypeField])
-
-        sessionLabelField = NSTextField()
-        sessionLabelField.stringValue = foundry.sessionLabel
-        sessionLabelField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
-        grid.addRow(with: [lbl("Session Label:"), sessionLabelField])
-
-        captureIntervalField = NSTextField()
-        captureIntervalField.integerValue = s.captureIntervalSeconds
-        captureIntervalField.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        let intRow = NSStackView(views: [captureIntervalField, lbl("sec")])
-        intRow.orientation = .horizontal
-        intRow.alignment = .centerY
-        grid.addRow(with: [lbl("Interval:"), intRow])
-
-        captureHotkeyRecorder = KeyRecorderButton(spec: s.captureHotkey)
-        captureHotkeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        grid.addRow(with: [lbl("Capture Key:"), captureHotkeyRecorder])
-
-        captureNoteHotkeyRecorder = KeyRecorderButton(spec: s.captureNoteHotkey)
-        captureNoteHotkeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        grid.addRow(with: [lbl("Note Key:"), captureNoteHotkeyRecorder])
-
-        // Save button
-        let saveBtn = NSButton(title: "Save", target: self, action: #selector(save))
-        saveBtn.bezelStyle = .rounded; saveBtn.keyEquivalent = "\r"
-        grid.addRow(with: [NSView(), saveBtn])
-
-        let content = window!.contentView!
-        let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.scrollerStyle = .overlay
-
-        let docView = FlippedView()
-        docView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.documentView = docView
-
-        content.addSubview(scrollView)
-        docView.addSubview(grid)
-
-        if grid.numberOfColumns >= 2 {
-            grid.column(at: 0).xPlacement = .trailing
-            grid.column(at: 1).xPlacement = .fill
-        }
-
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: content.topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-
-            docView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            docView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
-            docView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            docView.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor),
-            docView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-
-            grid.topAnchor.constraint(equalTo: docView.topAnchor, constant: 22),
-            grid.leadingAnchor.constraint(equalTo: docView.leadingAnchor, constant: 22),
-            grid.trailingAnchor.constraint(equalTo: docView.trailingAnchor, constant: -22),
-            grid.bottomAnchor.constraint(equalTo: docView.bottomAnchor, constant: -22),
-        ])
-
-        refreshOpenAIKeyUI()
-        refreshDictationUI()
-        fitWindowToContent(grid)
-    }
-
-    private func lbl(_ text: String) -> NSTextField {
-        let l = NSTextField(labelWithString: text)
-        l.textColor = Theme.text
-        l.font = .systemFont(ofSize: 13)
-        l.setContentCompressionResistancePriority(.required, for: .horizontal)
-        return l
-    }
-
-    private func fitWindowToContent(_ grid: NSGridView) {
-        guard let window, let content = window.contentView else { return }
-
-        content.layoutSubtreeIfNeeded()
-
-        let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 900)
-        let preferredWidth = min(max(560, grid.fittingSize.width + 64), visibleFrame.width * 0.8)
-        let preferredHeight = min(max(640, grid.fittingSize.height + 64), visibleFrame.height * 0.85)
-
-        window.setContentSize(NSSize(width: preferredWidth, height: preferredHeight))
-        window.minSize = NSSize(width: min(preferredWidth, 560), height: 540)
-    }
-
-    private func selectedDictationProvider() -> DictationProvider {
-        guard let raw = providerPopup.selectedItem?.representedObject as? String,
-              let provider = DictationProvider(rawValue: raw) else {
-            return .openai
-        }
-        return provider
-    }
-
-    private func refreshDictationUI() {
-        let isLocal = selectedDictationProvider() == .local
-        llmCleanupCheck.isEnabled = isLocal
-        llmCleanupCheck.alphaValue = isLocal ? 1.0 : 0.5
-    }
-
-    private func refreshOpenAIKeyUI(statusMessage: String? = nil) {
-        let hasKey = KeychainStore.shared.hasOpenAIAPIKey
-        openAIKeyField.stringValue = ""
-        openAIKeyField.placeholderString = hasKey
-            ? "••••••••••••••••"
-            : "sk-..."
-        openAIKeyStatusLabel.stringValue = statusMessage ?? (
-            hasKey
-                ? "Saved in macOS Keychain. Enter a new key only if you want to replace it."
-                : "Stored securely in macOS Keychain when you save."
-        )
-        removeOpenAIKeyButton.isEnabled = hasKey
-    }
-
-    @objc private func dictationProviderChanged() {
-        refreshDictationUI()
-    }
-
-    @objc private func removeOpenAIKey() {
-        guard KeychainStore.shared.removeOpenAIAPIKey() else {
-            NSSound.beep()
-            refreshOpenAIKeyUI(statusMessage: "Failed to remove the saved OpenAI key.")
-            return
-        }
-        openAIKeyField.stringValue = ""
-        refreshOpenAIKeyUI(statusMessage: "Saved OpenAI key removed from macOS Keychain.")
-    }
-
-    @objc private func save() {
-        let s = UserSettings.shared
-        let previousFoundryConfig = s.foundryConfig
-
-        let provider = selectedDictationProvider()
-        s.dictationProvider = provider
-
-        let newOpenAIKey = openAIKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !newOpenAIKey.isEmpty {
-            guard KeychainStore.shared.saveOpenAIAPIKey(newOpenAIKey) else {
-                NSSound.beep()
-                refreshOpenAIKeyUI(statusMessage: "Failed to save the OpenAI key to Keychain.")
-                return
-            }
-            openAIKeyField.stringValue = ""
-            refreshOpenAIKeyUI(statusMessage: "OpenAI key updated in macOS Keychain.")
-        } else if provider == .openai && !KeychainStore.shared.hasOpenAIAPIKey {
-            NSSound.beep()
-            refreshOpenAIKeyUI(statusMessage: "Enter an OpenAI API key or switch back to Local.")
-            return
-        }
-
-        if let spec = hotkeyRecorder.currentSpec {
-            if spec.keyCode != s.hotkey.keyCode || spec.modifiers != s.hotkey.modifiers {
-                s.hotkey = spec
-                onHotkeyChanged?(spec)
-            }
-        }
-        if let spec = handsFreeHotkeyRecorder.currentSpec {
-            if spec.keyCode != s.handsFreeHotkey.keyCode || spec.modifiers != s.handsFreeHotkey.modifiers {
-                s.handsFreeHotkey = spec
-                onHandsFreeHotkeyChanged?(spec)
-            }
-        }
-        if let spec = ttsHotkeyRecorder.currentSpec {
-            if spec.keyCode != s.ttsHotkey.keyCode || spec.modifiers != s.ttsHotkey.modifiers {
-                s.ttsHotkey = spec
-                onTTSHotkeyChanged?(spec)
-            }
-        }
-        s.soundsEnabled = soundsCheck.state == .on
-        s.doubleTapMs = doubleTapField.integerValue
-        s.llmCleanupEnabled = llmCleanupCheck.state == .on
-        s.customVocabulary = vocabularyField.stringValue
-            .components(separatedBy: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        // Foundry gateway settings
-        s.gatewayHost = gatewayHostField.stringValue
-        s.gatewayWSPort = max(1, gatewayWSPortField.integerValue)
-        s.gatewayHTTPPort = max(1, gatewayHTTPPortField.integerValue)
-        s.tenantId = tenantIdField.stringValue
-        s.appId = appIdField.stringValue
-        s.userId = userIdField.stringValue
-        s.agentType = agentTypeField.stringValue
-        s.sessionLabel = sessionLabelField.stringValue
-        s.captureIntervalSeconds = max(1, captureIntervalField.integerValue)
-        if let spec = captureHotkeyRecorder.currentSpec {
-            if spec.keyCode != s.captureHotkey.keyCode || spec.modifiers != s.captureHotkey.modifiers {
-                s.captureHotkey = spec
-                onCaptureHotkeyChanged?(spec)
-            }
-        }
-        if let spec = captureNoteHotkeyRecorder.currentSpec {
-            if spec.keyCode != s.captureNoteHotkey.keyCode || spec.modifiers != s.captureNoteHotkey.modifiers {
-                s.captureNoteHotkey = spec
-                onCaptureNoteHotkeyChanged?(spec)
-            }
-        }
-
-        s.save()
-        onSettingsChanged?(previousFoundryConfig != s.foundryConfig)
-        window?.close()
     }
 }

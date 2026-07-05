@@ -11,36 +11,37 @@ enum AppState: String {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var menuBar: MenuBarManager!
     var indicator: FloatingIndicator!
+    var chatPanel: ChatPanel!
+    var annotationOverlay: AnnotationOverlay!
     var historyWindow: HistoryWindowController!
     var settingsWindow: SettingsWindowController!
     var permissionsWindow: PermissionsWindowController!
     var hotkeyManager: HotkeyManager!
     var handsFreeHotkeyManager: HotkeyManager!
     var ttsHotkeyManager: HotkeyManager!
+    var sessionHotkeyManager: HotkeyManager!
+    var talkHotkeyManager: HotkeyManager!
+    var annotateHotkeyManager: HotkeyManager!
     var recorder: AudioRecorder!
     var backend: BackendBridge!
     var paster: Paster!
     var ttsController: TTSController!
     var localAPIServer: LocalAPIServer!
 
-    // Foundry capture
+    // Agent session
     var screenCapture: ScreenCapture!
     var captureScheduler: CaptureScheduler!
-    var captureHotkeyManager: HotkeyManager!
-    var captureNoteHotkeyManager: HotkeyManager!
-    var foundryClient: FoundryClient!
-    var conversationManager: ConversationManager!
-    private var isCapturing = false
-    private var isScreenCaptureActive = false
+    var agent: AgentSession!
+    private var sessionActive = false
     private var lastCaptureData: Data?
     private let diffThreshold: Double = 0.01
+    private var ambientScreenshots: [Data] = []
+    private let maxAmbientScreenshots = 2
+    private var escapeMonitor: Any?
 
-    // Buffered captures — sent to agent only when activity stops
-    private var pendingScreenshots: [Data] = []
-    private var pendingDictations: [String] = []
-
-    // Tracks whether the current recording is a capture note (buffer) vs regular dictation (paste)
-    private var recordingIsCaptureNote = false
+    // Tracks whether the current recording is a voice note for the agent
+    // (buffer + send) vs regular dictation (paste into the focused app).
+    private var recordingForAgent = false
     private var initialPermissionsRequested = false
 
     // Streaming partial transcription
@@ -65,26 +66,85 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         UserSettings.shared.load()
 
-        // ── UI ──────────────────────────────────────────
+        setupUIComponents()
+        setupMainMenu()
+        setupCore()
+        setupAgent()
+        setupHotkeys()
+
+        requestInitialPermissionsIfNeeded()
+        startHotkeyWithAccessibilityCheck()
+
+        // ── launch backend ──────────────────────────────
+        state = .loading
+        backend.start()
+        vflog("app started")
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        ttsController?.shutdown()
+        localAPIServer?.stop()
+        if let escapeMonitor {
+            NSEvent.removeMonitor(escapeMonitor)
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        refreshPermissionWindow()
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  Setup
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    private func setupUIComponents() {
         menuBar = MenuBarManager()
         menuBar.onShowHistory = { [weak self] in self?.toggleHistory() }
         menuBar.onShowPermissions = { [weak self] in self?.showPermissions() }
         menuBar.onShowSettings = { [weak self] in self?.showSettings() }
-        menuBar.onToggleCapture = { [weak self] in self?.toggleCapture() }
+        menuBar.onToggleSession = { [weak self] in self?.toggleSession() }
+        menuBar.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
+        menuBar.onShowChat = { [weak self] in self?.chatPanel.show() }
         menuBar.onQuit = { NSApp.terminate(nil) }
 
         indicator = FloatingIndicator()
-        indicator.onClick = { [weak self] in self?.toggleHistory() }
+        indicator.onClick = { [weak self] in self?.chatPanel.toggle() }
         indicator.onShowHistory = { [weak self] in self?.toggleHistory() }
-        indicator.onToggleCapture = { [weak self] in self?.toggleCapture() }
+        indicator.onToggleSession = { [weak self] in self?.toggleSession() }
+        indicator.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
         indicator.onQuit = { NSApp.terminate(nil) }
         indicator.show()
+
+        annotationOverlay = AnnotationOverlay()
+        annotationOverlay.onEditingChanged = { [weak self] editing in
+            self?.chatPanel.setAnnotating(editing)
+        }
+
+        chatPanel = ChatPanel()
+        chatPanel.onSendText = { [weak self] text in self?.sendTypedMessage(text) }
+        chatPanel.onSnap = { [weak self] in self?.snapAndSend() }
+        chatPanel.onToggleSession = { [weak self] in self?.toggleSession() }
+        chatPanel.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
+        chatPanel.onToggleVoiceReplies = { on in
+            UserSettings.shared.voiceRepliesEnabled = on
+            UserSettings.shared.save()
+        }
+        chatPanel.onToggleControl = { [weak self] on in
+            self?.agent.allowControl = on
+        }
+        chatPanel.onStop = { [weak self] in self?.agent.interrupt() }
+        chatPanel.onClear = { [weak self] in
+            self?.agent.reset()
+            self?.chatPanel.clearConversation()
+            self?.chatPanel.setActivity(.idle)
+        }
+        chatPanel.onOpenSettings = { [weak self] in self?.showSettings() }
+        chatPanel.setVoiceReplies(UserSettings.shared.voiceRepliesEnabled)
 
         transcriptPanel = FloatingTranscriptPanel()
 
         historyWindow = HistoryWindowController()
         historyWindow.onSettings = { [weak self] in self?.showSettings() }
-        historyWindow.onToggleCapture = { [weak self] in self?.toggleCapture() }
         historyWindow.onWindowClosed = { [weak self] in self?.hideDockIfNoWindows() }
         historyWindow.onTTSSpeak = { [weak self] request in
             self?.handleTTSSpeak(request, reveal: false, showSettingsOnMissingKey: true)
@@ -106,18 +166,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.onTTSHotkeyChanged = { [weak self] spec in
             self?.ttsHotkeyManager.updateSpec(spec)
         }
-        settingsWindow.onCaptureHotkeyChanged = { [weak self] spec in
-            self?.captureHotkeyManager.updateSpec(spec)
+        settingsWindow.onSessionHotkeyChanged = { [weak self] spec in
+            self?.sessionHotkeyManager.updateSpec(spec)
         }
-        settingsWindow.onCaptureNoteHotkeyChanged = { [weak self] spec in
-            self?.captureNoteHotkeyManager.updateSpec(spec)
+        settingsWindow.onTalkHotkeyChanged = { [weak self] spec in
+            self?.talkHotkeyManager.updateSpec(spec)
         }
-        settingsWindow.onSettingsChanged = { [weak self] foundrySettingsChanged in
-            guard let self else { return }
-            self.captureScheduler.interval = TimeInterval(UserSettings.shared.captureIntervalSeconds)
-            if foundrySettingsChanged {
-                self.resetFoundryConnectionForSettingsChange()
-            }
+        settingsWindow.onAnnotateHotkeyChanged = { [weak self] spec in
+            self?.annotateHotkeyManager.updateSpec(spec)
         }
         settingsWindow.onWindowClosed = { [weak self] in self?.hideDockIfNoWindows() }
 
@@ -127,8 +183,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         permissionsWindow.onRequestAccessibility = { [weak self] in self?.requestAccessibilityPermission() }
         permissionsWindow.onRefresh = { [weak self] in self?.refreshPermissionWindow() }
         permissionsWindow.onWindowClosed = { [weak self] in self?.hideDockIfNoWindows() }
+    }
 
-        // ── Menus (Cmd+Q, Cmd+W) ─────────────────────
+    private func setupMainMenu() {
         let mainMenu = NSMenu()
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu(title: "Voice Flow")
@@ -160,8 +217,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(windowMenuItem)
 
         NSApp.mainMenu = mainMenu
+    }
 
-        // ── core ────────────────────────────────────────
+    private func setupCore() {
         recorder = AudioRecorder()
         paster = Paster()
         ttsController = TTSController()
@@ -186,8 +244,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         backend.onError = { [weak self] msg in
             vflog("backend error: \(msg)")
             guard let self else { return }
-            if self.recordingIsCaptureNote {
-                self.finishCaptureNote(text: nil)
+            if self.recordingForAgent {
+                self.recordingForAgent = false
+                self.state = .idle
+                self.chatPanel.addNote("Couldn't transcribe that — try again.")
             } else {
                 self.state = .idle
             }
@@ -203,59 +263,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         historyWindow.applyTTSRequest(initialTTSRequest)
         historyWindow.setTTSStatus(ttsController.status)
 
-        localAPIServer = LocalAPIServer()
-        localAPIServer.onServerMessage = { [weak self] message in
-            DispatchQueue.main.async {
-                self?.historyWindow.setTTSServerLabel(message)
-            }
-        }
-        localAPIServer.onStatus = { [weak self] in
-            guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
-            var response = LocalAPIResponse.error(503, "Status unavailable.")
-            DispatchQueue.main.sync {
-                response = self.makeTTSStatusResponse()
-            }
-            return response
-        }
-        localAPIServer.onSet = { [weak self] payload in
-            guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
-            var response = LocalAPIResponse.error(503, "TTS controls unavailable.")
-            DispatchQueue.main.sync {
-                response = self.handleTTSSet(payload)
-            }
-            return response
-        }
-        localAPIServer.onSpeak = { [weak self] payload in
-            guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
-            var response = LocalAPIResponse.error(503, "TTS speak unavailable.")
-            DispatchQueue.main.sync {
-                response = self.handleTTSSpeak(payload)
-            }
-            return response
-        }
-        localAPIServer.onSeek = { [weak self] payload in
-            guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
-            var response = LocalAPIResponse.error(503, "TTS seek unavailable.")
-            DispatchQueue.main.sync {
-                response = self.handleTTSSeek(payload)
-            }
-            return response
-        }
-        localAPIServer.onStop = { [weak self] in
-            guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
-            var response = LocalAPIResponse.error(503, "TTS stop unavailable.")
-            DispatchQueue.main.sync {
-                self.ttsController.stop()
-                response = LocalAPIResponse.ok([
-                    "ok": true,
-                    "status": "stopped",
-                ])
-            }
-            return response
-        }
-        localAPIServer.start()
+        setupLocalAPIServer()
+    }
 
-        // ── screen capture ──────────────────────────────
+    private func setupAgent() {
         screenCapture = ScreenCapture()
         captureScheduler = CaptureScheduler(
             screenCapture: screenCapture,
@@ -263,46 +274,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         captureScheduler.onCapture = { [weak self] imageData in
             DispatchQueue.main.async {
-                guard let self, self.isScreenCaptureActive else { return }
-                self.indicator.flashCapturePulse()
-                self.handleScreenCapture(imageData)
+                guard let self, self.sessionActive else { return }
+                self.handleAmbientCapture(imageData)
             }
         }
 
-        // ── foundry gateway ─────────────────────────────
-        foundryClient = FoundryClient()
-        conversationManager = ConversationManager()
-
-        foundryClient.onMessage = { [weak self] msg in
-            self?.conversationManager.handleFoundryMessage(msg)
+        agent = AgentSession(screenCapture: screenCapture)
+        agent.onActivityChanged = { [weak self] activity in
+            self?.indicator.setAgentActivity(activity)
+            self?.chatPanel.setActivity(activity)
         }
-        foundryClient.onStreamDelta = { [weak self] streamId, content in
-            self?.conversationManager.handleStreamDelta(streamId, content)
+        agent.onAssistantStart = { [weak self] in
+            self?.chatPanel.beginAssistantMessage()
         }
-        foundryClient.onStreamEnd = { [weak self] streamId in
-            self?.conversationManager.handleStreamEnd(streamId)
+        agent.onAssistantDelta = { [weak self] delta in
+            self?.chatPanel.appendAssistantDelta(delta)
         }
-        foundryClient.onConnectionStateChanged = { [weak self] state in
-            DispatchQueue.main.async {
-                self?.historyWindow.setFoundryState(state)
+        agent.onAssistantDone = { [weak self] text in
+            guard let self else { return }
+            self.chatPanel.finishAssistantMessage(text)
+            if UserSettings.shared.voiceRepliesEnabled {
+                self.speakAgentReply(text)
             }
         }
-        foundryClient.onSessionReset = { [weak self] in
-            self?.conversationManager.clear()
+        agent.onToolActivity = { [weak self] detail in
+            self?.chatPanel.setToolDetail(detail)
         }
-        foundryClient.onError = { [weak self] msg in
-            vflog("foundry error: \(msg)")
-            self?.conversationManager.addError(msg)
-        }
-
-        conversationManager.onMessagesChanged = { [weak self] in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.historyWindow.updateConversation(self.conversationManager.displayMessages)
+        agent.onError = { [weak self] message in
+            self?.chatPanel.addNote(message)
+            if self?.chatPanel.isVisible == false {
+                self?.chatPanel.show(focusInput: false)
             }
         }
 
-        // ── hotkeys ───────────────────────────────────
+        // Escape is the panic button while the agent is acting.
+        escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.keyCode == 53, self.agent.activity == .acting else { return }
+            self.agent.interrupt()
+            self.chatPanel.addNote("Stopped by Escape")
+        }
+    }
+
+    private func setupHotkeys() {
         hotkeyManager = HotkeyManager(spec: UserSettings.shared.hotkey)
         hotkeyManager.onPress = { [weak self] in self?.startRecording() }
         hotkeyManager.onRelease = { [weak self] in self?.stopRecording() }
@@ -323,67 +336,377 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ttsHotkeyManager = HotkeyManager(spec: UserSettings.shared.ttsHotkey)
         ttsHotkeyManager.onPress = { [weak self] in self?.speakSelectedText() }
 
-        captureHotkeyManager = HotkeyManager(spec: UserSettings.shared.captureHotkey)
-        captureHotkeyManager.onPress = { [weak self] in self?.toggleCapture() }
+        sessionHotkeyManager = HotkeyManager(spec: UserSettings.shared.sessionHotkey)
+        sessionHotkeyManager.onPress = { [weak self] in self?.toggleSession() }
 
-        captureNoteHotkeyManager = HotkeyManager(spec: UserSettings.shared.captureNoteHotkey)
-        captureNoteHotkeyManager.onPress = { [weak self] in self?.startCaptureNoteRecording() }
-        captureNoteHotkeyManager.onRelease = { [weak self] in self?.stopCaptureNoteRecording() }
+        talkHotkeyManager = HotkeyManager(spec: UserSettings.shared.talkHotkey)
+        talkHotkeyManager.onPress = { [weak self] in self?.startTalkRecording() }
+        talkHotkeyManager.onRelease = { [weak self] in self?.stopTalkRecording() }
 
-        requestInitialPermissionsIfNeeded()
-        startHotkeyWithAccessibilityCheck()
-
-        // ── launch backend ──────────────────────────────
-        state = .loading
-        backend.start()
-        vflog("app started")
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        ttsController?.shutdown()
-        localAPIServer?.stop()
-    }
-
-    func applicationDidBecomeActive(_ notification: Notification) {
-        refreshPermissionWindow()
-    }
-
-    private func resetFoundryConnectionForSettingsChange() {
-        foundryClient.disconnect()
-        conversationManager.clear()
-        vflog("foundry settings changed — cleared active gateway session and will reconnect on next send")
-    }
-
-    @objc private func showPermissionsMenuAction() {
-        showPermissions()
-    }
-
-    @objc private func showSettingsMenuAction() {
-        showSettings()
+        annotateHotkeyManager = HotkeyManager(spec: UserSettings.shared.annotateHotkey)
+        annotateHotkeyManager.onPress = { [weak self] in self?.annotationOverlay.toggleEditing() }
     }
 
     private func startHotkeyWithAccessibilityCheck() {
         if checkAccessibility() {
-            hotkeyManager.start()
-            handsFreeHotkeyManager.start()
-            ttsHotkeyManager.start()
-            captureHotkeyManager.start()
-            captureNoteHotkeyManager.start()
+            startAllHotkeys()
             return
         }
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
             if self.checkAccessibility() {
                 timer.invalidate()
-                self.hotkeyManager.start()
-                self.handsFreeHotkeyManager.start()
-                self.ttsHotkeyManager.start()
-                self.captureHotkeyManager.start()
-                self.captureNoteHotkeyManager.start()
+                self.startAllHotkeys()
                 vflog("accessibility granted — hotkeys active")
             }
         }
     }
+
+    private func startAllHotkeys() {
+        hotkeyManager.start()
+        handsFreeHotkeyManager.start()
+        ttsHotkeyManager.start()
+        sessionHotkeyManager.start()
+        talkHotkeyManager.start()
+        annotateHotkeyManager.start()
+    }
+
+    @objc private func showPermissionsMenuAction() { showPermissions() }
+    @objc private func showSettingsMenuAction() { showSettings() }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  Session — the one mode
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    func toggleSession() {
+        if sessionActive { endSession() } else { startSession() }
+    }
+
+    private func startSession() {
+        guard !sessionActive else { return }
+        guard KeychainStore.shared.hasAgentAPIKey else {
+            chatPanel.show(focusInput: false)
+            chatPanel.addNote("Add your OpenRouter key in Settings to start a session.")
+            showSettings()
+            return
+        }
+        sessionActive = true
+        ambientScreenshots.removeAll()
+        lastCaptureData = nil
+        captureScheduler.interval = TimeInterval(max(1, UserSettings.shared.captureIntervalSeconds))
+        captureScheduler.start()
+
+        indicator.setSessionActive(true)
+        menuBar.setSessionActive(true)
+        chatPanel.setSessionActive(true)
+        if !chatPanel.isVisible {
+            chatPanel.show(focusInput: false)
+        }
+        chatPanel.addNote("Session started — I can see your screen when you talk, type, or snap.")
+        playSound("Tink")
+        vflog("session started")
+    }
+
+    private func endSession() {
+        guard sessionActive else { return }
+        sessionActive = false
+        captureScheduler.stop()
+        ambientScreenshots.removeAll()
+        lastCaptureData = nil
+        if agent.isRunning {
+            agent.interrupt()
+        }
+
+        indicator.setSessionActive(false)
+        indicator.setAgentActivity(.idle)
+        menuBar.setSessionActive(false)
+        chatPanel.setSessionActive(false)
+        chatPanel.setActivity(.idle)
+        chatPanel.addNote("Session ended")
+        playSound("Pop")
+        vflog("session ended")
+    }
+
+    /// Ambient screenshots build quiet context while a session runs —
+    /// deduped so an unchanged screen doesn't pile up frames.
+    private func handleAmbientCapture(_ imageData: Data) {
+        if let previous = lastCaptureData {
+            let diff = ImageUtils.difference(previous, imageData)
+            if diff < diffThreshold { return }
+        }
+        lastCaptureData = imageData
+        indicator.flashCapturePulse()
+        ambientScreenshots.append(imageData)
+        if ambientScreenshots.count > maxAmbientScreenshots {
+            ambientScreenshots.removeFirst(ambientScreenshots.count - maxAmbientScreenshots)
+        }
+    }
+
+    // ── Sending to the agent ────────────────────────────
+
+    private func sendTypedMessage(_ text: String) {
+        if sessionActive {
+            sendToAgent(text: text, includeFreshScreenshot: true)
+        } else {
+            sendToAgent(text: text, includeFreshScreenshot: false)
+        }
+    }
+
+    private func snapAndSend() {
+        sendToAgent(text: nil, includeFreshScreenshot: true, forceScreenshot: true)
+    }
+
+    private func sendToAgent(text: String?, includeFreshScreenshot: Bool, forceScreenshot: Bool = false) {
+        if !chatPanel.isVisible {
+            chatPanel.show(focusInput: false)
+        }
+
+        Task { @MainActor in
+            var screenshots: [Data] = []
+            if sessionActive {
+                screenshots.append(contentsOf: ambientScreenshots)
+                ambientScreenshots.removeAll()
+            }
+            if includeFreshScreenshot || forceScreenshot {
+                if let fresh = try? await screenCapture.captureScreen() {
+                    screenshots.append(fresh)
+                    lastCaptureData = fresh
+                }
+            }
+
+            let note: String?
+            if screenshots.isEmpty {
+                note = nil
+            } else if screenshots.count == 1 {
+                note = "📎 1 screenshot"
+            } else {
+                note = "📎 \(screenshots.count) screenshots"
+            }
+            self.chatPanel.addUserMessage(text ?? "", attachmentNote: note)
+            self.agent.send(text: text, screenshots: screenshots)
+        }
+    }
+
+    // ── Talk to the agent (hold-to-record) ─────────────
+
+    private func startTalkRecording() {
+        guard !recorder.isRecording else { return }
+        recordingForAgent = true
+        streamingViaAX = false
+        hadPartialStream = false
+        playSound("Tink")
+        state = .recording
+        recorder.start()
+        vflog("talk-to-agent recording started")
+    }
+
+    private func stopTalkRecording() {
+        guard recordingForAgent else { return }
+        stopRecording()
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  Dictation flow
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    private func startRecording() {
+        guard !recorder.isRecording else { return }
+        recordingForAgent = false
+        paster.capturePasteTarget()
+        streamingViaAX = false
+        hadPartialStream = false
+        playSound("Tink")
+        state = .recording
+        recorder.start()
+    }
+
+    private func stopRecording() {
+        guard recorder.isRecording else { return }
+        partialTimer?.invalidate()
+        partialTimer = nil
+        transcriptPanel.hide()
+        recorder.stop { [weak self] pcmData in
+            guard let self else { return }
+            if let pcmData {
+                self.state = .processing
+                let settings = UserSettings.shared
+                let provider = settings.dictationProvider
+                let skipCleanup = provider != .local || !settings.llmCleanupEnabled
+                vflog("final dictation provider=\(provider.rawValue)")
+
+                let openAIAPIKey: String?
+                if provider == .openai {
+                    openAIAPIKey = KeychainStore.shared.loadOpenAIAPIKey()
+                    if openAIAPIKey == nil {
+                        vflog("OpenAI dictation selected, but no API key is saved")
+                        self.state = .idle
+                        if self.recordingForAgent {
+                            self.recordingForAgent = false
+                            self.chatPanel.addNote("Add your OpenAI key in Settings to transcribe voice notes.")
+                        } else {
+                            self.showSettings()
+                        }
+                        return
+                    }
+                } else {
+                    openAIAPIKey = nil
+                }
+
+                self.backend.transcribe(
+                    pcmData: pcmData,
+                    sampleRate: 16000,
+                    provider: provider,
+                    skipCleanup: skipCleanup,
+                    openAIAPIKey: openAIAPIKey,
+                    vocabulary: settings.customVocabulary
+                )
+            } else if self.recordingForAgent {
+                self.recordingForAgent = false
+                self.state = .idle
+            } else {
+                self.state = .idle
+            }
+        }
+    }
+
+    // ── streaming partial transcription ───────────────
+
+    private func startPartialTranscriptionTimer() {
+        partialRequestId = 0
+        latestDisplayedPartialId = 0
+        partialTimer?.invalidate()
+        partialTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.sendPartialTranscription()
+        }
+    }
+
+    private func sendPartialTranscription() {
+        guard recorder.isRecording,
+              let (snapshot, hasNewSpeech) = recorder.currentAudioSnapshot(),
+              hasNewSpeech else { return }
+
+        partialRequestId += 1
+        vflog("partial: sending request \(partialRequestId) (\(snapshot.count) bytes)")
+        let settings = UserSettings.shared
+        let provider = settings.dictationProvider
+
+        let openAIAPIKey: String?
+        if provider == .openai {
+            openAIAPIKey = KeychainStore.shared.loadOpenAIAPIKey()
+        } else {
+            openAIAPIKey = nil
+        }
+
+        backend.partialTranscribe(
+            pcmData: snapshot,
+            sampleRate: 16000,
+            provider: provider,
+            requestId: partialRequestId,
+            openAIAPIKey: openAIAPIKey,
+            vocabulary: settings.customVocabulary
+        )
+    }
+
+    private func handlePartialResult(text: String, requestId: Int) {
+        vflog("partial result \(requestId): \"\(text)\" (state=\(state.rawValue))")
+        guard requestId > latestDisplayedPartialId else { return }
+        latestDisplayedPartialId = requestId
+        guard state == .recording || state == .handsFree else { return }
+        guard !text.isEmpty else { return }
+
+        if streamingViaAX {
+            vflog("partial: streaming \(text.count) chars via AX")
+            paster.streamText(text)
+            hadPartialStream = true
+        } else {
+            vflog("partial: showing in panel")
+            transcriptPanel.setText(text)
+        }
+    }
+
+    // ── final result ────────────────────────────────────
+
+    private func handleResult(raw: String, cleaned: String) {
+        vflog("raw: \(raw)")
+        vflog("cleaned: \(cleaned)")
+
+        // Voice note for the agent — never pasted anywhere.
+        if recordingForAgent {
+            recordingForAgent = false
+            paster.clearStreamTarget()
+            hadPartialStream = false
+            state = .idle
+            let note = cleaned.isEmpty ? raw : cleaned
+            guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            playSound("Pop")
+            sendToAgent(text: note, includeFreshScreenshot: true)
+            return
+        }
+
+        if cleaned.isEmpty {
+            if hadPartialStream {
+                paster.streamText("")
+            }
+            paster.clearStreamTarget()
+            hadPartialStream = false
+            state = .idle
+            return
+        }
+
+        if hadPartialStream {
+            // Partial text is in the field via AX — do final update with cleaned text
+            vflog("final AX update with cleaned text")
+            paster.streamText(cleaned)
+            paster.clearStreamTarget()
+            hadPartialStream = false
+        } else {
+            // No streaming (short recording or AX unsupported) — paste normally
+            paster.clearStreamTarget()
+            vflog("pasting text...")
+            paster.paste(cleaned)
+        }
+        playSound("Pop")
+        let timestamp = Self.timestamp()
+        DispatchQueue.main.async {
+            self.historyWindow.addEntry(text: cleaned, time: timestamp)
+        }
+        state = .done
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            if self.state == .done { self.state = .idle }
+        }
+    }
+
+    private func playSound(_ name: String) {
+        guard UserSettings.shared.soundsEnabled else { return }
+        NSSound(named: name)?.play()
+    }
+
+    private static func timestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: Date())
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  Voice replies
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    private func speakAgentReply(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, KeychainStore.shared.hasOpenAIAPIKey else { return }
+        let settings = UserSettings.shared
+        let request = TTSRequest(
+            text: trimmed,
+            voice: settings.ttsVoice,
+            speed: settings.ttsSpeed,
+            instructions: settings.ttsInstructions
+        )
+        try? ttsController.speak(request: request.normalized())
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  Permissions
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     private func checkAccessibility() -> Bool {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false] as CFDictionary
@@ -550,382 +873,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    // ── recording flow ──────────────────────────────────
-    private func startRecording() {
-        guard !recorder.isRecording else { return }
-        recordingIsCaptureNote = false
-        paster.capturePasteTarget()
-        streamingViaAX = false
-        hadPartialStream = false
-        playSound("Tink")
-        state = .recording
-        recorder.start()
-    }
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  Windows
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private func startCaptureNoteRecording() {
-        guard !recorder.isRecording else { return }
-        recordingIsCaptureNote = true
-        isScreenCaptureActive = true
-        pendingScreenshots.removeAll()
-        pendingDictations.removeAll()
-        lastCaptureData = nil
-        conversationManager.clear()
-
-        // Start screenshot capture (takes one immediately + periodic)
-        indicator.setCapturing(true)
-        captureScheduler.start()
-
-        streamingViaAX = false
-        hadPartialStream = false
-        playSound("Tink")
-        state = .recording
-        recorder.start()
-        vflog("capture note started — recording + screenshots")
-    }
-
-    private func stopCaptureNoteRecording() {
-        // Stop screenshots
-        isScreenCaptureActive = false
-        indicator.setCapturing(false)
-        captureScheduler.stop()
-
-        // Stop audio → triggers transcription → handleResult
-        stopRecording()
-    }
-
-    private func stopRecording() {
-        guard recorder.isRecording else { return }
-        partialTimer?.invalidate()
-        partialTimer = nil
-        transcriptPanel.hide()
-        recorder.stop { [weak self] pcmData in
-            guard let self else { return }
-            if let pcmData {
-                self.state = .processing
-                let settings = UserSettings.shared
-                let provider = settings.dictationProvider
-                let skipCleanup = provider != .local || !settings.llmCleanupEnabled
-                vflog("final dictation provider=\(provider.rawValue)")
-
-                let openAIAPIKey: String?
-                if provider == .openai {
-                    openAIAPIKey = KeychainStore.shared.loadOpenAIAPIKey()
-                    if openAIAPIKey == nil {
-                        vflog("OpenAI dictation selected, but no API key is saved")
-                        self.state = .idle
-                        if self.recordingIsCaptureNote {
-                            self.finishCaptureNote(text: nil)
-                        } else {
-                            self.showSettings()
-                        }
-                        return
-                    }
-                } else {
-                    openAIAPIKey = nil
-                }
-
-                self.backend.transcribe(
-                    pcmData: pcmData,
-                    sampleRate: 16000,
-                    provider: provider,
-                    skipCleanup: skipCleanup,
-                    openAIAPIKey: openAIAPIKey,
-                    vocabulary: settings.customVocabulary
-                )
-            } else if self.recordingIsCaptureNote {
-                // No audio but we have screenshots — send them anyway
-                self.finishCaptureNote(text: nil)
-            } else {
-                self.state = .idle
-            }
-        }
-    }
-
-    // ── streaming partial transcription ───────────────
-
-    private func startPartialTranscriptionTimer() {
-        partialRequestId = 0
-        latestDisplayedPartialId = 0
-        partialTimer?.invalidate()
-        partialTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            self?.sendPartialTranscription()
-        }
-    }
-
-    private func sendPartialTranscription() {
-        guard recorder.isRecording,
-              let (snapshot, hasNewSpeech) = recorder.currentAudioSnapshot(),
-              hasNewSpeech else { return }
-
-        partialRequestId += 1
-        vflog("partial: sending request \(partialRequestId) (\(snapshot.count) bytes)")
-        let settings = UserSettings.shared
-        let provider = settings.dictationProvider
-
-        let openAIAPIKey: String?
-        if provider == .openai {
-            openAIAPIKey = KeychainStore.shared.loadOpenAIAPIKey()
-        } else {
-            openAIAPIKey = nil
-        }
-
-        backend.partialTranscribe(
-            pcmData: snapshot,
-            sampleRate: 16000,
-            provider: provider,
-            requestId: partialRequestId,
-            openAIAPIKey: openAIAPIKey,
-            vocabulary: settings.customVocabulary
-        )
-    }
-
-    private func handlePartialResult(text: String, requestId: Int) {
-        vflog("partial result \(requestId): \"\(text)\" (state=\(state.rawValue))")
-        guard requestId > latestDisplayedPartialId else { return }
-        latestDisplayedPartialId = requestId
-        guard state == .recording || state == .handsFree else { return }
-        guard !text.isEmpty else { return }
-
-        if streamingViaAX {
-            vflog("partial: streaming \(text.count) chars via AX")
-            paster.streamText(text)
-            hadPartialStream = true
-        } else {
-            vflog("partial: showing in panel")
-            transcriptPanel.setText(text)
-        }
-    }
-
-    // ── final result ────────────────────────────────────
-
-    private func handleResult(raw: String, cleaned: String) {
-        if cleaned.isEmpty && !recordingIsCaptureNote {
-            if hadPartialStream {
-                // Clear the partial text we streamed
-                paster.streamText("")
-            }
-            paster.clearStreamTarget()
-            hadPartialStream = false
-            state = .idle
-            return
-        }
-        vflog("raw: \(raw)")
-        vflog("cleaned: \(cleaned)")
-        vflog("isCaptureNote=\(recordingIsCaptureNote)")
-
-        if recordingIsCaptureNote {
-            paster.clearStreamTarget()
-            hadPartialStream = false
-            finishCaptureNote(text: cleaned.isEmpty ? nil : cleaned)
-        } else if hadPartialStream {
-            // Partial text is in the field via AX — do final update with cleaned text
-            vflog("final AX update with cleaned text")
-            paster.streamText(cleaned)
-            paster.clearStreamTarget()
-            hadPartialStream = false
-            playSound("Pop")
-            let ts = Self.timestamp()
-            DispatchQueue.main.async {
-                self.historyWindow.addEntry(text: cleaned, time: ts)
-            }
-            state = .done
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                if self.state == .done { self.state = .idle }
-            }
-        } else {
-            // No streaming (short recording or AX unsupported) — paste normally
-            paster.clearStreamTarget()
-            vflog("pasting text...")
-            paster.paste(cleaned)
-            playSound("Pop")
-            let ts = Self.timestamp()
-            DispatchQueue.main.async {
-                self.historyWindow.addEntry(text: cleaned, time: ts)
-            }
-            state = .done
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                if self.state == .done { self.state = .idle }
-            }
-        }
-    }
-
-    private func finishCaptureNote(text: String?) {
-        let screenshots = pendingScreenshots
-        pendingScreenshots.removeAll()
-        pendingDictations.removeAll()
-        lastCaptureData = nil
-
-        if screenshots.isEmpty && text == nil {
-            vflog("capture note empty — nothing to send")
-            state = .idle
-            return
-        }
-
-        var dictations: [String] = []
-        if let text { dictations.append(text) }
-
-        vflog("capture note done — \(screenshots.count) screenshots + \(dictations.count) notes, connecting to send")
-        playSound("Pop")
-        conversationManager.markAllPendingSending()
-        connectAndFlush(screenshots: screenshots, dictations: dictations)
-
-        state = .done
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            if self.state == .done { self.state = .idle }
-        }
-    }
-
-    private func playSound(_ name: String) {
-        guard UserSettings.shared.soundsEnabled else { return }
-        NSSound(named: name)?.play()
-    }
-
-    private static func timestamp() -> String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        return f.string(from: Date())
-    }
-
-    // ── capture ─────────────────────────────────────────
-    func toggleCapture() {
-        if isCapturing { stopCapture() } else { startCapture() }
-    }
-
-    private func startCapture() {
-        isCapturing = true
-        isScreenCaptureActive = true
-        pendingScreenshots.removeAll()
-        pendingDictations.removeAll()
-        conversationManager.clear()
-        indicator.setCapturing(true)
-        menuBar.setCapturing(true)
-        historyWindow.setCapturing(true)
-        captureScheduler.start()
-        vflog("capture started — buffering until stop (no Foundry connection yet)")
-    }
-
-    private func stopCapture() {
-        isCapturing = false
-        isScreenCaptureActive = false
-        lastCaptureData = nil
-        indicator.setCapturing(false)
-        menuBar.setCapturing(false)
-        historyWindow.setCapturing(false)
-        captureScheduler.stop()
-
-        let screenshots = pendingScreenshots
-        let dictations = pendingDictations
-        pendingScreenshots.removeAll()
-        pendingDictations.removeAll()
-
-        if screenshots.isEmpty && dictations.isEmpty {
-            vflog("capture stopped — nothing to send")
-            return
-        }
-
-        vflog("capture stopped — connecting to flush \(screenshots.count) screenshots + \(dictations.count) dictations")
-        conversationManager.markAllPendingSending()
-        connectAndFlush(screenshots: screenshots, dictations: dictations)
-    }
-
-    private func connectAndFlush(screenshots: [Data], dictations: [String]) {
-        // If already subscribed, flush immediately
-        if foundryClient.connectionState == .subscribed {
-            flushPendingCaptures(screenshots: screenshots, dictations: dictations)
-            return
-        }
-
-        // Temporarily override connection handler to flush once subscribed
-        let originalHandler = foundryClient.onConnectionStateChanged
-        var flushed = false
-        foundryClient.onConnectionStateChanged = { [weak self] state in
-            guard let self else { return }
-            // Always forward to original handler (UI updates)
-            originalHandler?(state)
-
-            guard !flushed else { return }
-            if state == .subscribed {
-                flushed = true
-                DispatchQueue.main.async {
-                    // Restore original handler
-                    self.foundryClient.onConnectionStateChanged = originalHandler
-                    self.flushPendingCaptures(screenshots: screenshots, dictations: dictations)
-                }
-            } else if state == .disconnected {
-                flushed = true
-                DispatchQueue.main.async {
-                    self.foundryClient.onConnectionStateChanged = originalHandler
-                    self.conversationManager.addError("Failed to connect — captures saved locally but not sent")
-                    vflog("flush failed — could not connect to Foundry")
-                }
-            }
-        }
-        foundryClient.connect()
-    }
-
-    private func flushPendingCaptures(screenshots: [Data], dictations: [String]) {
-        Task {
-            // Upload all screenshots
-            var attachments: [FoundryAttachment] = []
-            for (i, imageData) in screenshots.enumerated() {
-                do {
-                    let attachment = try await foundryClient.uploadImage(imageData)
-                    attachments.append(attachment)
-                    vflog("uploaded screenshot \(i + 1)/\(screenshots.count)")
-                } catch {
-                    vflog("failed to upload screenshot \(i + 1): \(error)")
-                }
-            }
-
-            // Build combined prompt
-            var parts: [String] = []
-
-            if !dictations.isEmpty {
-                parts.append("Here are my voice notes during this activity:")
-                for (i, text) in dictations.enumerated() {
-                    parts.append("\(i + 1). \(text)")
-                }
-            } else {
-                parts.append("No voice note was captured. Treat this as a silent context capture, not an instruction to type or paste.")
-            }
-
-            if !attachments.isEmpty {
-                parts.append("\(attachments.count) screenshot(s) of what I was doing are attached.")
-            }
-
-            if dictations.isEmpty {
-                parts.append("If the intended text or action is not unambiguous from the screenshot(s), do not paste or type anything. Ask for clarification instead.")
-            } else {
-                parts.append("Please analyze everything together and provide your response.")
-            }
-
-            let prompt = parts.joined(separator: "\n")
-
-            DispatchQueue.main.async {
-                self.conversationManager.replacePendingWithSent(prompt)
-                self.foundryClient.sendMessage(prompt, attachments: attachments)
-                vflog("flush complete — sent combined message with \(attachments.count) attachments")
-            }
-        }
-    }
-
-    private func handleScreenCapture(_ imageData: Data) {
-        if let previous = lastCaptureData {
-            let diff = ImageUtils.difference(previous, imageData)
-            if diff < diffThreshold {
-                vflog("screen unchanged — skipping (diff=\(String(format: "%.4f", diff)))")
-                return
-            }
-        }
-        lastCaptureData = imageData
-
-        // Buffer screenshot locally — will be sent when activity stops
-        pendingScreenshots.append(imageData)
-        conversationManager.addCaptureMarker(isPending: true)
-        vflog("screen capture buffered (\(pendingScreenshots.count) total)")
-    }
-
-    // ── window toggles ──────────────────────────────────
     private func toggleHistory() {
         if historyWindow.window?.isVisible == true {
             historyWindow.window?.orderOut(nil)
@@ -961,6 +912,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func showDock() { NSApp.setActivationPolicy(.regular) }
+
+    private func hideDockIfNoWindows() {
+        let historyVisible = historyWindow.window?.isVisible == true
+        let settingsVisible = settingsWindow.window?.isVisible == true
+        let permissionsVisible = permissionsWindow.window?.isVisible == true
+        if !historyVisible && !settingsVisible && !permissionsVisible {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  TTS (hotkey + local API)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
     private func speakSelectedText() {
         guard let selectedText = paster.copySelectedText() else {
             NSSound.beep()
@@ -973,6 +939,60 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let normalized = request.normalized()
         historyWindow.applyTTSRequest(normalized)
         _ = handleTTSSpeak(normalized, reveal: false, showSettingsOnMissingKey: true)
+    }
+
+    private func setupLocalAPIServer() {
+        localAPIServer = LocalAPIServer()
+        localAPIServer.onServerMessage = { [weak self] message in
+            DispatchQueue.main.async {
+                self?.historyWindow.setTTSServerLabel(message)
+            }
+        }
+        localAPIServer.onStatus = { [weak self] in
+            guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
+            var response = LocalAPIResponse.error(503, "Status unavailable.")
+            DispatchQueue.main.sync {
+                response = self.makeTTSStatusResponse()
+            }
+            return response
+        }
+        localAPIServer.onSet = { [weak self] payload in
+            guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
+            var response = LocalAPIResponse.error(503, "TTS controls unavailable.")
+            DispatchQueue.main.sync {
+                response = self.handleTTSSet(payload)
+            }
+            return response
+        }
+        localAPIServer.onSpeak = { [weak self] payload in
+            guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
+            var response = LocalAPIResponse.error(503, "TTS speak unavailable.")
+            DispatchQueue.main.sync {
+                response = self.handleTTSSpeak(payload)
+            }
+            return response
+        }
+        localAPIServer.onSeek = { [weak self] payload in
+            guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
+            var response = LocalAPIResponse.error(503, "TTS seek unavailable.")
+            DispatchQueue.main.sync {
+                response = self.handleTTSSeek(payload)
+            }
+            return response
+        }
+        localAPIServer.onStop = { [weak self] in
+            guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
+            var response = LocalAPIResponse.error(503, "TTS stop unavailable.")
+            DispatchQueue.main.sync {
+                self.ttsController.stop()
+                response = LocalAPIResponse.ok([
+                    "ok": true,
+                    "status": "stopped",
+                ])
+            }
+            return response
+        }
+        localAPIServer.start()
     }
 
     private func mergedTTSRequest(_ payload: TTSAPIUpdatePayload) -> TTSRequest {
@@ -1085,16 +1105,5 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 "POST /api/tts/stop",
             ],
         ])
-    }
-
-    private func showDock() { NSApp.setActivationPolicy(.regular) }
-
-    private func hideDockIfNoWindows() {
-        let historyVisible = historyWindow.window?.isVisible == true
-        let settingsVisible = settingsWindow.window?.isVisible == true
-        let permissionsVisible = permissionsWindow.window?.isVisible == true
-        if !historyVisible && !settingsVisible && !permissionsVisible {
-            NSApp.setActivationPolicy(.accessory)
-        }
     }
 }

@@ -63,9 +63,21 @@ chmod +x "$APP_DEST/Contents/MacOS/voice-flow"
 echo "  ✓ Swift binary compiled"
 
 # ── codesign ───────────────────────────────────────────
-codesign --force --sign - --identifier "com.voiceflow.app" \
+# Use a stable signing identity when available so macOS keeps TCC
+# permissions and Keychain access across rebuilds. Ad-hoc ("-")
+# signatures change every build, which resets all grants.
+SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
+if [ -z "$SIGN_ID" ]; then
+    SIGN_ID="-"
+    echo "  ⚠ No stable signing identity found — using ad-hoc signature."
+    echo "    Permissions will need to be re-granted after every rebuild."
+else
+    echo "  Signing with: $SIGN_ID"
+fi
+
+codesign --force --sign "$SIGN_ID" --identifier "com.voiceflow.app" \
     "$APP_DEST/Contents/MacOS/voice-flow"
-codesign --force --deep --sign - "$APP_DEST"
+codesign --force --deep --sign "$SIGN_ID" "$APP_DEST"
 
 echo ""
 echo "✓ Installed to $APP_DEST"

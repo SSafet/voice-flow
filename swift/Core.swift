@@ -145,18 +145,14 @@ class UserSettings {
     var ttsInstructions: String = DefaultTTSInstructions
     var customVocabulary: [String] = []
 
-    // Foundry gateway
-    var captureIntervalSeconds: Int = 1
-    var captureHotkey = HotkeySpec(keyCode: 61, modifiers: [], label: "Right ⌥")
-    var captureNoteHotkey = HotkeySpec(keyCode: 98, modifiers: [], label: "F7")
-    var gatewayHost: String = "127.0.0.1"
-    var gatewayWSPort: Int = 8789
-    var gatewayHTTPPort: Int = 8791
-    var tenantId: String = "local"
-    var appId: String = "voice-flow"
-    var userId: String = UserSettings.defaultFoundryUserId()
-    var agentType: String = "eyes"
-    var sessionLabel: String = "voice-flow"
+    // Assistant (agent sessions)
+    var captureIntervalSeconds: Int = 2
+    var sessionHotkey = HotkeySpec(keyCode: 61, modifiers: [], label: "Right ⌥")
+    var talkHotkey = HotkeySpec(keyCode: 98, modifiers: [], label: "F7")
+    var annotateHotkey = HotkeySpec(keyCode: 96, modifiers: [], label: "F5")
+    var agentModel: String = DefaultAgentModel
+    var agentBaseURL: String = DefaultAgentBaseURL
+    var voiceRepliesEnabled: Bool = false
 
     private let url: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
@@ -176,28 +172,6 @@ class UserSettings {
         return normalized.isEmpty ? fallback : normalized
     }
 
-    private static func defaultFoundryUserId() -> String {
-        let raw = trimmed(NSUserName(), fallback: "local-user")
-        let safe = raw
-            .lowercased()
-            .replacingOccurrences(of: "[^a-z0-9._-]", with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        return safe.isEmpty ? "local-user" : safe
-    }
-
-    var foundryConfig: FoundryGatewayConfig {
-        FoundryGatewayConfig(
-            gatewayHost: Self.trimmed(gatewayHost, fallback: "127.0.0.1"),
-            gatewayWSPort: max(1, gatewayWSPort),
-            gatewayHTTPPort: max(1, gatewayHTTPPort),
-            tenantId: Self.trimmed(tenantId, fallback: "local"),
-            appId: Self.trimmed(appId, fallback: "voice-flow"),
-            userId: Self.trimmed(userId, fallback: Self.defaultFoundryUserId()),
-            agentType: Self.trimmed(agentType, fallback: "eyes"),
-            sessionLabel: Self.trimmed(sessionLabel, fallback: "voice-flow")
-        )
-    }
-
     func load() {
         guard let data = try? Data(contentsOf: url),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
@@ -209,8 +183,12 @@ class UserSettings {
         hotkey = loadHotkey(dict, key: "hotkey", fallback: hotkey)
         handsFreeHotkey = loadHotkey(dict, key: "hands_free_hotkey", fallback: handsFreeHotkey)
         ttsHotkey = loadHotkey(dict, key: "tts_hotkey", fallback: ttsHotkey)
-        captureHotkey = loadHotkey(dict, key: "capture_hotkey", fallback: captureHotkey)
-        captureNoteHotkey = loadHotkey(dict, key: "capture_note_hotkey", fallback: captureNoteHotkey)
+        // "capture_*" are the pre-redesign key names — accept both.
+        sessionHotkey = loadHotkey(dict, key: "session_hotkey",
+                                   fallback: loadHotkey(dict, key: "capture_hotkey", fallback: sessionHotkey))
+        talkHotkey = loadHotkey(dict, key: "talk_hotkey",
+                                fallback: loadHotkey(dict, key: "capture_note_hotkey", fallback: talkHotkey))
+        annotateHotkey = loadHotkey(dict, key: "annotate_hotkey", fallback: annotateHotkey)
         if let v = dict["sounds_enabled"] as? Bool { soundsEnabled = v }
         if let v = dict["double_tap_ms"] as? Int { doubleTapMs = v }
         if let v = dict["llm_cleanup_enabled"] as? Bool { llmCleanupEnabled = v }
@@ -222,14 +200,13 @@ class UserSettings {
             ttsInstructions = DefaultTTSInstructions
         }
         if let v = dict["capture_interval"] as? Int { captureIntervalSeconds = max(1, v) }
-        if let v = dict["gateway_host"] as? String { gatewayHost = v }
-        if let v = dict["gateway_ws_port"] as? Int { gatewayWSPort = v }
-        if let v = dict["gateway_http_port"] as? Int { gatewayHTTPPort = v }
-        if let v = dict["tenant_id"] as? String { tenantId = v }
-        if let v = dict["app_id"] as? String { appId = v }
-        if let v = dict["user_id"] as? String { userId = v }
-        if let v = dict["agent_type"] as? String { agentType = v }
-        if let v = dict["session_label"] as? String { sessionLabel = v }
+        if let v = dict["agent_model"] as? String {
+            agentModel = Self.trimmed(v, fallback: DefaultAgentModel)
+        }
+        if let v = dict["agent_base_url"] as? String {
+            agentBaseURL = Self.trimmed(v, fallback: DefaultAgentBaseURL)
+        }
+        if let v = dict["voice_replies_enabled"] as? Bool { voiceRepliesEnabled = v }
         if let v = dict["custom_vocabulary"] as? [String] {
             customVocabulary = v.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
@@ -237,16 +214,6 @@ class UserSettings {
     }
 
     func save() {
-        let foundry = foundryConfig
-        gatewayHost = foundry.gatewayHost
-        gatewayWSPort = foundry.gatewayWSPort
-        gatewayHTTPPort = foundry.gatewayHTTPPort
-        tenantId = foundry.tenantId
-        appId = foundry.appId
-        userId = foundry.userId
-        agentType = foundry.agentType
-        sessionLabel = foundry.sessionLabel
-
         let dict: [String: Any] = [
             "dictation_provider": dictationProvider.rawValue,
             "hotkey": hotkey.toDict(),
@@ -259,16 +226,12 @@ class UserSettings {
             "tts_speed": ttsSpeed,
             "tts_instructions": ttsInstructions,
             "capture_interval": captureIntervalSeconds,
-            "capture_hotkey": captureHotkey.toDict(),
-            "capture_note_hotkey": captureNoteHotkey.toDict(),
-            "gateway_host": foundry.gatewayHost,
-            "gateway_ws_port": foundry.gatewayWSPort,
-            "gateway_http_port": foundry.gatewayHTTPPort,
-            "tenant_id": foundry.tenantId,
-            "app_id": foundry.appId,
-            "user_id": foundry.userId,
-            "agent_type": foundry.agentType,
-            "session_label": foundry.sessionLabel,
+            "session_hotkey": sessionHotkey.toDict(),
+            "talk_hotkey": talkHotkey.toDict(),
+            "annotate_hotkey": annotateHotkey.toDict(),
+            "agent_model": agentModel,
+            "agent_base_url": agentBaseURL,
+            "voice_replies_enabled": voiceRepliesEnabled,
             "custom_vocabulary": customVocabulary,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted) {
@@ -277,37 +240,51 @@ class UserSettings {
     }
 }
 
-struct FoundryGatewayConfig: Equatable {
-    let gatewayHost: String
-    let gatewayWSPort: Int
-    let gatewayHTTPPort: Int
-    let tenantId: String
-    let appId: String
-    let userId: String
-    let agentType: String
-    let sessionLabel: String
-
-    var canonicalSessionId: String {
-        let safe = sessionLabel
-            .lowercased()
-            .replacingOccurrences(of: "[^a-z0-9_-]", with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        return safe.isEmpty ? "voice-flow" : safe
-    }
-}
-
 class KeychainStore {
     static let shared = KeychainStore()
 
     private let service = "com.voiceflow.app"
     private let openAIAPIKeyAccount = "openai_api_key"
+    private let agentAPIKeyAccount = "agent_api_key"
 
     var hasOpenAIAPIKey: Bool {
         loadOpenAIAPIKey() != nil
     }
 
+    var hasAgentAPIKey: Bool {
+        loadAgentAPIKey() != nil
+    }
+
     func loadOpenAIAPIKey() -> String? {
-        var query = baseQuery(account: openAIAPIKeyAccount)
+        load(account: openAIAPIKeyAccount)
+    }
+
+    @discardableResult
+    func saveOpenAIAPIKey(_ key: String) -> Bool {
+        save(key, account: openAIAPIKeyAccount)
+    }
+
+    @discardableResult
+    func removeOpenAIAPIKey() -> Bool {
+        remove(account: openAIAPIKeyAccount)
+    }
+
+    func loadAgentAPIKey() -> String? {
+        load(account: agentAPIKeyAccount)
+    }
+
+    @discardableResult
+    func saveAgentAPIKey(_ key: String) -> Bool {
+        save(key, account: agentAPIKeyAccount)
+    }
+
+    @discardableResult
+    func removeAgentAPIKey() -> Bool {
+        remove(account: agentAPIKeyAccount)
+    }
+
+    private func load(account: String) -> String? {
+        var query = baseQuery(account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
@@ -327,17 +304,17 @@ class KeychainStore {
     }
 
     @discardableResult
-    func saveOpenAIAPIKey(_ key: String) -> Bool {
+    private func save(_ key: String, account: String) -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
 
-        let deleteStatus = SecItemDelete(baseQuery(account: openAIAPIKeyAccount) as CFDictionary)
+        let deleteStatus = SecItemDelete(baseQuery(account: account) as CFDictionary)
         if deleteStatus != errSecSuccess && deleteStatus != errSecItemNotFound {
             vflog("keychain delete-before-save failed: \(deleteStatus)")
             return false
         }
 
-        var query = baseQuery(account: openAIAPIKeyAccount)
+        var query = baseQuery(account: account)
         query[kSecValueData as String] = Data(trimmed.utf8)
         query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
 
@@ -350,8 +327,8 @@ class KeychainStore {
     }
 
     @discardableResult
-    func removeOpenAIAPIKey() -> Bool {
-        let status = SecItemDelete(baseQuery(account: openAIAPIKeyAccount) as CFDictionary)
+    private func remove(account: String) -> Bool {
+        let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
         if status != errSecSuccess && status != errSecItemNotFound {
             vflog("keychain delete failed: \(status)")
             return false

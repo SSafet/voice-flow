@@ -30,6 +30,33 @@ enum ImageUtils {
         return rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
     }
 
+    /// Resize to an exact pixel size (JPEG). Used for agent screenshots so
+    /// tool coordinates map 1:1 onto a known image geometry.
+    static func resizeExact(_ data: Data, width: Int, height: Int, quality: CGFloat = 0.7) -> Data? {
+        guard width > 0, height > 0, let image = NSImage(data: data) else { return nil }
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { return nil }
+
+        ctx.interpolationQuality = .high
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        image.draw(in: NSRect(x: 0, y: 0, width: width, height: height),
+                   from: .zero, operation: .copy, fraction: 1.0)
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let cgImage = ctx.makeImage() else { return nil }
+        let rep = NSBitmapImageRep(cgImage: cgImage)
+        return rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
+    }
+
     static func difference(_ a: Data, _ b: Data) -> Double {
         let size = 32
         guard let thumbA = thumbnail(a, size: size),
