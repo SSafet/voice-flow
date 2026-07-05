@@ -12,6 +12,12 @@ enum ChatBubbleKind {
     case note      // small centered status/error text
 }
 
+enum ChatTab: Int {
+    case chat = 0
+    case dictations = 1
+    case speech = 2
+}
+
 final class ChatPanel {
     var onSendText: ((String) -> Void)?
     var onSnap: (() -> Void)?
@@ -22,11 +28,20 @@ final class ChatPanel {
     var onStop: (() -> Void)?
     var onClear: (() -> Void)?
     var onOpenSettings: (() -> Void)?
+    var onTTSSpeak: ((TTSRequest) -> Void)?
+    var onTTSSeek: ((Double) -> Void)?
+    var onTTSStop: (() -> Void)?
 
     private let width: CGFloat = 400
     private let height: CGFloat = 520
 
     private var panel: KeyablePanel!
+    private var tabControl: NSSegmentedControl!
+    private var dictationsView: DictationsView!
+    private var ttsView: TTSView!
+    private var currentTab: ChatTab = .chat
+    private var statusRow: NSStackView!
+    private var inputRow: NSStackView!
     private var bubbleStack: NSStackView!
     private var scrollView: NSScrollView!
     private var emptyLabel: NSTextField!
@@ -54,13 +69,18 @@ final class ChatPanel {
 
     func show(focusInput: Bool = true) {
         position()
-        panel.alphaValue = 0
-        panel.orderFront(nil)
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.16
-            panel.animator().alphaValue = 1
+        if panel.isVisible {
+            panel.orderFront(nil)          // already up — don't re-fade
+        } else {
+            panel.alphaValue = 0
+            panel.orderFront(nil)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                panel.animator().alphaValue = 1
+            }
         }
         if focusInput {
+            selectTab(.chat)               // the pill always lands on the chat surface
             panel.makeKey()
             panel.makeFirstResponder(inputField)
         }
@@ -134,7 +154,7 @@ final class ChatPanel {
             bubbleStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        emptyLabel.isHidden = false
+        updateEmptyLabel()
     }
 
     private func finishStreaming() {
@@ -201,6 +221,47 @@ final class ChatPanel {
         panel.makeKey()
         panel.makeFirstResponder(inputField)
     }
+
+    // ── Tabs ────────────────────────────────────────────
+
+    @objc private func tabTapped() {
+        let tab = ChatTab(rawValue: tabControl.selectedSegment) ?? .chat
+        applyTab(tab)
+        if tab == .chat { panel.makeFirstResponder(inputField) }
+    }
+
+    func selectTab(_ tab: ChatTab) {
+        tabControl.selectedSegment = tab.rawValue
+        applyTab(tab)
+    }
+
+    private func applyTab(_ tab: ChatTab) {
+        currentTab = tab
+        let isChat = tab == .chat
+        scrollView.isHidden = !isChat
+        statusRow.isHidden = !isChat
+        inputRow.isHidden = !isChat
+        dictationsView.isHidden = tab != .dictations
+        ttsView.isHidden = tab != .speech
+        updateEmptyLabel()
+        if isChat { scrollToBottom() }
+    }
+
+    private func updateEmptyLabel() {
+        let hasMessages = !bubbleStack.arrangedSubviews.isEmpty
+        emptyLabel.isHidden = currentTab != .chat || hasMessages
+    }
+
+    // ── Dictations + Speech passthroughs ────────────────
+
+    func addDictation(text: String, time: String) {
+        dictationsView.addEntry(text: text, time: time)
+    }
+
+    func currentTTSRequest() -> TTSRequest { ttsView.currentTTSRequest() }
+    func applyTTSRequest(_ request: TTSRequest) { ttsView.applyTTSRequest(request) }
+    func setTTSStatus(_ snapshot: TTSStatusSnapshot) { ttsView.setTTSStatus(snapshot) }
+    func setTTSServerLabel(_ text: String) { ttsView.setTTSServerLabel(text) }
 
     // ── Building the UI ─────────────────────────────────
 
@@ -309,7 +370,7 @@ final class ChatPanel {
         let statusSpacer = NSView()
         statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let statusRow = NSStackView(views: [statusLabel, statusSpacer, stopButton])
+        statusRow = NSStackView(views: [statusLabel, statusSpacer, stopButton])
         statusRow.orientation = .horizontal
         statusRow.spacing = 8
         statusRow.edgeInsets = NSEdgeInsets(top: 0, left: 16, bottom: 0, right: 14)
@@ -335,14 +396,43 @@ final class ChatPanel {
         sendButton = iconButton("arrow.up.circle.fill", action: #selector(sendTapped), tip: "Send")
         sendButton.contentTintColor = Theme.accent
 
-        let inputRow = NSStackView(views: [snapButton, inputField, sendButton])
+        inputRow = NSStackView(views: [snapButton, inputField, sendButton])
         inputRow.orientation = .horizontal
         inputRow.spacing = 8
         inputRow.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 12, right: 12)
         inputRow.translatesAutoresizingMaskIntoConstraints = false
 
+        // Tabs ----------------------------------------------------------------
+        tabControl = NSSegmentedControl(
+            labels: ["Chat", "Dictations", "Speech"],
+            trackingMode: .selectOne,
+            target: self, action: #selector(tabTapped)
+        )
+        tabControl.selectedSegment = 0
+        tabControl.translatesAutoresizingMaskIntoConstraints = false
+
+        let tabBar = NSView()
+        tabBar.translatesAutoresizingMaskIntoConstraints = false
+        tabBar.addSubview(tabControl)
+        NSLayoutConstraint.activate([
+            tabControl.centerXAnchor.constraint(equalTo: tabBar.centerXAnchor),
+            tabControl.topAnchor.constraint(equalTo: tabBar.topAnchor, constant: 2),
+            tabControl.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: -6),
+        ])
+
+        // Dictations + Speech surfaces (hidden until their tab is selected)
+        dictationsView = DictationsView()
+        dictationsView.isHidden = true
+        dictationsView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        ttsView = TTSView()
+        ttsView.isHidden = true
+        ttsView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        ttsView.onSpeak = { [weak self] request in self?.onTTSSpeak?(request) }
+        ttsView.onSeek = { [weak self] position in self?.onTTSSeek?(position) }
+        ttsView.onStop = { [weak self] in self?.onTTSStop?() }
+
         // Assemble ------------------------------------------------------------
-        let column = NSStackView(views: [header, headerLine, scrollView, statusRow, inputRow])
+        let column = NSStackView(views: [header, headerLine, tabBar, scrollView, dictationsView, ttsView, statusRow, inputRow])
         column.orientation = .vertical
         column.spacing = 4
         column.distribution = .fill
@@ -359,12 +449,10 @@ final class ChatPanel {
             emptyLabel.centerYAnchor.constraint(equalTo: root.centerYAnchor),
             emptyLabel.widthAnchor.constraint(lessThanOrEqualToConstant: width - 60),
         ])
-        for view in [header, headerLine, statusRow, inputRow] {
+        for view in [header, headerLine, tabBar, scrollView, dictationsView, ttsView, statusRow, inputRow] as [NSView] {
             view.leadingAnchor.constraint(equalTo: column.leadingAnchor).isActive = true
             view.trailingAnchor.constraint(equalTo: column.trailingAnchor).isActive = true
         }
-        scrollView.leadingAnchor.constraint(equalTo: column.leadingAnchor).isActive = true
-        scrollView.trailingAnchor.constraint(equalTo: column.trailingAnchor).isActive = true
         documentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor).isActive = true
 
         panel.contentView = root

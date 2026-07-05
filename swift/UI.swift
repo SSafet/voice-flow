@@ -492,10 +492,10 @@ class IndicatorView: NSView {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  History Window (branded, matches Python AppWindow)
+//  Dictation history entry (shown in the ChatPanel Dictations tab)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-struct HistoryEntry {
+struct HistoryEntry: Codable {
     let text: String
     let time: String
 }
@@ -600,29 +600,241 @@ class FloatingTranscriptPanel {
     }
 }
 
-enum HistoryTab: Int {
-    case dictations = 0
-    case tts = 1
-}
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Dictations view — browsable, copyable dictation history
+//  Hosted as a tab inside ChatPanel. Persists to
+//  ~/.config/voice-flow/dictations.json so history survives restarts.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-class HistoryWindowController: NSWindowController, NSWindowDelegate {
-    var onSettings: (() -> Void)?
-    var onWindowClosed: (() -> Void)?
-    var onTTSSpeak: ((TTSRequest) -> Void)?
-    var onTTSSeek: ((Double) -> Void)?
-    var onTTSStop: (() -> Void)?
-
-    // Dictations tab
+final class DictationsView: NSView {
     private var entries: [HistoryEntry] = []
     private var contentStack: NSView!          // flipped document view
-    private var bottomConstraint: NSLayoutConstraint?
-    private var lastCardBottomAnchor: NSLayoutYAxisAnchor?
     private var emptyView: NSView!
     private var scrollView: NSScrollView!
-    private var lastDay: String = ""
 
-    // TTS tab
-    private var ttsContainer: NSView!
+    private let renderCap = 60
+    private let storeCap = 200
+    private static let storeURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/voice-flow/dictations.json")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        entries = DictationsView.loadEntries()
+        setupUI()
+        rebuildContent()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    convenience init() { self.init(frame: .zero) }
+
+    private func setupUI() {
+        let secLabel = NSTextField(labelWithString: "DICTATIONS")
+        secLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        secLabel.textColor = Theme.text3
+        secLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        contentStack = FlippedView()
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+
+        emptyView = makeEmptyState()
+        emptyView.translatesAutoresizingMaskIntoConstraints = false
+
+        scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.scrollerStyle = .overlay
+        scrollView.documentView = contentStack
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(secLabel)
+        addSubview(scrollView)
+
+        NSLayoutConstraint.activate([
+            secLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            secLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            scrollView.topAnchor.constraint(equalTo: secLabel.bottomAnchor, constant: 8),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+        ])
+    }
+
+    func addEntry(text: String, time: String) {
+        entries.insert(HistoryEntry(text: text, time: time), at: 0)
+        if entries.count > storeCap { entries = Array(entries.prefix(storeCap)) }
+        DictationsView.saveEntries(entries)
+        rebuildContent()
+    }
+
+    private func rebuildContent() {
+        contentStack.subviews.forEach { $0.removeFromSuperview() }
+
+        if entries.isEmpty {
+            contentStack.addSubview(emptyView)
+            NSLayoutConstraint.activate([
+                emptyView.topAnchor.constraint(equalTo: contentStack.topAnchor, constant: 60),
+                emptyView.centerXAnchor.constraint(equalTo: contentStack.centerXAnchor),
+            ])
+            return
+        }
+
+        var topAnchor = contentStack.topAnchor
+
+        // Day label
+        let dayLabel = NSTextField(labelWithString: "Today")
+        dayLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        dayLabel.textColor = Theme.text2
+        dayLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addSubview(dayLabel)
+        NSLayoutConstraint.activate([
+            dayLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            dayLabel.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor, constant: 2),
+        ])
+        topAnchor = dayLabel.bottomAnchor
+
+        // Cards (newest first, capped)
+        let capped = Array(entries.prefix(renderCap))
+        for entry in capped {
+            let card = makeCard(text: entry.text, time: entry.time)
+            card.translatesAutoresizingMaskIntoConstraints = false
+            contentStack.addSubview(card)
+            NSLayoutConstraint.activate([
+                card.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+                card.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor),
+                card.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor),
+            ])
+            topAnchor = card.bottomAnchor
+        }
+
+        // Pin bottom to size the document view for scrolling
+        let bottom = topAnchor.constraint(equalTo: contentStack.bottomAnchor, constant: -12)
+        bottom.priority = .defaultLow
+        bottom.isActive = true
+    }
+
+    private func makeCard(text: String, time: String) -> NSView {
+        let card = HoverCardView()
+        card.wantsLayer = true
+        card.layer?.cornerRadius = 8
+        card.layer?.backgroundColor = Theme.card.cgColor
+        card.layer?.borderWidth = 1
+        card.layer?.borderColor = Theme.border.cgColor
+
+        let textLabel = NSTextField(wrappingLabelWithString: text)
+        textLabel.font = .systemFont(ofSize: 13)
+        textLabel.textColor = Theme.text
+        textLabel.maximumNumberOfLines = 0
+        textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let timeLabel = NSTextField(labelWithString: time)
+        timeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        timeLabel.textColor = Theme.text3
+
+        let copyBtn = NSButton(title: "Copy", target: self, action: #selector(copyClicked(_:)))
+        copyBtn.bezelStyle = .inline
+        copyBtn.font = .systemFont(ofSize: 11)
+        copyBtn.toolTip = text
+        copyBtn.setContentHuggingPriority(.required, for: .horizontal)
+        copyBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        card.addSubview(textLabel)
+        card.addSubview(timeLabel)
+        card.addSubview(copyBtn)
+        textLabel.translatesAutoresizingMaskIntoConstraints = false
+        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        copyBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            textLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
+            textLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            textLabel.trailingAnchor.constraint(equalTo: copyBtn.leadingAnchor, constant: -10),
+
+            copyBtn.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            copyBtn.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+
+            timeLabel.topAnchor.constraint(equalTo: textLabel.bottomAnchor, constant: 3),
+            timeLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            timeLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
+        ])
+
+        return card
+    }
+
+    @objc private func copyClicked(_ sender: NSButton) {
+        guard let text = sender.toolTip else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+
+        // Green flash feedback
+        if let card = sender.superview as? HoverCardView {
+            card.layer?.backgroundColor = NSColor(r: 120, g: 180, b: 100, a: 15).cgColor
+            card.layer?.borderColor = NSColor(r: 120, g: 180, b: 100, a: 30).cgColor
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                card.layer?.backgroundColor = Theme.card.cgColor
+                card.layer?.borderColor = Theme.border.cgColor
+            }
+        }
+    }
+
+    private func makeEmptyState() -> NSView {
+        let v = NSStackView()
+        v.orientation = .vertical
+        v.alignment = .centerX
+        v.spacing = 8
+
+        let bundle = Bundle.main
+        if let iconPath = bundle.path(forResource: "icon", ofType: "icns"),
+           let img = NSImage(contentsOfFile: iconPath) {
+            let iv = NSImageView(image: img)
+            iv.imageScaling = .scaleProportionallyDown
+            iv.translatesAutoresizingMaskIntoConstraints = false
+            iv.widthAnchor.constraint(equalToConstant: 72).isActive = true
+            iv.heightAnchor.constraint(equalToConstant: 72).isActive = true
+            v.addArrangedSubview(iv)
+        }
+
+        let t = NSTextField(labelWithString: "No dictations yet")
+        t.font = .systemFont(ofSize: 14, weight: .medium)
+        t.textColor = Theme.text2
+        t.alignment = .center
+        v.addArrangedSubview(t)
+
+        let h = NSTextField(labelWithString: "Your dictations will appear here")
+        h.font = .systemFont(ofSize: 12)
+        h.textColor = Theme.text3
+        h.alignment = .center
+        v.addArrangedSubview(h)
+
+        return v
+    }
+
+    // ── Persistence ────────────────────────────────────
+    private static func loadEntries() -> [HistoryEntry] {
+        guard let data = try? Data(contentsOf: storeURL),
+              let list = try? JSONDecoder().decode([HistoryEntry].self, from: data) else { return [] }
+        return list
+    }
+
+    private static func saveEntries(_ entries: [HistoryEntry]) {
+        let dir = storeURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(entries) {
+            try? data.write(to: storeURL, options: .atomic)
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Text-to-Speech view — paste text and play it
+//  Hosted as a tab inside ChatPanel; drives the shared TTS engine.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+final class TTSView: NSView {
+    var onSpeak: ((TTSRequest) -> Void)?
+    var onSeek: ((Double) -> Void)?
+    var onStop: (() -> Void)?
+
     private var ttsStatusLabel: NSTextField!
     private var ttsServerLabel: NSTextField!
     private var ttsVoicePopup: NSPopUpButton!
@@ -636,209 +848,16 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
     private var ttsSpeakButton: NSButton!
     private var ttsTimelineIsUpdating = false
 
-    // Shared
-    private var statusPill: NSTextField!
-    private var pillContainer: NSView!
-    private var segmentControl: NSSegmentedControl!
-    private var dictationsContainer: NSView!
-
-    init() {
-        let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 620),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
-            backing: .buffered, defer: false
-        )
-        w.minSize = NSSize(width: 420, height: 360)
-        w.title = "Voice Flow"
-        w.center()
-        w.backgroundColor = Theme.bg
-        w.appearance = NSAppearance(named: .darkAqua)
-        w.titlebarAppearsTransparent = true
-        w.isReleasedWhenClosed = false
-        super.init(window: w)
-        w.delegate = self
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
         setupUI()
+        updateTTSSpeedLabel()
     }
     required init?(coder: NSCoder) { fatalError() }
-
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        sender.orderOut(nil)
-        onWindowClosed?()
-        return false  // hide, don't close
-    }
+    convenience init() { self.init(frame: .zero) }
 
     private func setupUI() {
-        let content = window!.contentView!
-        let root = NSStackView()
-        root.orientation = .vertical
-        root.spacing = 0
-        root.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(root)
-        NSLayoutConstraint.activate([
-            root.topAnchor.constraint(equalTo: content.topAnchor),
-            root.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            root.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-        ])
-
-        // ── header (80px) ───────────────────────────────
-        let header = NSView()
-        header.wantsLayer = true
-        header.layer?.backgroundColor = Theme.bgLighter.cgColor
-        header.translatesAutoresizingMaskIntoConstraints = false
-        header.heightAnchor.constraint(equalToConstant: 80).isActive = true
-
-        let hStack = NSStackView()
-        hStack.orientation = .horizontal
-        hStack.spacing = 14
-        hStack.edgeInsets = NSEdgeInsets(top: 0, left: 20, bottom: 0, right: 16)
-        hStack.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(hStack)
-        NSLayoutConstraint.activate([
-            hStack.leadingAnchor.constraint(equalTo: header.leadingAnchor),
-            hStack.trailingAnchor.constraint(equalTo: header.trailingAnchor),
-            hStack.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-        ])
-
-        // Logo
-        let bundle = Bundle.main
-        if let iconPath = bundle.path(forResource: "icon", ofType: "icns"),
-           let img = NSImage(contentsOfFile: iconPath) {
-            let iv = NSImageView(image: img)
-            iv.imageScaling = .scaleProportionallyDown
-            iv.translatesAutoresizingMaskIntoConstraints = false
-            iv.widthAnchor.constraint(equalToConstant: 44).isActive = true
-            iv.heightAnchor.constraint(equalToConstant: 44).isActive = true
-            hStack.addArrangedSubview(iv)
-        }
-
-        // Title block
-        let titleBlock = NSStackView()
-        titleBlock.orientation = .vertical
-        titleBlock.alignment = .leading
-        titleBlock.spacing = 2
-        let titleLabel = NSTextField(labelWithString: "Voice Flow")
-        titleLabel.font = .boldSystemFont(ofSize: 17)
-        titleLabel.textColor = Theme.accent
-        let subtitleLabel = NSTextField(labelWithString: "Dictation history & text to speech")
-        subtitleLabel.font = .systemFont(ofSize: 11)
-        subtitleLabel.textColor = Theme.text3
-        titleBlock.addArrangedSubview(titleLabel)
-        titleBlock.addArrangedSubview(subtitleLabel)
-        hStack.addArrangedSubview(titleBlock)
-
-        // Spacer
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        hStack.addArrangedSubview(spacer)
-
-        // Status pill (wrapped in a container for padding)
-        pillContainer = NSView()
-        pillContainer.wantsLayer = true
-        pillContainer.layer?.cornerRadius = 11
-        pillContainer.layer?.backgroundColor = Theme.accentGlow.cgColor
-        pillContainer.translatesAutoresizingMaskIntoConstraints = false
-        pillContainer.heightAnchor.constraint(equalToConstant: 22).isActive = true
-        pillContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
-
-        statusPill = NSTextField(labelWithString: "Loading…")
-        statusPill.font = .systemFont(ofSize: 11, weight: .medium)
-        statusPill.textColor = Theme.accent
-        statusPill.backgroundColor = .clear
-        statusPill.isBezeled = false
-        statusPill.isEditable = false
-        statusPill.alignment = .center
-        statusPill.translatesAutoresizingMaskIntoConstraints = false
-
-        pillContainer.addSubview(statusPill)
-        NSLayoutConstraint.activate([
-            statusPill.leadingAnchor.constraint(equalTo: pillContainer.leadingAnchor, constant: 12),
-            statusPill.trailingAnchor.constraint(equalTo: pillContainer.trailingAnchor, constant: -12),
-            statusPill.centerYAnchor.constraint(equalTo: pillContainer.centerYAnchor),
-        ])
-        hStack.addArrangedSubview(pillContainer)
-
-        // Settings gear
-        let gearBtn = NSButton(title: "⚙", target: self, action: #selector(settingsClicked))
-        gearBtn.isBordered = false
-        gearBtn.font = .systemFont(ofSize: 17)
-        gearBtn.translatesAutoresizingMaskIntoConstraints = false
-        gearBtn.widthAnchor.constraint(equalToConstant: 30).isActive = true
-        hStack.addArrangedSubview(gearBtn)
-
-        root.addArrangedSubview(header)
-
-        // Border line
-        let borderLine = NSView()
-        borderLine.wantsLayer = true
-        borderLine.layer?.backgroundColor = Theme.border.cgColor
-        borderLine.translatesAutoresizingMaskIntoConstraints = false
-        borderLine.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        root.addArrangedSubview(borderLine)
-
-        // ── segment control ─────────────────────────────
-        let segContainer = NSView()
-        segContainer.wantsLayer = true
-        segContainer.layer?.backgroundColor = Theme.bg.cgColor
-        segContainer.translatesAutoresizingMaskIntoConstraints = false
-        segContainer.heightAnchor.constraint(equalToConstant: 40).isActive = true
-
-        segmentControl = NSSegmentedControl(labels: ["Dictations", "Text to Speech"], trackingMode: .selectOne,
-                                            target: self, action: #selector(tabChanged))
-        segmentControl.selectedSegment = 0
-        segmentControl.translatesAutoresizingMaskIntoConstraints = false
-        segContainer.addSubview(segmentControl)
-        NSLayoutConstraint.activate([
-            segmentControl.centerXAnchor.constraint(equalTo: segContainer.centerXAnchor),
-            segmentControl.centerYAnchor.constraint(equalTo: segContainer.centerYAnchor),
-        ])
-        root.addArrangedSubview(segContainer)
-
-        // ── dictations tab ─────────────────────────────
-        dictationsContainer = NSView()
-        dictationsContainer.translatesAutoresizingMaskIntoConstraints = false
-
-        let secLabel = NSTextField(labelWithString: "DICTATIONS")
-        secLabel.font = .systemFont(ofSize: 10, weight: .semibold)
-        secLabel.textColor = Theme.text3
-
-        contentStack = FlippedView()
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
-
-        emptyView = makeEmptyState()
-        emptyView.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addSubview(emptyView)
-        NSLayoutConstraint.activate([
-            emptyView.topAnchor.constraint(equalTo: contentStack.topAnchor, constant: 60),
-            emptyView.centerXAnchor.constraint(equalTo: contentStack.centerXAnchor),
-        ])
-
-        scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
-        scrollView.scrollerStyle = .overlay
-        scrollView.documentView = contentStack
-
-        dictationsContainer.addSubview(secLabel)
-        dictationsContainer.addSubview(scrollView)
-        secLabel.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        NSLayoutConstraint.activate([
-            secLabel.topAnchor.constraint(equalTo: dictationsContainer.topAnchor, constant: 14),
-            secLabel.leadingAnchor.constraint(equalTo: dictationsContainer.leadingAnchor, constant: 16),
-            scrollView.topAnchor.constraint(equalTo: secLabel.bottomAnchor, constant: 8),
-            scrollView.leadingAnchor.constraint(equalTo: dictationsContainer.leadingAnchor, constant: 12),
-            scrollView.trailingAnchor.constraint(equalTo: dictationsContainer.trailingAnchor, constant: -12),
-            scrollView.bottomAnchor.constraint(equalTo: dictationsContainer.bottomAnchor, constant: -12),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-        ])
-
-        // ── tts tab ───────────────────────────────────
-        ttsContainer = NSView()
-        ttsContainer.translatesAutoresizingMaskIntoConstraints = false
-        ttsContainer.isHidden = true
-
         let ttsHeader = NSStackView()
         ttsHeader.orientation = .horizontal
         ttsHeader.spacing = 8
@@ -963,88 +982,29 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
         textScroll.documentView = ttsTextView
         textScroll.contentView.postsBoundsChangedNotifications = true
 
-        ttsContainer.addSubview(ttsHeader)
-        ttsContainer.addSubview(controlsRow)
-        ttsContainer.addSubview(ttsServerLabel)
-        ttsContainer.addSubview(textScroll)
+        addSubview(ttsHeader)
+        addSubview(controlsRow)
+        addSubview(ttsServerLabel)
+        addSubview(textScroll)
 
         NSLayoutConstraint.activate([
-            ttsHeader.topAnchor.constraint(equalTo: ttsContainer.topAnchor, constant: 14),
-            ttsHeader.leadingAnchor.constraint(equalTo: ttsContainer.leadingAnchor, constant: 16),
-            ttsHeader.trailingAnchor.constraint(equalTo: ttsContainer.trailingAnchor, constant: -16),
+            ttsHeader.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            ttsHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            ttsHeader.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
 
             controlsRow.topAnchor.constraint(equalTo: ttsHeader.bottomAnchor, constant: 12),
-            controlsRow.leadingAnchor.constraint(equalTo: ttsContainer.leadingAnchor, constant: 16),
-            controlsRow.trailingAnchor.constraint(equalTo: ttsContainer.trailingAnchor, constant: -16),
+            controlsRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            controlsRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
 
             ttsServerLabel.topAnchor.constraint(equalTo: controlsRow.bottomAnchor, constant: 12),
-            ttsServerLabel.leadingAnchor.constraint(equalTo: ttsContainer.leadingAnchor, constant: 16),
-            ttsServerLabel.trailingAnchor.constraint(equalTo: ttsContainer.trailingAnchor, constant: -16),
+            ttsServerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            ttsServerLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
 
             textScroll.topAnchor.constraint(equalTo: ttsServerLabel.bottomAnchor, constant: 10),
-            textScroll.leadingAnchor.constraint(equalTo: ttsContainer.leadingAnchor, constant: 12),
-            textScroll.trailingAnchor.constraint(equalTo: ttsContainer.trailingAnchor, constant: -12),
-            textScroll.bottomAnchor.constraint(equalTo: ttsContainer.bottomAnchor, constant: -12),
+            textScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            textScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            textScroll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
         ])
-
-        updateTTSSpeedLabel()
-
-        // ── add all tabs to a content wrapper ─────────
-        let contentArea = NSView()
-        contentArea.translatesAutoresizingMaskIntoConstraints = false
-        contentArea.addSubview(dictationsContainer)
-        contentArea.addSubview(ttsContainer)
-
-        NSLayoutConstraint.activate([
-            dictationsContainer.topAnchor.constraint(equalTo: contentArea.topAnchor),
-            dictationsContainer.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
-            dictationsContainer.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
-            dictationsContainer.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
-            ttsContainer.topAnchor.constraint(equalTo: contentArea.topAnchor),
-            ttsContainer.bottomAnchor.constraint(equalTo: contentArea.bottomAnchor),
-            ttsContainer.leadingAnchor.constraint(equalTo: contentArea.leadingAnchor),
-            ttsContainer.trailingAnchor.constraint(equalTo: contentArea.trailingAnchor),
-        ])
-
-        root.addArrangedSubview(contentArea)
-
-        // Stretch all arranged subviews to fill the stack's width
-        for v in root.arrangedSubviews {
-            v.leadingAnchor.constraint(equalTo: root.leadingAnchor).isActive = true
-            v.trailingAnchor.constraint(equalTo: root.trailingAnchor).isActive = true
-        }
-    }
-
-    private func makeEmptyState() -> NSView {
-        let v = NSStackView()
-        v.orientation = .vertical
-        v.alignment = .centerX
-        v.spacing = 8
-
-        let bundle = Bundle.main
-        if let iconPath = bundle.path(forResource: "icon", ofType: "icns"),
-           let img = NSImage(contentsOfFile: iconPath) {
-            let iv = NSImageView(image: img)
-            iv.imageScaling = .scaleProportionallyDown
-            iv.translatesAutoresizingMaskIntoConstraints = false
-            iv.widthAnchor.constraint(equalToConstant: 72).isActive = true
-            iv.heightAnchor.constraint(equalToConstant: 72).isActive = true
-            v.addArrangedSubview(iv)
-        }
-
-        let t = NSTextField(labelWithString: "No dictations yet")
-        t.font = .systemFont(ofSize: 14, weight: .medium)
-        t.textColor = Theme.text2
-        t.alignment = .center
-        v.addArrangedSubview(t)
-
-        let h = NSTextField(labelWithString: "Hold Right Option to start dictating")
-        h.font = .systemFont(ofSize: 12)
-        h.textColor = Theme.text3
-        h.alignment = .center
-        v.addArrangedSubview(h)
-
-        return v
     }
 
     private func gridLabel(_ text: String) -> NSTextField {
@@ -1052,161 +1012,6 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
         label.font = .systemFont(ofSize: 12)
         label.textColor = Theme.text2
         return label
-    }
-
-    func setState(_ state: AppState) {
-        let label = Theme.stateLabel(state)
-        statusPill?.stringValue = label
-        if state == .idle {
-            statusPill?.textColor = Theme.text3
-            pillContainer?.layer?.backgroundColor = NSColor.clear.cgColor
-            pillContainer?.layer?.borderWidth = 1
-            pillContainer?.layer?.borderColor = Theme.border.cgColor
-        } else {
-            let c = Theme.stateColor(state)
-            statusPill?.textColor = c
-            pillContainer?.layer?.backgroundColor = c.withAlphaComponent(0.12).cgColor
-            pillContainer?.layer?.borderWidth = 0
-        }
-    }
-
-    func addEntry(text: String, time: String) {
-        entries.insert(HistoryEntry(text: text, time: time), at: 0)
-
-        if emptyView.superview != nil {
-            emptyView.removeFromSuperview()
-        }
-
-        // Rebuild the entire content (simple and correct)
-        rebuildContent()
-    }
-
-    private func rebuildContent() {
-        // Remove all subviews
-        contentStack.subviews.forEach { $0.removeFromSuperview() }
-        bottomConstraint = nil
-        lastCardBottomAnchor = nil
-
-        if entries.isEmpty {
-            emptyView.translatesAutoresizingMaskIntoConstraints = false
-            contentStack.addSubview(emptyView)
-            NSLayoutConstraint.activate([
-                emptyView.topAnchor.constraint(equalTo: contentStack.topAnchor, constant: 60),
-                emptyView.centerXAnchor.constraint(equalTo: contentStack.centerXAnchor),
-            ])
-            return
-        }
-
-        var topAnchor = contentStack.topAnchor
-
-        // Day label
-        let dayLabel = NSTextField(labelWithString: "Today")
-        dayLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        dayLabel.textColor = Theme.text2
-        dayLabel.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addSubview(dayLabel)
-        NSLayoutConstraint.activate([
-            dayLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            dayLabel.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor, constant: 2),
-        ])
-        topAnchor = dayLabel.bottomAnchor
-
-        // Add cards (newest first, capped at 60)
-        let capped = Array(entries.prefix(60))
-        for entry in capped {
-            let card = makeCard(text: entry.text, time: entry.time)
-            card.translatesAutoresizingMaskIntoConstraints = false
-            contentStack.addSubview(card)
-            NSLayoutConstraint.activate([
-                card.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-                card.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor),
-                card.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor),
-            ])
-            topAnchor = card.bottomAnchor
-        }
-
-        // Pin bottom to size the document view for scrolling
-        let bottom = topAnchor.constraint(equalTo: contentStack.bottomAnchor, constant: -12)
-        bottom.priority = .defaultLow
-        bottom.isActive = true
-    }
-
-    private func makeCard(text: String, time: String) -> NSView {
-        let card = HoverCardView()
-        card.wantsLayer = true
-        card.layer?.cornerRadius = 8
-        card.layer?.backgroundColor = Theme.card.cgColor
-        card.layer?.borderWidth = 1
-        card.layer?.borderColor = Theme.border.cgColor
-
-        let textLabel = NSTextField(wrappingLabelWithString: text)
-        textLabel.font = .systemFont(ofSize: 13)
-        textLabel.textColor = Theme.text
-        textLabel.maximumNumberOfLines = 0
-        textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let timeLabel = NSTextField(labelWithString: time)
-        timeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        timeLabel.textColor = Theme.text3
-
-        let copyBtn = NSButton(title: "Copy", target: self, action: #selector(copyClicked(_:)))
-        copyBtn.bezelStyle = .inline
-        copyBtn.font = .systemFont(ofSize: 11)
-        copyBtn.toolTip = text
-        copyBtn.setContentHuggingPriority(.required, for: .horizontal)
-        copyBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        card.addSubview(textLabel)
-        card.addSubview(timeLabel)
-        card.addSubview(copyBtn)
-        textLabel.translatesAutoresizingMaskIntoConstraints = false
-        timeLabel.translatesAutoresizingMaskIntoConstraints = false
-        copyBtn.translatesAutoresizingMaskIntoConstraints = false
-
-        NSLayoutConstraint.activate([
-            textLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
-            textLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-            textLabel.trailingAnchor.constraint(equalTo: copyBtn.leadingAnchor, constant: -10),
-
-            copyBtn.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
-            copyBtn.centerYAnchor.constraint(equalTo: card.centerYAnchor),
-
-            timeLabel.topAnchor.constraint(equalTo: textLabel.bottomAnchor, constant: 3),
-            timeLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-            timeLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
-        ])
-
-        return card
-    }
-
-    @objc private func copyClicked(_ sender: NSButton) {
-        guard let text = sender.toolTip else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-
-        // Green flash feedback
-        if let card = sender.superview?.superview as? HoverCardView {
-            card.layer?.backgroundColor = NSColor(r: 120, g: 180, b: 100, a: 15).cgColor
-            card.layer?.borderColor = NSColor(r: 120, g: 180, b: 100, a: 30).cgColor
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                card.layer?.backgroundColor = Theme.card.cgColor
-                card.layer?.borderColor = Theme.border.cgColor
-            }
-        }
-    }
-
-    @objc private func settingsClicked() { onSettings?() }
-
-    // ── tab switching ─────────────────────────────────
-    @objc private func tabChanged() {
-        let tab = HistoryTab(rawValue: segmentControl.selectedSegment) ?? .dictations
-        dictationsContainer.isHidden = tab != .dictations
-        ttsContainer.isHidden = tab != .tts
-    }
-
-    func selectTab(_ tab: HistoryTab) {
-        segmentControl.selectedSegment = tab.rawValue
-        tabChanged()
     }
 
     func currentTTSRequest() -> TTSRequest {
@@ -1301,15 +1106,15 @@ class HistoryWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func ttsTimelineChanged() {
         guard !ttsTimelineIsUpdating else { return }
-        onTTSSeek?(ttsTimelineSlider?.doubleValue ?? 0)
+        onSeek?(ttsTimelineSlider?.doubleValue ?? 0)
     }
 
     @objc private func ttsSpeakClicked() {
-        onTTSSpeak?(currentTTSRequest())
+        onSpeak?(currentTTSRequest())
     }
 
     @objc private func ttsStopClicked() {
-        onTTSStop?()
+        onStop?()
     }
 
     @objc private func ttsClearClicked() {

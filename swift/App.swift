@@ -13,7 +13,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var indicator: FloatingIndicator!
     var chatPanel: ChatPanel!
     var annotationOverlay: AnnotationOverlay!
-    var historyWindow: HistoryWindowController!
     var settingsWindow: SettingsWindowController!
     var permissionsWindow: PermissionsWindowController!
     var hotkeyManager: HotkeyManager!
@@ -57,7 +56,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { [self] in
                 menuBar?.setState(state)
                 indicator?.setState(state)
-                historyWindow?.setState(state)
             }
         }
     }
@@ -139,22 +137,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.chatPanel.setActivity(.idle)
         }
         chatPanel.onOpenSettings = { [weak self] in self?.showSettings() }
+        chatPanel.onTTSSpeak = { [weak self] request in
+            self?.handleTTSSpeak(request, reveal: false, showSettingsOnMissingKey: true)
+        }
+        chatPanel.onTTSSeek = { [weak self] position in
+            self?.ttsController.seek(to: position)
+        }
+        chatPanel.onTTSStop = { [weak self] in
+            self?.ttsController.stop()
+        }
         chatPanel.setVoiceReplies(UserSettings.shared.voiceRepliesEnabled)
 
         transcriptPanel = FloatingTranscriptPanel()
-
-        historyWindow = HistoryWindowController()
-        historyWindow.onSettings = { [weak self] in self?.showSettings() }
-        historyWindow.onWindowClosed = { [weak self] in self?.hideDockIfNoWindows() }
-        historyWindow.onTTSSpeak = { [weak self] request in
-            self?.handleTTSSpeak(request, reveal: false, showSettingsOnMissingKey: true)
-        }
-        historyWindow.onTTSSeek = { [weak self] position in
-            self?.ttsController.seek(to: position)
-        }
-        historyWindow.onTTSStop = { [weak self] in
-            self?.ttsController.stop()
-        }
 
         settingsWindow = SettingsWindowController()
         settingsWindow.onHotkeyChanged = { [weak self] spec in
@@ -226,7 +220,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ttsController.onStatusChanged = { [weak self] snapshot in
             DispatchQueue.main.async {
                 self?.indicator.setTTSStatus(snapshot)
-                self?.historyWindow.setTTSStatus(snapshot)
+                self?.chatPanel.setTTSStatus(snapshot)
             }
         }
 
@@ -260,8 +254,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             speed: UserSettings.shared.ttsSpeed,
             instructions: UserSettings.shared.ttsInstructions
         )
-        historyWindow.applyTTSRequest(initialTTSRequest)
-        historyWindow.setTTSStatus(ttsController.status)
+        chatPanel.applyTTSRequest(initialTTSRequest)
+        chatPanel.setTTSStatus(ttsController.status)
 
         setupLocalAPIServer()
     }
@@ -668,7 +662,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         playSound("Pop")
         let timestamp = Self.timestamp()
         DispatchQueue.main.async {
-            self.historyWindow.addEntry(text: cleaned, time: timestamp)
+            self.chatPanel.addDictation(text: cleaned, time: timestamp)
         }
         state = .done
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
@@ -878,15 +872,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     private func toggleHistory() {
-        if historyWindow.window?.isVisible == true {
-            historyWindow.window?.orderOut(nil)
-            hideDockIfNoWindows()
-        } else {
-            showDock()
-            historyWindow.showWindow(nil)
-            historyWindow.window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        chatPanel.show(focusInput: false)
+        chatPanel.selectTab(.dictations)
     }
 
     private func showSettings() {
@@ -904,21 +891,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func showHistoryTab(_ tab: HistoryTab) {
-        showDock()
-        historyWindow.showWindow(nil)
-        historyWindow.window?.makeKeyAndOrderFront(nil)
-        historyWindow.selectTab(tab)
-        NSApp.activate(ignoringOtherApps: true)
+    private func revealSpeechTab() {
+        chatPanel.show(focusInput: false)
+        chatPanel.selectTab(.speech)
     }
 
     private func showDock() { NSApp.setActivationPolicy(.regular) }
 
     private func hideDockIfNoWindows() {
-        let historyVisible = historyWindow.window?.isVisible == true
         let settingsVisible = settingsWindow.window?.isVisible == true
         let permissionsVisible = permissionsWindow.window?.isVisible == true
-        if !historyVisible && !settingsVisible && !permissionsVisible {
+        if !settingsVisible && !permissionsVisible {
             NSApp.setActivationPolicy(.accessory)
         }
     }
@@ -934,10 +917,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        var request = historyWindow.currentTTSRequest()
+        var request = chatPanel.currentTTSRequest()
         request.text = selectedText
         let normalized = request.normalized()
-        historyWindow.applyTTSRequest(normalized)
+        chatPanel.applyTTSRequest(normalized)
         _ = handleTTSSpeak(normalized, reveal: false, showSettingsOnMissingKey: true)
     }
 
@@ -945,7 +928,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         localAPIServer = LocalAPIServer()
         localAPIServer.onServerMessage = { [weak self] message in
             DispatchQueue.main.async {
-                self?.historyWindow.setTTSServerLabel(message)
+                self?.chatPanel.setTTSServerLabel(message)
             }
         }
         localAPIServer.onStatus = { [weak self] in
@@ -996,7 +979,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func mergedTTSRequest(_ payload: TTSAPIUpdatePayload) -> TTSRequest {
-        var request = historyWindow.currentTTSRequest()
+        var request = chatPanel.currentTTSRequest()
         if let text = payload.text { request.text = text }
         if let voice = payload.voice { request.voice = voice }
         if let speed = payload.speed { request.speed = speed }
@@ -1007,9 +990,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @discardableResult
     private func handleTTSSpeak(_ request: TTSRequest, reveal: Bool, showSettingsOnMissingKey: Bool) -> String? {
         let normalized = request.normalized()
-        historyWindow.applyTTSRequest(normalized)
+        chatPanel.applyTTSRequest(normalized)
         if reveal {
-            showHistoryTab(.tts)
+            revealSpeechTab()
         }
 
         do {
@@ -1018,7 +1001,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             let message = error.localizedDescription
             let currentStatus = ttsController.status
-            historyWindow.setTTSStatus(TTSStatusSnapshot(
+            chatPanel.setTTSStatus(TTSStatusSnapshot(
                 phase: .error,
                 message: message,
                 currentTime: currentStatus.currentTime,
@@ -1037,9 +1020,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleTTSSet(_ payload: TTSAPIUpdatePayload) -> LocalAPIResponse {
         let request = mergedTTSRequest(payload)
-        historyWindow.applyTTSRequest(request)
+        chatPanel.applyTTSRequest(request)
         if payload.reveal == true {
-            showHistoryTab(.tts)
+            revealSpeechTab()
         }
 
         return LocalAPIResponse.ok([
@@ -1070,7 +1053,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         ttsController.seek(to: position)
         if payload.reveal == true {
-            showHistoryTab(.tts)
+            revealSpeechTab()
         }
         return LocalAPIResponse.ok([
             "ok": true,
@@ -1081,7 +1064,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeTTSStatusResponse() -> LocalAPIResponse {
-        let request = historyWindow.currentTTSRequest()
+        let request = chatPanel.currentTTSRequest()
         let status = ttsController.status
         return LocalAPIResponse.ok([
             "ok": true,
