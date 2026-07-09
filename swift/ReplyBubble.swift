@@ -12,7 +12,7 @@ final class ReplyBubble {
     var onClosed: (() -> Void)?
 
     private let width: CGFloat = 400
-    private let maxTextHeight: CGFloat = 240
+    private let maxTextHeight: CGFloat = 320
     private let headerHeight: CGFloat = 28
     private let bottomInset: CGFloat = 12
     private let actionRowHeight: CGFloat = 34
@@ -113,15 +113,16 @@ final class ReplyBubble {
     }
 
     /// A question from Claude waiting for the user — prompt in the body,
-    /// how-to-answer hint in the status line.
-    func showAsk(prompt: String, hint: String) {
+    /// how-to-answer hint in the status line, optional acknowledge button
+    /// ("Seen — I'll answer later").
+    func showAsk(prompt: String, hint: String, actionTitle: String? = nil, action: (() -> Void)? = nil) {
         suppressed = false
         cancelAutoHide()
         ensurePanel()
         streaming = false
         setText(prompt, attributes: textAttributes)
         statusLabel.stringValue = hint
-        configureAction(title: nil, handler: nil)
+        configureAction(title: actionTitle, handler: action)
         reveal()
     }
 

@@ -311,7 +311,10 @@ final class MCPServer {
             session (narration + ordered screenshots). The result contains their words plus \
             absolute file paths of any screenshots — read those files. Use when you cannot \
             proceed without their input. If you'd rather keep working while they decide, use \
-            notify_user and collect the reply later with check_messages or wait_for_message.
+            notify_user and collect the reply later with check_messages or wait_for_message. \
+            The user may also tap "Seen — I'll answer later": you get that back immediately as \
+            a non-error result — continue working and collect their eventual reply from the \
+            message inbox.
             """,
             "inputSchema": [
                 "type": "object",
