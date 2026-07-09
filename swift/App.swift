@@ -1473,6 +1473,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleMCPTool(_ name: String, _ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         switch name {
+        case "set_session_name": return mcpSetSessionName(args, session)
         case "ask_user": return mcpAskUser(args, session)
         case "notify_user": return mcpNotifyUser(args, session)
         case "check_messages": return mcpCheckMessages(session)
@@ -1504,6 +1505,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return "{}"
         }
         return text
+    }
+
+    private func mcpSetSessionName(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
+        guard let session else {
+            return .fail("This request carried no session id, so there is nothing to name.")
+        }
+        var name = (args["name"] as? String ?? "")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            return .fail("set_session_name needs a non-empty `name`.")
+        }
+        name = String(name.prefix(48))
+        guard let renamed = mcpServer.sessions.rename(session.id, to: name) else {
+            return .fail("This session is no longer registered.")
+        }
+        return .ok("This session now appears to the user as \"\(renamed.label)\".")
     }
 
     private func mcpAskUser(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {

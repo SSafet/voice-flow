@@ -77,13 +77,16 @@ Tool handlers live in `AppDelegate.handleMCPTool` (`App.swift`); they run on
 background HTTP threads and hop to main for UI.
 
 **Sessions**: each Claude Code instance gets an `Mcp-Session-Id` on
-initialize (`MCPSessionRegistry` in `MCP.swift`, labeled "Claude #N");
-`DELETE /mcp` closes one. Talk hotkeys feed the **target session**
-(`AppDelegate.targetSessionId` — newest connection by default, switchable
-via the menu bar's "Voice Goes To" submenu). The inbox is per-session
-(`InboxMessage.session`; nil = any session may drain it), and `ask_user` /
-`notify_user` bubbles are labeled with the asking session when several are
-connected. 16 tools in three groups:
+initialize (`MCPSessionRegistry` in `MCP.swift`); sessions name themselves
+via the `set_session_name` tool (server instructions + a one-time nudge in
+the first tool result push Claude to call it; unnamed sessions show as
+"Claude #N"). `DELETE /mcp` closes one. Talk hotkeys feed the **target
+session** (`AppDelegate.targetSessionId` — newest connection by default,
+switchable via the menu bar's "Voice Goes To" submenu). The inbox is
+per-session (`InboxMessage.session`; nil = any session may drain it), and
+`ask_user` / `notify_user` bubbles are labeled with the asking session when
+several are connected. 17 tools in three groups (plus `set_session_name`
+above):
 
 **Hearing from the user**
 - `ask_user` — **blocks** until the human answers (`PendingInteraction`

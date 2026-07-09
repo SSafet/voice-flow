@@ -13,8 +13,13 @@ struct MCPSession {
     let number: Int          // display order: "Claude #2"
     let firstSeen: Date
     var lastSeen: Date
+    /// Self-chosen via the set_session_name tool ("voice-flow — routing").
+    var name: String?
+    /// Whether the one-time "name yourself" hint was already appended to a
+    /// tool result of this session.
+    var nudgedForName = false
 
-    var label: String { "Claude #\(number)" }
+    var label: String { name ?? "Claude #\(number)" }
 }
 
 final class MCPSessionRegistry {
@@ -53,6 +58,28 @@ final class MCPSessionRegistry {
 
     func close(_ id: String) -> MCPSession? {
         lock.sync { sessions.removeValue(forKey: id) }
+    }
+
+    /// Set the session's display name. Returns the updated session.
+    func rename(_ id: String, to name: String) -> MCPSession? {
+        lock.sync {
+            guard var session = sessions[id] else { return nil }
+            session.name = name
+            sessions[id] = session
+            return session
+        }
+    }
+
+    /// True exactly once per unnamed session — marks the nudge as spent.
+    func consumeNameNudge(_ id: String) -> Bool {
+        lock.sync {
+            guard var session = sessions[id], session.name == nil, !session.nudgedForName else {
+                return false
+            }
+            session.nudgedForName = true
+            sessions[id] = session
+            return true
+        }
     }
 
     func session(_ id: String?) -> MCPSession? {
@@ -115,6 +142,10 @@ final class MCPServer {
     private let serverInstructions = """
         Voice Flow is a macOS voice + screen companion app the user is running. It is your \
         interaction layer with the user — richer than plain text, in both directions.
+
+        First, introduce yourself: call set_session_name with a short project/task name \
+        ("voice-flow — session routing"). The user may have several Claude sessions connected \
+        at once and picks which one their voice goes to by that name.
 
         Hearing from the user:
         - ask_user: put a prompt on their screen and BLOCK until they answer (voice, voice + \
@@ -207,7 +238,14 @@ final class MCPServer {
             guard let callTool else {
                 return respond(error: (-32603, "Voice Flow is still starting up."), id: id)
             }
-            let result = callTool(name, arguments, session)
+            var result = callTool(name, arguments, session)
+            // One-time reminder: an unnamed session is hard for the user
+            // to route voice input to.
+            if !result.isError, name != "set_session_name",
+               let session, sessions.consumeNameNudge(session.id) {
+                result = ToolResult.ok(result.text
+                    + "\n\n(This session is unnamed — call set_session_name with a short project/task label so the user can tell their Claude sessions apart.)")
+            }
             return respond(result: [
                 "content": [["type": "text", "text": result.text]],
                 "isError": result.isError,
@@ -241,6 +279,25 @@ final class MCPServer {
     ]
 
     static let toolDefinitions: [[String: Any]] = [
+        [
+            "name": "set_session_name",
+            "description": """
+            Name this Claude Code session inside Voice Flow — a short project/task label like \
+            "voice-flow — session routing". The user can have several Claude sessions connected \
+            at once; they route their voice input by this name (unnamed sessions show as \
+            "Claude #N"). Call it once right after connecting, and again if your focus changes.
+            """,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "name": [
+                        "type": "string",
+                        "description": "Short label, ~40 characters max — repo and current task work well.",
+                    ],
+                ],
+                "required": ["name"],
+            ],
+        ],
         [
             "name": "ask_user",
             "description": """
