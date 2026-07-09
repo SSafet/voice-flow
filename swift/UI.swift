@@ -232,12 +232,14 @@ class FloatingIndicator: NSObject {
     private var sessionRingLayer: CALayer!
     private var watcherRingLayer: CALayer!
     private var dotLayers: [CALayer] = []
-    // Expanded mode: shell + session title above the dots, 5s then collapse.
-    private var expandBackdropLayer: CALayer!
+    // Flash mode: the pill stretches into one wide capsule, the dots swap
+    // out for the session title on a single line, 5s later it shrinks back.
     private var expandTitleLayer: CATextLayer!
     private var sessionBadgeLayer: CATextLayer!
     private var expandTimer: Timer?
     private var expandedSize: NSSize?
+    private var badgeIndex: Int?
+    private var badgeCount = 0
 
     private var state: AppState = .idle
     private var sessionActive = false
@@ -274,44 +276,54 @@ class FloatingIndicator: NSObject {
 
     /// Show/refresh the tiny active-session number on the pill.
     func setSessionBadge(index: Int?, count: Int) {
-        guard sessionBadgeLayer != nil else { return }
-        if let index, count > 1 {
-            sessionBadgeLayer.string = "\(index + 1)"
+        badgeIndex = index
+        badgeCount = count
+        guard sessionBadgeLayer != nil, expandedSize == nil else { return }
+        applyBadge()
+    }
+
+    private func applyBadge() {
+        if let badgeIndex, badgeCount > 1 {
+            sessionBadgeLayer.string = "\(badgeIndex + 1)"
             sessionBadgeLayer.isHidden = false
         } else {
             sessionBadgeLayer.isHidden = true
         }
     }
 
-    /// The pill grows into a shell with the session title above the dots
-    /// (which keep animating untouched), then collapses after 5s. Selecting
-    /// the same session again re-flashes it — the on-demand peek.
+    /// The pill stretches into one wide capsule: the dots swap out and the
+    /// session title takes their place on a single line; after 5s it
+    /// shrinks back to the classic pill. Selecting the same session again
+    /// re-flashes it — the on-demand peek.
     func flashSession(title: String, index: Int?, count: Int) {
         guard panel != nil else { return }
         expandTimer?.invalidate()
-        setSessionBadge(index: index, count: count)
+        badgeIndex = index
+        badgeCount = count
 
         let font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
         let display = (index.map { "\($0 + 1) · " } ?? "") + title
         let textWidth = ceil((display as NSString).size(withAttributes: [.font: font]).width)
-        let shellW = max(W + 36, min(320, textWidth + 32))
-        let shellH = H + 26
+        let shellW = max(W, min(340, textWidth + 30))
+        let shellH = H + 6
         expandedSize = NSSize(width: shellW, height: shellH)
-        if dockFrame != nil { dock(above: dockFrame!) } else { recenter() }
+        if let dockFrame { dock(above: dockFrame) } else { recenter() }
 
-        expandBackdropLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
-        expandBackdropLayer.isHidden = false
+        capsuleLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
+        pillLayer.frame = CGRect(x: 1, y: 1, width: shellW - 2, height: shellH - 2)
+        pillLayer.cornerRadius = (shellH - 2) / 2
+        sessionRingLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
+        sessionRingLayer.cornerRadius = shellH / 2
+        watcherRingLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
+        watcherRingLayer.cornerRadius = shellH / 2
+        dotLayers.forEach { $0.isHidden = true }
+        sessionBadgeLayer.isHidden = true
+
         expandTitleLayer.font = font
         expandTitleLayer.fontSize = 11.5
         expandTitleLayer.string = display
-        expandTitleLayer.frame = CGRect(x: 14, y: H + 5, width: shellW - 28, height: 15)
+        expandTitleLayer.frame = CGRect(x: 15, y: (shellH - 14) / 2, width: shellW - 30, height: 14)
         expandTitleLayer.isHidden = false
-        // The shell IS the grown pill — hide the capsule's own skin, keep
-        // the dots (and their animations) at the bottom.
-        capsuleLayer.frame = CGRect(x: (shellW - W) / 2, y: 2, width: W, height: H)
-        pillLayer.isHidden = true
-        sessionRingLayer.isHidden = true
-        watcherRingLayer.isHidden = true
 
         expandTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
             self?.collapseSessionFlash()
@@ -322,13 +334,17 @@ class FloatingIndicator: NSObject {
         expandTimer?.invalidate()
         expandTimer = nil
         expandedSize = nil
-        expandBackdropLayer.isHidden = true
         expandTitleLayer.isHidden = true
-        pillLayer.isHidden = false
-        sessionRingLayer.isHidden = false
-        watcherRingLayer.isHidden = false
         capsuleLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
-        if dockFrame != nil { dock(above: dockFrame!) } else { recenter() }
+        pillLayer.frame = CGRect(x: 1, y: 1, width: W - 2, height: H - 2)
+        pillLayer.cornerRadius = (H - 2) / 2
+        sessionRingLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
+        sessionRingLayer.cornerRadius = H / 2
+        watcherRingLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
+        watcherRingLayer.cornerRadius = H / 2
+        dotLayers.forEach { $0.isHidden = false }
+        applyBadge()
+        if let dockFrame { dock(above: dockFrame) } else { recenter() }
         applyState(force: true)
     }
 
@@ -352,24 +368,6 @@ class FloatingIndicator: NSObject {
         rootView.wantsLayer = true
         rootView.autoresizingMask = [.width, .height]
         let root = rootView.layer!
-
-        // Expanded shell — the "grown pill" that appears behind the capsule
-        // when a session title flashes. Hidden in the classic state.
-        expandBackdropLayer = CALayer()
-        expandBackdropLayer.backgroundColor = NSColor(r: 26, g: 24, b: 22, a: 242).cgColor
-        expandBackdropLayer.borderColor = Theme.border.cgColor
-        expandBackdropLayer.borderWidth = 1
-        expandBackdropLayer.cornerRadius = 12
-        expandBackdropLayer.isHidden = true
-        root.addSublayer(expandBackdropLayer)
-
-        expandTitleLayer = CATextLayer()
-        expandTitleLayer.alignmentMode = .center
-        expandTitleLayer.truncationMode = .end
-        expandTitleLayer.contentsScale = 2
-        expandTitleLayer.foregroundColor = Theme.text.cgColor
-        expandTitleLayer.isHidden = true
-        root.addSublayer(expandTitleLayer)
 
         // Everything that IS the classic pill lives in one capsule layer, so
         // the panel can grow around it without touching the dot animations.
@@ -431,6 +429,16 @@ class FloatingIndicator: NSObject {
         sessionBadgeLayer.frame = CGRect(x: W - 11, y: H - 10, width: 9, height: 9)
         sessionBadgeLayer.isHidden = true
         capsuleLayer.addSublayer(sessionBadgeLayer)
+
+        // Session title shown while the pill is stretched (replaces the dots).
+        expandTitleLayer = CATextLayer()
+        expandTitleLayer.alignmentMode = .center
+        expandTitleLayer.truncationMode = .end
+        expandTitleLayer.contentsScale = 2
+        expandTitleLayer.foregroundColor = Theme.text.cgColor
+        expandTitleLayer.zPosition = 5
+        expandTitleLayer.isHidden = true
+        capsuleLayer.addSublayer(expandTitleLayer)
 
         panel.contentView = rootView
         recenter()
