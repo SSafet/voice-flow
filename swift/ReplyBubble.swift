@@ -10,9 +10,9 @@ final class ReplyBubble {
     /// Fired when the user dismisses the bubble with ✕ (used to cancel a
     /// pending ask from Claude).
     var onClosed: (() -> Void)?
-    /// The bubble replaces the pill while visible ("the pill expands") —
-    /// the app hides/restores the indicator on this signal.
-    var onVisibilityChanged: ((Bool) -> Void)?
+    /// The bubble's on-screen frame (nil when hidden) — the app docks the
+    /// real pill right above it, so its rich state animations stay visible.
+    var onFrameChanged: ((NSRect?) -> Void)?
 
     private let maxWidth: CGFloat = 400
     private let maxTextHeight: CGFloat = 320
@@ -27,7 +27,6 @@ final class ReplyBubble {
     private var closeButton: NSButton!
     private var actionButton: NSButton!
     private var actionHandler: (() -> Void)?
-    private var stateDot: NSView!
     private var streaming = false
     private var suppressed = false
     private var autoHideTimer: Timer?
@@ -148,38 +147,6 @@ final class ReplyBubble {
         relayout()   // a status line changes the whole geometry
     }
 
-    /// Mini pill: the bubble hides the real pill while visible, so it
-    /// carries the app state itself — a small dot that pulses while the
-    /// mic records and dims when idle.
-    func setAppState(_ state: AppState) {
-        guard stateDot != nil else { return }
-        let color: NSColor
-        var pulsing = false
-        switch state {
-        case .recording, .handsFree:
-            color = NSColor(r: 255, g: 96, b: 96)
-            pulsing = true
-        case .processing, .loading:
-            color = NSColor(r: 255, g: 194, b: 75)
-            pulsing = true
-        case .done:
-            color = NSColor(r: 110, g: 215, b: 130)
-        case .idle:
-            color = Theme.text3.withAlphaComponent(0.5)
-        }
-        stateDot.layer?.backgroundColor = color.cgColor
-        stateDot.layer?.removeAnimation(forKey: "pulse")
-        if pulsing {
-            let pulse = CABasicAnimation(keyPath: "opacity")
-            pulse.fromValue = 1.0
-            pulse.toValue = 0.35
-            pulse.duration = 0.55
-            pulse.autoreverses = true
-            pulse.repeatCount = .infinity
-            stateDot.layer?.add(pulse, forKey: "pulse")
-        }
-    }
-
     private func cancelAutoHide() {
         autoHideTimer?.invalidate()
         autoHideTimer = nil
@@ -189,7 +156,7 @@ final class ReplyBubble {
         streaming = false
         cancelAutoHide()
         guard let panel, panel.isVisible else { return }
-        onVisibilityChanged?(false)
+        onFrameChanged?(nil)
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.14
             panel.animator().alphaValue = 0
@@ -214,7 +181,7 @@ final class ReplyBubble {
         }
         panel.alphaValue = 0
         panel.orderFront(nil)
-        onVisibilityChanged?(true)
+        onFrameChanged?(panel.frame)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.16
             panel.animator().alphaValue = 1
@@ -244,15 +211,15 @@ final class ReplyBubble {
         var width = maxWidth
         if !hasStatus {
             let natural = ceil(textView.textStorage?.size().width ?? maxWidth)
-            var ideal = natural + 66   // dot(14) + 10 + text + 4 + ✕(20) + 10
+            var ideal = natural + 52   // 12 + text + 4 + ✕(20) + 10
             if hasAction {
                 ideal = max(ideal, actionButton.intrinsicContentSize.width + 56)
             }
             width = min(maxWidth, max(200, ideal))
         }
 
-        // In compact mode the dot leads and the ✕ trails the text row.
-        let scrollWidth = width - (hasStatus ? 20 : 60)
+        // In compact mode the ✕ sits beside the text, so keep clear of it.
+        let scrollWidth = width - (hasStatus ? 20 : 46)
         scrollView.frame.size.width = scrollWidth
         textView.frame.size.width = scrollWidth
         layoutManager.ensureLayout(for: container)
@@ -269,22 +236,22 @@ final class ReplyBubble {
         let y = frame.minY + 6  // the pill hides while we're up — take its spot
         panel.setFrame(NSRect(x: x, y: y, width: width, height: totalHeight), display: true)
 
-        scrollView.frame = NSRect(x: hasStatus ? 10 : 24, y: bottomPad + actionSpace, width: scrollWidth, height: textHeight)
+        scrollView.frame = NSRect(x: 10, y: bottomPad + actionSpace, width: scrollWidth, height: textHeight)
         statusLabel.isHidden = !hasStatus
-        statusLabel.frame = NSRect(x: 24, y: totalHeight - headerHeight + 5, width: width - 64, height: 16)
+        statusLabel.frame = NSRect(x: 12, y: totalHeight - headerHeight + 5, width: width - 52, height: 16)
         if hasStatus {
-            // Dot leads the status line in the header.
-            stateDot.frame = NSRect(x: 10, y: totalHeight - headerHeight + 9, width: 8, height: 8)
             closeButton.frame = NSRect(x: width - 30, y: totalHeight - headerHeight + 3, width: 20, height: 20)
         } else {
-            // Dot and ✕ flank the text row — no empty header band above.
-            let rowCenter = bottomPad + actionSpace + textHeight / 2
-            stateDot.frame = NSRect(x: 10, y: rowCenter - 4, width: 8, height: 8)
-            closeButton.frame = NSRect(x: width - 30, y: rowCenter - 10, width: 20, height: 20)
+            // Centered on the text row — no empty header band above.
+            closeButton.frame = NSRect(x: width - 30, y: bottomPad + actionSpace + (textHeight - 20) / 2, width: 20, height: 20)
         }
         if hasAction {
             let buttonWidth = min(width - 32, max(140, actionButton.intrinsicContentSize.width + 24))
             actionButton.frame = NSRect(x: 16, y: 8, width: buttonWidth, height: 22)
+        }
+
+        if panel.isVisible {
+            onFrameChanged?(panel.frame)   // keep the docked pill attached
         }
     }
 
@@ -333,12 +300,6 @@ final class ReplyBubble {
         closeButton.contentTintColor = Theme.text2
         closeButton.toolTip = "Dismiss"
         root.addSubview(closeButton)
-
-        stateDot = NSView(frame: NSRect(x: 10, y: 0, width: 8, height: 8))
-        stateDot.wantsLayer = true
-        stateDot.layer?.cornerRadius = 4
-        stateDot.layer?.backgroundColor = Theme.text3.withAlphaComponent(0.5).cgColor
-        root.addSubview(stateDot)
 
         actionButton = NSButton(title: "", target: self, action: #selector(actionTapped))
         actionButton.bezelStyle = .inline

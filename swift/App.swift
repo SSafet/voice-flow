@@ -104,7 +104,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { [self] in
                 menuBar?.setState(state)
                 indicator?.setState(state, recordingFor: recordingPurpose)
-                replyBubble?.setAppState(state)
             }
         }
     }
@@ -209,8 +208,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             interaction.cancelled = true
             interaction.semaphore.signal()
         }
-        replyBubble.onVisibilityChanged = { [weak self] visible in
-            self?.indicator.setSuppressed(visible)
+        replyBubble.onFrameChanged = { [weak self] frame in
+            guard let self else { return }
+            if let frame {
+                self.indicator.dock(above: frame)
+            } else {
+                self.indicator.undock()
+            }
         }
 
         sessionStrip = SessionStrip()
@@ -2223,7 +2227,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // the user taps Listen (or just reads it).
         DispatchQueue.main.sync {
             let sender = self.sessionName(for: session?.id)
-            self.replyBubble.showNote("\(sender): \(text)", actionTitle: "🔊 Listen", action: { [weak self] in
+            self.replyBubble.showNote("\(sender): \(text)", actionTitle: "Listen", action: { [weak self] in
                 guard let self else { return }
                 var request = self.chatPanel.currentTTSRequest()
                 request.text = text

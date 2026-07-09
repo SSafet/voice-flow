@@ -239,14 +239,22 @@ class FloatingIndicator: NSObject {
     private var appliedVisual: Visual?
     private var appliedRing: (session: Bool, watcher: Bool)?
 
-    /// Hidden while the reply bubble is visible — it takes the pill's spot
-    /// at the bottom edge ("the pill expands into the bubble").
-    func setSuppressed(_ suppressed: Bool) {
-        if suppressed {
-            panel?.orderOut(nil)
-        } else {
-            panel?.orderFront(nil)
-        }
+    /// While the reply bubble is visible the pill docks right above it —
+    /// the real pill, animations and all, visually attached to the bubble.
+    private var dockFrame: NSRect?
+
+    func dock(above bubbleFrame: NSRect) {
+        dockFrame = bubbleFrame
+        guard let panel else { return }
+        let x = (bubbleFrame.midX - W / 2).rounded()
+        let y = (bubbleFrame.maxY + 3).rounded()
+        panel.setFrame(NSRect(x: x, y: y, width: W, height: H), display: true)
+        panel.orderFront(nil)
+    }
+
+    func undock() {
+        dockFrame = nil
+        recenter()
     }
 
     func show() {
@@ -345,6 +353,11 @@ class FloatingIndicator: NSObject {
     }
 
     private func recenter() {
+        // Docked to the reply bubble? Stay there.
+        if let dockFrame {
+            dock(above: dockFrame)
+            return
+        }
         // Follow the user: the screen holding the mouse pointer, not the
         // primary display.
         let mouse = NSEvent.mouseLocation
