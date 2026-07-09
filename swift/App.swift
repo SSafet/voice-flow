@@ -734,12 +734,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let frames = "\(summary.frameCount) frame\(summary.frameCount == 1 ? "" : "s")"
-        let text = "Capture saved — \(frames) · \(Int(summary.durationSeconds))s.\nTell Claude Code to get your latest capture, or copy a ready-made prompt."
-        let prompt = summary.claudePrompt
-        replyBubble.showNote(text, actionTitle: "Copy prompt for Claude", action: {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(prompt, forType: .string)
-        })
+        let stats = "\(frames) · \(Int(summary.durationSeconds))s"
+        // Hand the capture to the active session automatically: instantly
+        // if it's listening, otherwise queued + surfaced by the piggyback
+        // nudge on its next Voice Flow call. The menu bar keeps the manual
+        // copy-prompt fallback for unconnected sessions.
+        if let target = mcpServer.sessions.session(targetSessionId) {
+            let live = inbox.hasWaiter(for: target.id)
+            inbox.add(
+                text: "I recorded a Voice Flow capture (\(stats)). Fetch it with get_latest_capture, or read \(summary.transcriptPath) and the frames it lists in order.",
+                attachments: [],
+                session: target.id)
+            replyBubble.showTransient("Capture saved — \(stats). \(sessionName(for: target.id)) \(live ? "got it." : "is told on its next check-in.")", seconds: 6)
+        } else {
+            replyBubble.showTransient("Capture saved — \(stats). No Claude session connected — the menu bar can copy a prompt for one.", seconds: 8)
+        }
         if chatPanel.isVisible {
             chatPanel.addNote("Capture saved to \(summary.directory.path)")
         }
