@@ -879,6 +879,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func deliverPush(_ push: SessionPush, from sessionId: String?) {
         let sid = sessionId ?? ""
         var queue = sessionPushes[sid] ?? []
+        // An agent re-sending the same thing (retry loops, "did you hear
+        // me?" spam) collapses into one entry instead of filling the stack.
+        if let last = queue.last, last.text == push.text, last.isAsk == push.isAsk {
+            queue.removeLast()
+        }
         queue.append(push)
         if queue.count > maxQueuedPushes { queue.removeFirst(queue.count - maxQueuedPushes) }
         sessionPushes[sid] = queue

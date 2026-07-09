@@ -144,6 +144,10 @@ final class MCPServer {
     /// Claude Code knows about this server (surfaced in Settings).
     static let registerCommand = "claude mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp"
 
+    /// All tool calls that arrive WITHOUT an Mcp-Session-Id share this
+    /// registry entry, so even a degraded client has a picker dot.
+    static let anonymousSessionId = "anonymous"
+
     /// When a client (Claude Code) last sent any request. Main thread only —
     /// the Settings window reads it to show connection status.
     static private(set) var lastActivity: Date?
@@ -226,11 +230,20 @@ final class MCPServer {
         }
         let id = message["id"]
 
-        // Refresh (or re-adopt) the caller's session on every request;
-        // requests without a session header work as one anonymous pool.
+        // Refresh (or re-adopt) the caller's session on every request. A
+        // client calling TOOLS with no session header at all (seen from
+        // some Claude Code states after a Voice Flow restart) would
+        // otherwise be a black hole — no picker dot, unanswerable asks,
+        // nothing for the user to switch to. Fold all such traffic into
+        // one well-known "anonymous" session so it stays visible and
+        // routable (it names itself via the usual nudge).
         var session: MCPSession?
         if method != "initialize" {
-            let (touched, isNew) = sessions.touch(sessionId)
+            var effectiveId = sessionId
+            if effectiveId == nil, method == "tools/call" {
+                effectiveId = Self.anonymousSessionId
+            }
+            let (touched, isNew) = sessions.touch(effectiveId)
             session = touched
             if isNew, let touched {
                 onSessionConnected?(touched)

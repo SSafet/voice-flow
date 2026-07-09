@@ -1836,6 +1836,12 @@ final class MessagesView: NSView {
     }
 
     func addEntry(time: String, session: String, text: String, isAsk: Bool) {
+        // A re-sent duplicate (agent retry loops) refreshes the newest
+        // entry's time instead of piling up identical rows.
+        if let newest = entries.first, newest.session == session,
+           newest.text == text, newest.isAsk == isAsk {
+            entries.removeFirst()
+        }
         entries.insert(AgentMessageEntry(time: time, session: session, text: text, isAsk: isAsk), at: 0)
         if entries.count > storeCap { entries = Array(entries.prefix(storeCap)) }
         MessagesView.saveEntries(entries)

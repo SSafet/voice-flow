@@ -69,8 +69,10 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   (`showGrown`: amber title, selectable text, ask hint line, speaker/trash/✕
   icon cluster, live dots in the bottom band; streamed replies grow it live).
   Pushes queue **per session** (`sessionPushes`, a stack capped at 8;
-  sessionless clients share the anonymous `""` pool) and NEVER take the
-  screen on arrival, no matter whose session: the user gets a one-line
+  tool calls arriving with no `Mcp-Session-Id` are folded into a shared
+  "anonymous" registry session so even degraded clients get a picker dot;
+  consecutive identical re-sends collapse into one entry) and NEVER take
+  the screen on arrival, no matter whose session: the user gets a one-line
   receipt ("name · new message — ⌃⌥N") plus the small pulsing unread ring
   around the number dot (`setUnreadIndicator`) until viewed. Reading happens
   by switching onto the session — ⌃⌥1–6 grows its whole stack (older pushes
