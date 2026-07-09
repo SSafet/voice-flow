@@ -70,7 +70,9 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
 
 `LocalAPIServer` (port 8792) also serves **MCP over Streamable HTTP** at
 `http://127.0.0.1:8792/mcp` (`MCPServer` in `swift/MCP.swift`; registered once
-via `claude mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp`).
+via `claude mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp` —
+Settings → Assistant shows connection status and copies that command;
+`MCPServer.lastActivity` tracks the most recent client request).
 Tool handlers live in `AppDelegate.handleMCPTool` (`App.swift`); they run on
 background HTTP threads and hop to main for UI. 16 tools in three groups:
 

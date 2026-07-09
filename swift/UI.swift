@@ -58,6 +58,7 @@ class MenuBarManager: NSObject {
     var onShowSettings: (() -> Void)?
     var onShowPermissions: (() -> Void)?
     var onToggleSession: (() -> Void)?
+    var onCopyCapturePrompt: (() -> Void)?
     var onToggleAnnotate: (() -> Void)?
     var onShowChat: (() -> Void)?
     var onQuit: (() -> Void)?
@@ -88,6 +89,7 @@ class MenuBarManager: NSObject {
         menu.addItem(.separator())
         sessionMenuItem = menu.addItem(withTitle: "Start Session", action: #selector(toggleSessionAction), keyEquivalent: "")
         sessionMenuItem.target = self
+        menu.addItem(withTitle: "Copy Prompt for Latest Capture", action: #selector(copyCaptureAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Annotate Screen", action: #selector(annotateAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Show Chat", action: #selector(chatAction), keyEquivalent: "").target = self
         menu.addItem(.separator())
@@ -112,6 +114,7 @@ class MenuBarManager: NSObject {
     @objc private func permissionsAction() { onShowPermissions?() }
     @objc private func settingsAction() { onShowSettings?() }
     @objc private func toggleSessionAction() { onToggleSession?() }
+    @objc private func copyCaptureAction() { onCopyCapturePrompt?() }
     @objc private func annotateAction() { onToggleAnnotate?() }
     @objc private func chatAction() { onShowChat?() }
     @objc private func quitAction() { onQuit?() }

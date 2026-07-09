@@ -41,7 +41,10 @@ struct CaptureSummary {
     var transcriptPath: String { directory.appendingPathComponent("transcript.md").path }
 
     /// One-liner the user pastes into Claude Code.
-    var claudePrompt: String {
+    var claudePrompt: String { Self.claudePrompt(transcriptPath: transcriptPath) }
+
+    /// Same prompt for a bundle already on disk (menu bar's copy action).
+    static func claudePrompt(transcriptPath: String) -> String {
         "I recorded a Voice Flow capture — my spoken narration plus ordered screenshots of what I was doing. "
         + "Read \(transcriptPath), then look at the frames it lists in order, and act on what I said and showed."
     }

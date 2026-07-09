@@ -13,6 +13,14 @@ import Foundation
 
 final class MCPServer {
 
+    /// The one-time registration command the user runs in Terminal so
+    /// Claude Code knows about this server (surfaced in Settings).
+    static let registerCommand = "claude mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp"
+
+    /// When a client (Claude Code) last sent any request. Main thread only —
+    /// the Settings window reads it to show connection status.
+    static private(set) var lastActivity: Date?
+
     struct ToolResult {
         let text: String
         let isError: Bool
@@ -60,6 +68,7 @@ final class MCPServer {
     /// Handle one POST /mcp body. Returns (httpStatus, responseBody).
     /// A 202 with nil body answers notifications.
     func handle(body: Data) -> (status: Int, payload: Data?) {
+        DispatchQueue.main.async { Self.lastActivity = Date() }
         guard let message = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
             return respond(error: (-32700, "Parse error"), id: NSNull())
         }

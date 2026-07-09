@@ -434,6 +434,7 @@ private struct AssistantSettingsView: View {
             }
 
             Section {
+                ClaudeConnectionRow()
                 Toggle(isOn: $store.talkSendToAgent) {
                     SettingRowLabel(title: "Talk hotkeys go to the in-app assistant",
                                     subtitle: "Off: talking with the Talk / Talk + snap shortcuts sends your words to Claude Code — instantly when Claude is listening, queued otherwise")
@@ -445,7 +446,7 @@ private struct AssistantSettingsView: View {
             } header: {
                 Text("Claude Code")
             } footer: {
-                Text("Voice Flow is connected to Claude Code through its MCP server (http://127.0.0.1:8792/mcp). Claude can ask you questions on screen, receive your voice messages and captures, place guides and panels, draw on your screen, and speak to you. These switches re-route the hotkeys to the built-in assistant instead.")
+                Text("Once connected, Claude can ask you questions on screen, receive your voice messages and captures, place guides and panels, draw on your screen, and speak to you. These switches re-route the hotkeys to the built-in assistant instead.")
             }
 
             Section("Advanced") {
@@ -461,6 +462,39 @@ private struct AssistantSettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+// Whether Claude Code has actually talked to the MCP server, plus the
+// one-time registration command (the server is useless until it's run).
+private struct ClaudeConnectionRow: View {
+    @State private var lastActivity: Date? = MCPServer.lastActivity
+    @State private var copied = false
+    private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        LabeledContent {
+            Button(copied ? "Copied" : "Copy Setup Command") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(MCPServer.registerCommand, forType: .string)
+                copied = true
+            }
+        } label: {
+            SettingRowLabel(title: "Connection", subtitle: subtitle)
+        }
+        .onReceive(refresh) { _ in
+            lastActivity = MCPServer.lastActivity
+            copied = false
+        }
+    }
+
+    private var subtitle: String {
+        guard let lastActivity else {
+            return "No requests from Claude Code since Voice Flow started. Register it once: copy the setup command and run it in Terminal."
+        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return "Connected — last request \(formatter.localizedString(for: lastActivity, relativeTo: Date()))"
     }
 }
 

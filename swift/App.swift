@@ -136,6 +136,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onShowPermissions = { [weak self] in self?.showPermissions() }
         menuBar.onShowSettings = { [weak self] in self?.showSettings() }
         menuBar.onToggleSession = { [weak self] in self?.toggleSession() }
+        menuBar.onCopyCapturePrompt = { [weak self] in self?.copyLatestCapturePrompt() }
         menuBar.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
         menuBar.onShowChat = { [weak self] in self?.chatPanel.show() }
         menuBar.onQuit = { NSApp.terminate(nil) }
@@ -617,6 +618,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if chatPanel.isVisible {
             chatPanel.addNote("Capture saved to \(summary.directory.path)")
         }
+    }
+
+    /// Menu-bar route to the same prompt the post-session bubble offers —
+    /// for when that bubble is long dismissed.
+    private func copyLatestCapturePrompt() {
+        guard let (directory, meta) = CaptureStore.latestBundle() else {
+            replyBubble.showNote("No captures yet — record one with the session hotkey (\(UserSettings.shared.sessionHotkey.label)).")
+            return
+        }
+        let prompt = CaptureSummary.claudePrompt(
+            transcriptPath: directory.appendingPathComponent("transcript.md").path)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(prompt, forType: .string)
+        replyBubble.showNote("Prompt for capture \(meta.id) copied — paste it into Claude Code.")
     }
 
     // ── Sending to the agent ────────────────────────────
