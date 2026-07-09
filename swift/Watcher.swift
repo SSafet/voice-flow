@@ -26,7 +26,7 @@ final class WorkflowWatcher {
 
     private let screenCapture: ScreenCapture
     private let interval: TimeInterval = 5
-    private let idleCutoff: TimeInterval = 120
+    private let idleCutoff: TimeInterval = 90
     private let diffThreshold: Double = 0.01
     private let keepDays = 7
     private let writeQueue = DispatchQueue(label: "voiceflow.watcher", qos: .utility)
@@ -81,11 +81,12 @@ final class WorkflowWatcher {
         capturing = true
         let app = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
         let title = Self.frontmostWindowTitle()
-        Task { [weak self] in
+        Task.detached { [weak self] in
+            let url = Self.browserURL(app: app)
             let raw = try? await self?.screenCapture.captureScreen()
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.record(raw: raw, app: app, title: title)
+                self.record(raw: raw, app: app, title: title, url: url)
                 self.capturing = false
             }
         }
@@ -93,7 +94,7 @@ final class WorkflowWatcher {
 
     /// Main thread: dedup + day rolling are serialized here; JPEG encode
     /// and file appends go to the write queue.
-    private func record(raw: Data?, app: String, title: String?) {
+    private func record(raw: Data?, app: String, title: String?, url: String?) {
         let now = Date()
         let day = Self.dayFormatter.string(from: now)
         if day != currentDay {
@@ -111,16 +112,23 @@ final class WorkflowWatcher {
                 lastFrameData = raw
                 let name = "frame-\(Self.fileTimeFormatter.string(from: now)).jpg"
                 frameName = name
-                let url = dayDir.appendingPathComponent(name)
+                let frameURL = dayDir.appendingPathComponent(name)
                 writeQueue.async {
-                    guard let jpeg = ImageUtils.compress(raw, maxDimension: 1280, quality: 0.5) else { return }
-                    try? jpeg.write(to: url, options: .atomic)
+                    // 1568px = the long edge AI vision actually uses; bigger
+                    // is wasted disk and tokens.
+                    guard let jpeg = ImageUtils.compress(raw, maxDimension: 1568, quality: 0.5) else { return }
+                    try? jpeg.write(to: frameURL, options: .atomic)
                 }
             }
         }
 
-        var line: [String: Any] = ["t": Self.clockFormatter.string(from: now), "app": app]
+        var line: [String: Any] = [
+            "t": Self.clockFormatter.string(from: now),
+            "e": Int(now.timeIntervalSince1970),
+            "app": app,
+        ]
         if let title, !title.isEmpty { line["title"] = title }
+        if let url, !url.isEmpty { line["url"] = url }
         if let frameName { line["frame"] = frameName }
         guard let json = try? JSONSerialization.data(withJSONObject: line) else { return }
         let logURL = dayDir.appendingPathComponent("activity.jsonl")
@@ -152,6 +160,38 @@ final class WorkflowWatcher {
             return name
         }
         return nil
+    }
+
+    /// Front-tab URL when a known browser is frontmost. One AppleScript per
+    /// browser, referenced only when that browser is active — AppleScript
+    /// resolves app dictionaries at compile time, so a single script naming
+    /// an uninstalled browser would fail outright. First use prompts the
+    /// user to allow Voice Flow to control the browser (Automation TCC).
+    private static func browserURL(app: String) -> String? {
+        let script: String
+        switch app {
+        case "Google Chrome", "Brave Browser", "Arc", "Microsoft Edge", "Vivaldi":
+            script = "tell application \"\(app)\" to get URL of active tab of front window"
+        case "Safari":
+            script = "tell application \"Safari\" to get URL of front document"
+        default:
+            return nil
+        }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", script]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        guard (try? proc.run()) != nil else { return nil }
+        let killer = DispatchWorkItem { if proc.isRunning { proc.terminate() } }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2, execute: killer)
+        proc.waitUntilExit()
+        killer.cancel()
+        guard proc.terminationStatus == 0 else { return nil }
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (out?.isEmpty == false) ? out : nil
     }
 
     private static func screenIsLocked() -> Bool {

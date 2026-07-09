@@ -127,14 +127,18 @@ Claude**; Claude Code can also pull bundles through the MCP tools.
 
 The ambient watcher (menu bar → "Watch Workflow", or Settings → Assistant;
 `WorkflowWatcher` in `swift/Watcher.swift`, `workflow_watcher_enabled` setting)
-ticks every 5 s while the user is active (input within the last 2 min): one
-frontmost-app + window-title line appended to `<yyyy-mm-dd>/activity.jsonl`,
-plus a deduped ≤1280-px screenshot. Day folders are pruned to the newest 7.
-A LaunchAgent (`~/Library/LaunchAgents/com.voiceflow.watcher-analyze.plist`,
-21:37 nightly) runs headless Claude Code against `watcher/ANALYZE.md`, which
-maintains the observations ledger (`ledger.md`, patterns suggested only after
-3+ sightings), writes `reviews/<day>.md`, and surfaces suggestions via the MCP
-overlay tools.
+ticks every 5 s while the user is active (input within the last 90 s, screen
+unlocked): one metadata line — frontmost app, window title, browser-tab URL
+(per-browser AppleScript; needs the one-time Automation grant) — appended to
+`<yyyy-mm-dd>/activity.jsonl`, plus a deduped ≤1568-px screenshot. Day folders
+are pruned to the newest 7. A LaunchAgent
+(`~/Library/LaunchAgents/com.voiceflow.watcher-analyze.plist`, 21:37 nightly)
+runs headless Claude Code against `watcher/ANALYZE.md`, which aggregates the
+log by script (never raw into context), maintains the observations ledger
+(`ledger.md`, patterns suggested only after 3+ sightings on 2+ days), writes
+`reviews/<day>.md`, and surfaces suggestions via the MCP overlay tools. The
+user-level `/screenwatch` skill (`~/.claude/skills/screenwatch/`) is the
+on-demand analyze/optimize/status version.
 
 ## Persistent data (`~/.config/voice-flow/`)
 
