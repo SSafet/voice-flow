@@ -27,6 +27,7 @@ final class SettingsStore: ObservableObject {
     @Published var agentBaseURL: String { didSet { commit() } }
     @Published var sessionSendToAgent: Bool { didSet { commit() } }
     @Published var talkSendToAgent: Bool { didSet { commit() } }
+    @Published var workflowWatcherEnabled: Bool { didSet { commit() } }
 
     // Keychain state
     @Published var hasOpenAIKey: Bool
@@ -60,6 +61,7 @@ final class SettingsStore: ObservableObject {
         agentBaseURL = s.agentBaseURL
         sessionSendToAgent = s.sessionSendToAgent
         talkSendToAgent = s.talkSendToAgent
+        workflowWatcherEnabled = s.workflowWatcherEnabled
         hasOpenAIKey = KeychainStore.shared.hasOpenAIAPIKey
         hasAgentKey = KeychainStore.shared.hasAgentAPIKey
         hotkey = s.hotkey
@@ -93,6 +95,7 @@ final class SettingsStore: ObservableObject {
         s.agentBaseURL = url.isEmpty ? DefaultAgentBaseURL : url
         s.sessionSendToAgent = sessionSendToAgent
         s.talkSendToAgent = talkSendToAgent
+        s.workflowWatcherEnabled = workflowWatcherEnabled
         s.save()
         onSettingsChanged?()
     }
@@ -435,6 +438,10 @@ private struct AssistantSettingsView: View {
 
             Section {
                 ClaudeConnectionRow()
+                Toggle(isOn: $store.workflowWatcherEnabled) {
+                    SettingRowLabel(title: "Watch my workflow",
+                                    subtitle: "Logs what app you're in plus deduped screenshots every 5 seconds (pauses when you're idle) so Claude's nightly review can spot repetitive, automatable work")
+                }
                 Toggle(isOn: $store.talkSendToAgent) {
                     SettingRowLabel(title: "Talk hotkeys go to the in-app assistant",
                                     subtitle: "Off: talking with the Talk / Talk + snap shortcuts sends your words to Claude Code — instantly when Claude is listening, queued otherwise")

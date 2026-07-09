@@ -157,6 +157,10 @@ final class MCPServer {
         what they were looking at). A wait_for_message timeout is normal — call it again.
         - get_latest_capture / list_captures: recorded demonstrations — spoken narration plus \
         ordered screenshots. When the user says they recorded/captured/showed something, fetch it.
+        - The ambient workflow watcher (when the user enables it) logs their workday to \
+        ~/.config/voice-flow/watcher/<yyyy-mm-dd>/ — activity.jsonl holds one frontmost-app \
+        line per 5s tick plus deduped screenshots. Read those files directly to analyze how \
+        the user works; the review protocol is ~/.config/voice-flow/watcher/ANALYZE.md.
 
         Showing the user:
         - Every on-screen element you place is a LIVE JSON FILE in \

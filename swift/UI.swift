@@ -58,6 +58,7 @@ class MenuBarManager: NSObject {
     var onShowSettings: (() -> Void)?
     var onShowPermissions: (() -> Void)?
     var onToggleSession: (() -> Void)?
+    var onToggleWatcher: (() -> Void)?
     var onCopyCapturePrompt: (() -> Void)?
     var onToggleAnnotate: (() -> Void)?
     var onShowChat: (() -> Void)?
@@ -70,6 +71,7 @@ class MenuBarManager: NSObject {
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
     private var sessionMenuItem: NSMenuItem!
+    private var watcherMenuItem: NSMenuItem!
     private var claudeSessionsMenu: NSMenu!
 
     override init() {
@@ -94,6 +96,8 @@ class MenuBarManager: NSObject {
         menu.addItem(.separator())
         sessionMenuItem = menu.addItem(withTitle: "Start Session", action: #selector(toggleSessionAction), keyEquivalent: "")
         sessionMenuItem.target = self
+        watcherMenuItem = menu.addItem(withTitle: "Watch Workflow", action: #selector(toggleWatcherAction), keyEquivalent: "")
+        watcherMenuItem.target = self
         menu.addItem(withTitle: "Copy Prompt for Latest Capture", action: #selector(copyCaptureAction), keyEquivalent: "").target = self
         let voiceTargetItem = menu.addItem(withTitle: "Voice Goes To", action: nil, keyEquivalent: "")
         claudeSessionsMenu = NSMenu(title: "Voice Goes To")
@@ -119,10 +123,15 @@ class MenuBarManager: NSObject {
         sessionMenuItem?.state = active ? .on : .off
     }
 
+    func setWatcherActive(_ active: Bool) {
+        watcherMenuItem?.state = active ? .on : .off
+    }
+
     @objc private func historyAction() { onShowHistory?() }
     @objc private func permissionsAction() { onShowPermissions?() }
     @objc private func settingsAction() { onShowSettings?() }
     @objc private func toggleSessionAction() { onToggleSession?() }
+    @objc private func toggleWatcherAction() { onToggleWatcher?() }
     @objc private func copyCaptureAction() { onCopyCapturePrompt?() }
     @objc private func annotateAction() { onToggleAnnotate?() }
     @objc private func chatAction() { onShowChat?() }

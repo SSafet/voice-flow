@@ -70,6 +70,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Agent session
     var screenCapture: ScreenCapture!
     var captureScheduler: CaptureScheduler!
+    var workflowWatcher: WorkflowWatcher!
     var agent: AgentSession!
     private var sessionActive = false
     private var lastCaptureData: Data?
@@ -141,6 +142,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onShowPermissions = { [weak self] in self?.showPermissions() }
         menuBar.onShowSettings = { [weak self] in self?.showSettings() }
         menuBar.onToggleSession = { [weak self] in self?.toggleSession() }
+        menuBar.onToggleWatcher = { [weak self] in self?.toggleWorkflowWatcher() }
+        menuBar.setWatcherActive(UserSettings.shared.workflowWatcherEnabled)
         menuBar.onCopyCapturePrompt = { [weak self] in self?.copyLatestCapturePrompt() }
         menuBar.claudeSessionsProvider = { [weak self] in
             guard let self else { return [] }
@@ -236,6 +239,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         transcriptPanel = FloatingTranscriptPanel()
 
         settingsWindow = SettingsWindowController()
+        settingsWindow.onSettingsChanged = { [weak self] in self?.syncWorkflowWatcher() }
         settingsWindow.onHotkeyChanged = { [weak self] spec in
             self?.hotkeyManager.updateSpec(spec)
         }
@@ -361,6 +365,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupAgent() {
         screenCapture = ScreenCapture()
+        workflowWatcher = WorkflowWatcher(screenCapture: screenCapture)
+        if UserSettings.shared.workflowWatcherEnabled {
+            workflowWatcher.start()
+        }
         captureScheduler = CaptureScheduler(
             screenCapture: screenCapture,
             interval: TimeInterval(UserSettings.shared.captureIntervalSeconds)
@@ -504,6 +512,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func toggleSession() {
         if sessionActive { endSession() } else { startSession() }
+    }
+
+    /// Ambient workflow watcher (menu bar / Settings) — logs the workday
+    /// for the scheduled Claude review, independent of sessions.
+    private func toggleWorkflowWatcher() {
+        UserSettings.shared.workflowWatcherEnabled = !workflowWatcher.isRunning
+        UserSettings.shared.save()
+        syncWorkflowWatcher()
+        replyBubble.showTransient(workflowWatcher.isRunning
+            ? "Watching your workflow — activity log + deduped screenshots every 5s, reviewed by Claude nightly."
+            : "Stopped watching your workflow.", seconds: 6)
+    }
+
+    /// Make the running watcher match the setting (menu toggle and the
+    /// Settings window both funnel through here).
+    private func syncWorkflowWatcher() {
+        let wanted = UserSettings.shared.workflowWatcherEnabled
+        if wanted, !workflowWatcher.isRunning {
+            workflowWatcher.start()
+        } else if !wanted, workflowWatcher.isRunning {
+            workflowWatcher.stop()
+        }
+        menuBar.setWatcherActive(wanted)
     }
 
     private func startSession() {

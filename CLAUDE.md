@@ -123,6 +123,19 @@ A session writes every deduped frame live via `CaptureStore`
 `captures/shots/`). On session end the bubble offers **Copy prompt for
 Claude**; Claude Code can also pull bundles through the MCP tools.
 
+## Workflow watcher (`~/.config/voice-flow/watcher/`)
+
+The ambient watcher (menu bar → "Watch Workflow", or Settings → Assistant;
+`WorkflowWatcher` in `swift/Watcher.swift`, `workflow_watcher_enabled` setting)
+ticks every 5 s while the user is active (input within the last 2 min): one
+frontmost-app + window-title line appended to `<yyyy-mm-dd>/activity.jsonl`,
+plus a deduped ≤1280-px screenshot. Day folders are pruned to the newest 7.
+A LaunchAgent (`~/Library/LaunchAgents/com.voiceflow.watcher-analyze.plist`,
+21:37 nightly) runs headless Claude Code against `watcher/ANALYZE.md`, which
+maintains the observations ledger (`ledger.md`, patterns suggested only after
+3+ sightings), writes `reviews/<day>.md`, and surfaces suggestions via the MCP
+overlay tools.
+
 ## Persistent data (`~/.config/voice-flow/`)
 
 - `settings.json` — `UserSettings` (hotkeys, TTS voice/speed/instructions, agent model, …).
@@ -130,6 +143,7 @@ Claude**; Claude Code can also pull bundles through the MCP tools.
   `DictationsView` on each new dictation (render cap 60, store cap 200). Survives restarts.
 - `inbox.json` — queued talk-hotkey messages for Claude (`MessageInbox`).
 - `overlays/*.json` — live on-screen elements (`OverlayManager`); `_schema.md` documents the format.
+- `watcher/` — ambient workflow log (`WorkflowWatcher`): per-day `activity.jsonl` + deduped frames, plus `ANALYZE.md` / `ledger.md` / `reviews/` for the nightly review.
 - `app.log` — `vflog` output.
 - OpenAI / agent API keys live in the **Keychain** (`KeychainStore`), not on disk.
 
@@ -145,6 +159,7 @@ Claude**; Claude Code can also pull bundles through the MCP tools.
 | `ReplyBubble.swift` | `ReplyBubble` | Floating streamed-reply bubble (also shows Claude's `ask_user` prompts + capture-saved notes with an action button). |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
 | `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of talk-hotkey messages for Claude (check/wait semantics). |
+| `Watcher.swift` | `WorkflowWatcher` | Ambient 5 s screen/app log feeding the nightly workflow review. |
 | `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
 | `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Claude Code. |
 | `Agent.swift` | `AgentSession`, `ComputerControl` | LLM loop that reasons over screenshots and issues screen-control tool calls. |
