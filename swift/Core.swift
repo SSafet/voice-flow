@@ -166,6 +166,8 @@ class UserSettings {
     var watcherIntervalSeconds: Int = 5
     var watcherIdlePauseSeconds: Int = 90
     var watcherKeepDays: Int = 30
+    // AVCaptureDevice uniqueID of the optional body camera ("" = off).
+    var watcherCameraId: String = ""
 
     private let url: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
@@ -227,6 +229,7 @@ class UserSettings {
         if let v = dict["watcher_interval_seconds"] as? Int { watcherIntervalSeconds = max(2, v) }
         if let v = dict["watcher_idle_pause_seconds"] as? Int { watcherIdlePauseSeconds = max(30, v) }
         if let v = dict["watcher_keep_days"] as? Int { watcherKeepDays = max(3, v) }
+        if let v = dict["watcher_camera_id"] as? String { watcherCameraId = v }
         if let v = dict["custom_vocabulary"] as? [String] {
             customVocabulary = v.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
@@ -259,6 +262,7 @@ class UserSettings {
             "watcher_interval_seconds": watcherIntervalSeconds,
             "watcher_idle_pause_seconds": watcherIdlePauseSeconds,
             "watcher_keep_days": watcherKeepDays,
+            "watcher_camera_id": watcherCameraId,
             "custom_vocabulary": customVocabulary,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted) {

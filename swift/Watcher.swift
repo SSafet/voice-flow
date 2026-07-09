@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -13,6 +14,85 @@ import Foundation
 //  ~/.config/voice-flow/watcher/2026-07-09/
 //      activity.jsonl            one line per tick
 //      frame-HH-mm-ss.jpg        deduped screenshots
+
+/// Keeps one camera (e.g. a mirrorless over an HDMI dongle) streaming and
+/// hands out a JPEG of the freshest frame when asked — the watcher asks
+/// once per tick, so the 30 fps stream is never encoded wholesale.
+final class CameraGrabber: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+    private let session = AVCaptureSession()
+    private let queue = DispatchQueue(label: "voiceflow.watcher.camera", qos: .utility)
+    private let ciContext = CIContext()
+    private var wantsFrame = false
+    private var onFrame: ((Data) -> Void)?
+    private(set) var runningDeviceId: String?
+
+    static func availableCameras() -> [(id: String, name: String)] {
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera, .external],
+            mediaType: .video, position: .unspecified)
+        return discovery.devices.map { ($0.uniqueID, $0.localizedName) }
+    }
+
+    func start(deviceId: String) {
+        guard runningDeviceId != deviceId else { return }
+        stop()
+        guard let device = AVCaptureDevice(uniqueID: deviceId),
+              let input = try? AVCaptureDeviceInput(device: device) else {
+            vflog("watcher: camera \(deviceId) not found or unusable")
+            return
+        }
+        session.beginConfiguration()
+        if session.canSetSessionPreset(.hd1280x720) { session.sessionPreset = .hd1280x720 }
+        guard session.canAddInput(input) else {
+            session.commitConfiguration()
+            vflog("watcher: camera input rejected")
+            return
+        }
+        session.addInput(input)
+        let output = AVCaptureVideoDataOutput()
+        output.alwaysDiscardsLateVideoFrames = true
+        output.setSampleBufferDelegate(self, queue: queue)
+        if session.canAddOutput(output) { session.addOutput(output) }
+        session.commitConfiguration()
+        session.startRunning()
+        runningDeviceId = deviceId
+        vflog("watcher: camera streaming — \(device.localizedName)")
+    }
+
+    func stop() {
+        guard runningDeviceId != nil else { return }
+        session.stopRunning()
+        session.beginConfiguration()
+        session.inputs.forEach { session.removeInput($0) }
+        session.outputs.forEach { session.removeOutput($0) }
+        session.commitConfiguration()
+        runningDeviceId = nil
+        vflog("watcher: camera stopped")
+    }
+
+    /// Handler is called on the main thread with the next frame's JPEG.
+    func requestFrame(_ handler: @escaping (Data) -> Void) {
+        queue.async {
+            self.onFrame = handler
+            self.wantsFrame = true
+        }
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        guard wantsFrame, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        wantsFrame = false
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let jpeg = ciContext.jpegRepresentation(
+                of: image, colorSpace: space,
+                options: [CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): 0.6])
+        else { return }
+        let handler = onFrame
+        onFrame = nil
+        DispatchQueue.main.async { handler?(jpeg) }
+    }
+}
 
 final class WorkflowWatcher {
     static let baseDir: URL = {
@@ -41,6 +121,13 @@ final class WorkflowWatcher {
     private var currentDay = ""
     private var capturing = false
 
+    // Optional body camera (Settings → Watcher): one frame per tick from a
+    // continuously-streaming device, deduped separately from the screen.
+    private let camera = CameraGrabber()
+    private var latestCamJpeg: Data?
+    private var lastSavedCamJpeg: Data?
+    private let camDiffThreshold: Double = 0.03
+
     private static let dayFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
@@ -66,18 +153,44 @@ final class WorkflowWatcher {
         isRunning = true
         appliedInterval = TimeInterval(max(2, UserSettings.shared.watcherIntervalSeconds))
         pruneOldDays()
+        syncCamera()
         timer = Timer.scheduledTimer(withTimeInterval: appliedInterval, repeats: true) { [weak self] _ in
             self?.tick()
         }
         vflog("watcher: started — every \(Int(appliedInterval))s into \(Self.baseDir.path)")
     }
 
-    /// Pick up a changed interval without disturbing anything else.
+    /// Pick up changed tunables without disturbing anything else.
     func applySettings() {
+        guard isRunning else { return }
+        syncCamera()
         let wanted = TimeInterval(max(2, UserSettings.shared.watcherIntervalSeconds))
-        guard isRunning, wanted != appliedInterval else { return }
+        guard wanted != appliedInterval else { return }
         stop()
         start()
+    }
+
+    private func syncCamera() {
+        let wanted = UserSettings.shared.watcherCameraId
+        if wanted.isEmpty {
+            camera.stop()
+            latestCamJpeg = nil
+            return
+        }
+        guard camera.runningDeviceId != wanted else { return }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            camera.start(deviceId: wanted)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted { self?.camera.start(deviceId: wanted) }
+                    else { vflog("watcher: camera permission denied") }
+                }
+            }
+        default:
+            vflog("watcher: camera permission denied — enable in System Settings → Privacy → Camera")
+        }
     }
 
     func stop() {
@@ -85,6 +198,9 @@ final class WorkflowWatcher {
         timer = nil
         isRunning = false
         lastFrameData = nil
+        camera.stop()
+        latestCamJpeg = nil
+        lastSavedCamJpeg = nil
         vflog("watcher: stopped")
     }
 
@@ -104,6 +220,9 @@ final class WorkflowWatcher {
         capturing = true
         let app = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
         let title = Self.frontmostWindowTitle()
+        if camera.runningDeviceId != nil {
+            camera.requestFrame { [weak self] jpeg in self?.latestCamJpeg = jpeg }
+        }
         Task.detached { [weak self] in
             let url = Self.browserURL(app: app)
             let raw = try? await self?.screenCapture.captureScreen()
@@ -145,6 +264,22 @@ final class WorkflowWatcher {
             }
         }
 
+        // Body-camera frame, deduped on its own motion threshold.
+        var camName: String?
+        if let cam = latestCamJpeg {
+            let moved = lastSavedCamJpeg.map { ImageUtils.difference($0, cam) >= camDiffThreshold } ?? true
+            if moved {
+                lastSavedCamJpeg = cam
+                let name = "cam-\(Self.fileTimeFormatter.string(from: now)).jpg"
+                camName = name
+                let camURL = dayDir.appendingPathComponent(name)
+                writeQueue.async {
+                    guard let jpeg = ImageUtils.compress(cam, maxDimension: 960, quality: 0.5) else { return }
+                    try? jpeg.write(to: camURL, options: .atomic)
+                }
+            }
+        }
+
         var line: [String: Any] = [
             "t": Self.clockFormatter.string(from: now),
             "e": Int(now.timeIntervalSince1970),
@@ -153,6 +288,7 @@ final class WorkflowWatcher {
         if let title, !title.isEmpty { line["title"] = title }
         if let url, !url.isEmpty { line["url"] = url }
         if let frameName { line["frame"] = frameName }
+        if let camName { line["cam"] = camName }
         guard let json = try? JSONSerialization.data(withJSONObject: line) else { return }
         let logURL = dayDir.appendingPathComponent("activity.jsonl")
         writeQueue.async {

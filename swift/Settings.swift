@@ -31,6 +31,7 @@ final class SettingsStore: ObservableObject {
     @Published var watcherInterval: Double { didSet { commit() } }
     @Published var watcherIdlePause: Double { didSet { commit() } }
     @Published var watcherKeepDays: Double { didSet { commit() } }
+    @Published var watcherCameraId: String { didSet { commit() } }
 
     // Keychain state
     @Published var hasOpenAIKey: Bool
@@ -68,6 +69,7 @@ final class SettingsStore: ObservableObject {
         watcherInterval = Double(s.watcherIntervalSeconds)
         watcherIdlePause = Double(s.watcherIdlePauseSeconds)
         watcherKeepDays = Double(s.watcherKeepDays)
+        watcherCameraId = s.watcherCameraId
         hasOpenAIKey = KeychainStore.shared.hasOpenAIAPIKey
         hasAgentKey = KeychainStore.shared.hasAgentAPIKey
         hotkey = s.hotkey
@@ -105,6 +107,7 @@ final class SettingsStore: ObservableObject {
         s.watcherIntervalSeconds = Int(watcherInterval)
         s.watcherIdlePauseSeconds = Int(watcherIdlePause)
         s.watcherKeepDays = Int(watcherKeepDays)
+        s.watcherCameraId = watcherCameraId
         s.save()
         onSettingsChanged?()
     }
@@ -479,6 +482,7 @@ private struct AssistantSettingsView: View {
 
 private struct WatcherSettingsView: View {
     @ObservedObject var store: SettingsStore
+    @State private var cameras: [(id: String, name: String)] = []
 
     var body: some View {
         Form {
@@ -524,6 +528,27 @@ private struct WatcherSettingsView: View {
                         .monospacedDigit()
                         .frame(width: 40, alignment: .trailing)
                 }
+            }
+
+            Section {
+                Picker(selection: $store.watcherCameraId) {
+                    Text("Off").tag("")
+                    ForEach(cameras, id: \.id) { cam in
+                        Text(cam.name).tag(cam.id)
+                    }
+                    if !store.watcherCameraId.isEmpty,
+                       !cameras.contains(where: { $0.id == store.watcherCameraId }) {
+                        Text("Disconnected camera").tag(store.watcherCameraId)
+                    }
+                } label: {
+                    SettingRowLabel(title: "Body camera",
+                                    subtitle: "One frame per tick from a camera pointed at you — posture, lighting, environment")
+                }
+                .onAppear { cameras = CameraGrabber.availableCameras() }
+            } header: {
+                Text("Camera")
+            } footer: {
+                Text("Connect any camera the Mac can see (a mirrorless over an HDMI capture dongle works best) and pick it here. Frames are deduped on motion, stored as cam-*.jpg next to the screen captures, and never leave this Mac. First use asks for camera permission.")
             }
 
             Section {
