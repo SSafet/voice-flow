@@ -68,9 +68,16 @@ echo "  ✓ Swift binary compiled"
 # signatures change every build, which resets all grants.
 SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
 if [ -z "$SIGN_ID" ]; then
+    if [ "${VF_ADHOC:-}" != "1" ]; then
+        echo "  ✗ No stable Developer ID signing identity found."
+        echo "    An ad-hoc build would invalidate every TCC grant (mic, screen"
+        echo "    recording, accessibility) and leave stale 'On' rows in System"
+        echo "    Settings. Unlock the login keychain and retry, or force with:"
+        echo "      VF_ADHOC=1 ./install.sh"
+        exit 1
+    fi
     SIGN_ID="-"
-    echo "  ⚠ No stable signing identity found — using ad-hoc signature."
-    echo "    Permissions will need to be re-granted after every rebuild."
+    echo "  ⚠ Ad-hoc signature forced — permissions must be re-granted after this build."
 else
     echo "  Signing with: $SIGN_ID"
 fi

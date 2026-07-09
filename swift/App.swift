@@ -25,6 +25,8 @@ final class PendingInteraction {
     var responseText: String?
     var attachments: [String] = []   // absolute screenshot/frame paths
     var cancelled = false
+    /// "Seen — I'll answer later": unblocks Claude without an answer.
+    var acknowledged = false
     /// Set (on main) once the blocked tool call has returned — a late
     /// answer must go to the inbox instead of this dead interaction.
     var resolved = false
@@ -83,6 +85,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var recordingPurpose: RecordingPurpose = .dictation
     private var initialPermissionsRequested = false
+    private var screenGrantPollTimer: Timer?
 
     // Streaming partial transcription
     var transcriptPanel: FloatingTranscriptPanel!
@@ -716,6 +719,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// "Seen — I'll answer later" on an ask bubble: unblock Claude's
+    /// ask_user without an answer; a later talk reply reaches it through
+    /// the inbox. Main thread.
+    private func acknowledgePendingAsk() {
+        guard let interaction = pendingInteraction else { return }
+        interaction.acknowledged = true
+        interaction.semaphore.signal()
+        replyBubble.showTransient("Told \(sessionName(for: interaction.sessionId)) you'll answer later.", seconds: 5)
+    }
+
     /// Menu-bar route to the same prompt the post-session bubble offers —
     /// for when that bubble is long dismissed.
     private func copyLatestCapturePrompt() {
@@ -1127,6 +1140,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return AXIsProcessTrustedWithOptions(opts)
     }
 
+    /// Screen-recording TCC rows bind to the granting build's code
+    /// signature: after a signature change System Settings still shows
+    /// Voice Flow "On" while the OS denies the running binary — and
+    /// CGPreflightScreenCaptureAccess trusts the stale row. Other apps'
+    /// window NAMES are only readable with a live grant, so probe those.
+    private func screenCaptureActuallyWorks() -> Bool {
+        guard let windows = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return false }
+        let myPid = Int(ProcessInfo.processInfo.processIdentifier)
+        return windows.contains { window in
+            window[kCGWindowOwnerPID as String] as? Int != myPid
+                && (window[kCGWindowName as String] as? String)?.isEmpty == false
+        }
+    }
+
+    /// Drop this app's TCC row so the next request shows a fresh prompt
+    /// instead of a System Settings toggle that is already (stale) "On".
+    private func resetStaleTCCGrant(service: String) {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+        proc.arguments = ["reset", service, Bundle.main.bundleIdentifier ?? "com.voiceflow.app"]
+        try? proc.run()
+        proc.waitUntilExit()
+        vflog("permissions: tccutil reset \(service) → exit \(proc.terminationStatus)")
+    }
+
+    /// Screen-recording grants only take effect after a relaunch. Poll the
+    /// TCC state after a (re-)request and restart once the user approved.
+    private func relaunchWhenScreenCaptureGranted() {
+        screenGrantPollTimer?.invalidate()
+        var polls = 0
+        screenGrantPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { timer in
+            polls += 1
+            if CGPreflightScreenCaptureAccess() {
+                timer.invalidate()
+                vflog("permissions: screen recording granted — relaunching to apply")
+                let path = Bundle.main.bundlePath
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/bin/sh")
+                proc.arguments = ["-c", "sleep 1; /usr/bin/open \"\(path)\""]
+                try? proc.run()
+                NSApp.terminate(nil)
+            } else if polls > 90 {
+                timer.invalidate()
+            }
+        }
+    }
+
     private func requestAccessibility() {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(opts)
@@ -1166,12 +1228,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func requestScreenCapturePermission() {
         showPermissions()
         if CGPreflightScreenCaptureAccess() {
-            vflog("screen capture permission already granted")
-            refreshPermissionWindow()
-            return
+            if screenCaptureActuallyWorks() {
+                vflog("screen capture permission already granted")
+                refreshPermissionWindow()
+                return
+            }
+            // Stale row: clear it so the fresh prompt and the System
+            // Settings entry actually apply to THIS build.
+            vflog("screen capture grant is stale — resetting")
+            resetStaleTCCGrant(service: "ScreenCapture")
         }
         let granted = CGRequestScreenCaptureAccess()
         vflog(granted ? "screen capture permission granted" : "screen capture permission not yet granted")
+        relaunchWhenScreenCaptureGranted()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.refreshPermissionWindow()
         }
@@ -1184,6 +1253,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             refreshPermissionWindow()
             return
         }
+        // A stale "On" row in System Settings blocks re-granting (the
+        // toggle is already on) — clear it first; a no-op when fresh.
+        resetStaleTCCGrant(service: "Accessibility")
         requestAccessibility()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.refreshPermissionWindow()
@@ -1239,11 +1311,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func screenCapturePermissionState() -> PermissionViewState {
         if CGPreflightScreenCaptureAccess() {
+            if screenCaptureActuallyWorks() {
+                return PermissionViewState(
+                    statusText: "Granted",
+                    statusColor: NSColor(r: 120, g: 180, b: 100),
+                    actionTitle: "Granted",
+                    actionEnabled: false
+                )
+            }
             return PermissionViewState(
-                statusText: "Granted",
-                statusColor: NSColor(r: 120, g: 180, b: 100),
-                actionTitle: "Granted",
-                actionEnabled: false
+                statusText: "Stale: System Settings lists an older build as allowed, but macOS denies this one. Reset clears the stale entry and re-prompts; Voice Flow restarts itself once you approve.",
+                statusColor: NSColor(r: 220, g: 160, b: 70),
+                actionTitle: "Reset & Re-grant",
+                actionEnabled: true
             )
         }
         return PermissionViewState(
@@ -1274,6 +1354,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func allPermissionsGranted() -> Bool {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             && CGPreflightScreenCaptureAccess()
+            && screenCaptureActuallyWorks()
             && checkAccessibility()
     }
 
@@ -1617,6 +1698,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     payload["note"] = "Screenshot file paths, in order — read them to see what the user showed you."
                 }
                 result = .ok(self.mcpJSON(payload))
+            } else if interaction.acknowledged {
+                result = .ok("The user saw your question but isn't answering right now. Don't re-ask and don't block on it — continue with what you can, and pick their reply up later with check_messages or wait_for_message.")
             } else if interaction.cancelled {
                 result = .fail("The user dismissed the prompt without answering. Don't immediately re-ask; continue as best you can or try another approach.")
             } else {
@@ -1640,7 +1723,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func presentAsk(prompt: String, speakAloud: Bool, from asker: String) {
         let settings = UserSettings.shared
         let hint = "Hold \(settings.talkHotkey.label) to answer · \(settings.snapTalkHotkey.label) +screen · \(settings.sessionHotkey.label) demo"
-        replyBubble.showAsk(prompt: "\(asker) asks: \(prompt)", hint: hint)
+        replyBubble.showAsk(prompt: "\(asker) asks: \(prompt)", hint: hint,
+                            actionTitle: "Seen — I'll answer later",
+                            action: { [weak self] in self?.acknowledgePendingAsk() })
         if chatPanel.isVisible {
             chatPanel.addNote("\(asker) asks: \(prompt)")
         }
