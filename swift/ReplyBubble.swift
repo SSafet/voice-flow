@@ -26,6 +26,7 @@ final class ReplyBubble {
     private var actionHandler: (() -> Void)?
     private var streaming = false
     private var suppressed = false
+    private var autoHideTimer: Timer?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -46,6 +47,7 @@ final class ReplyBubble {
     /// Show the bubble with a dim echo of what the user just asked.
     func showThinking(echo: String?) {
         suppressed = false
+        cancelAutoHide()
         ensurePanel()
         streaming = false
         if let echo, !echo.isEmpty {
@@ -60,6 +62,7 @@ final class ReplyBubble {
 
     func beginStreaming() {
         guard !suppressed else { return }
+        cancelAutoHide()
         ensurePanel()
         streaming = true
         setText("", attributes: textAttributes)
@@ -91,6 +94,7 @@ final class ReplyBubble {
     /// for Claude" after a capture is saved).
     func showNote(_ text: String, actionTitle: String?, action: (() -> Void)?) {
         suppressed = false
+        cancelAutoHide()
         ensurePanel()
         streaming = false
         setText(text, attributes: echoAttributes)
@@ -99,10 +103,20 @@ final class ReplyBubble {
         reveal()
     }
 
+    /// A short-lived confirmation ("Answer sent to …") that fades out on
+    /// its own; any newer content cancels the pending auto-hide.
+    func showTransient(_ text: String, seconds: TimeInterval = 4) {
+        showNote(text, actionTitle: nil, action: nil)
+        autoHideTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
+            self?.hide()
+        }
+    }
+
     /// A question from Claude waiting for the user — prompt in the body,
     /// how-to-answer hint in the status line.
     func showAsk(prompt: String, hint: String) {
         suppressed = false
+        cancelAutoHide()
         ensurePanel()
         streaming = false
         setText(prompt, attributes: textAttributes)
@@ -127,8 +141,14 @@ final class ReplyBubble {
         statusLabel.stringValue = text
     }
 
+    private func cancelAutoHide() {
+        autoHideTimer?.invalidate()
+        autoHideTimer = nil
+    }
+
     func hide() {
         streaming = false
+        cancelAutoHide()
         guard let panel, panel.isVisible else { return }
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.14
