@@ -296,13 +296,21 @@ class FloatingIndicator: NSObject {
     /// shrinks back to the classic pill. Selecting the same session again
     /// re-flashes it — the on-demand peek.
     func flashSession(title: String, index: Int?, count: Int) {
-        guard panel != nil else { return }
-        expandTimer?.invalidate()
         badgeIndex = index
         badgeCount = count
+        expandPill((index.map { "\($0 + 1) · " } ?? "") + title, for: 5.0)
+    }
+
+    /// Short in-pill feedback ("no sessions") — same stretch, quicker collapse.
+    func flashMessage(_ text: String) {
+        expandPill(text, for: 2.0)
+    }
+
+    private func expandPill(_ display: String, for duration: TimeInterval) {
+        guard panel != nil else { return }
+        expandTimer?.invalidate()
 
         let font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
-        let display = (index.map { "\($0 + 1) · " } ?? "") + title
         let textWidth = ceil((display as NSString).size(withAttributes: [.font: font]).width)
         let shellW = max(W, min(340, textWidth + 30))
         let shellH = H + 6
@@ -325,7 +333,7 @@ class FloatingIndicator: NSObject {
         expandTitleLayer.frame = CGRect(x: 15, y: (shellH - 14) / 2, width: shellW - 30, height: 14)
         expandTitleLayer.isHidden = false
 
-        expandTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+        expandTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
             self?.collapseSessionFlash()
         }
     }

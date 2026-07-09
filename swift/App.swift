@@ -778,10 +778,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                   count: ordered.count)
     }
 
-    /// ⌃⌥1–6. A number with no session behind it is a silent no-op. Main thread.
+    /// ⌃⌥1–6. Misses answer inside the pill, never as a bubble. Main thread.
     private func switchToSession(at index: Int) {
         let ordered = mcpServer.sessions.ordered()
-        guard index < ordered.count else { return }
+        guard index < ordered.count else {
+            indicator.flashMessage(ordered.isEmpty ? "no sessions" : "no #\(index + 1) session")
+            return
+        }
         setTargetSession(ordered[index].id, announce: true)
     }
 
