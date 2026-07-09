@@ -86,6 +86,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var recordingPurpose: RecordingPurpose = .dictation
     private var initialPermissionsRequested = false
     private var screenGrantPollTimer: Timer?
+    private var screenGrantPendingRestart = false
 
     // Streaming partial transcription
     var transcriptPanel: FloatingTranscriptPanel!
@@ -1167,22 +1168,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         vflog("permissions: tccutil reset \(service) → exit \(proc.terminationStatus)")
     }
 
-    /// Screen-recording grants only take effect after a relaunch. Poll the
-    /// TCC state after a (re-)request and restart once the user approved.
+    private func relaunchNow() {
+        vflog("permissions: relaunching to apply screen recording grant")
+        let path = Bundle.main.bundlePath
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/sh")
+        proc.arguments = ["-c", "sleep 1; /usr/bin/open \"\(path)\""]
+        try? proc.run()
+        NSApp.terminate(nil)
+    }
+
+    /// Screen-recording grants only take effect after a relaunch, and the
+    /// running process CACHES its denial — CGPreflight often keeps saying
+    /// false here even after the user approves. The poll is best-effort;
+    /// the reliable path is the "Restart Voice Flow" button
+    /// (screenGrantPendingRestart) shown after a request.
     private func relaunchWhenScreenCaptureGranted() {
         screenGrantPollTimer?.invalidate()
         var polls = 0
-        screenGrantPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { timer in
+        screenGrantPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
             polls += 1
-            if CGPreflightScreenCaptureAccess() {
+            if CGPreflightScreenCaptureAccess(), self?.screenCaptureActuallyWorks() != true {
                 timer.invalidate()
-                vflog("permissions: screen recording granted — relaunching to apply")
-                let path = Bundle.main.bundlePath
-                let proc = Process()
-                proc.executableURL = URL(fileURLWithPath: "/bin/sh")
-                proc.arguments = ["-c", "sleep 1; /usr/bin/open \"\(path)\""]
-                try? proc.run()
-                NSApp.terminate(nil)
+                self?.relaunchNow()
             } else if polls > 90 {
                 timer.invalidate()
             }
@@ -1227,12 +1235,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func requestScreenCapturePermission() {
         showPermissions()
+        if CGPreflightScreenCaptureAccess(), screenCaptureActuallyWorks() {
+            vflog("screen capture permission already granted")
+            screenGrantPendingRestart = false
+            refreshPermissionWindow()
+            return
+        }
+        if screenGrantPendingRestart {
+            // Second click = the "Restart Voice Flow" button.
+            relaunchNow()
+            return
+        }
         if CGPreflightScreenCaptureAccess() {
-            if screenCaptureActuallyWorks() {
-                vflog("screen capture permission already granted")
-                refreshPermissionWindow()
-                return
-            }
             // Stale row: clear it so the fresh prompt and the System
             // Settings entry actually apply to THIS build.
             vflog("screen capture grant is stale — resetting")
@@ -1240,6 +1254,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let granted = CGRequestScreenCaptureAccess()
         vflog(granted ? "screen capture permission granted" : "screen capture permission not yet granted")
+        screenGrantPendingRestart = true
         relaunchWhenScreenCaptureGranted()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.refreshPermissionWindow()
@@ -1319,10 +1334,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     actionEnabled: false
                 )
             }
+            if screenGrantPendingRestart {
+                return PermissionViewState(
+                    statusText: "Approved — restart Voice Flow to apply it (macOS only hands the grant to a fresh launch).",
+                    statusColor: NSColor(r: 220, g: 160, b: 70),
+                    actionTitle: "Restart Voice Flow",
+                    actionEnabled: true
+                )
+            }
             return PermissionViewState(
-                statusText: "Stale: System Settings lists an older build as allowed, but macOS denies this one. Reset clears the stale entry and re-prompts; Voice Flow restarts itself once you approve.",
+                statusText: "Stale: System Settings lists an older build as allowed, but macOS denies this one. Reset clears the stale entry and re-prompts, then restart to apply.",
                 statusColor: NSColor(r: 220, g: 160, b: 70),
                 actionTitle: "Reset & Re-grant",
+                actionEnabled: true
+            )
+        }
+        if screenGrantPendingRestart {
+            return PermissionViewState(
+                statusText: "After approving in the system dialog or System Settings, restart Voice Flow to apply it.",
+                statusColor: NSColor(r: 220, g: 160, b: 70),
+                actionTitle: "Restart Voice Flow",
                 actionEnabled: true
             )
         }

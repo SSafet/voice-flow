@@ -35,8 +35,10 @@ cp "$PROJECT_DIR/assets/StatusBarIconTemplate@2x.png" "$APP_DEST/Contents/Resour
 cp "$PROJECT_DIR/assets/StatusBarIconTemplate.png"     "$APP_DEST/Contents/Resources/" 2>/dev/null || true
 cp "$PROJECT_DIR/assets/icon.icns"                     "$APP_DEST/Contents/Resources/" 2>/dev/null || true
 
-# Write project directory path into bundle (used to locate .venv)
-echo -n "$PROJECT_DIR" > "$APP_DEST/Contents/Resources/project_dir.txt"
+# Write project directory path into bundle (used to locate .venv).
+# VF_PROJECT_DIR overrides it when compiling from a throwaway snapshot
+# (e.g. a git worktree) so the app keeps pointing at the real repo.
+echo -n "${VF_PROJECT_DIR:-$PROJECT_DIR}" > "$APP_DEST/Contents/Resources/project_dir.txt"
 
 # Bundle Python source so the app is self-contained
 rm -rf "$APP_DEST/Contents/Resources/voice_flow"
