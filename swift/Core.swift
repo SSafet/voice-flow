@@ -896,6 +896,11 @@ class AudioRecorder {
     private let speechThreshold: Float = 0.01  // ~-40dBFS, above background noise
     private var speechSinceLastPartial = false
     private var lastSpeechDataLength: Int = 0  // audioData.count at last speech buffer
+    // Buffers (~21ms each) that peaked above the threshold. A hotkey click
+    // or breath spikes 1–2 buffers; the shortest spoken word spans many —
+    // the silence gate requires sustained signal, not one transient.
+    private var speechBufferCount = 0
+    private let minSpeechBuffers = 4
 
     func start() {
         // Pre-allocate for up to 60 seconds of 16kHz int16 audio
@@ -904,6 +909,7 @@ class AudioRecorder {
         clippingDetected = false
         speechSinceLastPartial = false
         lastSpeechDataLength = 0
+        speechBufferCount = 0
 
         // Reset filter state
         hpX1 = 0; hpX2 = 0; hpY1 = 0; hpY2 = 0
@@ -982,6 +988,7 @@ class AudioRecorder {
                 if maxVal >= self.speechThreshold {
                     // Mark end of speech region (+ this buffer) for trimming
                     self.lastSpeechDataLength = self.audioData.count
+                    self.speechBufferCount += 1
                 }
             }
 
@@ -1048,10 +1055,10 @@ class AudioRecorder {
             return
         }
 
-        let heardSpeech = audioLock.sync { lastSpeechDataLength > 0 }
-        guard heardSpeech else {
+        let voicedBuffers = audioLock.sync { speechBufferCount }
+        guard voicedBuffers >= minSpeechBuffers else {
             lastCaptureWasSilent = true
-            vflog("audio: no speech detected (\(audioData.count) bytes of room tone) — discarded")
+            vflog("audio: no sustained speech (\(voicedBuffers) voiced buffers in \(audioData.count) bytes) — discarded")
             completion(nil)
             return
         }
