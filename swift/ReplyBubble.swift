@@ -1,342 +1,89 @@
 import Cocoa
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  Reply Bubble — the agent answers without opening the panel
+//  Reply Bubble — facade over the pill's grown surface
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  When the ChatPanel is closed, agent replies stream into this small
-//  bubble anchored above the pill. It stays until dismissed with ✕.
+//  There is no separate bubble window anymore: everything renders inside
+//  FloatingIndicator's own growing panel — content above, the live dots in
+//  the bottom band of the same shape. This class keeps the familiar API
+//  and forwards to the pill.
 
 final class ReplyBubble {
-    /// Fired when the user dismisses the bubble with ✕ (used to cancel a
-    /// pending ask from Claude).
+    /// ✕ — close and keep (a pending ask stays pending; the session's
+    /// preview slot survives for the picker).
     var onClosed: (() -> Void)?
-    /// The bubble's on-screen frame (nil when hidden) — the app docks the
-    /// real pill right above it, so its rich state animations stay visible.
-    var onFrameChanged: ((NSRect?) -> Void)?
+    /// Trash — delete: cancels a pending ask, clears the preview slot.
+    var onTrashed: (() -> Void)?
+    /// Speaker icon — read the visible text aloud.
+    var onSpeakRequested: ((String) -> Void)?
 
-    private let maxWidth: CGFloat = 400
-    private let maxTextHeight: CGFloat = 320
-    private let headerHeight: CGFloat = 26
-    /// Bottom band left free for the pill — it docks into the bubble's
-    /// lower edge (its usual screen spot) so the dots never move.
-    private let pillZone: CGFloat = 26
-    private let actionRowHeight: CGFloat = 34
+    private let indicator: FloatingIndicator
 
-    private var panel: NSPanel?
-    private var textView: NSTextView!
-    private var scrollView: NSScrollView!
-    private var statusLabel: NSTextField!
-    private var closeButton: NSButton!
-    private var actionButton: NSButton!
-    private var actionHandler: (() -> Void)?
-    private var streaming = false
-    private var suppressed = false
-    private var autoHideTimer: Timer?
+    var isVisible: Bool { indicator.isGrownVisible }
 
-    var isVisible: Bool { panel?.isVisible ?? false }
-
-    private var textAttributes: [NSAttributedString.Key: Any] {
-        [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: Theme.text]
+    init(indicator: FloatingIndicator) {
+        self.indicator = indicator
+        indicator.onGrownSpeak = { [weak self] text in self?.onSpeakRequested?(text) }
+        indicator.onGrownTrash = { [weak self] in self?.onTrashed?() }
+        indicator.onGrownClose = { [weak self] in self?.onClosed?() }
     }
 
-    private var echoAttributes: [NSAttributedString.Key: Any] {
-        [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: Theme.text3]
-    }
+    /// Suppression died with the separate window — kept for call sites.
+    func resetSuppression() {}
 
-    /// A new request is on its way — allow the bubble to appear again even
-    /// if the user dismissed the previous reply.
-    func resetSuppression() {
-        suppressed = false
-    }
-
-    /// Show the bubble with a dim echo of what the user just asked.
     func showThinking(echo: String?) {
-        suppressed = false
-        cancelAutoHide()
-        ensurePanel()
-        streaming = false
-        if let echo, !echo.isEmpty {
-            setText("You: \(echo)", attributes: echoAttributes)
-        } else {
-            setText("", attributes: textAttributes)
-        }
-        statusLabel.stringValue = "Thinking…"
-        configureAction(title: nil, handler: nil)
-        reveal()
+        indicator.showGrown(FloatingIndicator.GrownSpec(
+            title: "Thinking…",
+            text: echo.map { "You: \($0)" } ?? ""))
     }
 
     func beginStreaming() {
-        guard !suppressed else { return }
-        cancelAutoHide()
-        ensurePanel()
-        streaming = true
-        setText("", attributes: textAttributes)
-        statusLabel.stringValue = "Replying…"
-        configureAction(title: nil, handler: nil)
-        reveal()
+        indicator.beginGrownStream(title: "Replying…")
     }
 
     func appendDelta(_ delta: String) {
-        guard streaming, isVisible else { return }
-        textView.textStorage?.append(NSAttributedString(string: delta, attributes: textAttributes))
-        relayout()
-        textView.scrollToEndOfDocument(nil)
+        indicator.appendGrownDelta(delta)
     }
 
     func finishStreaming(_ fullText: String) {
-        guard streaming, isVisible else { streaming = false; return }
-        streaming = false
-        setText(fullText, attributes: textAttributes)
-        statusLabel.stringValue = ""
-        relayout()
+        indicator.finishGrownStream(fullText, title: nil)
+    }
+
+    /// A message grown out of the pill; `from` becomes the amber header.
+    /// The hint line + brighter border mark a push that wants an answer.
+    func showMessage(from title: String?, text: String, hint: String? = nil, isAsk: Bool = false) {
+        indicator.showGrown(FloatingIndicator.GrownSpec(
+            title: title, text: text, hint: hint, isAsk: isAsk))
     }
 
     func showNote(_ text: String) {
-        showNote(text, actionTitle: nil, action: nil)
+        showMessage(from: nil, text: text)
     }
 
-    /// A note with an optional action button underneath (e.g. "Copy prompt
-    /// for Claude" after a capture is saved).
+    /// Legacy action-button variant — buttons are gone (the corner icons
+    /// took their place); the text still shows.
     func showNote(_ text: String, actionTitle: String?, action: (() -> Void)?) {
-        suppressed = false
-        cancelAutoHide()
-        ensurePanel()
-        streaming = false
-        setText(text, attributes: echoAttributes)
-        statusLabel.stringValue = ""
-        configureAction(title: actionTitle, handler: action)
-        reveal()
+        showMessage(from: nil, text: text)
     }
 
-    /// A short-lived confirmation ("Answer sent to …") that fades out on
-    /// its own; any newer content cancels the pending auto-hide.
+    /// Short receipts flash as a one-line stretch of the pill. Skipped
+    /// while grown content is showing — hide() first when a receipt must
+    /// replace it (e.g. after answering an ask).
     func showTransient(_ text: String, seconds: TimeInterval = 4,
-                       actionTitle: String? = nil, action: (() -> Void)? = nil) {
-        showNote(text, actionTitle: actionTitle, action: action)
-        autoHideTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
-            self?.hide()
-        }
+                       actionTitle: String? = nil, action: (() -> Void)? = nil,
+                       isError: Bool = false) {
+        guard !indicator.isGrownVisible else { return }
+        indicator.flashMessage(text, seconds: seconds, isError: isError)
     }
 
-    /// A question from Claude waiting for the user — prompt in the body,
-    /// how-to-answer hint in the status line, optional acknowledge button
-    /// ("Seen — I'll answer later").
     func showAsk(prompt: String, hint: String, actionTitle: String? = nil, action: (() -> Void)? = nil) {
-        suppressed = false
-        cancelAutoHide()
-        ensurePanel()
-        streaming = false
-        setText(prompt, attributes: textAttributes)
-        statusLabel.stringValue = hint
-        configureAction(title: actionTitle, handler: action)
-        reveal()
+        showMessage(from: nil, text: prompt, hint: hint, isAsk: true)
     }
 
-    private func configureAction(title: String?, handler: (() -> Void)?) {
-        actionHandler = handler
-        if let title {
-            actionButton.title = title
-            actionButton.isHidden = false
-        } else {
-            actionButton.isHidden = true
-        }
-        relayout()
-    }
-
-    func setStatus(_ text: String) {
-        guard isVisible else { return }
-        statusLabel.stringValue = text
-        relayout()   // a status line changes the whole geometry
-    }
-
-    private func cancelAutoHide() {
-        autoHideTimer?.invalidate()
-        autoHideTimer = nil
-    }
+    /// The old status line is gone — the hint line belongs to asks only.
+    func setStatus(_ text: String) {}
 
     func hide() {
-        streaming = false
-        cancelAutoHide()
-        guard let panel, panel.isVisible else { return }
-        onFrameChanged?(nil)
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.14
-            panel.animator().alphaValue = 0
-        }, completionHandler: {
-            panel.orderOut(nil)
-        })
+        indicator.hideGrown()
     }
-
-    // ── Internals ───────────────────────────────────────
-
-    private func setText(_ text: String, attributes: [NSAttributedString.Key: Any]) {
-        textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: attributes))
-        relayout()
-    }
-
-    private func reveal() {
-        guard let panel else { return }
-        relayout()
-        if panel.isVisible {
-            panel.orderFront(nil)
-            return
-        }
-        panel.alphaValue = 0
-        panel.orderFront(nil)
-        onFrameChanged?(panel.frame)
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.16
-            panel.animator().alphaValue = 1
-        }
-    }
-
-    @objc private func closeTapped() {
-        suppressed = true
-        hide()
-        onClosed?()
-    }
-
-    @objc private func actionTapped() {
-        actionHandler?()
-    }
-
-    private func relayout() {
-        guard let panel, let container = textView.textContainer,
-              let layoutManager = textView.layoutManager else { return }
-
-        let hasStatus = !statusLabel.stringValue.isEmpty || streaming
-        let hasAction = !actionButton.isHidden
-        let actionSpace: CGFloat = hasAction ? actionRowHeight : 0
-
-        // Bare notes shrink to their text; anything with a status line or a
-        // streaming reply keeps the full width.
-        var width = maxWidth
-        if !hasStatus {
-            let natural = ceil(textView.textStorage?.size().width ?? maxWidth)
-            var ideal = natural + 52   // 12 + text + 4 + ✕(20) + 10
-            if hasAction {
-                ideal = max(ideal, actionButton.intrinsicContentSize.width + 56)
-            }
-            width = min(maxWidth, max(200, ideal))
-        }
-
-        // In compact mode the ✕ sits beside the text, so keep clear of it.
-        let scrollWidth = width - (hasStatus ? 20 : 46)
-        scrollView.frame.size.width = scrollWidth
-        textView.frame.size.width = scrollWidth
-        layoutManager.ensureLayout(for: container)
-        let used = layoutManager.usedRect(for: container).height
-        let textHeight = min(max(used + 6, 22), maxTextHeight)
-
-        let topSpace: CGFloat = hasStatus ? headerHeight : 7
-        let totalHeight = topSpace + textHeight + actionSpace + pillZone
-
-        guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
-        let frame = screen.frame
-        let x = frame.midX - width / 2
-        // Grow upward from the very bottom: the docked pill lands at
-        // minY+5 — its normal home — inside our bottom band.
-        let y = frame.minY + 2
-        panel.setFrame(NSRect(x: x, y: y, width: width, height: totalHeight), display: true)
-
-        scrollView.frame = NSRect(x: 10, y: pillZone + actionSpace, width: scrollWidth, height: textHeight)
-        statusLabel.isHidden = !hasStatus
-        statusLabel.frame = NSRect(x: 12, y: totalHeight - headerHeight + 5, width: width - 52, height: 16)
-        if hasStatus {
-            closeButton.frame = NSRect(x: width - 30, y: totalHeight - headerHeight + 3, width: 20, height: 20)
-        } else {
-            // Centered on the text row — no empty header band above.
-            closeButton.frame = NSRect(x: width - 30, y: pillZone + actionSpace + (textHeight - 20) / 2, width: 20, height: 20)
-        }
-        if hasAction {
-            let buttonWidth = min(width - 32, max(140, actionButton.intrinsicContentSize.width + 24))
-            actionButton.frame = NSRect(x: 16, y: pillZone + 6, width: buttonWidth, height: 22)
-        }
-
-        if panel.isVisible {
-            onFrameChanged?(panel.frame)   // keep the docked pill attached
-        }
-    }
-
-    private func ensurePanel() {
-        if panel != nil { return }
-
-        // KeyablePanel: borderless windows refuse key status by default,
-        // which breaks scrolling long content inside the bubble.
-        let newPanel = KeyablePanel(
-            contentRect: NSRect(x: 0, y: 0, width: maxWidth, height: 120),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: false
-        )
-        newPanel.level = .floating + 1
-        newPanel.isOpaque = false
-        newPanel.backgroundColor = .clear
-        newPanel.hasShadow = true
-        newPanel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        newPanel.isReleasedWhenClosed = false
-
-        let root = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: maxWidth, height: 120))
-        root.material = .hudWindow
-        root.state = .active
-        root.appearance = NSAppearance(named: .darkAqua)
-        root.wantsLayer = true
-        root.layer?.cornerRadius = 14
-        root.layer?.masksToBounds = true
-        root.layer?.borderWidth = 1
-        root.layer?.borderColor = Theme.border.cgColor
-        root.autoresizingMask = [.width, .height]
-
-        // Same size as the body so the "title" never looks smaller than
-        // the text under it.
-        statusLabel = NSTextField(labelWithString: "")
-        statusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        statusLabel.textColor = Theme.accent
-        statusLabel.lineBreakMode = .byTruncatingTail
-        root.addSubview(statusLabel)
-
-        closeButton = BubbleCloseButton(
-            image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Dismiss")?
-                .withSymbolConfiguration(.init(pointSize: 13, weight: .medium)) ?? NSImage(),
-            target: self, action: #selector(closeTapped)
-        )
-        closeButton.isBordered = false
-        closeButton.contentTintColor = Theme.text2
-        closeButton.toolTip = "Dismiss"
-        root.addSubview(closeButton)
-
-        actionButton = NSButton(title: "", target: self, action: #selector(actionTapped))
-        actionButton.bezelStyle = .inline
-        actionButton.controlSize = .small
-        actionButton.font = .systemFont(ofSize: 11, weight: .semibold)
-        actionButton.contentTintColor = Theme.accent
-        actionButton.isHidden = true
-        root.addSubview(actionButton)
-
-        textView = NSTextView(frame: NSRect(x: 0, y: 0, width: maxWidth - 24, height: 24))
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.drawsBackground = false
-        textView.isRichText = false
-        textView.textContainerInset = NSSize(width: 2, height: 2)
-        textView.textContainer?.lineFragmentPadding = 0   // no hidden side gutters
-        textView.textContainer?.widthTracksTextView = true
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-
-        scrollView = NSScrollView()
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.scrollerStyle = .overlay
-        scrollView.documentView = textView
-        root.addSubview(scrollView)
-
-        newPanel.contentView = root
-        panel = newPanel
-    }
-}
-
-private final class BubbleCloseButton: NSButton {
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

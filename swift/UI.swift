@@ -242,6 +242,35 @@ class FloatingIndicator: NSObject {
     private var activeNumber: Int?
     private var clickMonitor: Any?
 
+    /// What the surface currently is. flash/picker are transient (timer,
+    /// click-anywhere, or another hotkey collapse them); grown content
+    /// persists until ✕/trash or an explicit hide.
+    private enum SurfaceMode { case pill, flash, picker, grown }
+    private var mode: SurfaceMode = .pill
+    var isGrownVisible: Bool { mode == .grown }
+
+    // Grown mode — message content above, live dots at the bottom band.
+    struct GrownSpec {
+        var title: String?
+        var text: String
+        var hint: String?
+        var isAsk = false
+    }
+    var onGrownSpeak: ((String) -> Void)?
+    var onGrownTrash: (() -> Void)?
+    var onGrownClose: (() -> Void)?
+    private var grownBackdropLayer: CALayer!
+    private var grownStatusLabel: NSTextField!
+    private var grownHintLabel: NSTextField!
+    private var grownScroll: NSScrollView!
+    private var grownTextView: NSTextView!
+    private var iconSpeaker: NSButton!
+    private var iconTrash: NSButton!
+    private var iconClose: NSButton!
+    private var grownStreaming = false
+    private let grownWidth: CGFloat = 400
+    private let grownMaxTextHeight: CGFloat = 320
+
     private var state: AppState = .idle
     private var sessionActive = false
     private var watcherActive = false
@@ -321,14 +350,33 @@ class FloatingIndicator: NSObject {
         expandTitleLayer.isHidden = true
 
         let shellH = H + 8
+        let shellW = pickerRowWidth(entries: entries, activeName: activeName)
+        expandShell(width: shellW, height: shellH, as: .picker)
+
+        let row = buildPickerRow(entries: entries, activeName: activeName, shellW: shellW, shellH: shellH)
+        capsuleLayer.addSublayer(row)
+        pickerLayer = row
+
+        expandTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
+            self?.collapseNow()
+        }
+    }
+
+    private func pickerRowWidth(entries: [PickerEntry], activeName: String?) -> CGFloat {
         let labelFont = NSFont.systemFont(ofSize: 10.5)
         let nameFont = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
         let labelW = ceil(("sessions" as NSString).size(withAttributes: [.font: labelFont]).width)
         let name = activeName ?? ""
         let nameW = name.isEmpty ? 0 : min(220, ceil((name as NSString).size(withAttributes: [.font: nameFont]).width))
         let dotsW = CGFloat(entries.count) * 12 + CGFloat(max(0, entries.count - 1)) * 6
-        let shellW = max(W, min(440, 14 + labelW + 10 + dotsW + (nameW > 0 ? 10 + nameW : 0) + 14))
-        expandShell(width: shellW, height: shellH)
+        return max(W, min(440, 14 + labelW + 10 + dotsW + (nameW > 0 ? 10 + nameW : 0) + 14))
+    }
+
+    private func buildPickerRow(entries: [PickerEntry], activeName: String?, shellW: CGFloat, shellH: CGFloat) -> CALayer {
+        let labelFont = NSFont.systemFont(ofSize: 10.5)
+        let nameFont = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+        let labelW = ceil(("sessions" as NSString).size(withAttributes: [.font: labelFont]).width)
+        let name = activeName ?? ""
 
         let row = CALayer()
         row.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
@@ -372,7 +420,7 @@ class FloatingIndicator: NSObject {
             x += 18
         }
 
-        if nameW > 0 {
+        if !name.isEmpty {
             let nameLayer = CATextLayer()
             nameLayer.string = name
             nameLayer.font = nameFont
@@ -383,13 +431,7 @@ class FloatingIndicator: NSObject {
             nameLayer.frame = CGRect(x: x + 4, y: (shellH - 14) / 2, width: shellW - x - 18, height: 14)
             row.addSublayer(nameLayer)
         }
-
-        capsuleLayer.addSublayer(row)
-        pickerLayer = row
-
-        expandTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
-            self?.collapseNow()
-        }
+        return row
     }
 
     /// Short in-pill feedback ("no sessions", receipts) — one-line stretch.
@@ -403,7 +445,7 @@ class FloatingIndicator: NSObject {
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
         let shellW = max(W, min(340, textWidth + 30))
         let shellH = H + 6
-        expandShell(width: shellW, height: shellH)
+        expandShell(width: shellW, height: shellH, as: .flash)
 
         expandTitleLayer.font = font
         expandTitleLayer.fontSize = 11.5
@@ -419,12 +461,14 @@ class FloatingIndicator: NSObject {
         }
     }
 
-    /// Stretch the shell around the capsule and hide the classic dots.
-    private func expandShell(width shellW: CGFloat, height shellH: CGFloat) {
+    /// Stretch the one-line shell around the capsule, hiding the classic dots.
+    private func expandShell(width shellW: CGFloat, height shellH: CGFloat, as newMode: SurfaceMode) {
+        mode = newMode
         expandedSize = NSSize(width: shellW, height: shellH)
-        if let dockFrame { dock(into: dockFrame) } else { recenter() }
+        recenter()
 
         capsuleLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
+        pillLayer.isHidden = false
         pillLayer.frame = CGRect(x: 1, y: 1, width: shellW - 2, height: shellH - 2)
         pillLayer.cornerRadius = (shellH - 2) / 2
         sessionRingLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
@@ -432,6 +476,7 @@ class FloatingIndicator: NSObject {
         watcherRingLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
         watcherRingLayer.cornerRadius = shellH / 2
         dotLayers.forEach { $0.isHidden = true }
+        hideGrownChrome()
 
         if clickMonitor == nil {
             clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
@@ -440,9 +485,22 @@ class FloatingIndicator: NSObject {
         }
     }
 
-    /// Back to the classic pill — timer, click-anywhere, or another hotkey.
+    /// Collapse transient surfaces (flash / picker) — timer, click-anywhere,
+    /// or another hotkey. Grown content persists; hide it via hideGrown().
     func collapseNow() {
-        guard expandedSize != nil else { return }
+        guard mode == .flash || mode == .picker else { return }
+        collapseToPill()
+    }
+
+    /// Dismiss grown content (✕ / trash / programmatic).
+    func hideGrown() {
+        guard mode == .grown else { return }
+        grownStreaming = false
+        collapseToPill()
+    }
+
+    private func collapseToPill() {
+        mode = .pill
         expandTimer?.invalidate()
         expandTimer = nil
         expandedSize = nil
@@ -453,20 +511,172 @@ class FloatingIndicator: NSObject {
         pickerLayer?.removeFromSuperlayer()
         pickerLayer = nil
         expandTitleLayer.isHidden = true
+        hideGrownChrome()
+        grownBackdropLayer.isHidden = true
+        pillLayer.isHidden = false
         capsuleLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
         pillLayer.frame = CGRect(x: 1, y: 1, width: W - 2, height: H - 2)
         pillLayer.cornerRadius = (H - 2) / 2
+        sessionRingLayer.isHidden = false
+        watcherRingLayer.isHidden = false
         sessionRingLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
         sessionRingLayer.cornerRadius = H / 2
         watcherRingLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
         watcherRingLayer.cornerRadius = H / 2
         dotLayers.forEach { $0.isHidden = false }
-        if let dockFrame { dock(into: dockFrame) } else { recenter() }
+        recenter()
         applyState(force: true)
     }
 
+    // ── Grown mode: message content above, live dots at the bottom ──
+
+    private func hideGrownChrome() {
+        grownStatusLabel?.isHidden = true
+        grownHintLabel?.isHidden = true
+        grownScroll?.isHidden = true
+        iconSpeaker?.isHidden = true
+        iconTrash?.isHidden = true
+        iconClose?.isHidden = true
+    }
+
+    /// Show content grown out of the pill: title/text/hint above, the live
+    /// dots (still animating, with the session number) in the bottom band.
+    /// Persists until ✕/trash/hideGrown, unless `autoHide` is set. Pass
+    /// `bottomPicker` to render the session picker row instead of the dots
+    /// (used while switching sessions with a message to preview).
+    func showGrown(_ spec: GrownSpec,
+                   bottomPicker: (entries: [PickerEntry], activeName: String?)? = nil,
+                   autoHide: TimeInterval? = nil) {
+        guard panel != nil else { return }
+        expandTimer?.invalidate()
+        expandTimer = nil
+        pickerLayer?.removeFromSuperlayer()
+        pickerLayer = nil
+        expandTitleLayer.isHidden = true
+        grownStreaming = false
+
+        mode = .grown
+        grownStatusLabel.stringValue = spec.title ?? ""
+        grownHintLabel.stringValue = spec.hint ?? ""
+        grownTextView.textStorage?.setAttributedString(NSAttributedString(
+            string: spec.text,
+            attributes: [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: Theme.text]))
+        grownBackdropLayer.borderColor = spec.isAsk
+            ? NSColor(r: 255, g: 194, b: 75, a: 217).cgColor
+            : NSColor(r: 255, g: 170, b: 60, a: 140).cgColor
+        relayoutGrown(bottomPicker: bottomPicker)
+
+        if let autoHide {
+            expandTimer = Timer.scheduledTimer(withTimeInterval: autoHide, repeats: false) { [weak self] _ in
+                self?.hideGrown()
+            }
+        }
+    }
+
+    /// Streamed replies: open empty, append deltas, finish with full text.
+    func beginGrownStream(title: String?) {
+        showGrown(GrownSpec(title: title ?? "Replying…", text: ""))
+        grownStreaming = true
+    }
+
+    func appendGrownDelta(_ delta: String) {
+        guard mode == .grown, grownStreaming else { return }
+        grownTextView.textStorage?.append(NSAttributedString(
+            string: delta,
+            attributes: [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: Theme.text]))
+        relayoutGrown(bottomPicker: nil)
+        grownTextView.scrollToEndOfDocument(nil)
+    }
+
+    func finishGrownStream(_ fullText: String, title: String?) {
+        guard mode == .grown else { return }
+        grownStreaming = false
+        grownStatusLabel.stringValue = title ?? ""
+        grownTextView.textStorage?.setAttributedString(NSAttributedString(
+            string: fullText,
+            attributes: [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: Theme.text]))
+        relayoutGrown(bottomPicker: nil)
+    }
+
+    private func relayoutGrown(bottomPicker: (entries: [PickerEntry], activeName: String?)?) {
+        guard mode == .grown, let container = grownTextView.textContainer,
+              let layoutManager = grownTextView.layoutManager else { return }
+
+        let width = grownWidth
+        let hasTitle = !grownStatusLabel.stringValue.isEmpty
+        let hasHint = !grownHintLabel.stringValue.isEmpty
+        let bottomBand: CGFloat = 26
+
+        grownScroll.frame.size.width = width - 24
+        grownTextView.frame.size.width = width - 24
+        layoutManager.ensureLayout(for: container)
+        let used = layoutManager.usedRect(for: container).height
+        let textHeight = min(max(used + 6, 22), grownMaxTextHeight)
+
+        let titleSpace: CGFloat = hasTitle ? 24 : 6
+        let hintSpace: CGFloat = hasHint ? 20 : 0
+        let totalH = 8 + titleSpace + textHeight + hintSpace + bottomBand
+        expandedSize = NSSize(width: width, height: totalH)
+        recenter()
+
+        grownBackdropLayer.isHidden = false
+        grownBackdropLayer.frame = CGRect(x: 0, y: 0, width: width, height: totalH)
+
+        // Bottom band: naked capsule dots (skin hidden) or the picker row.
+        pillLayer.isHidden = true
+        sessionRingLayer.isHidden = true
+        watcherRingLayer.isHidden = true
+        pickerLayer?.removeFromSuperlayer()
+        pickerLayer = nil
+        if let bottomPicker {
+            dotLayers.forEach { $0.isHidden = true }
+            capsuleLayer.frame = CGRect(x: 0, y: 0, width: width, height: bottomBand)
+            let row = buildPickerRow(entries: bottomPicker.entries, activeName: bottomPicker.activeName,
+                                     shellW: width, shellH: bottomBand)
+            capsuleLayer.addSublayer(row)
+            pickerLayer = row
+        } else {
+            dotLayers.forEach { $0.isHidden = false }
+            capsuleLayer.frame = CGRect(x: (width - W) / 2, y: 3, width: W, height: H)
+        }
+
+        // Content views (panel coords, bottom-up).
+        grownScroll.isHidden = false
+        grownScroll.frame = NSRect(x: 12, y: bottomBand + hintSpace, width: width - 24, height: textHeight)
+        grownHintLabel.isHidden = !hasHint
+        if hasHint {
+            grownHintLabel.frame = NSRect(x: 12, y: bottomBand + 2, width: width - 24, height: 15)
+        }
+        grownStatusLabel.isHidden = !hasTitle
+        if hasTitle {
+            grownStatusLabel.frame = NSRect(x: 12, y: totalH - 24, width: width - 100, height: 16)
+        }
+        iconClose.isHidden = false
+        iconClose.frame = NSRect(x: width - 26, y: totalH - 24, width: 16, height: 16)
+        iconTrash.isHidden = false
+        iconTrash.frame = NSRect(x: width - 48, y: totalH - 24, width: 16, height: 16)
+        iconSpeaker.isHidden = false
+        iconSpeaker.frame = NSRect(x: width - 70, y: totalH - 24, width: 16, height: 16)
+    }
+
+    @objc private func grownSpeakTapped() {
+        onGrownSpeak?(grownTextView.string)
+    }
+
+    @objc private func grownTrashTapped() {
+        onGrownTrash?()
+        hideGrown()
+    }
+
+    @objc private func grownCloseTapped() {
+        onGrownClose?()
+        hideGrown()
+    }
+
     func show() {
-        panel = NSPanel(
+        // KeyablePanel: grown content hosts a scrollable text view, and
+        // borderless windows otherwise refuse the key status scrolling needs.
+        panel = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: W, height: H),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false
@@ -480,11 +690,23 @@ class FloatingIndicator: NSObject {
         panel.isReleasedWhenClosed = false
 
         let rootView = IndicatorView(frame: NSRect(x: 0, y: 0, width: W, height: H))
-        rootView.onClick = { [weak self] in self?.onClick?() }
+        rootView.onClick = { [weak self] in
+            guard let self, self.mode == .pill else { return }
+            self.onClick?()
+        }
         rootView.onRightClick = { [weak self] view, point in self?.showContextMenu(in: view, at: point) }
         rootView.wantsLayer = true
         rootView.autoresizingMask = [.width, .height]
         let root = rootView.layer!
+
+        // Grown-mode backdrop — the whole shape when content is showing.
+        grownBackdropLayer = CALayer()
+        grownBackdropLayer.backgroundColor = NSColor(r: 33, g: 30, b: 27, a: 245).cgColor
+        grownBackdropLayer.borderColor = NSColor(r: 255, g: 170, b: 60, a: 140).cgColor
+        grownBackdropLayer.borderWidth = 1
+        grownBackdropLayer.cornerRadius = 14
+        grownBackdropLayer.isHidden = true
+        root.addSublayer(grownBackdropLayer)
 
         // Everything that IS the classic pill lives in one capsule layer, so
         // the panel can grow around it without touching the dot animations.
@@ -558,6 +780,60 @@ class FloatingIndicator: NSObject {
         capsuleLayer.addSublayer(expandTitleLayer)
 
         panel.contentView = rootView
+
+        // Grown-mode content views (hidden until showGrown).
+        grownStatusLabel = NSTextField(labelWithString: "")
+        grownStatusLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        grownStatusLabel.textColor = Theme.accent
+        grownStatusLabel.lineBreakMode = .byTruncatingTail
+        grownStatusLabel.isHidden = true
+        rootView.addSubview(grownStatusLabel)
+
+        grownHintLabel = NSTextField(labelWithString: "")
+        grownHintLabel.font = .systemFont(ofSize: 10.5)
+        grownHintLabel.textColor = Theme.text2
+        grownHintLabel.lineBreakMode = .byTruncatingTail
+        grownHintLabel.isHidden = true
+        rootView.addSubview(grownHintLabel)
+
+        grownTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: grownWidth - 24, height: 24))
+        grownTextView.isEditable = false
+        grownTextView.isSelectable = true
+        grownTextView.drawsBackground = false
+        grownTextView.isRichText = false
+        grownTextView.textContainerInset = NSSize(width: 2, height: 2)
+        grownTextView.textContainer?.lineFragmentPadding = 0
+        grownTextView.textContainer?.widthTracksTextView = true
+        grownTextView.isVerticallyResizable = true
+        grownTextView.isHorizontallyResizable = false
+        grownTextView.autoresizingMask = [.width]
+        grownTextView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        grownScroll = NSScrollView()
+        grownScroll.drawsBackground = false
+        grownScroll.hasVerticalScroller = true
+        grownScroll.scrollerStyle = .overlay
+        grownScroll.documentView = grownTextView
+        grownScroll.isHidden = true
+        rootView.addSubview(grownScroll)
+
+        func makeIcon(_ symbol: String, action: Selector) -> NSButton {
+            let button = NSButton(
+                image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                    .withSymbolConfiguration(.init(pointSize: 8.5, weight: .semibold)) ?? NSImage(),
+                target: self, action: action)
+            button.isBordered = false
+            button.contentTintColor = Theme.text2
+            button.wantsLayer = true
+            button.layer?.backgroundColor = NSColor(r: 56, g: 52, b: 48).cgColor
+            button.layer?.cornerRadius = 8
+            button.isHidden = true
+            rootView.addSubview(button)
+            return button
+        }
+        iconSpeaker = makeIcon("speaker.wave.2.fill", action: #selector(grownSpeakTapped))
+        iconTrash = makeIcon("trash.fill", action: #selector(grownTrashTapped))
+        iconClose = makeIcon("xmark", action: #selector(grownCloseTapped))
+
         recenter()
         panel.orderFront(nil)
         applyState()

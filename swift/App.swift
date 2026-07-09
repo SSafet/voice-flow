@@ -71,6 +71,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Change it only through setTargetSession. Main thread only.
     var targetSessionId: String?
     var sessionSwitchHotkeyManagers: [HotkeyManager] = []
+    /// Latest push per session — the preview the picker grows into.
+    struct SessionPush {
+        let title: String
+        let text: String
+        let hint: String?
+        let isAsk: Bool
+    }
+    var sessionPushes: [String: SessionPush] = [:]
+    /// Which session's push is currently displayed (trash targets it).
+    var currentPushSessionId: String?
 
     // Agent session
     var screenCapture: ScreenCapture!
@@ -201,20 +211,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        replyBubble = ReplyBubble()
-        replyBubble.onClosed = { [weak self] in
-            // ✕ on a pending Claude question = "not answering this one".
-            guard let self, let interaction = self.pendingInteraction else { return }
-            interaction.cancelled = true
-            interaction.semaphore.signal()
-        }
-        replyBubble.onFrameChanged = { [weak self] frame in
+        replyBubble = ReplyBubble(indicator: indicator)
+        // ✕ closes and keeps: a pending ask stays pending (answer whenever,
+        // or it times out into the inbox); the session's preview survives.
+        replyBubble.onClosed = nil
+        // Trash deletes: cancels a waiting ask and clears the session's
+        // preview slot.
+        replyBubble.onTrashed = { [weak self] in
             guard let self else { return }
-            if let frame {
-                self.indicator.dock(into: frame)
-            } else {
-                self.indicator.undock()
+            if let interaction = self.pendingInteraction {
+                interaction.cancelled = true
+                interaction.semaphore.signal()
             }
+            if let id = self.currentPushSessionId {
+                self.sessionPushes.removeValue(forKey: id)
+            }
+            self.currentPushSessionId = nil
+        }
+        replyBubble.onSpeakRequested = { [weak self] text in
+            guard let self, !text.isEmpty else { return }
+            var request = self.chatPanel.currentTTSRequest()
+            request.text = text
+            _ = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
         }
 
 
@@ -368,7 +386,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             case .talk, .snapTalk:
                 self.chatPanel.addNote("Couldn't transcribe that — try again.")
                 if !self.chatPanel.isVisible {
-                    self.replyBubble.showTransient("Couldn't transcribe that — try again.", seconds: 5)
+                    self.replyBubble.showTransient("couldn't transcribe — try again", seconds: 5, isError: true)
                 }
             case .session:
                 self.chatPanel.addNote("Couldn't transcribe the session audio — keeping the screenshots on their own.")
@@ -640,7 +658,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         recorder.start()
         if !recorder.isRecording {
             recordingPurpose = .dictation
-            replyBubble.showTransient("Couldn't start the microphone — the session will capture screenshots only.", seconds: 8)
+            replyBubble.showTransient("microphone unavailable — screenshots only", seconds: 8, isError: true)
         }
 
         indicator.setSessionActive(true)
@@ -734,7 +752,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let summary else {
             chatPanel.addNote("Session ended — nothing captured.")
             if !chatPanel.isVisible {
-                replyBubble.showTransient("Session ended — nothing captured.", seconds: 5)
+                replyBubble.showTransient("session ended — nothing captured", seconds: 5)
             }
             return
         }
@@ -751,9 +769,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 text: "I recorded a Voice Flow capture (\(stats)). Fetch it with get_latest_capture, or read \(summary.transcriptPath) and the frames it lists in order.",
                 attachments: [],
                 session: target.id)
-            replyBubble.showTransient("Capture saved — \(stats). \(sessionName(for: target.id)) \(live ? "got it." : "is told on its next check-in.")", seconds: 6)
+            replyBubble.showTransient("capture saved — \(sessionName(for: target.id)) \(live ? "got it" : "is told next check-in")", seconds: 6)
         } else {
-            replyBubble.showTransient("Capture saved — \(stats). No Claude session connected — the menu bar can copy a prompt for one.", seconds: 8)
+            replyBubble.showTransient("capture saved — no session; menu bar has the prompt", seconds: 8)
         }
         if chatPanel.isVisible {
             chatPanel.addNote("Capture saved to \(summary.directory.path)")
@@ -781,7 +799,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 number: index + 1,
                 active: session.id == targetSessionId,
                 pending: inbox.pendingCount(for: session.id) > 0
-                    || pendingInteraction?.sessionId == session.id)
+                    || pendingInteraction?.sessionId == session.id
+                    || sessionPushes[session.id] != nil)
         }
         return (entries, ordered.first { $0.id == targetSessionId }?.label)
     }
@@ -795,7 +814,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         refreshSessionIndicator()
         if announce {
             let (entries, activeName) = pickerEntries()
-            indicator.showPicker(entries: entries, activeName: activeName)
+            if let id, let push = sessionPushes[id] {
+                // The session has something to show — the picker grows
+                // straight into it, picker row at the bottom.
+                currentPushSessionId = id
+                indicator.showGrown(
+                    FloatingIndicator.GrownSpec(title: push.title, text: push.text,
+                                                hint: push.hint, isAsk: push.isAsk),
+                    bottomPicker: (entries, activeName),
+                    autoHide: 5.0)
+            } else {
+                indicator.showPicker(entries: entries, activeName: activeName)
+            }
         }
     }
 
@@ -818,28 +848,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setTargetSession(ordered[index].id, announce: true)
     }
 
-    /// "Seen — I'll answer later" on an ask bubble: unblock Claude's
-    /// ask_user without an answer; a later talk reply reaches it through
-    /// the inbox. Main thread.
-    private func acknowledgePendingAsk() {
-        guard let interaction = pendingInteraction else { return }
-        interaction.acknowledged = true
-        interaction.semaphore.signal()
-        replyBubble.showTransient("Told \(sessionName(for: interaction.sessionId)) you'll answer later.", seconds: 5)
-    }
-
     /// Menu-bar route to the same prompt the post-session bubble offers —
     /// for when that bubble is long dismissed.
     private func copyLatestCapturePrompt() {
         guard let (directory, meta) = CaptureStore.latestBundle() else {
-            replyBubble.showTransient("No captures yet — record one with the session hotkey (\(UserSettings.shared.sessionHotkey.label)).", seconds: 6)
+            replyBubble.showTransient("no captures yet", seconds: 4)
             return
         }
         let prompt = CaptureSummary.claudePrompt(
             transcriptPath: directory.appendingPathComponent("transcript.md").path)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(prompt, forType: .string)
-        replyBubble.showTransient("Prompt for capture \(meta.id) copied — paste it into Claude Code.", seconds: 5)
+        replyBubble.showTransient("capture prompt copied", seconds: 4)
     }
 
     // ── Sending to the agent ────────────────────────────
@@ -866,13 +886,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             guard !interaction.resolved else {
                 inbox.add(text: text, attachments: attachments, session: interaction.sessionId)
-                replyBubble.showTransient("\(sessionName(for: interaction.sessionId)) had stopped waiting — your answer is queued for its next check-in.", seconds: 6)
+                replyBubble.showTransient("\(sessionName(for: interaction.sessionId)) had stopped waiting — answer queued", seconds: 6)
                 return
             }
             interaction.attachments.append(contentsOf: attachments)
             interaction.responseText = text
             interaction.semaphore.signal()
-            replyBubble.showTransient("Answer sent to \(sessionName(for: interaction.sessionId)).")
+            replyBubble.hide()
+            replyBubble.showTransient("answer sent to \(sessionName(for: interaction.sessionId))")
         }
     }
 
@@ -891,7 +912,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let target = mcpServer.sessions.session(targetSessionId)
             if let target, inbox.hasWaiter(for: target.id) {
                 inbox.add(text: text, attachments: attachments, session: target.id)
-                replyBubble.showTransient("Sent to \(sessionName(for: target.id)).", seconds: 5)
+                replyBubble.showTransient("sent to \(sessionName(for: target.id))", seconds: 5)
                 return
             }
             // A session parked in wait_for_message takes it even when no
@@ -899,15 +920,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // send no id, yet a live listener is unambiguous.
             if inbox.hasWaiter(for: nil) {
                 inbox.add(text: text, attachments: attachments, session: nil)
-                replyBubble.showTransient("Sent to Claude.", seconds: 5)
+                replyBubble.showTransient("sent to Claude", seconds: 5)
                 return
             }
             let prompt = Self.messagePrompt(text: text, attachments: attachments)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(prompt, forType: .string)
             chatPanel.addDictation(text: prompt, time: Self.timestamp())
-            let note = target.map { "\(sessionName(for: $0.id)) isn't listening — copied to clipboard (also in History). Paste it where you want it." }
-                ?? "No Claude session connected — copied to clipboard (also in History). Paste it where you want it."
+            let note = target.map { "\(sessionName(for: $0.id)) not listening — copied + saved in History" }
+                ?? "no session — copied + saved in History"
             replyBubble.showTransient(note, seconds: 8)
         }
     }
@@ -922,7 +943,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func copyQueuedMessages() {
         let messages = inbox.drain(session: nil)
         guard !messages.isEmpty else {
-            replyBubble.showTransient("No queued messages — everything was already delivered.")
+            replyBubble.showTransient("no queued messages")
             return
         }
         var lines = ["Voice messages I recorded for you in Voice Flow:"]
@@ -935,7 +956,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
-        replyBubble.showTransient("Copied \(messages.count) message\(messages.count == 1 ? "" : "s") — paste into any Claude session.", seconds: 5)
+        replyBubble.showTransient("copied \(messages.count) message\(messages.count == 1 ? "" : "s")", seconds: 4)
     }
 
     private func snapAndSend() {
@@ -1024,7 +1045,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard recorder.isRecording else {
             state = .idle
             recordingPurpose = .dictation
-            replyBubble.showTransient("Couldn't start the microphone — check it's connected, or restart Voice Flow.", seconds: 8)
+            replyBubble.showTransient("microphone unavailable — restart Voice Flow", seconds: 8, isError: true)
             return
         }
         vflog("talk-to-agent recording started (\(purpose))")
@@ -1052,7 +1073,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         recorder.start()
         if !recorder.isRecording {
             state = .idle
-            replyBubble.showTransient("Couldn't start the microphone — check it's connected, or restart Voice Flow.", seconds: 8)
+            replyBubble.showTransient("microphone unavailable — restart Voice Flow", seconds: 8, isError: true)
         }
     }
 
@@ -1106,9 +1127,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.recordingPurpose = .dictation
                 self.state = .idle
                 if self.recorder.lastCaptureBytes == 0 {
-                    self.replyBubble.showTransient("The microphone delivered no audio — it may have changed or be in use. Restart Voice Flow if this keeps happening.", seconds: 8)
+                    self.replyBubble.showTransient("no audio from the microphone", seconds: 8, isError: true)
                 } else if self.recorder.lastCaptureWasSilent {
-                    self.replyBubble.showTransient("Didn't catch any speech — nothing transcribed.")
+                    self.replyBubble.showTransient("didn't catch any speech")
                 }
                 if purpose == .session {
                     self.finishSession(transcript: nil)
@@ -1668,10 +1689,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mcpServer.onSessionConnected = { [weak self] session in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.setTargetSession(session.id, announce: false)
-                self.replyBubble.showTransient(self.mcpServer.sessions.count > 1
-                    ? "\(session.label) connected — your talk hotkeys now go to it (⌃⌥1–6 to switch)."
-                    : "Claude Code connected to Voice Flow.", seconds: 5)
+                self.setTargetSession(session.id, announce: true)
             }
         }
         localAPIServer.onMCP = { [weak self] body, sessionId in
@@ -1683,12 +1701,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if self.targetSessionId == closed.id {
                     self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
                     if let next = self.mcpServer.sessions.session(self.targetSessionId) {
-                        self.replyBubble.showTransient("\(closed.label) session ended — talk hotkeys now go to \(next.label).", seconds: 5)
+                        self.replyBubble.showTransient("\(closed.label) ended — now talking to \(next.label)", seconds: 5)
                         return
                     }
                 }
                 self.refreshSessionIndicator()
-                self.replyBubble.showTransient("\(closed.label) session ended.", seconds: 5)
+                self.replyBubble.showTransient("\(closed.label) ended", seconds: 5)
             }
         }
         localAPIServer.start()
@@ -1873,7 +1891,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let created = PendingInteraction(prompt: prompt, sessionId: session?.id)
             self.pendingInteraction = created
             interaction = created
-            self.presentAsk(prompt: prompt, speakAloud: speakAloud, from: self.sessionName(for: created.sessionId))
+            let asker = self.sessionName(for: created.sessionId)
+            if let sid = session?.id {
+                self.sessionPushes[sid] = SessionPush(
+                    title: "\(asker) asks", text: prompt,
+                    hint: self.askHint(), isAsk: true)
+                self.currentPushSessionId = sid
+            }
+            self.presentAsk(prompt: prompt, speakAloud: speakAloud, from: asker)
         }
         guard let interaction else {
             return .fail("Another ask_user request is already waiting for the user — wait for it to resolve.")
@@ -1885,6 +1910,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.sync {
             interaction.resolved = true
             self.pendingInteraction = nil
+            // The ask is settled either way — clear its preview slot and
+            // take it off screen.
+            if let sid = interaction.sessionId {
+                self.sessionPushes.removeValue(forKey: sid)
+            }
+            self.replyBubble.hide()
             if let text = interaction.responseText {
                 var payload: [String: Any] = ["response": text]
                 if !interaction.attachments.isEmpty {
@@ -1897,7 +1928,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } else if interaction.cancelled {
                 result = .fail("The user dismissed the prompt without answering. Don't immediately re-ask; continue as best you can or try another approach.")
             } else {
-                self.replyBubble.showTransient("\(self.sessionName(for: interaction.sessionId)) stopped waiting for an answer.", seconds: 6)
+                self.replyBubble.showTransient("\(self.sessionName(for: interaction.sessionId)) stopped waiting", seconds: 6)
                 result = .fail("The user didn't respond within \(Int(timeout))s. The prompt was removed from their screen.")
             }
         }
@@ -1913,13 +1944,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return mcpServer.sessions.count > 1 ? session.label : "Claude"
     }
 
+    func askHint() -> String {
+        let settings = UserSettings.shared
+        return "Hold \(settings.talkHotkey.label) to answer · \(settings.snapTalkHotkey.label) +screen · \(settings.sessionHotkey.label) demo"
+    }
+
     /// Main thread. Put Claude's question where the user will see it.
     private func presentAsk(prompt: String, speakAloud: Bool, from asker: String) {
-        let settings = UserSettings.shared
-        let hint = "Hold \(settings.talkHotkey.label) to answer · \(settings.snapTalkHotkey.label) +screen · \(settings.sessionHotkey.label) demo"
-        replyBubble.showAsk(prompt: "\(asker) asks: \(prompt)", hint: hint,
-                            actionTitle: "Seen — I'll answer later",
-                            action: { [weak self] in self?.acknowledgePendingAsk() })
+        let hint = askHint()
+        replyBubble.showMessage(from: "\(asker) asks", text: prompt, hint: hint, isAsk: true)
         if chatPanel.isVisible {
             chatPanel.addNote("\(asker) asks: \(prompt)")
         }
@@ -2006,13 +2039,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let speakAloud = args["speak_aloud"] as? Bool ?? false
         DispatchQueue.main.sync {
-            let settings = UserSettings.shared
             let sender = self.sessionName(for: session?.id)
-            self.replyBubble.showNote(
-                "\(sender): \(text)",
-                actionTitle: nil, action: nil
-            )
-            self.replyBubble.setStatus("Reply anytime: hold \(settings.talkHotkey.label) · \(settings.snapTalkHotkey.label) +screen")
+            if let sid = session?.id {
+                self.sessionPushes[sid] = SessionPush(title: sender, text: text, hint: nil, isAsk: false)
+                self.currentPushSessionId = sid
+            }
+            self.replyBubble.showMessage(from: sender, text: text)
             if self.chatPanel.isVisible {
                 self.chatPanel.addNote("Claude: \(text)")
             }
@@ -2268,15 +2300,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // the user taps Listen (or just reads it).
         DispatchQueue.main.sync {
             let sender = self.sessionName(for: session?.id)
-            self.replyBubble.showNote("\(sender): \(text)", actionTitle: "Listen", action: { [weak self] in
-                guard let self else { return }
-                var request = self.chatPanel.currentTTSRequest()
-                request.text = text
-                _ = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
-            })
+            if let sid = session?.id {
+                self.sessionPushes[sid] = SessionPush(title: sender, text: text, hint: nil, isAsk: false)
+                self.currentPushSessionId = sid
+            }
+            self.replyBubble.showMessage(from: sender, text: text)
             self.playSound("Glass")
         }
-        return .ok("Left as a bubble with a Listen button — the user reads or plays it when ready.")
+        return .ok("Left on screen with a speaker icon — the user reads it or taps to hear it when ready.")
     }
 
     private func mcpRecentDictations(_ args: [String: Any]) -> MCPServer.ToolResult {
