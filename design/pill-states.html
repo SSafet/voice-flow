@@ -89,6 +89,14 @@
     width: 16px; height: 16px; border-radius: 8px;
     background: #383430; color: #c9c0b2; font-size: 10px; line-height: 16px; text-align: center;
   }
+  /* Corner icon cluster: speak · remove · close — no button rows */
+  .icons { position: absolute; top: 8px; right: 10px; display: flex; gap: 6px; }
+  .icons .ic {
+    width: 16px; height: 16px; border-radius: 8px; background: #383430;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .icons .ic svg { width: 9px; height: 9px; stroke: #c9c0b2; stroke-width: 1.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .hint { font-size: 10.5px; color: var(--text2); margin-top: 6px; }
   /* Active session: the middle dot grows a touch and carries the number.
      12px in the roomy picker row; only 9px inside the collapsed pill so
      the pill still reads as the pill. */
@@ -171,7 +179,11 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
       Above: that session's latest message, so you see what you're choosing.</div>
     <div class="screen tall">
       <div class="shape grown idle" style="width: 400px;">
-        <div class="x">✕</div>
+        <div class="icons">
+          <span class="ic" title="speak it"><svg viewBox="0 0 12 12"><path d="M2 4.5v3h2l3 2.5v-8L4 4.5z" fill="#c9c0b2" stroke="none"/><path d="M9.2 4.4c.9.9.9 2.3 0 3.2"/></svg></span>
+          <span class="ic" title="remove"><svg viewBox="0 0 12 12"><path d="M2.5 3.5h7M5 3.3v-1h2v1M3.5 3.5l.5 6h4l.5-6"/></svg></span>
+          <span class="ic" title="close"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></span>
+        </div>
         <div class="content">
           <div class="status">voice-flow — session routing</div>
           <div class="msg">All done — everything is committed, pushed, and the app is running the latest build.</div>
@@ -184,15 +196,22 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
       </div>
     </div>
   </div>
-  <div class="stage wide"><div class="label"><b>Pending marks</b> — amber hollow dots have something waiting; hop onto one
-      and its message shows above. Here #3 asked a question while you were on #2.</div>
+  <div class="stage wide"><div class="label"><b>Pending marks + the session's screen</b> — amber hollow dots have something
+      waiting. Selecting a session brings back ALL its elements: message, annotations, guides (the red drawing is #3's).
+      No "answer later" button — not answering IS deferring.</div>
     <div class="screen tall">
+      <div style="position:absolute; top:14px; left:22px; width:74px; height:40px; border:2px solid rgba(255,96,96,.7); border-radius:10px;"></div>
+      <span style="position:absolute; top:10px; left:106px; font-size:11px; color:#ff8a8a; font-weight:600;">check this field</span>
       <div class="shape grown idle" style="width: 400px;">
-        <div class="x">✕</div>
+        <div class="icons">
+          <span class="ic" title="speak it"><svg viewBox="0 0 12 12"><path d="M2 4.5v3h2l3 2.5v-8L4 4.5z" fill="#c9c0b2" stroke="none"/><path d="M9.2 4.4c.9.9.9 2.3 0 3.2"/></svg></span>
+          <span class="ic" title="remove"><svg viewBox="0 0 12 12"><path d="M2.5 3.5h7M5 3.3v-1h2v1M3.5 3.5l.5 6h4l.5-6"/></svg></span>
+          <span class="ic" title="close"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></span>
+        </div>
         <div class="content">
           <div class="status">atika — onboarding asks</div>
           <div class="msg bright">Should I keep the waitlist gate on for new signups?</div>
-          <div class="actions"><button class="btn">Seen — I'll answer later</button></div>
+          <div class="hint">hold Fn1 to answer · Fn2 +screen</div>
         </div>
         <div class="picker" style="height: 28px;">
           <span class="lbl">sessions</span>
@@ -207,6 +226,11 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
       ⌃⌥3 hops the dot, the message crossfades to #3's → collapses to the active-session pill.</div>
     <div class="screen tall">
       <div id="pickdemo" class="shape pill idle morph">
+        <div id="pickIcons" style="display:none;"><div class="icons">
+          <span class="ic" title="speak it"><svg viewBox="0 0 12 12"><path d="M2 4.5v3h2l3 2.5v-8L4 4.5z" fill="#c9c0b2" stroke="none"/><path d="M9.2 4.4c.9.9.9 2.3 0 3.2"/></svg></span>
+          <span class="ic" title="remove"><svg viewBox="0 0 12 12"><path d="M2.5 3.5h7M5 3.3v-1h2v1M3.5 3.5l.5 6h4l.5-6"/></svg></span>
+          <span class="ic" title="close"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></span>
+        </div></div>
         <div class="content" id="pickContent" style="display:none;">
           <div class="status" id="pickStatus">voice-flow — session routing</div>
           <div class="msg" id="pickMsg">All done — everything is committed, pushed, and the app is running the latest build.</div>
@@ -229,11 +253,14 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
   <div class="stage wide"><div class="label"><b>Claude message</b> (notify / deferred speak)</div>
     <div class="screen tall">
       <div class="shape grown idle" style="width: 380px;">
-        <div class="x">✕</div>
+        <div class="icons">
+          <span class="ic" title="speak it"><svg viewBox="0 0 12 12"><path d="M2 4.5v3h2l3 2.5v-8L4 4.5z" fill="#c9c0b2" stroke="none"/><path d="M9.2 4.4c.9.9.9 2.3 0 3.2"/></svg></span>
+          <span class="ic" title="remove"><svg viewBox="0 0 12 12"><path d="M2.5 3.5h7M5 3.3v-1h2v1M3.5 3.5l.5 6h4l.5-6"/></svg></span>
+          <span class="ic" title="close"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></span>
+        </div>
         <div class="content">
           <div class="status">voice-flow — session routing</div>
           <div class="msg">All done — everything is committed, pushed, and the app is running the latest build.</div>
-          <div class="actions"><button class="btn">Listen</button></div>
         </div>
         <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
       </div>
@@ -242,12 +269,15 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
   <div class="stage wide"><div class="label"><b>Ask</b> — waiting for your voice; dots pulse red while you answer</div>
     <div class="screen tall">
       <div class="shape grown rec" style="width: 380px;">
-        <div class="x">✕</div>
+        <div class="icons">
+          <span class="ic" title="speak it"><svg viewBox="0 0 12 12"><path d="M2 4.5v3h2l3 2.5v-8L4 4.5z" fill="#c9c0b2" stroke="none"/><path d="M9.2 4.4c.9.9.9 2.3 0 3.2"/></svg></span>
+          <span class="ic" title="remove"><svg viewBox="0 0 12 12"><path d="M2.5 3.5h7M5 3.3v-1h2v1M3.5 3.5l.5 6h4l.5-6"/></svg></span>
+          <span class="ic" title="close"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></span>
+        </div>
         <div class="content">
           <div class="status">voice-flow asks</div>
           <div class="msg bright">Should I restart the staging deploy, or wait for the migration to finish?</div>
-          <div class="actions"><button class="btn">Seen — I'll answer later</button>
-            <span style="font-size:10.5px;color:var(--text2);align-self:center">hold Fn1 to answer · Fn2 +screen</span></div>
+          <div class="hint">hold Fn1 to answer · Fn2 +screen</div>
         </div>
         <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
       </div>
@@ -256,7 +286,11 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
   <div class="stage wide"><div class="label"><b>Streaming reply</b> — grows as text arrives</div>
     <div class="screen tall">
       <div class="shape grown proc" style="width: 380px;">
-        <div class="x">✕</div>
+        <div class="icons">
+          <span class="ic" title="speak it"><svg viewBox="0 0 12 12"><path d="M2 4.5v3h2l3 2.5v-8L4 4.5z" fill="#c9c0b2" stroke="none"/><path d="M9.2 4.4c.9.9.9 2.3 0 3.2"/></svg></span>
+          <span class="ic" title="remove"><svg viewBox="0 0 12 12"><path d="M2.5 3.5h7M5 3.3v-1h2v1M3.5 3.5l.5 6h4l.5-6"/></svg></span>
+          <span class="ic" title="close"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></span>
+        </div>
         <div class="content">
           <div class="status">Replying…</div>
           <div class="msg">The capture bundle has 14 frames. The first three show the login flow, and the timeout you hit appears in frame 9 where—</div>
@@ -268,7 +302,11 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
   <div class="stage wide"><div class="label"><b>Capture saved</b> — with action</div>
     <div class="screen tall">
       <div class="shape grown done" style="width: 380px;">
-        <div class="x">✕</div>
+        <div class="icons">
+          <span class="ic" title="speak it"><svg viewBox="0 0 12 12"><path d="M2 4.5v3h2l3 2.5v-8L4 4.5z" fill="#c9c0b2" stroke="none"/><path d="M9.2 4.4c.9.9.9 2.3 0 3.2"/></svg></span>
+          <span class="ic" title="remove"><svg viewBox="0 0 12 12"><path d="M2.5 3.5h7M5 3.3v-1h2v1M3.5 3.5l.5 6h4l.5-6"/></svg></span>
+          <span class="ic" title="close"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></span>
+        </div>
         <div class="content">
           <div class="status">Capture saved — 14 frames · 96s</div>
           <div class="msg">Tell Claude Code to get your latest capture, or copy a ready-made prompt.</div>
@@ -330,6 +368,7 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
 
   function pillState(active, label) {
     pd.content.style.display = 'none';
+    document.getElementById('pickIcons').style.display = 'none';
     pd.shape.className = 'shape pill idle morph';
     pd.shape.style.width = '52px'; pd.shape.style.height = '18px'; pd.shape.style.borderRadius = '9px'; pd.shape.style.padding = '0';
     pd.row.style.height = '18px';
@@ -343,6 +382,7 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
 
   function pickerState(active, name, header, message, pendingIdx, label) {
     pd.shape.className = 'shape grown idle morph';
+    document.getElementById('pickIcons').style.display = '';
     pd.shape.style.width = '400px'; pd.shape.style.height = '128px'; pd.shape.style.borderRadius = '14px'; pd.shape.style.padding = '10px 14px 0';
     pd.row.style.height = '28px';
     pd.lbl.style.display = '';
