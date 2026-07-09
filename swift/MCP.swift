@@ -173,7 +173,7 @@ final class MCPServer {
         Showing the user:
         - Elements you place are scoped to YOUR session: if the user is currently working \
         with another Claude session, yours are NOT drawn over it — the user gets a small \
-        notification and sees your elements when they switch to you (session strip or ⌃⌥1-6). \
+        notification and sees your elements when they switch to you (⌃⌥1–6). \
         Your tool results tell you which happened.
         - Every on-screen element you place is a LIVE JSON FILE in \
         ~/.config/voice-flow/overlays/ — the screen re-renders within ~0.5s of any file change. \

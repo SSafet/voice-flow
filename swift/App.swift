@@ -66,10 +66,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Set while an MCP ask_user call is waiting for the human. Main thread only.
     var pendingInteraction: PendingInteraction?
     /// Which Claude Code session the talk hotkeys feed (newest connection
-    /// by default; switchable via strip chips, ⌃⌥1–6, or the menu bar).
+    /// by default; switchable via ⌃⌥1–6 or the menu bar — the pill flashes
+    /// the session title and carries the active number as a badge).
     /// Change it only through setTargetSession. Main thread only.
     var targetSessionId: String?
-    var sessionStrip: SessionStrip!
     var sessionSwitchHotkeyManagers: [HotkeyManager] = []
 
     // Agent session
@@ -217,10 +217,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        sessionStrip = SessionStrip()
-        sessionStrip.onSelect = { [weak self] id in
-            self?.setTargetSession(id, announce: true)
-        }
 
         overlayManager = OverlayManager()
         overlayManager.start()
@@ -762,18 +758,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Single entry for changing which Claude session owns the user's
     /// voice + screen: routes hotkeys, swaps that session's overlays in,
-    /// and refreshes the strip. Main thread.
+    /// and updates the pill (badge + expanded title flash). Main thread.
     func setTargetSession(_ id: String?, announce: Bool) {
         targetSessionId = id
         overlayManager.setActiveSession(id)
-        refreshSessionStrip()
+        refreshSessionIndicator()
         if announce, let session = mcpServer.sessions.session(id) {
-            replyBubble.showTransient("Talking to \(session.label).")
+            let ordered = mcpServer.sessions.ordered()
+            indicator.flashSession(title: session.label,
+                                   index: ordered.firstIndex { $0.id == session.id },
+                                   count: ordered.count)
         }
     }
 
-    func refreshSessionStrip() {
-        sessionStrip.update(sessions: mcpServer.sessions.ordered(), activeId: targetSessionId)
+    /// Keep the pill's tiny active-session number current.
+    func refreshSessionIndicator() {
+        let ordered = mcpServer.sessions.ordered()
+        indicator.setSessionBadge(index: ordered.firstIndex { $0.id == targetSessionId },
+                                  count: ordered.count)
     }
 
     /// ⌃⌥1–6 or a strip chip. Main thread.
@@ -1636,7 +1638,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.setTargetSession(session.id, announce: false)
                 self.replyBubble.showTransient(self.mcpServer.sessions.count > 1
-                    ? "\(session.label) connected — your talk hotkeys now go to it (⌃⌥number or the strip to switch)."
+                    ? "\(session.label) connected — your talk hotkeys now go to it (⌃⌥1–6 to switch)."
                     : "Claude Code connected to Voice Flow.", seconds: 5)
             }
         }
@@ -1653,7 +1655,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         return
                     }
                 }
-                self.refreshSessionStrip()
+                self.refreshSessionIndicator()
                 self.replyBubble.showTransient("\(closed.label) session ended.", seconds: 5)
             }
         }
@@ -1813,7 +1815,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let renamed = mcpServer.sessions.rename(session.id, to: name) else {
             return .fail("This session is no longer registered.")
         }
-        DispatchQueue.main.async { self.refreshSessionStrip() }
+        DispatchQueue.main.async {
+            self.refreshSessionIndicator()
+            // Renaming the active session? Show the user its new name.
+            if renamed.id == self.targetSessionId {
+                let ordered = self.mcpServer.sessions.ordered()
+                self.indicator.flashSession(title: renamed.label,
+                                            index: ordered.firstIndex { $0.id == renamed.id },
+                                            count: ordered.count)
+            }
+        }
         return .ok("This session now appears to the user as \"\(renamed.label)\".")
     }
 
@@ -2055,7 +2066,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             hidden = session.id != self.targetSessionId
             if hidden {
                 let index = self.mcpServer.sessions.ordered().firstIndex { $0.id == session.id }
-                let hint = index.map { " (⌃⌥\($0 + 1) or the strip)" } ?? ""
+                let hint = index.map { " (⌃⌥\($0 + 1))" } ?? ""
                 self.replyBubble.showTransient(
                     "\(self.sessionName(for: session.id)) placed a \(kind) — switch to it\(hint) to view.",
                     seconds: 8)

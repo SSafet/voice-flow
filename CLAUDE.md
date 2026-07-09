@@ -81,12 +81,19 @@ initialize (`MCPSessionRegistry` in `MCP.swift`); sessions name themselves
 via the `set_session_name` tool (server instructions + a one-time nudge in
 the first tool result push Claude to call it; unnamed sessions show as
 "Claude #N"). `DELETE /mcp` closes one. Talk hotkeys feed the **target
-session** (`AppDelegate.targetSessionId` — newest connection by default,
-switchable via the menu bar's "Voice Goes To" submenu). The inbox is
-per-session (`InboxMessage.session`; nil = any session may drain it), and
-`ask_user` / `notify_user` bubbles are labeled with the asking session when
-several are connected. 17 tools in three groups (plus `set_session_name`
-above):
+session** (`AppDelegate.targetSessionId`, changed only via
+`setTargetSession` — newest connection by default, switchable with
+**⌃⌥1–6** or the menu bar's "Voice Goes To" submenu). Switching flashes
+the pill: it expands into a shell with the session title above the dots
+(`FloatingIndicator.flashSession`, 5 s), and a tiny number badge on the
+pill marks the active session when several are connected; re-selecting the
+current session re-flashes the title. **Overlays are session-scoped**
+(`"session"` field, stamped by the tools): only the active session's
+elements render; a background session's push triggers a transient note
+instead of drawing over the user. The inbox is per-session
+(`InboxMessage.session`; nil = any session may drain it), and `ask_user` /
+`notify_user` bubbles are labeled with the asking session when several are
+connected. 17 tools in three groups (plus `set_session_name` above):
 
 **Hearing from the user**
 - `ask_user` — **blocks** until the human answers (`PendingInteraction`
@@ -163,8 +170,7 @@ on-demand analyze/optimize/status version.
 | `Core.swift` | `UserSettings`, `KeychainStore`, `HotkeyManager`, `AudioRecorder`, `BackendBridge`, `Paster`, `HotkeySpec` | Audio capture, Python STT bridge (subprocess), paste/stream into the frontmost app, settings, global hotkeys. |
 | `UI.swift` | `Theme`, `MenuBarManager`, `FloatingIndicator`, `FloatingTranscriptPanel`, `DictationsView`, `TTSView`, `HoverCardView`, `KeyRecorderButton` | Menu bar, pill, live transcript overlay, and the Dictations/Speech tab surfaces. |
 | `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel and its tabs. |
-| `ReplyBubble.swift` | `ReplyBubble` | Floating streamed-reply bubble (also shows Claude's `ask_user` prompts + capture-saved notes with an action button; carries a mini state dot while the pill is hidden). |
-| `SessionStrip.swift` | `SessionStrip` | Persistent bottom-right chip row of connected Claude sessions; click a chip (or ⌃⌥1–6) to switch the target session. |
+| `ReplyBubble.swift` | `ReplyBubble` | Floating streamed-reply bubble (also shows Claude's `ask_user` prompts + capture-saved notes with an action button; the real pill docks right above it while visible). |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
 | `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of talk-hotkey messages for Claude (check/wait semantics). |
 | `Watcher.swift` | `WorkflowWatcher` | Ambient 5 s screen/app log feeding the nightly workflow review. |
