@@ -196,6 +196,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.onToggleSession = { [weak self] in self?.toggleSession() }
         indicator.onToggleWatcher = { [weak self] in self?.toggleWorkflowWatcher() }
         indicator.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
+        indicator.onSessionRemovals = { [weak self] in
+            self?.mcpServer.sessions.ordered().map { ($0.id, $0.label) } ?? []
+        }
+        indicator.onRemoveSession = { [weak self] id in
+            guard let self, let closed = self.mcpServer.sessions.close(id) else { return }
+            self.sessionPushes.removeValue(forKey: id)
+            if self.targetSessionId == id {
+                self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
+            }
+            self.refreshSessionIndicator()
+            self.refreshUnreadIndicator()
+            self.replyBubble.showTransient("\(closed.label) removed", seconds: 4)
+        }
         indicator.onQuit = { NSApp.terminate(nil) }
         indicator.show()
 
@@ -226,9 +239,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // are otherwise their only trace.
         replyBubble.onClosed = { [weak self] in
             guard let self else { return }
-            let waiting = self.sessionPushes.filter {
-                $0.key != self.currentPushSessionId && !$0.value.isEmpty
-            }.count
+            let waiting = self.unseenSessions(excluding: self.currentPushSessionId)
             guard waiting > 0 else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                 guard !self.indicator.isGrownVisible else { return }
@@ -912,13 +923,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         refreshUnreadIndicator()
     }
 
+    /// Sessions other than `excluded` (and than the target's own) holding
+    /// pushes the user hasn't seen. Drops orphan queues of dead sessions
+    /// on the way — a queue nobody can switch to must never count as
+    /// "waiting" (its history lives on in the Messages tab). Main thread.
+    private func unseenSessions(excluding excluded: String? = nil) -> Int {
+        sessionPushes = sessionPushes.filter { sid, queue in
+            !queue.isEmpty && (sid.isEmpty || mcpServer.sessions.session(sid) != nil)
+        }
+        return sessionPushes.filter { sid, queue in
+            !sid.isEmpty && sid != targetSessionId && sid != excluded
+                && queue.contains { !$0.seen }
+        }.count
+    }
+
     /// The pill's small pulsing ring around the number dot: on while any
     /// session the user is NOT on holds pushes they haven't seen. Main thread.
     func refreshUnreadIndicator() {
-        let unread = sessionPushes.contains { sid, queue in
-            !sid.isEmpty && sid != targetSessionId && queue.contains { !$0.seen }
-        }
-        indicator.setUnreadIndicator(unread)
+        indicator.setUnreadIndicator(unseenSessions() > 0)
     }
 
     /// ⌃⌥1–6. Any select attempt — valid or aimed at a missing number —
@@ -1783,6 +1805,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         localAPIServer.onMCPSessionEnd = { [weak self] sessionId in
             guard let self, let closed = self.mcpServer.sessions.close(sessionId) else { return }
             DispatchQueue.main.async {
+                // Its stack has no picker dot to live behind anymore — drop
+                // it (the Messages tab keeps the history).
+                self.sessionPushes.removeValue(forKey: closed.id)
+                self.refreshUnreadIndicator()
                 if self.targetSessionId == closed.id {
                     self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
                     if let next = self.mcpServer.sessions.session(self.targetSessionId) {

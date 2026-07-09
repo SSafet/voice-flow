@@ -220,6 +220,9 @@ class FloatingIndicator: NSObject {
     var onToggleSession: (() -> Void)?
     var onToggleAnnotate: (() -> Void)?
     var onToggleWatcher: (() -> Void)?
+    /// Context-menu session removal: the list to offer, and the action.
+    var onSessionRemovals: (() -> [(id: String, label: String)])?
+    var onRemoveSession: ((String) -> Void)?
 
     private let W: CGFloat = 52, H: CGFloat = 18
     private let DOT_R: CGFloat = 3, DOT_SP: CGFloat = 11
@@ -829,7 +832,11 @@ class FloatingIndicator: NSObject {
 
         let rootView = IndicatorView(frame: NSRect(x: 0, y: 0, width: W, height: H))
         rootView.onClick = { [weak self] in
-            guard let self, self.mode == .pill else { return }
+            guard let self else { return }
+            // A click means "open the app" in every mode: receipts and the
+            // picker collapse first; grown padding opens too (the icon
+            // cluster and the selectable text keep their own behavior).
+            self.collapseNow()
             self.onClick?()
         }
         rootView.onRightClick = { [weak self] view, point in self?.showContextMenu(in: view, at: point) }
@@ -1380,6 +1387,20 @@ class FloatingIndicator: NSObject {
         menu.addItem(withTitle: "Annotate Screen", action: #selector(ctxAnnotate), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Dictation History", action: #selector(ctxHistory), keyEquivalent: "").target = self
+        // Kick a Claude session out of the picker by hand (it comes back
+        // by itself if it's actually still alive and calls again).
+        let removals = onSessionRemovals?() ?? []
+        if !removals.isEmpty {
+            let removeMenu = NSMenu(title: "Remove Session")
+            for (id, label) in removals {
+                let item = NSMenuItem(title: label, action: #selector(ctxRemoveSession(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = id
+                removeMenu.addItem(item)
+            }
+            let removeItem = menu.addItem(withTitle: "Remove Session", action: nil, keyEquivalent: "")
+            menu.setSubmenu(removeMenu, for: removeItem)
+        }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Voice Flow", action: #selector(ctxQuit), keyEquivalent: "").target = self
         menu.popUp(positioning: nil, at: point, in: view)
@@ -1388,6 +1409,9 @@ class FloatingIndicator: NSObject {
     @objc private func ctxToggleWatcher() { onToggleWatcher?() }
     @objc private func ctxAnnotate() { onToggleAnnotate?() }
     @objc private func ctxHistory() { onShowHistory?() }
+    @objc private func ctxRemoveSession(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? String { onRemoveSession?(id) }
+    }
     @objc private func ctxQuit() { onQuit?() }
 }
 
