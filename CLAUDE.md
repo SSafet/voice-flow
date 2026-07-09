@@ -65,10 +65,18 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   collapses after ~4s, on any other hotkey, or click-anywhere), and `grown`
   (`showGrown`: amber title, selectable text, ask hint line, speaker/trash/✕
   icon cluster, live dots in the bottom band; streamed replies grow it live).
-  Switching onto a session with a waiting push grows into it with the picker
-  row as the bottom band. `ReplyBubble` is now only a facade forwarding to
-  the pill: ✕ closes-and-keeps (asks stay pending, `sessionPushes` preview
-  slots survive), trash deletes (cancels a waiting ask), speaker reads aloud.
+  Pushes queue **per session** (`sessionPushes`, a stack capped at 8): a
+  second push appends below the first — older ones dim, newest bright —
+  instead of replacing it (`deliverPush`/`showPushStack` in `App.swift`). A
+  push that actually displays retargets voice to its session (the number dot
+  follows what's on screen); pushes arriving mid-recording or while ANOTHER
+  session's content is up don't take the screen — they stay amber-pending in
+  the picker and the pushing tool is told "queued". Switching onto a session
+  with waiting pushes grows into its whole stack with the picker row as the
+  bottom band. `ReplyBubble` is now only a facade forwarding to the pill: ✕
+  closes-and-keeps (asks stay pending, stacks survive; a "N sessions
+  waiting" receipt flashes if others queued meanwhile), trash deletes
+  (cancels a waiting ask, clears the stack), speaker reads aloud.
 - With voice replies on (speaker toggle), `AgentReplySpeaker` (`swift/TTS.swift`)
   cuts the streaming reply at sentence boundaries into
   `TTSController.beginLiveSpeech/feedLiveSpeech/endLiveSpeech`, so speech starts
@@ -91,7 +99,9 @@ background HTTP threads and hop to main for UI.
 initialize (`MCPSessionRegistry` in `MCP.swift`); sessions name themselves
 via the `set_session_name` tool (server instructions + a one-time nudge in
 the first tool result push Claude to call it; unnamed sessions show as
-"Claude #N"). `DELETE /mcp` closes one. Talk hotkeys feed the **target
+"Claude #N"). `DELETE /mcp` closes one; sessions silent for 2 h are pruned
+as ghosts (a live one self-heals — its next request is re-adopted by
+`touch()`). Talk hotkeys feed the **target
 session** (`AppDelegate.targetSessionId`, changed only via
 `setTargetSession` — newest connection by default, switchable with
 **⌃⌥1–6** or the menu bar's "Voice Goes To" submenu). Switching flashes

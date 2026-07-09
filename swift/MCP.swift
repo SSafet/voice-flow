@@ -27,6 +27,21 @@ final class MCPSessionRegistry {
     private var counter = 0
     private let lock = DispatchQueue(label: "voiceflow.mcp-sessions")
 
+    /// Sessions silent this long are treated as gone. Claude Code DELETEs
+    /// on a clean exit, but a killed/crashed session never does — without
+    /// pruning, a ghost holds a picker slot (and the pill's number dot)
+    /// indefinitely. A live-but-idle session that gets pruned self-heals:
+    /// its next request is silently re-adopted by touch().
+    private let staleAfter: TimeInterval = 2 * 3600
+
+    /// Callers must hold `lock`.
+    private func pruneStale() {
+        let cutoff = Date().addingTimeInterval(-staleAfter)
+        for (id, session) in sessions where session.lastSeen < cutoff {
+            sessions.removeValue(forKey: id)
+        }
+    }
+
     /// New session for an initialize request.
     func begin() -> MCPSession {
         lock.sync {
@@ -87,22 +102,26 @@ final class MCPSessionRegistry {
         return lock.sync { sessions[id] }
     }
 
-    var count: Int { lock.sync { sessions.count } }
+    var count: Int {
+        lock.sync {
+            pruneStale()
+            return sessions.count
+        }
+    }
 
     /// Connection order — stable numbering for the session strip and the
     /// ⌃⌥1–6 switch hotkeys.
     func ordered() -> [MCPSession] {
-        lock.sync { sessions.values.sorted { $0.number < $1.number } }
+        lock.sync {
+            pruneStale()
+            return sessions.values.sorted { $0.number < $1.number }
+        }
     }
 
-    /// Most recently active first; sessions silent for a day are dropped
-    /// (Claude Code usually DELETEs on exit, but not always).
+    /// Most recently active first.
     func list() -> [MCPSession] {
         lock.sync {
-            let cutoff = Date().addingTimeInterval(-24 * 3600)
-            for (id, session) in sessions where session.lastSeen < cutoff {
-                sessions.removeValue(forKey: id)
-            }
+            pruneStale()
             return sessions.values.sorted { $0.lastSeen > $1.lastSeen }
         }
     }

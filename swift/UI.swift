@@ -265,6 +265,10 @@ class FloatingIndicator: NSObject {
     struct GrownSpec {
         var title: String?
         var text: String
+        /// Older queued pushes from the same session, oldest first —
+        /// rendered dim above the newest message so a second push stacks
+        /// instead of replacing what the user hasn't read yet.
+        var earlier: [String] = []
         var hint: String?
         var isAsk = false
     }
@@ -619,9 +623,16 @@ class FloatingIndicator: NSObject {
 
         grownStatusLabel.stringValue = spec.title ?? ""
         grownHintLabel.stringValue = spec.hint ?? ""
-        grownTextView.textStorage?.setAttributedString(NSAttributedString(
+        let body = NSMutableAttributedString()
+        for older in spec.earlier {
+            body.append(NSAttributedString(
+                string: older + "\n\n",
+                attributes: [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: Theme.text2]))
+        }
+        body.append(NSAttributedString(
             string: spec.text,
             attributes: [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: Theme.text]))
+        grownTextView.textStorage?.setAttributedString(body)
         withoutAnimation {
             grownBackdropLayer.borderColor = spec.isAsk
                 ? NSColor(r: 255, g: 194, b: 75, a: 217).cgColor
@@ -629,6 +640,10 @@ class FloatingIndicator: NSObject {
         }
         relayoutGrown(bottomPicker: bottomPicker,
                       enteringFrom: entering ? (previousWindowW, previousCapsule) : nil)
+        // A stack taller than the window should open at its newest entry.
+        if !spec.earlier.isEmpty {
+            grownTextView.scrollToEndOfDocument(nil)
+        }
 
         if let autoHide {
             expandTimer = Timer.scheduledTimer(withTimeInterval: autoHide, repeats: false) { [weak self] _ in

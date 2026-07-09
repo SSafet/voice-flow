@@ -71,14 +71,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Change it only through setTargetSession. Main thread only.
     var targetSessionId: String?
     var sessionSwitchHotkeyManagers: [HotkeyManager] = []
-    /// Latest push per session — the preview the picker grows into.
+    /// Pushes waiting per session, oldest first — the stack the grown
+    /// surface renders and the picker previews. A new push APPENDS; it
+    /// never replaces what the user hasn't seen yet.
     struct SessionPush {
+        let id = UUID()
         let title: String
         let text: String
         let hint: String?
         let isAsk: Bool
     }
-    var sessionPushes: [String: SessionPush] = [:]
+    var sessionPushes: [String: [SessionPush]] = [:]
+    private let maxQueuedPushes = 8
     /// Which session's push is currently displayed (trash targets it).
     var currentPushSessionId: String?
 
@@ -213,10 +217,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         replyBubble = ReplyBubble(indicator: indicator)
         // ✕ closes and keeps: a pending ask stays pending (answer whenever,
-        // or it times out into the inbox); the session's preview survives.
-        replyBubble.onClosed = nil
+        // or it times out into the inbox); the session's stack survives.
+        // If OTHER sessions queued pushes while this one held the screen,
+        // flash a receipt once the collapse lands — the amber picker dots
+        // are otherwise their only trace.
+        replyBubble.onClosed = { [weak self] in
+            guard let self else { return }
+            let waiting = self.sessionPushes.filter {
+                $0.key != self.currentPushSessionId && !$0.value.isEmpty
+            }.count
+            guard waiting > 0 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                guard !self.indicator.isGrownVisible else { return }
+                self.indicator.flashMessage(
+                    "\(waiting) session\(waiting == 1 ? "" : "s") waiting — ⌃⌥1–6", seconds: 4)
+            }
+        }
         // Trash deletes: cancels a waiting ask and clears the session's
-        // preview slot.
+        // whole push stack.
         replyBubble.onTrashed = { [weak self] in
             guard let self else { return }
             if let interaction = self.pendingInteraction {
@@ -800,7 +818,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 active: session.id == targetSessionId,
                 pending: inbox.pendingCount(for: session.id) > 0
                     || pendingInteraction?.sessionId == session.id
-                    || sessionPushes[session.id] != nil)
+                    || !(sessionPushes[session.id]?.isEmpty ?? true))
         }
         return (entries, ordered.first { $0.id == targetSessionId }?.label)
     }
@@ -814,15 +832,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         refreshSessionIndicator()
         if announce {
             let (entries, activeName) = pickerEntries()
-            if let id, let push = sessionPushes[id] {
+            if let id, sessionPushes[id]?.isEmpty == false {
                 // The session has something to show — the picker grows
-                // straight into it, picker row at the bottom.
+                // straight into its whole stack, picker row at the bottom.
                 currentPushSessionId = id
-                indicator.showGrown(
-                    FloatingIndicator.GrownSpec(title: push.title, text: push.text,
-                                                hint: push.hint, isAsk: push.isAsk),
-                    bottomPicker: (entries, activeName),
-                    autoHide: 5.0)
+                showPushStack(for: id, bottomPicker: (entries, activeName), autoHide: 5.0)
             } else {
                 indicator.showPicker(entries: entries, activeName: activeName)
             }
@@ -834,6 +848,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let ordered = mcpServer.sessions.ordered()
         indicator.setActiveSessionNumber(
             ordered.firstIndex { $0.id == targetSessionId }.map { $0 + 1 })
+    }
+
+    /// Queue a push from a session and put its whole stack on screen.
+    /// The screen is NOT taken when that would misroute or bury something:
+    /// while the user records / a transcription is in flight (their words
+    /// must land where they aimed them), or while ANOTHER session's content
+    /// is up. Queued pushes stay amber in the picker until the user
+    /// switches. Returns true when the push is actually showing. Main thread.
+    @discardableResult
+    func deliverPush(_ push: SessionPush, from sessionId: String?) -> Bool {
+        guard let sid = sessionId else {
+            // Sessionless client — nothing to queue against; just show it.
+            replyBubble.showMessage(from: push.title, text: push.text,
+                                    hint: push.hint, isAsk: push.isAsk)
+            return true
+        }
+        var queue = sessionPushes[sid] ?? []
+        queue.append(push)
+        if queue.count > maxQueuedPushes { queue.removeFirst(queue.count - maxQueuedPushes) }
+        sessionPushes[sid] = queue
+
+        let voiceBusy = state == .recording || state == .processing || state == .handsFree
+        let showingAnotherSession = indicator.isGrownVisible && currentPushSessionId != sid
+        let needsRetarget = targetSessionId != sid
+        if showingAnotherSession || (voiceBusy && needsRetarget) { return false }
+
+        // What's on screen is who the voice goes to — the number dot (and
+        // the session's overlays) follow the push.
+        if needsRetarget, mcpServer.sessions.session(sid) != nil {
+            setTargetSession(sid, announce: false)
+        }
+        currentPushSessionId = sid
+        showPushStack(for: sid)
+        return true
+    }
+
+    /// Render a session's queued pushes as one grown surface: older ones
+    /// dim above, the newest bright; the hint line (and brighter border)
+    /// appear when an ask is anywhere in the stack. Main thread.
+    private func showPushStack(for sessionId: String,
+                               bottomPicker: (entries: [FloatingIndicator.PickerEntry], activeName: String?)? = nil,
+                               autoHide: TimeInterval? = nil) {
+        guard let queue = sessionPushes[sessionId], let newest = queue.last else { return }
+        let ask = queue.last { $0.isAsk }
+        indicator.showGrown(
+            FloatingIndicator.GrownSpec(
+                title: (ask ?? newest).title,
+                text: newest.text,
+                earlier: queue.dropLast().map { $0.text },
+                hint: ask?.hint,
+                isAsk: ask != nil),
+            bottomPicker: bottomPicker,
+            autoHide: autoHide)
     }
 
     /// ⌃⌥1–6. Any select attempt — valid or aimed at a missing number —
@@ -1892,13 +1959,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.pendingInteraction = created
             interaction = created
             let asker = self.sessionName(for: created.sessionId)
-            if let sid = session?.id {
-                self.sessionPushes[sid] = SessionPush(
-                    title: "\(asker) asks", text: prompt,
-                    hint: self.askHint(), isAsk: true)
-                self.currentPushSessionId = sid
+            let shown = self.deliverPush(
+                SessionPush(title: "\(asker) asks", text: prompt,
+                            hint: self.askHint(), isAsk: true),
+                from: session?.id)
+            if self.chatPanel.isVisible {
+                self.chatPanel.addNote("\(asker) asks: \(prompt)")
             }
-            self.presentAsk(prompt: prompt, speakAloud: speakAloud, from: asker)
+            self.playSound("Glass")
+            // Never speak over the user's own recording — a queued ask
+            // stays silent until they switch to it.
+            if speakAloud, shown {
+                var request = self.chatPanel.currentTTSRequest()
+                request.text = prompt
+                _ = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
+            }
         }
         guard let interaction else {
             return .fail("Another ask_user request is already waiting for the user — wait for it to resolve.")
@@ -1910,12 +1985,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.sync {
             interaction.resolved = true
             self.pendingInteraction = nil
-            // The ask is settled either way — clear its preview slot and
-            // take it off screen.
+            // The ask is settled either way — drop IT from the stack (any
+            // queued notifies survive as pending) and give the screen back,
+            // unless another session's content took it in the meantime.
             if let sid = interaction.sessionId {
-                self.sessionPushes.removeValue(forKey: sid)
+                self.sessionPushes[sid]?.removeAll { $0.isAsk }
+                if self.sessionPushes[sid]?.isEmpty == true {
+                    self.sessionPushes.removeValue(forKey: sid)
+                }
             }
-            self.replyBubble.hide()
+            if interaction.sessionId == nil || self.currentPushSessionId == interaction.sessionId {
+                self.replyBubble.hide()
+            }
             if let text = interaction.responseText {
                 var payload: [String: Any] = ["response": text]
                 if !interaction.attachments.isEmpty {
@@ -1950,20 +2031,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Main thread. Put Claude's question where the user will see it.
-    private func presentAsk(prompt: String, speakAloud: Bool, from asker: String) {
-        let hint = askHint()
-        replyBubble.showMessage(from: "\(asker) asks", text: prompt, hint: hint, isAsk: true)
-        if chatPanel.isVisible {
-            chatPanel.addNote("\(asker) asks: \(prompt)")
-        }
-        playSound("Glass")
-        if speakAloud {
-            var request = chatPanel.currentTTSRequest()
-            request.text = prompt
-            _ = handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
-        }
-    }
-
     private func mcpLatestCapture() -> MCPServer.ToolResult {
         guard let (directory, meta) = CaptureStore.latestBundle() else {
             return .fail("No captures yet. The user records one with the session hotkey — or use ask_user to request a demonstration.")
@@ -2038,24 +2105,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return .fail("notify_user needs non-empty `text`.")
         }
         let speakAloud = args["speak_aloud"] as? Bool ?? false
+        var shown = false
         DispatchQueue.main.sync {
             let sender = self.sessionName(for: session?.id)
-            if let sid = session?.id {
-                self.sessionPushes[sid] = SessionPush(title: sender, text: text, hint: nil, isAsk: false)
-                self.currentPushSessionId = sid
-            }
-            self.replyBubble.showMessage(from: sender, text: text)
+            shown = self.deliverPush(
+                SessionPush(title: sender, text: text, hint: nil, isAsk: false),
+                from: session?.id)
             if self.chatPanel.isVisible {
                 self.chatPanel.addNote("Claude: \(text)")
             }
             self.playSound("Glass")
-            if speakAloud {
+            // Never speak over the user's own recording or another
+            // session's content — a queued push waits for its switch.
+            if speakAloud, shown {
                 var request = self.chatPanel.currentTTSRequest()
                 request.text = text
                 _ = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
             }
         }
-        return .ok("Shown to the user. Any reply lands in the inbox — fetch it with check_messages or wait_for_message.")
+        return .ok(shown
+            ? "Shown to the user. Any reply lands in the inbox — fetch it with check_messages or wait_for_message."
+            : "The user is busy (recording, or viewing another session) — your message is queued: it marks their session picker and shows when they switch to you. Replies land in the inbox.")
     }
 
     private func inboxPayload(_ messages: [InboxMessage]) -> String {
@@ -2298,16 +2368,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Never barge in with audio — the message waits in a bubble until
         // the user taps Listen (or just reads it).
+        var shown = false
         DispatchQueue.main.sync {
             let sender = self.sessionName(for: session?.id)
-            if let sid = session?.id {
-                self.sessionPushes[sid] = SessionPush(title: sender, text: text, hint: nil, isAsk: false)
-                self.currentPushSessionId = sid
-            }
-            self.replyBubble.showMessage(from: sender, text: text)
+            shown = self.deliverPush(
+                SessionPush(title: sender, text: text, hint: nil, isAsk: false),
+                from: session?.id)
             self.playSound("Glass")
         }
-        return .ok("Left on screen with a speaker icon — the user reads it or taps to hear it when ready.")
+        return .ok(shown
+            ? "Left on screen with a speaker icon — the user reads it or taps to hear it when ready."
+            : "The user is busy (recording, or viewing another session) — your message is queued: it marks their session picker and shows, with the speaker icon, when they switch to you.")
     }
 
     private func mcpRecentDictations(_ args: [String: Any]) -> MCPServer.ToolResult {
