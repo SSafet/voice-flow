@@ -51,6 +51,11 @@ final class MessageInbox {
         queue.sync { messages.count }
     }
 
+    /// How many messages a given session would receive right now.
+    func pendingCount(for session: String?) -> Int {
+        queue.sync { messages.filter { Self.matches($0.session, session) }.count }
+    }
+
     func add(text: String, attachments: [String], session: String? = nil) {
         let message = InboxMessage(
             time: ISO8601DateFormatter().string(from: Date()),

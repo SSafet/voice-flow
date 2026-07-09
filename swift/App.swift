@@ -153,6 +153,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.watcherStatusProvider = { [weak self] in self?.workflowWatcher?.statusLine() ?? "Off" }
         menuBar.setWatcherActive(UserSettings.shared.workflowWatcherEnabled)
         menuBar.onCopyCapturePrompt = { [weak self] in self?.copyLatestCapturePrompt() }
+        menuBar.inboxCountProvider = { [weak self] in self?.inbox.pendingCount ?? 0 }
+        menuBar.onCopyInbox = { [weak self] in self?.copyQueuedMessages() }
         menuBar.claudeSessionsProvider = { [weak self] in
             guard let self else { return [] }
             return self.mcpServer.sessions.list().map { session in
@@ -808,10 +810,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let name = sessionName(for: target?.id)
             let delivered = inbox.hasWaiter(for: target?.id)
             inbox.add(text: text, attachments: attachments, session: target?.id)
-            replyBubble.showTransient(delivered
-                ? "Sent to \(name)."
-                : "Queued for \(name) — delivered when it next checks in.", seconds: 5)
+            if delivered {
+                replyBubble.showTransient("Sent to \(name).", seconds: 5)
+            } else {
+                let note = mcpServer.sessions.count == 0
+                    ? "No Claude session connected — copy the message and paste it into one."
+                    : "Queued for \(name) — it's told about it on its next Voice Flow call, or copy to paste it yourself."
+                replyBubble.showTransient(note, seconds: 10,
+                                          actionTitle: "Copy for Claude",
+                                          action: { [weak self] in self?.copyQueuedMessages() })
+            }
         }
+    }
+
+    /// Hand-deliver the queue: every pending message goes to the clipboard
+    /// as a paste-ready prompt (and leaves the inbox — pasting IS delivery).
+    private func copyQueuedMessages() {
+        let messages = inbox.drain(session: nil)
+        guard !messages.isEmpty else {
+            replyBubble.showTransient("No queued messages — everything was already delivered.")
+            return
+        }
+        var lines = ["Voice messages I recorded for you in Voice Flow:"]
+        for message in messages {
+            var line = "- \(message.text)"
+            if !message.attachments.isEmpty {
+                line += " (screenshot of what I was looking at: \(message.attachments.joined(separator: ", ")) — read it)"
+            }
+            lines.append(line)
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        replyBubble.showTransient("Copied \(messages.count) message\(messages.count == 1 ? "" : "s") — paste into any Claude session.", seconds: 5)
     }
 
     private func snapAndSend() {
@@ -1657,6 +1687,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     //  ask_user deliberately blocks — its result IS the user's answer.
 
     private func handleMCPTool(_ name: String, _ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
+        let result = dispatchMCPTool(name, args, session)
+        // Queued voice messages piggyback on every tool result so they
+        // can't rot in the inbox unnoticed.
+        guard !result.isError, let session,
+              name != "check_messages", name != "wait_for_message" else { return result }
+        let pending = inbox.pendingCount(for: session.id)
+        guard pending > 0 else { return result }
+        return .ok(result.text
+            + "\n\n(\(pending) voice message\(pending == 1 ? "" : "s") from the user queued — call check_messages.)")
+    }
+
+    private func dispatchMCPTool(_ name: String, _ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         switch name {
         case "set_session_name": return mcpSetSessionName(args, session)
         case "ask_user": return mcpAskUser(args, session)

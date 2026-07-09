@@ -105,8 +105,9 @@ final class ReplyBubble {
 
     /// A short-lived confirmation ("Answer sent to …") that fades out on
     /// its own; any newer content cancels the pending auto-hide.
-    func showTransient(_ text: String, seconds: TimeInterval = 4) {
-        showNote(text, actionTitle: nil, action: nil)
+    func showTransient(_ text: String, seconds: TimeInterval = 4,
+                       actionTitle: String? = nil, action: (() -> Void)? = nil) {
+        showNote(text, actionTitle: actionTitle, action: action)
         autoHideTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
             self?.hide()
         }

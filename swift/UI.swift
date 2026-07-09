@@ -73,6 +73,9 @@ class MenuBarManager: NSObject {
     /// rebuilt every time it opens.
     var claudeSessionsProvider: (() -> [(id: String, title: String, isTarget: Bool)])?
     var onSelectClaudeSession: ((String) -> Void)?
+    /// Pending inbox messages, shown live on the copy-queued-messages item.
+    var inboxCountProvider: (() -> Int)?
+    var onCopyInbox: (() -> Void)?
 
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
@@ -81,6 +84,8 @@ class MenuBarManager: NSObject {
     private var watcherStatusItem: NSMenuItem!
     private var watcherToggleItem: NSMenuItem!
     private var claudeSessionsMenu: NSMenu!
+    private var mainMenu: NSMenu!
+    private var inboxMenuItem: NSMenuItem!
 
     override init() {
         super.init()
@@ -117,6 +122,7 @@ class MenuBarManager: NSObject {
         watcherMenu.addItem(withTitle: "Open Data Folder", action: #selector(openWatcherFolderAction), keyEquivalent: "").target = self
         menu.setSubmenu(watcherMenu, for: watcherRootItem)
         menu.addItem(withTitle: "Copy Prompt for Latest Capture", action: #selector(copyCaptureAction), keyEquivalent: "").target = self
+        inboxMenuItem = menu.addItem(withTitle: "No Queued Messages for Claude", action: nil, keyEquivalent: "")
         let voiceTargetItem = menu.addItem(withTitle: "Voice Goes To", action: nil, keyEquivalent: "")
         claudeSessionsMenu = NSMenu(title: "Voice Goes To")
         claudeSessionsMenu.delegate = self
@@ -129,6 +135,8 @@ class MenuBarManager: NSObject {
         menu.addItem(withTitle: "Settings…", action: #selector(settingsAction), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Voice Flow", action: #selector(quitAction), keyEquivalent: "").target = self
+        menu.delegate = self
+        mainMenu = menu
         statusItem.menu = menu
     }
 
@@ -154,6 +162,7 @@ class MenuBarManager: NSObject {
     @objc private func openLatestReviewAction() { onOpenLatestReview?() }
     @objc private func openWatcherFolderAction() { onOpenWatcherFolder?() }
     @objc private func copyCaptureAction() { onCopyCapturePrompt?() }
+    @objc private func copyInboxAction() { onCopyInbox?() }
     @objc private func annotateAction() { onToggleAnnotate?() }
     @objc private func chatAction() { onShowChat?() }
     @objc private func quitAction() { onQuit?() }
@@ -165,6 +174,19 @@ class MenuBarManager: NSObject {
 
 extension MenuBarManager: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === mainMenu {
+            let count = inboxCountProvider?() ?? 0
+            if count > 0 {
+                inboxMenuItem.title = "Copy \(count) Queued Message\(count == 1 ? "" : "s") for Claude"
+                inboxMenuItem.action = #selector(copyInboxAction)
+                inboxMenuItem.target = self
+            } else {
+                inboxMenuItem.title = "No Queued Messages for Claude"
+                inboxMenuItem.action = nil
+                inboxMenuItem.target = nil
+            }
+            return
+        }
         if menu === watcherMenu {
             watcherStatusItem.title = watcherStatusProvider?() ?? "Off"
             return
