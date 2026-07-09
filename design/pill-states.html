@@ -95,6 +95,15 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 8px; font-weight: 700; font-style: normal; color: #17150f;
   }
+  /* Picker row: one numbered dot per available session, active one lit */
+  .picker { display: flex; align-items: center; gap: 6px; }
+  .picker .lbl { font-size: 10.5px; color: var(--text2); margin-right: 4px; }
+  .dot.numoff {
+    width: 12px; height: 12px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 700; font-style: normal;
+    background: transparent; border: 1px solid var(--dot-dim); color: var(--text2);
+  }
 
   /* ───────── dot animations (essence of the real pill) ───────── */
   @keyframes pulse   { 0%,100% { transform: scale(1); } 50% { transform: scale(1.35); } }
@@ -148,13 +157,26 @@ bottom. Nothing overlays anything.</p>
     <div class="screen"><div class="shape pill idle"><div class="dots"><i class="dot"></i><i class="dot num">2</i><i class="dot"></i></div></div></div></div>
 </div>
 
-<h2>2 · One-line stretch (dots swap out, 5s / 2s, then shrink)</h2>
+<h2>2 · One-line stretch (temporary, then shrink back)</h2>
 <div class="row">
-  <div class="stage"><div class="label"><b>Session switch / peek</b></div>
-    <div class="screen"><div class="shape stretch"><span class="title-line">1 · voice-flow — session routing</span></div></div></div>
-  <div class="stage"><div class="label"><b>Hotkey miss</b></div>
-    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">no #3 session</span></div></div></div>
-  <div class="stage"><div class="label"><b>Receipt</b> — short confirmations live here too</div>
+  <div class="stage wide"><div class="label"><b>Session picker</b> — ANY select attempt (valid, closed, whatever) expands this:
+      "sessions" + one numbered dot per available session, active one lit. Here: 3 sessions, #2 active, user pressed the closed #1.</div>
+    <div class="screen"><div class="shape stretch"><div class="picker">
+      <span class="lbl">sessions</span>
+      <i class="dot numoff">1</i><i class="dot num">2</i><i class="dot numoff">3</i>
+    </div></div></div></div>
+  <div class="stage wide"><div class="label"><b>Many sessions</b> — scales 1–9; #4 active</div>
+    <div class="screen"><div class="shape stretch"><div class="picker">
+      <span class="lbl">sessions</span>
+      <i class="dot numoff">1</i><i class="dot numoff">2</i><i class="dot numoff">3</i><i class="dot num">4</i><i class="dot numoff">5</i><i class="dot numoff">6</i>
+    </div></div></div></div>
+  <div class="stage wide"><div class="label"><b>Variant to confirm</b> — picker with the active session's name trailing?</div>
+    <div class="screen"><div class="shape stretch"><div class="picker">
+      <span class="lbl">sessions</span>
+      <i class="dot numoff">1</i><i class="dot num">2</i><i class="dot numoff">3</i>
+      <span class="title-line" style="margin-left:6px">voice-flow — routing</span>
+    </div></div></div></div>
+  <div class="stage"><div class="label"><b>Receipt</b> — short confirmations as a one-liner</div>
     <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">Sent to voice-flow ✓</span></div></div></div>
 </div>
 
