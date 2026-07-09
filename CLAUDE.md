@@ -163,7 +163,8 @@ on-demand analyze/optimize/status version.
 | `Core.swift` | `UserSettings`, `KeychainStore`, `HotkeyManager`, `AudioRecorder`, `BackendBridge`, `Paster`, `HotkeySpec` | Audio capture, Python STT bridge (subprocess), paste/stream into the frontmost app, settings, global hotkeys. |
 | `UI.swift` | `Theme`, `MenuBarManager`, `FloatingIndicator`, `FloatingTranscriptPanel`, `DictationsView`, `TTSView`, `HoverCardView`, `KeyRecorderButton` | Menu bar, pill, live transcript overlay, and the Dictations/Speech tab surfaces. |
 | `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel and its tabs. |
-| `ReplyBubble.swift` | `ReplyBubble` | Floating streamed-reply bubble (also shows Claude's `ask_user` prompts + capture-saved notes with an action button). |
+| `ReplyBubble.swift` | `ReplyBubble` | Floating streamed-reply bubble (also shows Claude's `ask_user` prompts + capture-saved notes with an action button; carries a mini state dot while the pill is hidden). |
+| `SessionStrip.swift` | `SessionStrip` | Persistent bottom-right chip row of connected Claude sessions; click a chip (or ⌃⌥1–6) to switch the target session. |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
 | `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of talk-hotkey messages for Claude (check/wait semantics). |
 | `Watcher.swift` | `WorkflowWatcher` | Ambient 5 s screen/app log feeding the nightly workflow review. |

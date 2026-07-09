@@ -89,6 +89,12 @@ final class MCPSessionRegistry {
 
     var count: Int { lock.sync { sessions.count } }
 
+    /// Connection order — stable numbering for the session strip and the
+    /// ⌃⌥1–6 switch hotkeys.
+    func ordered() -> [MCPSession] {
+        lock.sync { sessions.values.sorted { $0.number < $1.number } }
+    }
+
     /// Most recently active first; sessions silent for a day are dropped
     /// (Claude Code usually DELETEs on exit, but not always).
     func list() -> [MCPSession] {
@@ -165,6 +171,10 @@ final class MCPServer {
         the user works; the review protocol is ~/.config/voice-flow/watcher/ANALYZE.md.
 
         Showing the user:
+        - Elements you place are scoped to YOUR session: if the user is currently working \
+        with another Claude session, yours are NOT drawn over it — the user gets a small \
+        notification and sees your elements when they switch to you (session strip or ⌃⌥1-6). \
+        Your tool results tell you which happened.
         - Every on-screen element you place is a LIVE JSON FILE in \
         ~/.config/voice-flow/overlays/ — the screen re-renders within ~0.5s of any file change. \
         The show_guide / update_guide / show_panel / annotate_screen tools write these files for \
@@ -618,7 +628,7 @@ final class MCPServer {
         ],
         [
             "name": "speak",
-            "description": "Say something to the user out loud through Voice Flow's text-to-speech. Use for short spoken updates while they work heads-down (\"done, tests pass\", \"step two is ready\"). Keep it to a sentence or two — this is voice, not a report.",
+            "description": "Leave the user a short spoken-style message. It does NOT auto-play: it appears as a small bubble with a Listen button, and the user reads it or taps to hear it when they're ready (audio barging in uninvited interrupts their work). Keep it to a sentence or two.",
             "inputSchema": [
                 "type": "object",
                 "properties": [

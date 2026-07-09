@@ -119,6 +119,9 @@ struct OverlayDoc {
     let id: String
     let kind: Kind
     let visible: Bool
+    /// Owning MCP session — the element renders only while that session is
+    /// the user's active one. nil = always visible (hand-written files).
+    let session: String?
     let title: String
     let note: String?
     // guide
@@ -153,6 +156,7 @@ struct OverlayDoc {
             id: id,
             kind: kind,
             visible: dict["visible"] as? Bool ?? true,
+            session: dict["session"] as? String,
             title: dict["title"] as? String ?? "",
             note: dict["note"] as? String,
             steps: steps,
@@ -678,6 +682,16 @@ final class OverlayManager {
     private let shapeWindow = ShapeOverlayWindow()
     private var pollTimer: Timer?
     private var lastSignature = ""
+    /// The user's active MCP session — session-owned overlays render only
+    /// while their owner is active. Main thread.
+    private var activeSession: String?
+
+    /// Swap which session's overlays are on screen. Main thread.
+    func setActiveSession(_ id: String?) {
+        guard id != activeSession else { return }
+        activeSession = id
+        rescan(force: true)
+    }
 
     /// Main thread. Writes the schema doc and begins watching.
     func start() {
@@ -792,9 +806,11 @@ final class OverlayManager {
         var docs: [String: OverlayDoc] = [:]
         for (id, dict) in allDocsRaw() {
             // Malformed / mid-write files are skipped; the next tick retries.
-            if let doc = OverlayDoc.parse(id: id, dict: dict) {
-                docs[id] = doc
-            }
+            guard let doc = OverlayDoc.parse(id: id, dict: dict) else { continue }
+            // Another session's elements stay off screen until the user
+            // switches to it — never draw over what they're doing now.
+            if let owner = doc.session, owner != activeSession { continue }
+            docs[id] = doc
         }
 
         // Panels + guides
@@ -839,6 +855,9 @@ final class OverlayManager {
 
     - `type` (required): `"guide"` | `"panel"` | `"annotations"`
     - `visible`: bool, default true (false hides without deleting)
+    - `session`: string, optional — owning MCP session id (the tools stamp it
+      automatically). The element renders only while that session is the
+      user's active one; omit it for elements that should always show.
     - `position` (guide/panel): anchor string — `top-left`, `top-right`,
       `bottom-left`, `bottom-right`, `center-left`, `center-right`, `center` —
       or `[x, y]` (top-left corner of the panel, y measured from the top).

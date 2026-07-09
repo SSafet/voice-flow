@@ -66,8 +66,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Set while an MCP ask_user call is waiting for the human. Main thread only.
     var pendingInteraction: PendingInteraction?
     /// Which Claude Code session the talk hotkeys feed (newest connection
-    /// by default; switchable via the menu bar). Main thread only.
+    /// by default; switchable via strip chips, ⌃⌥1–6, or the menu bar).
+    /// Change it only through setTargetSession. Main thread only.
     var targetSessionId: String?
+    var sessionStrip: SessionStrip!
+    var sessionSwitchHotkeyManagers: [HotkeyManager] = []
 
     // Agent session
     var screenCapture: ScreenCapture!
@@ -101,6 +104,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { [self] in
                 menuBar?.setState(state)
                 indicator?.setState(state, recordingFor: recordingPurpose)
+                replyBubble?.setAppState(state)
             }
         }
     }
@@ -164,11 +168,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         menuBar.onSelectClaudeSession = { [weak self] id in
-            guard let self else { return }
-            self.targetSessionId = id
-            if let session = self.mcpServer.sessions.session(id) {
-                self.replyBubble.showTransient("Talk hotkeys now go to \(session.label).")
-            }
+            self?.setTargetSession(id, announce: true)
         }
         menuBar.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
         menuBar.onShowChat = { [weak self] in self?.chatPanel.show() }
@@ -211,6 +211,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         replyBubble.onVisibilityChanged = { [weak self] visible in
             self?.indicator.setSuppressed(visible)
+        }
+
+        sessionStrip = SessionStrip()
+        sessionStrip.onSelect = { [weak self] id in
+            self?.setTargetSession(id, announce: true)
         }
 
         overlayManager = OverlayManager()
@@ -500,6 +505,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         annotateHotkeyManager = HotkeyManager(spec: UserSettings.shared.annotateHotkey)
         annotateHotkeyManager.onPress = { [weak self] in self?.annotationOverlay.toggleEditing() }
+
+        // ⌃⌥1–6: jump straight to a Claude session (order = connect order,
+        // mirrored by the session strip's chip numbers).
+        let numberKeyCodes: [CGKeyCode] = [18, 19, 20, 21, 23, 22]   // 1…6
+        sessionSwitchHotkeyManagers = numberKeyCodes.enumerated().map { index, keyCode in
+            let manager = HotkeyManager(spec: HotkeySpec(
+                keyCode: keyCode,
+                modifiers: [.maskControl, .maskAlternate],
+                label: "⌃⌥\(index + 1)"))
+            manager.onPress = { [weak self] in self?.switchToSession(at: index) }
+            return manager
+        }
     }
 
     private func startHotkeyWithAccessibilityCheck() {
@@ -525,6 +542,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         talkHotkeyManager.start()
         snapTalkHotkeyManager.start()
         annotateHotkeyManager.start()
+        sessionSwitchHotkeyManagers.forEach { $0.start() }
     }
 
     @objc private func showPermissionsMenuAction() { showPermissions() }
@@ -736,6 +754,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case ..<3600: return "\(seconds / 60)m ago"
         default: return "\(seconds / 3600)h ago"
         }
+    }
+
+    /// Single entry for changing which Claude session owns the user's
+    /// voice + screen: routes hotkeys, swaps that session's overlays in,
+    /// and refreshes the strip. Main thread.
+    func setTargetSession(_ id: String?, announce: Bool) {
+        targetSessionId = id
+        overlayManager.setActiveSession(id)
+        refreshSessionStrip()
+        if announce, let session = mcpServer.sessions.session(id) {
+            replyBubble.showTransient("Talking to \(session.label).")
+        }
+    }
+
+    func refreshSessionStrip() {
+        sessionStrip.update(sessions: mcpServer.sessions.ordered(), activeId: targetSessionId)
+    }
+
+    /// ⌃⌥1–6 or a strip chip. Main thread.
+    private func switchToSession(at index: Int) {
+        let ordered = mcpServer.sessions.ordered()
+        guard index < ordered.count else {
+            replyBubble.showTransient("No Claude session #\(index + 1) connected.")
+            return
+        }
+        setTargetSession(ordered[index].id, announce: true)
     }
 
     /// "Seen — I'll answer later" on an ask bubble: unblock Claude's
@@ -1586,9 +1630,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mcpServer.onSessionConnected = { [weak self] session in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.targetSessionId = session.id
+                self.setTargetSession(session.id, announce: false)
                 self.replyBubble.showTransient(self.mcpServer.sessions.count > 1
-                    ? "\(session.label) connected — your talk hotkeys now go to it (switch in the menu bar)."
+                    ? "\(session.label) connected — your talk hotkeys now go to it (⌃⌥number or the strip to switch)."
                     : "Claude Code connected to Voice Flow.", seconds: 5)
             }
         }
@@ -1599,12 +1643,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, let closed = self.mcpServer.sessions.close(sessionId) else { return }
             DispatchQueue.main.async {
                 if self.targetSessionId == closed.id {
-                    self.targetSessionId = self.mcpServer.sessions.list().first?.id
+                    self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
                     if let next = self.mcpServer.sessions.session(self.targetSessionId) {
                         self.replyBubble.showTransient("\(closed.label) session ended — talk hotkeys now go to \(next.label).", seconds: 5)
                         return
                     }
                 }
+                self.refreshSessionStrip()
                 self.replyBubble.showTransient("\(closed.label) session ended.", seconds: 5)
             }
         }
@@ -1724,17 +1769,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case "get_latest_capture": return mcpLatestCapture()
         case "list_captures": return mcpListCaptures(args)
         case "take_screenshot": return mcpTakeScreenshot()
-        case "show_guide": return mcpShowGuide(args)
-        case "update_guide": return mcpUpdateGuide(args)
-        case "show_panel": return mcpShowPanel(args)
-        case "annotate_screen": return mcpAnnotateScreen(args)
+        case "show_guide": return mcpShowGuide(args, session)
+        case "update_guide": return mcpUpdateGuide(args, session)
+        case "show_panel": return mcpShowPanel(args, session)
+        case "annotate_screen": return mcpAnnotateScreen(args, session)
         case "clear_annotations":
             let removed = overlayManager.removeAll(annotationsOnly: true)
             DispatchQueue.main.sync { self.annotationOverlay.clear() }
             return .ok("Cleared \(removed) annotation overlay\(removed == 1 ? "" : "s") and the user's own marks.")
         case "remove_overlay": return mcpRemoveOverlay(args)
         case "list_overlays": return mcpListOverlays()
-        case "speak": return mcpSpeak(args)
+        case "speak": return mcpSpeak(args, session)
         case "get_recent_dictations": return mcpRecentDictations(args)
         default:
             return .fail("Unknown tool: \(name)")
@@ -1764,6 +1809,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let renamed = mcpServer.sessions.rename(session.id, to: name) else {
             return .fail("This session is no longer registered.")
         }
+        DispatchQueue.main.async { self.refreshSessionStrip() }
         return .ok("This session now appears to the user as \"\(renamed.label)\".")
     }
 
@@ -1985,14 +2031,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return steps.isEmpty ? nil : steps
     }
 
-    private func overlayWrittenResult(_ kind: String, id: String, path: String?, extra: String = "") -> MCPServer.ToolResult {
+    private func overlayWrittenResult(_ kind: String, id: String, path: String?, session: MCPSession?, extra: String = "") -> MCPServer.ToolResult {
         guard let path else {
             return .fail("Couldn't write the \(kind) overlay file.")
         }
-        return .ok("\(kind.capitalized) \"\(id)\" is on the user's screen. \(extra)Its live file is \(path) — edit it directly (or via the tools) and the screen updates within ~0.5s; delete it (or remove_overlay) to dismiss. Schema: \(OverlayManager.schemaPath)")
+        let visibility = notifyIfBackgroundOverlay(kind, session: session)
+            ? "It is NOT on screen yet — the user is working with another session and was notified; they'll see it when they switch to you. "
+            : "It is on the user's screen. "
+        return .ok("\(kind.capitalized) \"\(id)\" written. \(visibility)\(extra)Its live file is \(path) — edit it directly (or via the tools) and the screen updates within ~0.5s; delete it (or remove_overlay) to dismiss. Schema: \(OverlayManager.schemaPath)")
     }
 
-    private func mcpShowGuide(_ args: [String: Any]) -> MCPServer.ToolResult {
+    /// A non-active session pushed something on screen — tell the user
+    /// instead of drawing over what they're doing. Returns true when the
+    /// element is hidden until they switch. Any thread.
+    private func notifyIfBackgroundOverlay(_ kind: String, session: MCPSession?) -> Bool {
+        guard let session else { return false }
+        var hidden = false
+        DispatchQueue.main.sync {
+            hidden = session.id != self.targetSessionId
+            if hidden {
+                let index = self.mcpServer.sessions.ordered().firstIndex { $0.id == session.id }
+                let hint = index.map { " (⌃⌥\($0 + 1) or the strip)" } ?? ""
+                self.replyBubble.showTransient(
+                    "\(self.sessionName(for: session.id)) placed a \(kind) — switch to it\(hint) to view.",
+                    seconds: 8)
+            }
+        }
+        return hidden
+    }
+
+    private func mcpShowGuide(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         guard let steps = Self.overlayStepDicts(args["steps"]) else {
             return .fail("show_guide needs a non-empty `steps` array of {text, detail?} objects.")
         }
@@ -2007,12 +2075,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let note = args["note"] as? String, !note.isEmpty {
             doc["note"] = note
         }
+        if let session {
+            doc["session"] = session.id
+        }
         let path = overlayManager.write(id: id, dict: doc)
-        return overlayWrittenResult("guide", id: id, path: path,
+        return overlayWrittenResult("guide", id: id, path: path, session: session,
                                     extra: "\(steps.count) steps. Advance with update_guide as the user progresses. ")
     }
 
-    private func mcpUpdateGuide(_ args: [String: Any]) -> MCPServer.ToolResult {
+    private func mcpUpdateGuide(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         let id = OverlayManager.sanitize(id: args["id"] as? String) ?? "guide"
         guard var doc = overlayManager.read(id: id), doc["type"] as? String == "guide" else {
             return .fail("No guide overlay \"\(id)\" exists — call show_guide first.")
@@ -2038,7 +2109,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return .ok("Guide \"\(id)\" updated.")
     }
 
-    private func mcpShowPanel(_ args: [String: Any]) -> MCPServer.ToolResult {
+    private func mcpShowPanel(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         guard let rawBlocks = args["blocks"] as? [[String: Any]], !rawBlocks.isEmpty else {
             return .fail("show_panel needs a non-empty `blocks` array.")
         }
@@ -2062,11 +2133,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let width = (args["width"] as? NSNumber)?.doubleValue {
             doc["width"] = min(max(width, 240), 620)
         }
+        if let session {
+            doc["session"] = session.id
+        }
         let path = overlayManager.write(id: id, dict: doc)
-        return overlayWrittenResult("panel", id: id, path: path)
+        return overlayWrittenResult("panel", id: id, path: path, session: session)
     }
 
-    private func mcpAnnotateScreen(_ args: [String: Any]) -> MCPServer.ToolResult {
+    private func mcpAnnotateScreen(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         guard let actions = args["actions"] as? [[String: Any]], !actions.isEmpty else {
             return .fail("annotate_screen needs a non-empty `actions` array.")
         }
@@ -2092,11 +2166,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
            let previous = existing["items"] as? [[String: Any]] {
             items = previous + valid
         }
-        let path = overlayManager.write(id: id, dict: ["type": "annotations", "items": items])
+        var annotationsDoc: [String: Any] = ["type": "annotations", "items": items]
+        if let session {
+            annotationsDoc["session"] = session.id
+        }
+        let path = overlayManager.write(id: id, dict: annotationsDoc)
         guard let path else {
             return .fail("Couldn't write the annotations overlay file.")
         }
-        var text = "Drew \(valid.count) shape\(valid.count == 1 ? "" : "s") on the user's screen (\(items.count) total in overlay \"\(id)\"). They stay visible — and appear in screenshots — until cleared. Live file: \(path)"
+        let hidden = notifyIfBackgroundOverlay("drawing", session: session)
+        var text = hidden
+            ? "Drew \(valid.count) shape\(valid.count == 1 ? "" : "s") (\(items.count) total in overlay \"\(id)\") — NOT visible yet: the user is on another session and was notified; they'll see them when they switch to you. Live file: \(path)"
+            : "Drew \(valid.count) shape\(valid.count == 1 ? "" : "s") on the user's screen (\(items.count) total in overlay \"\(id)\"). They stay visible — and appear in screenshots — until cleared. Live file: \(path)"
         if !problems.isEmpty {
             text += " Skipped: " + problems.joined(separator: "; ")
         }
@@ -2133,21 +2214,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ]))
     }
 
-    private func mcpSpeak(_ args: [String: Any]) -> MCPServer.ToolResult {
+    private func mcpSpeak(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         let text = (args["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             return .fail("speak needs non-empty `text`.")
         }
-        var failure: String?
+        // Never barge in with audio — the message waits in a bubble until
+        // the user taps Listen (or just reads it).
         DispatchQueue.main.sync {
-            var request = self.chatPanel.currentTTSRequest()
-            request.text = text
-            failure = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
+            let sender = self.sessionName(for: session?.id)
+            self.replyBubble.showNote("\(sender): \(text)", actionTitle: "🔊 Listen", action: { [weak self] in
+                guard let self else { return }
+                var request = self.chatPanel.currentTTSRequest()
+                request.text = text
+                _ = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
+            })
+            self.playSound("Glass")
         }
-        if let failure {
-            return .fail("Couldn't speak: \(failure)")
-        }
-        return .ok("Speaking to the user now.")
+        return .ok("Left as a bubble with a Listen button — the user reads or plays it when ready.")
     }
 
     private func mcpRecentDictations(_ args: [String: Any]) -> MCPServer.ToolResult {
