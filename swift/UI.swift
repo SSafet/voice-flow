@@ -197,6 +197,7 @@ class FloatingIndicator: NSObject {
     var onShowHistory: (() -> Void)?
     var onToggleSession: (() -> Void)?
     var onToggleAnnotate: (() -> Void)?
+    var onToggleWatcher: (() -> Void)?
 
     private let W: CGFloat = 52, H: CGFloat = 18
     private let DOT_R: CGFloat = 3, DOT_SP: CGFloat = 11
@@ -204,10 +205,12 @@ class FloatingIndicator: NSObject {
     private var panel: NSPanel!
     private var pillLayer: CALayer!
     private var sessionRingLayer: CALayer!
+    private var watcherDotLayer: CALayer!
     private var dotLayers: [CALayer] = []
 
     private var state: AppState = .idle
     private var sessionActive = false
+    private var watcherActive = false
     private var agentActivity: AgentActivity = .idle
     private var ttsSnapshot: TTSStatusSnapshot?
     private var recordingPurpose: RecordingPurpose = .dictation
@@ -252,6 +255,15 @@ class FloatingIndicator: NSObject {
         sessionRingLayer.shadowColor = NSColor(r: 255, g: 128, b: 96, a: 255).cgColor
         sessionRingLayer.shadowOffset = .zero
         root.addSublayer(sessionRingLayer)
+
+        // Watcher dot — small amber marker at the pill's right edge while
+        // the ambient workflow watcher is recording.
+        watcherDotLayer = CALayer()
+        watcherDotLayer.frame = CGRect(x: W - 7, y: H / 2 - 2, width: 4, height: 4)
+        watcherDotLayer.cornerRadius = 2
+        watcherDotLayer.backgroundColor = NSColor(r: 255, g: 170, b: 60, a: 230).cgColor
+        watcherDotLayer.opacity = watcherActive ? 1 : 0
+        root.addSublayer(watcherDotLayer)
 
         // 3 dots, centered as a group on the pill
         let cy = H / 2.0
@@ -315,6 +327,11 @@ class FloatingIndicator: NSObject {
     func setSessionActive(_ active: Bool) {
         sessionActive = active
         applyState()
+    }
+
+    func setWatcherActive(_ active: Bool) {
+        watcherActive = active
+        watcherDotLayer?.opacity = active ? 1 : 0
     }
 
     func setAgentActivity(_ activity: AgentActivity) {
@@ -590,6 +607,11 @@ class FloatingIndicator: NSObject {
             withTitle: sessionActive ? "End Session" : "Start Session",
             action: #selector(ctxToggleSession), keyEquivalent: "")
         sessionItem.target = self
+        let watcherItem = menu.addItem(
+            withTitle: "Watch Workflow",
+            action: #selector(ctxToggleWatcher), keyEquivalent: "")
+        watcherItem.target = self
+        watcherItem.state = watcherActive ? .on : .off
         menu.addItem(withTitle: "Annotate Screen", action: #selector(ctxAnnotate), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Dictation History", action: #selector(ctxHistory), keyEquivalent: "").target = self
@@ -598,6 +620,7 @@ class FloatingIndicator: NSObject {
         menu.popUp(positioning: nil, at: point, in: view)
     }
     @objc private func ctxToggleSession() { onToggleSession?() }
+    @objc private func ctxToggleWatcher() { onToggleWatcher?() }
     @objc private func ctxAnnotate() { onToggleAnnotate?() }
     @objc private func ctxHistory() { onShowHistory?() }
     @objc private func ctxQuit() { onQuit?() }

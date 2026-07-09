@@ -176,6 +176,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.onClick = { [weak self] in self?.chatPanel.toggle() }
         indicator.onShowHistory = { [weak self] in self?.toggleHistory() }
         indicator.onToggleSession = { [weak self] in self?.toggleSession() }
+        indicator.onToggleWatcher = { [weak self] in self?.toggleWorkflowWatcher() }
         indicator.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
         indicator.onQuit = { NSApp.terminate(nil) }
         indicator.show()
@@ -270,6 +271,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.annotateHotkeyManager.updateSpec(spec)
         }
         settingsWindow.onWindowClosed = { [weak self] in self?.hideDockIfNoWindows() }
+        // Clicking into Settings while the chat panel floats over it should
+        // dismiss the panel — same feel as clicking anywhere else outside it.
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let window = note.object as? NSWindow,
+                  window === self.settingsWindow.window else { return }
+            self.chatPanel.hide()
+        }
 
         permissionsWindow = PermissionsWindowController()
         permissionsWindow.onRequestMicrophone = { [weak self] in self?.requestMicrophonePermission() }
@@ -377,6 +387,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if UserSettings.shared.workflowWatcherEnabled {
             workflowWatcher.start()
         }
+        indicator.setWatcherActive(workflowWatcher.isRunning)
         captureScheduler = CaptureScheduler(
             screenCapture: screenCapture,
             interval: TimeInterval(UserSettings.shared.captureIntervalSeconds)
@@ -569,6 +580,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             workflowWatcher.stop()
         }
         menuBar.setWatcherActive(wanted)
+        indicator.setWatcherActive(wanted)
     }
 
     private func startSession() {
@@ -1410,6 +1422,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showSettings() {
         showDock()
+        chatPanel.hide()
         settingsWindow.showWindow(nil)
         settingsWindow.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
