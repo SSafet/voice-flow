@@ -804,23 +804,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                let shot = CaptureStore.saveShot(raw) {
                 attachments.append(shot.path)
             }
-            // A vanished target (session gone, none left) degrades to an
-            // unscoped message any session may pick up.
-            let target = mcpServer.sessions.session(targetSessionId)
-            let name = sessionName(for: target?.id)
-            let delivered = inbox.hasWaiter(for: target?.id)
-            inbox.add(text: text, attachments: attachments, session: target?.id)
+            // No known destination? Don't queue into the void — hand the
+            // message straight to the clipboard and let the user aim it.
+            guard let target = mcpServer.sessions.session(targetSessionId) else {
+                copyMessageToClipboard(text: text, attachments: attachments)
+                replyBubble.showTransient("No Claude session to send this to — copied it instead. Paste it where you want it.", seconds: 8)
+                return
+            }
+            let name = sessionName(for: target.id)
+            let delivered = inbox.hasWaiter(for: target.id)
+            inbox.add(text: text, attachments: attachments, session: target.id)
             if delivered {
                 replyBubble.showTransient("Sent to \(name).", seconds: 5)
             } else {
-                let note = mcpServer.sessions.count == 0
-                    ? "No Claude session connected — copy the message and paste it into one."
-                    : "Queued for \(name) — it's told about it on its next Voice Flow call, or copy to paste it yourself."
-                replyBubble.showTransient(note, seconds: 10,
-                                          actionTitle: "Copy for Claude",
-                                          action: { [weak self] in self?.copyQueuedMessages() })
+                replyBubble.showTransient(
+                    "Queued for \(name) — it's told about it on its next Voice Flow call, or copy to paste it yourself.",
+                    seconds: 10,
+                    actionTitle: "Copy for Claude",
+                    action: { [weak self] in self?.copyQueuedMessages() })
             }
         }
+    }
+
+    private func copyMessageToClipboard(text: String, attachments: [String]) {
+        var prompt = text
+        if !attachments.isEmpty {
+            prompt += "\n(Screenshot of what I was looking at: \(attachments.joined(separator: ", ")) — read it.)"
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(prompt, forType: .string)
     }
 
     /// Hand-deliver the queue: every pending message goes to the clipboard
