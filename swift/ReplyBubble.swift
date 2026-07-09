@@ -206,23 +206,23 @@ final class ReplyBubble {
         var width = maxWidth
         if !hasStatus {
             let natural = ceil(textView.textStorage?.size().width ?? maxWidth)
-            var ideal = natural + 64   // left inset + text padding + ✕ clearance
+            var ideal = natural + 52   // 12 + text + 4 + ✕(20) + 10
             if hasAction {
                 ideal = max(ideal, actionButton.intrinsicContentSize.width + 56)
             }
-            width = min(maxWidth, max(220, ideal))
+            width = min(maxWidth, max(200, ideal))
         }
 
         // In compact mode the ✕ sits beside the text, so keep clear of it.
-        let scrollWidth = width - (hasStatus ? 24 : 52)
+        let scrollWidth = width - (hasStatus ? 24 : 46)
         scrollView.frame.size.width = scrollWidth
         textView.frame.size.width = scrollWidth
         layoutManager.ensureLayout(for: container)
         let used = layoutManager.usedRect(for: container).height
-        let textHeight = min(max(used + 8, 24), maxTextHeight)
+        let textHeight = min(max(used + 6, 22), maxTextHeight)
 
-        let topSpace: CGFloat = hasStatus ? headerHeight : 9
-        let bottomPad: CGFloat = hasStatus ? bottomInset : 9
+        let topSpace: CGFloat = hasStatus ? headerHeight : 7
+        let bottomPad: CGFloat = hasStatus ? bottomInset : 7
         let totalHeight = topSpace + textHeight + actionSpace + bottomPad
 
         guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
@@ -238,7 +238,7 @@ final class ReplyBubble {
             closeButton.frame = NSRect(x: width - 32, y: totalHeight - headerHeight + 3, width: 20, height: 20)
         } else {
             // Centered on the text row — no empty header band above.
-            closeButton.frame = NSRect(x: width - 32, y: bottomPad + actionSpace + (textHeight - 20) / 2, width: 20, height: 20)
+            closeButton.frame = NSRect(x: width - 30, y: bottomPad + actionSpace + (textHeight - 20) / 2, width: 20, height: 20)
         }
         if hasAction {
             let buttonWidth = min(width - 32, max(140, actionButton.intrinsicContentSize.width + 24))
@@ -304,6 +304,7 @@ final class ReplyBubble {
         textView.drawsBackground = false
         textView.isRichText = false
         textView.textContainerInset = NSSize(width: 2, height: 2)
+        textView.textContainer?.lineFragmentPadding = 0   // no hidden side gutters
         textView.textContainer?.widthTracksTextView = true
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
