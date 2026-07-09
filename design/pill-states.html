@@ -89,9 +89,11 @@
     width: 16px; height: 16px; border-radius: 8px;
     background: #383430; color: #c9c0b2; font-size: 10px; line-height: 16px; text-align: center;
   }
-  .badge {
-    position: absolute; top: -4px; right: -3px;
-    font-size: 8px; font-weight: 700; color: var(--accent);
+  /* Active session: the middle dot grows and carries the session number */
+  .dot.num {
+    width: 12px; height: 12px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 700; font-style: normal; color: #17150f;
   }
 
   /* ───────── dot animations (essence of the real pill) ───────── */
@@ -106,6 +108,7 @@
   .tts  .dot { background: var(--accent); animation: eq .7s ease-in-out infinite; }
   .tts  .dot:nth-child(2) { animation-delay: .12s; } .tts .dot:nth-child(3) { animation-delay: .24s; }
   .idle .dot { background: var(--dot-dim); animation: breathe 3.2s ease-in-out infinite; }
+  .idle .dot.num { background: var(--dot); animation: none; }   /* the indicator stays legible */
   .done .dot { background: var(--green); }
   .ring-session { border-color: rgba(255,128,96,.9); box-shadow: 0 0 8px rgba(255,128,96,.5); }
   .ring-watcher { border-color: rgba(255,170,60,.35); }
@@ -139,8 +142,10 @@ bottom. Nothing overlays anything.</p>
     <div class="screen"><div class="shape pill tts"><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
   <div class="stage"><div class="label"><b>Session recording</b> — warm ring</div>
     <div class="screen"><div class="shape pill rec ring-session"><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
-  <div class="stage"><div class="label"><b>Multiple sessions</b> — tiny number = active</div>
-    <div class="screen"><div class="shape pill idle"><span class="badge">2</span><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
+  <div class="stage"><div class="label"><b>Active session</b> — middle dot grows, carries its number</div>
+    <div class="screen"><div class="shape pill idle"><div class="dots"><i class="dot"></i><i class="dot num">1</i><i class="dot"></i></div></div></div></div>
+  <div class="stage"><div class="label"><b>Multiple sessions</b> — the active one's number, same spot</div>
+    <div class="screen"><div class="shape pill idle"><div class="dots"><i class="dot"></i><i class="dot num">2</i><i class="dot"></i></div></div></div></div>
 </div>
 
 <h2>2 · One-line stretch (dots swap out, 5s / 2s, then shrink)</h2>
