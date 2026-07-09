@@ -56,8 +56,19 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   off-by-default `session_send_to_agent` setting. `RecordingPurpose` in
   `App.swift` routes each transcription result (dictation / talk / snapTalk /
   session).
-- Replies stream into the **`ReplyBubble`** (`swift/ReplyBubble.swift`), a
-  floating bubble above the pill, whenever the ChatPanel is closed; ✕ dismisses.
+- **The pill IS the whole surface** (design spec: `design/pill-states.html`;
+  one shape, nothing overlaid, dots never move). `FloatingIndicator` has four
+  modes — `pill` (collapsed 52×18; middle dot grows to 9px and carries the
+  active session number), `flash` (one-line receipts/errors,
+  `flashMessage`), `picker` (`showPicker`: "sessions" + a numbered dot per
+  session, active lit / pending amber, active name trailing; ⌃⌥1–6 or menu;
+  collapses after ~4s, on any other hotkey, or click-anywhere), and `grown`
+  (`showGrown`: amber title, selectable text, ask hint line, speaker/trash/✕
+  icon cluster, live dots in the bottom band; streamed replies grow it live).
+  Switching onto a session with a waiting push grows into it with the picker
+  row as the bottom band. `ReplyBubble` is now only a facade forwarding to
+  the pill: ✕ closes-and-keeps (asks stay pending, `sessionPushes` preview
+  slots survive), trash deletes (cancels a waiting ask), speaker reads aloud.
 - With voice replies on (speaker toggle), `AgentReplySpeaker` (`swift/TTS.swift`)
   cuts the streaming reply at sentence boundaries into
   `TTSController.beginLiveSpeech/feedLiveSpeech/endLiveSpeech`, so speech starts
@@ -172,7 +183,7 @@ on-demand analyze/optimize/status version.
 | `Core.swift` | `UserSettings`, `KeychainStore`, `HotkeyManager`, `AudioRecorder`, `BackendBridge`, `Paster`, `HotkeySpec` | Audio capture, Python STT bridge (subprocess), paste/stream into the frontmost app, settings, global hotkeys. |
 | `UI.swift` | `Theme`, `MenuBarManager`, `FloatingIndicator`, `FloatingTranscriptPanel`, `DictationsView`, `TTSView`, `HoverCardView`, `KeyRecorderButton` | Menu bar, pill, live transcript overlay, and the Dictations/Speech tab surfaces. |
 | `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel and its tabs. |
-| `ReplyBubble.swift` | `ReplyBubble` | Floating streamed-reply bubble (also shows Claude's `ask_user` prompts + capture-saved notes with an action button; the real pill docks right above it while visible). |
+| `ReplyBubble.swift` | `ReplyBubble` | Facade over the pill's grown surface (no window of its own) — forwards messages/asks/streaming to `FloatingIndicator`. |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
 | `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of talk-hotkey messages for Claude (check/wait semantics). |
 | `Watcher.swift` | `WorkflowWatcher` | Ambient 5 s screen/app log feeding the nightly workflow review. |
