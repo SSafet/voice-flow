@@ -1014,6 +1014,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.state = .idle
                 if self.recorder.lastCaptureBytes == 0 {
                     self.replyBubble.showTransient("The microphone delivered no audio — it may have changed or be in use. Restart Voice Flow if this keeps happening.", seconds: 8)
+                } else if self.recorder.lastCaptureWasSilent {
+                    self.replyBubble.showTransient("Didn't catch any speech — nothing transcribed.")
                 }
                 if purpose == .session {
                     self.finishSession(transcript: nil)

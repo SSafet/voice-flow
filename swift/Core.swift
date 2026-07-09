@@ -866,6 +866,10 @@ class AudioRecorder {
     /// Bytes captured by the last completed recording (0 = the tap never
     /// fired — a wedged engine or missing device, not a short press).
     private(set) var lastCaptureBytes = 0
+    /// The last recording never crossed the speech threshold — pure room
+    /// tone. Transcribing it makes Whisper hallucinate words out of the
+    /// vocabulary prompt, so it's discarded before it gets there.
+    private(set) var lastCaptureWasSilent = false
     private let sampleRate: Double = 16000
     private let audioLock = DispatchQueue(label: "com.voiceflow.audioData")
 
@@ -1035,10 +1039,19 @@ class AudioRecorder {
         }
 
         lastCaptureBytes = audioData.count
+        lastCaptureWasSilent = false
         guard audioData.count > 3200 else { // < 100ms at 16kHz int16
             vflog(audioData.isEmpty
                 ? "audio: no audio arrived from the microphone — engine wedged or device gone"
                 : "audio: recording too short (\(audioData.count) bytes) — discarded")
+            completion(nil)
+            return
+        }
+
+        let heardSpeech = audioLock.sync { lastSpeechDataLength > 0 }
+        guard heardSpeech else {
+            lastCaptureWasSilent = true
+            vflog("audio: no speech detected (\(audioData.count) bytes of room tone) — discarded")
             completion(nil)
             return
         }
