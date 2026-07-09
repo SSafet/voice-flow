@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VoiceFlow — pill states</title>
+<style>
+  :root {
+    --bg: #131110;
+    --stage: #1b1917;
+    --shape: #211e1b;
+    --border: #45403a;
+    --pill-ring: rgba(255, 170, 60, .55);
+    --dot: #d8cfc0;
+    --dot-dim: #6f675c;
+    --accent: #ffc24b;
+    --red: #ff6060;
+    --green: #6ed782;
+    --text: #d6cec0;
+    --text2: #a89e8d;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, "SF Pro Text", sans-serif;
+    padding: 40px 48px 120px;
+  }
+  h1 { font-size: 20px; margin-bottom: 6px; }
+  .sub { color: var(--text2); margin-bottom: 36px; max-width: 720px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .12em; color: var(--accent); margin: 44px 0 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 20px; }
+
+  .stage {
+    width: 300px;
+    background: var(--stage);
+    border: 1px solid #2a2724;
+    border-radius: 10px;
+    padding-top: 10px;
+    overflow: hidden;
+  }
+  .stage.wide { width: 460px; }
+  .stage .label { font-size: 11px; color: var(--text2); padding: 0 12px 6px; }
+  .stage .label b { color: var(--text); font-weight: 600; }
+  .screen {
+    position: relative;
+    height: 150px;
+    background:
+      linear-gradient(#161413, #171514 80%, #1d1a18);
+    border-top: 1px solid #262320;
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  .screen.tall { height: 210px; }
+
+  /* ───────── the ONE shape ───────── */
+  .shape {
+    position: relative;
+    margin-bottom: 5px;              /* pill's home offset from screen edge */
+    background: var(--shape);
+    border: 1px solid var(--pill-ring);
+    display: flex; flex-direction: column; justify-content: flex-end;
+    box-shadow: 0 4px 18px rgba(0,0,0,.45);
+  }
+  /* collapsed pill */
+  .shape.pill { width: 52px; height: 18px; border-radius: 9px; }
+  /* one-line stretch — same height family, wider */
+  .shape.stretch { height: 24px; border-radius: 12px; padding: 0 14px;
+                   display: flex; flex-direction: row; align-items: center; justify-content: center; }
+  /* grown container — dots stay in the bottom band of the SAME shape */
+  .shape.grown { border-radius: 14px; padding: 10px 14px 0; }
+
+  .dots { display: flex; gap: 5px; align-items: center; justify-content: center; height: 18px; flex: none; }
+  .dot { width: 6px; height: 6px; border-radius: 3px; background: var(--dot); }
+  .shape.grown .dots { height: 24px; }   /* bottom band inside the shape */
+
+  .title-line { font-size: 11.5px; font-weight: 600; color: var(--text); white-space: nowrap; }
+
+  .content { padding-bottom: 4px; }
+  .content .status { font-size: 11.5px; font-weight: 600; color: var(--accent); margin-bottom: 4px; padding-right: 20px; }
+  .content .msg { font-size: 12.5px; color: var(--text2); }
+  .content .msg.bright { color: var(--text); }
+  .content .actions { margin-top: 8px; display: flex; gap: 8px; }
+  .btn {
+    font-size: 11px; font-weight: 600; color: var(--accent);
+    background: rgba(255,194,75,.12); border: none; border-radius: 6px;
+    padding: 3px 10px; cursor: pointer;
+  }
+  .x {
+    position: absolute; top: 8px; right: 10px;
+    width: 16px; height: 16px; border-radius: 8px;
+    background: #383430; color: #c9c0b2; font-size: 10px; line-height: 16px; text-align: center;
+  }
+  .badge {
+    position: absolute; top: -4px; right: -3px;
+    font-size: 8px; font-weight: 700; color: var(--accent);
+  }
+
+  /* ───────── dot animations (essence of the real pill) ───────── */
+  @keyframes pulse   { 0%,100% { transform: scale(1); } 50% { transform: scale(1.35); } }
+  @keyframes bounce  { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+  @keyframes eq      { 0%,100% { transform: scaleY(1); } 50% { transform: scaleY(2.1); } }
+  @keyframes breathe { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
+  .rec  .dot { background: var(--red); animation: pulse 1.2s ease-in-out infinite; }
+  .rec  .dot:nth-child(2) { animation-delay: .2s; } .rec .dot:nth-child(3) { animation-delay: .4s; }
+  .proc .dot { background: var(--accent); animation: bounce 1s ease-in-out infinite; }
+  .proc .dot:nth-child(2) { animation-delay: .15s; } .proc .dot:nth-child(3) { animation-delay: .3s; }
+  .tts  .dot { background: var(--accent); animation: eq .7s ease-in-out infinite; }
+  .tts  .dot:nth-child(2) { animation-delay: .12s; } .tts .dot:nth-child(3) { animation-delay: .24s; }
+  .idle .dot { background: var(--dot-dim); animation: breathe 3.2s ease-in-out infinite; }
+  .done .dot { background: var(--green); }
+  .ring-session { border-color: rgba(255,128,96,.9); box-shadow: 0 0 8px rgba(255,128,96,.5); }
+  .ring-watcher { border-color: rgba(255,170,60,.35); }
+
+  /* ───────── morph demo ───────── */
+  .morph {
+    transition: width .28s cubic-bezier(.3,.9,.3,1.05), height .28s cubic-bezier(.3,.9,.3,1.05),
+                border-radius .28s ease;
+    overflow: hidden;
+  }
+  .morph .content, .morph .title-line { transition: opacity .22s ease .1s; }
+  .morph-note { font-size: 11px; color: var(--text2); text-align: center; padding: 8px 0 10px; }
+</style>
+</head>
+<body>
+
+<h1>VoiceFlow — every state, one shape</h1>
+<p class="sub">Design rule: there is exactly <b>one</b> element on screen. The pill <i>is</i> the container —
+it stretches for one-liners and grows upward for content, and the dots never leave their spot at the
+bottom. Nothing overlays anything.</p>
+
+<h2>1 · The pill (collapsed, 52×18)</h2>
+<div class="row">
+  <div class="stage"><div class="label"><b>Idle</b> — dim, slow breathe</div>
+    <div class="screen"><div class="shape pill idle"><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
+  <div class="stage"><div class="label"><b>Recording</b> — red pulse</div>
+    <div class="screen"><div class="shape pill rec"><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
+  <div class="stage"><div class="label"><b>Transcribing</b> — amber bounce</div>
+    <div class="screen"><div class="shape pill proc"><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
+  <div class="stage"><div class="label"><b>Speaking</b> — equalizer</div>
+    <div class="screen"><div class="shape pill tts"><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
+  <div class="stage"><div class="label"><b>Session recording</b> — warm ring</div>
+    <div class="screen"><div class="shape pill rec ring-session"><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
+  <div class="stage"><div class="label"><b>Multiple sessions</b> — tiny number = active</div>
+    <div class="screen"><div class="shape pill idle"><span class="badge">2</span><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
+</div>
+
+<h2>2 · One-line stretch (dots swap out, 5s / 2s, then shrink)</h2>
+<div class="row">
+  <div class="stage"><div class="label"><b>Session switch / peek</b></div>
+    <div class="screen"><div class="shape stretch"><span class="title-line">1 · voice-flow — session routing</span></div></div></div>
+  <div class="stage"><div class="label"><b>Hotkey miss</b></div>
+    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">no #3 session</span></div></div></div>
+  <div class="stage"><div class="label"><b>Receipt</b> — short confirmations live here too</div>
+    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">Sent to voice-flow ✓</span></div></div></div>
+</div>
+
+<h2>3 · Grown container (dots stay at the bottom of the SAME shape)</h2>
+<div class="row">
+  <div class="stage wide"><div class="label"><b>Claude message</b> (notify / deferred speak)</div>
+    <div class="screen tall">
+      <div class="shape grown idle" style="width: 380px;">
+        <div class="x">✕</div>
+        <div class="content">
+          <div class="status">voice-flow — session routing</div>
+          <div class="msg">All done — everything is committed, pushed, and the app is running the latest build.</div>
+          <div class="actions"><button class="btn">Listen</button></div>
+        </div>
+        <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
+      </div>
+    </div>
+  </div>
+  <div class="stage wide"><div class="label"><b>Ask</b> — waiting for your voice; dots pulse red while you answer</div>
+    <div class="screen tall">
+      <div class="shape grown rec" style="width: 380px;">
+        <div class="x">✕</div>
+        <div class="content">
+          <div class="status">voice-flow asks</div>
+          <div class="msg bright">Should I restart the staging deploy, or wait for the migration to finish?</div>
+          <div class="actions"><button class="btn">Seen — I'll answer later</button>
+            <span style="font-size:10.5px;color:var(--text2);align-self:center">hold Fn1 to answer · Fn2 +screen</span></div>
+        </div>
+        <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
+      </div>
+    </div>
+  </div>
+  <div class="stage wide"><div class="label"><b>Streaming reply</b> — grows as text arrives</div>
+    <div class="screen tall">
+      <div class="shape grown proc" style="width: 380px;">
+        <div class="x">✕</div>
+        <div class="content">
+          <div class="status">Replying…</div>
+          <div class="msg">The capture bundle has 14 frames. The first three show the login flow, and the timeout you hit appears in frame 9 where—</div>
+        </div>
+        <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
+      </div>
+    </div>
+  </div>
+  <div class="stage wide"><div class="label"><b>Capture saved</b> — with action</div>
+    <div class="screen tall">
+      <div class="shape grown done" style="width: 380px;">
+        <div class="x">✕</div>
+        <div class="content">
+          <div class="status">Capture saved — 14 frames · 96s</div>
+          <div class="msg">Tell Claude Code to get your latest capture, or copy a ready-made prompt.</div>
+          <div class="actions"><button class="btn">Copy prompt for Claude</button></div>
+        </div>
+        <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>4 · The morph — one element through all three sizes</h2>
+<div class="row">
+  <div class="stage wide">
+    <div class="label"><b>Watch it cycle</b>: pill → one-line → grown → pill (dots anchored throughout)</div>
+    <div class="screen tall">
+      <div id="morph" class="shape pill idle morph">
+        <div class="title-line" id="morphTitle" style="opacity:0; position:absolute; top:0; left:0; right:0; text-align:center; line-height:24px;">1 · voice-flow — session routing</div>
+        <div class="content" id="morphContent" style="opacity:0;">
+          <div class="status">voice-flow</div>
+          <div class="msg">Your words land here, above the dots — one shape, grown upward.</div>
+        </div>
+        <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
+      </div>
+    </div>
+    <div class="morph-note" id="morphNote">state: pill</div>
+  </div>
+</div>
+
+<script>
+  const shape = document.getElementById('morph');
+  const title = document.getElementById('morphTitle');
+  const content = document.getElementById('morphContent');
+  const note = document.getElementById('morphNote');
+  const states = [
+    { name: 'pill',     apply() { shape.style.width='52px';  shape.style.height='18px';  shape.style.borderRadius='9px';  title.style.opacity=0; content.style.opacity=0; } },
+    { name: 'one-line', apply() { shape.style.width='230px'; shape.style.height='24px';  shape.style.borderRadius='12px'; title.style.opacity=1; content.style.opacity=0; } },
+    { name: 'pill',     apply() { shape.style.width='52px';  shape.style.height='18px';  shape.style.borderRadius='9px';  title.style.opacity=0; content.style.opacity=0; } },
+    { name: 'grown',    apply() { shape.style.width='380px'; shape.style.height='108px'; shape.style.borderRadius='14px'; title.style.opacity=0; content.style.opacity=1;
+                                  shape.classList.add('grown'); shape.style.padding='10px 14px 0'; } },
+    { name: 'pill',     apply() { shape.style.width='52px';  shape.style.height='18px';  shape.style.borderRadius='9px';  title.style.opacity=0; content.style.opacity=0;
+                                  shape.classList.remove('grown'); shape.style.padding='0'; } },
+  ];
+  let i = 0;
+  setInterval(() => {
+    i = (i + 1) % states.length;
+    states[i].apply();
+    note.textContent = 'state: ' + states[i].name;
+  }, 2200);
+</script>
+
+</body>
+</html>
