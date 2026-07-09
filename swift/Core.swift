@@ -553,9 +553,18 @@ class HotkeyManager {
             if type == .keyDown && event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
                 return held == required  // swallow held-key repeats
             }
+            if type == .keyUp {
+                // A release counts even when the modifiers were let go
+                // before the key (fn up a beat before the 1) — otherwise
+                // the hold never ends and the hotkey wedges "pressed".
+                guard pressed || held == required else { return false }
+                cancelPendingActivation()
+                handleRelease()
+                return true
+            }
             guard held == required else { return false }
             cancelPendingActivation()
-            if type == .keyDown { handlePress() } else { handleRelease() }
+            handlePress()
             return true
         }
         return false
@@ -795,12 +804,13 @@ class HotkeyManager {
             return true
         }
 
-        if doubleTapExactDown && held == required {
+        if doubleTapExactDown {
+            // The down matched exactly — count the tap even if the
+            // modifiers were released a beat before the key.
             completeDoubleTap()
             doubleTapExactDown = false
             return true
         }
-        doubleTapExactDown = false
         return held == required
     }
 
