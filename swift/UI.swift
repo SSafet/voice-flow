@@ -62,10 +62,15 @@ class MenuBarManager: NSObject {
     var onToggleAnnotate: (() -> Void)?
     var onShowChat: (() -> Void)?
     var onQuit: (() -> Void)?
+    /// Connected Claude Code sessions for the "Voice Goes To" submenu,
+    /// rebuilt every time it opens.
+    var claudeSessionsProvider: (() -> [(id: String, title: String, isTarget: Bool)])?
+    var onSelectClaudeSession: ((String) -> Void)?
 
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
     private var sessionMenuItem: NSMenuItem!
+    private var claudeSessionsMenu: NSMenu!
 
     override init() {
         super.init()
@@ -90,6 +95,10 @@ class MenuBarManager: NSObject {
         sessionMenuItem = menu.addItem(withTitle: "Start Session", action: #selector(toggleSessionAction), keyEquivalent: "")
         sessionMenuItem.target = self
         menu.addItem(withTitle: "Copy Prompt for Latest Capture", action: #selector(copyCaptureAction), keyEquivalent: "").target = self
+        let voiceTargetItem = menu.addItem(withTitle: "Voice Goes To", action: nil, keyEquivalent: "")
+        claudeSessionsMenu = NSMenu(title: "Voice Goes To")
+        claudeSessionsMenu.delegate = self
+        menu.setSubmenu(claudeSessionsMenu, for: voiceTargetItem)
         menu.addItem(withTitle: "Annotate Screen", action: #selector(annotateAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Show Chat", action: #selector(chatAction), keyEquivalent: "").target = self
         menu.addItem(.separator())
@@ -118,6 +127,30 @@ class MenuBarManager: NSObject {
     @objc private func annotateAction() { onToggleAnnotate?() }
     @objc private func chatAction() { onShowChat?() }
     @objc private func quitAction() { onQuit?() }
+    @objc private func selectClaudeSessionAction(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        onSelectClaudeSession?(id)
+    }
+}
+
+extension MenuBarManager: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === claudeSessionsMenu else { return }
+        menu.removeAllItems()
+        let sessions = claudeSessionsProvider?() ?? []
+        guard !sessions.isEmpty else {
+            let empty = menu.addItem(withTitle: "No Claude Code sessions connected", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            return
+        }
+        for session in sessions {
+            let item = menu.addItem(withTitle: session.title,
+                                    action: #selector(selectClaudeSessionAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = session.id
+            item.state = session.isTarget ? .on : .off
+        }
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

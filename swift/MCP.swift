@@ -1,6 +1,81 @@
 import Foundation
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  MCP sessions — one per connected Claude Code instance
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Streamable HTTP session management: initialize mints an Mcp-Session-Id
+//  the client echoes on every request, so several Claude Code sessions can
+//  be told apart — the user picks which one their voice input goes to
+//  ("Voice Goes To" in the menu bar; AppDelegate.targetSessionId).
+
+struct MCPSession {
+    let id: String
+    let number: Int          // display order: "Claude #2"
+    let firstSeen: Date
+    var lastSeen: Date
+
+    var label: String { "Claude #\(number)" }
+}
+
+final class MCPSessionRegistry {
+    private var sessions: [String: MCPSession] = [:]
+    private var counter = 0
+    private let lock = DispatchQueue(label: "voiceflow.mcp-sessions")
+
+    /// New session for an initialize request.
+    func begin() -> MCPSession {
+        lock.sync {
+            counter += 1
+            let session = MCPSession(id: UUID().uuidString, number: counter,
+                                     firstSeen: Date(), lastSeen: Date())
+            sessions[session.id] = session
+            return session
+        }
+    }
+
+    /// Refresh lastSeen. Unknown ids (a Claude session outliving a Voice
+    /// Flow restart) are silently re-adopted rather than rejected.
+    func touch(_ id: String?) -> (session: MCPSession?, isNew: Bool) {
+        guard let id else { return (nil, false) }
+        return lock.sync {
+            if var session = sessions[id] {
+                session.lastSeen = Date()
+                sessions[id] = session
+                return (session, false)
+            }
+            counter += 1
+            let session = MCPSession(id: id, number: counter,
+                                     firstSeen: Date(), lastSeen: Date())
+            sessions[id] = session
+            return (session, true)
+        }
+    }
+
+    func close(_ id: String) -> MCPSession? {
+        lock.sync { sessions.removeValue(forKey: id) }
+    }
+
+    func session(_ id: String?) -> MCPSession? {
+        guard let id else { return nil }
+        return lock.sync { sessions[id] }
+    }
+
+    var count: Int { lock.sync { sessions.count } }
+
+    /// Most recently active first; sessions silent for a day are dropped
+    /// (Claude Code usually DELETEs on exit, but not always).
+    func list() -> [MCPSession] {
+        lock.sync {
+            let cutoff = Date().addingTimeInterval(-24 * 3600)
+            for (id, session) in sessions where session.lastSeen < cutoff {
+                sessions.removeValue(forKey: id)
+            }
+            return sessions.values.sorted { $0.lastSeen > $1.lastSeen }
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  MCP Server — Voice Flow as a peer of Claude Code
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Implements the Model Context Protocol over Streamable HTTP (plain JSON
@@ -28,8 +103,14 @@ final class MCPServer {
         static func fail(_ text: String) -> ToolResult { ToolResult(text: text, isError: true) }
     }
 
-    /// (toolName, arguments) → result. Called on a background thread; may block.
-    var callTool: ((String, [String: Any]) -> ToolResult)?
+    /// (toolName, arguments, callingSession) → result. Called on a
+    /// background thread; may block.
+    var callTool: ((String, [String: Any], MCPSession?) -> ToolResult)?
+
+    let sessions = MCPSessionRegistry()
+    /// A session appeared (initialize, or an unknown id re-adopted after a
+    /// Voice Flow restart). Called on the HTTP thread — hop to main for UI.
+    var onSessionConnected: ((MCPSession) -> Void)?
 
     private let serverInstructions = """
         Voice Flow is a macOS voice + screen companion app the user is running. It is your \
@@ -65,9 +146,11 @@ final class MCPServer {
 
     // ── HTTP entry point ────────────────────────────────
 
-    /// Handle one POST /mcp body. Returns (httpStatus, responseBody).
-    /// A 202 with nil body answers notifications.
-    func handle(body: Data) -> (status: Int, payload: Data?) {
+    /// Handle one POST /mcp body. Returns (httpStatus, responseBody,
+    /// sessionIdToIssue) — the id is set only for initialize responses and
+    /// becomes the Mcp-Session-Id header. A 202 with nil body answers
+    /// notifications.
+    func handle(body: Data, sessionId: String?) -> (status: Int, payload: Data?, sessionId: String?) {
         DispatchQueue.main.async { Self.lastActivity = Date() }
         guard let message = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
             return respond(error: (-32700, "Parse error"), id: NSNull())
@@ -77,23 +160,37 @@ final class MCPServer {
         }
         let id = message["id"]
 
+        // Refresh (or re-adopt) the caller's session on every request;
+        // requests without a session header work as one anonymous pool.
+        var session: MCPSession?
+        if method != "initialize" {
+            let (touched, isNew) = sessions.touch(sessionId)
+            session = touched
+            if isNew, let touched {
+                onSessionConnected?(touched)
+            }
+        }
+
         // Notifications get no JSON-RPC response.
         guard let id else {
-            return (202, nil)
+            return (202, nil, nil)
         }
 
         switch method {
         case "initialize":
+            let created = sessions.begin()
+            onSessionConnected?(created)
             let params = message["params"] as? [String: Any]
             let requested = params?["protocolVersion"] as? String ?? "2025-06-18"
             let supported = ["2024-11-05", "2025-03-26", "2025-06-18"]
             let version = supported.contains(requested) ? requested : "2025-06-18"
-            return respond(result: [
+            let (status, payload, _) = respond(result: [
                 "protocolVersion": version,
                 "capabilities": ["tools": [String: Any]()],
                 "serverInfo": ["name": "voice-flow", "version": "2.0.0"],
                 "instructions": serverInstructions,
             ], id: id)
+            return (status, payload, created.id)
 
         case "ping":
             return respond(result: [String: Any](), id: id)
@@ -110,7 +207,7 @@ final class MCPServer {
             guard let callTool else {
                 return respond(error: (-32603, "Voice Flow is still starting up."), id: id)
             }
-            let result = callTool(name, arguments)
+            let result = callTool(name, arguments, session)
             return respond(result: [
                 "content": [["type": "text", "text": result.text]],
                 "isError": result.isError,
@@ -121,18 +218,18 @@ final class MCPServer {
         }
     }
 
-    private func respond(result: [String: Any], id: Any) -> (Int, Data?) {
+    private func respond(result: [String: Any], id: Any) -> (Int, Data?, String?) {
         let envelope: [String: Any] = ["jsonrpc": "2.0", "id": id, "result": result]
-        return (200, try? JSONSerialization.data(withJSONObject: envelope))
+        return (200, try? JSONSerialization.data(withJSONObject: envelope), nil)
     }
 
-    private func respond(error: (code: Int, message: String), id: Any) -> (Int, Data?) {
+    private func respond(error: (code: Int, message: String), id: Any) -> (Int, Data?, String?) {
         let envelope: [String: Any] = [
             "jsonrpc": "2.0",
             "id": id,
             "error": ["code": error.code, "message": error.message],
         ]
-        return (200, try? JSONSerialization.data(withJSONObject: envelope))
+        return (200, try? JSONSerialization.data(withJSONObject: envelope), nil)
     }
 
     // ── Tool catalog ────────────────────────────────────

@@ -1138,9 +1138,12 @@ final class LocalAPIServer {
     var onSeek: ((TTSAPIUpdatePayload) -> LocalAPIResponse)?
     var onStop: (() -> LocalAPIResponse)?
     var onServerMessage: ((String) -> Void)?
-    /// MCP endpoint: raw JSON-RPC body in → (status, body) out. May block
-    /// for minutes (ask_user), hence the concurrent client queue below.
-    var onMCP: ((Data) -> (status: Int, payload: Data?))?
+    /// MCP endpoint: (raw JSON-RPC body, Mcp-Session-Id) in → (status,
+    /// body, sessionIdToIssue) out. May block for minutes (ask_user),
+    /// hence the concurrent client queue below.
+    var onMCP: ((Data, String?) -> (status: Int, payload: Data?, sessionId: String?))?
+    /// DELETE /mcp with a session id — Claude Code ending its session.
+    var onMCPSessionEnd: ((String) -> Void)?
 
     private let queue = DispatchQueue(label: "voiceflow.local-api", qos: .userInitiated)
     // Each connection is served on its own thread so one long-running MCP
@@ -1245,9 +1248,18 @@ final class LocalAPIServer {
     }
 
     private func handleMCPRequest(_ request: LocalHTTPRequest, fd: Int32) {
+        let sessionId = request.headers["mcp-session-id"]
+        if request.method == "DELETE" {
+            // Explicit session teardown from the client.
+            if let sessionId {
+                onMCPSessionEnd?(sessionId)
+            }
+            writeRawResponse(status: 200, payload: Data("{}".utf8), to: fd)
+            return
+        }
         guard request.method == "POST" else {
-            // Streamable HTTP allows a server without an SSE listening stream
-            // to reject GET; DELETE (session teardown) has nothing to do.
+            // Streamable HTTP allows a server without an SSE listening
+            // stream to reject GET.
             writeRawResponse(status: 405, payload: Data("{}".utf8), to: fd)
             return
         }
@@ -1255,8 +1267,12 @@ final class LocalAPIServer {
             writeRawResponse(status: 503, payload: Data("{}".utf8), to: fd)
             return
         }
-        let (status, payload) = onMCP(request.body)
-        writeRawResponse(status: status, payload: payload, to: fd)
+        let (status, payload, issued) = onMCP(request.body, sessionId)
+        var extraHeaders: [String: String] = [:]
+        if let issued {
+            extraHeaders["Mcp-Session-Id"] = issued
+        }
+        writeRawResponse(status: status, payload: payload, extraHeaders: extraHeaders, to: fd)
     }
 
     private func route(_ request: LocalHTTPRequest) -> LocalAPIResponse {
@@ -1373,7 +1389,7 @@ final class LocalAPIServer {
         writeRawResponse(status: response.statusCode, payload: payloadData, to: fd)
     }
 
-    private func writeRawResponse(status: Int, payload: Data?, to fd: Int32) {
+    private func writeRawResponse(status: Int, payload: Data?, extraHeaders: [String: String] = [:], to fd: Int32) {
         let statusText: String
         switch status {
         case 200: statusText = "OK"
@@ -1386,14 +1402,18 @@ final class LocalAPIServer {
         }
         let payloadData = payload ?? Data()
 
-        let header = [
+        var lines = [
             "HTTP/1.1 \(status) \(statusText)",
             "Content-Type: application/json",
             "Content-Length: \(payloadData.count)",
             "Connection: close",
-            "",
-            "",
-        ].joined(separator: "\r\n")
+        ]
+        for (key, value) in extraHeaders {
+            lines.append("\(key): \(value)")
+        }
+        lines.append("")
+        lines.append("")
+        let header = lines.joined(separator: "\r\n")
 
         writeAll(fd: fd, data: Data(header.utf8))
         if !payloadData.isEmpty {

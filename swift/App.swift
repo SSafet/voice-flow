@@ -20,6 +20,8 @@ enum RecordingPurpose {
 // the prompt, or the timeout passes.
 final class PendingInteraction {
     let prompt: String
+    let sessionId: String?      // MCP session that asked (routes late answers)
+    let sessionLabel: String?   // "Claude #2" for display
     let semaphore = DispatchSemaphore(value: 0)
     var responseText: String?
     var attachments: [String] = []   // absolute screenshot/frame paths
@@ -28,8 +30,10 @@ final class PendingInteraction {
     /// answer must go to the inbox instead of this dead interaction.
     var resolved = false
 
-    init(prompt: String) {
+    init(prompt: String, sessionId: String?, sessionLabel: String?) {
         self.prompt = prompt
+        self.sessionId = sessionId
+        self.sessionLabel = sessionLabel
     }
 }
 
@@ -61,6 +65,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var mcpServer: MCPServer!
     /// Set while an MCP ask_user call is waiting for the human. Main thread only.
     var pendingInteraction: PendingInteraction?
+    /// Which Claude Code session the talk hotkeys feed (newest connection
+    /// by default; switchable via the menu bar). Main thread only.
+    var targetSessionId: String?
 
     // Agent session
     var screenCapture: ScreenCapture!
@@ -137,6 +144,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onShowSettings = { [weak self] in self?.showSettings() }
         menuBar.onToggleSession = { [weak self] in self?.toggleSession() }
         menuBar.onCopyCapturePrompt = { [weak self] in self?.copyLatestCapturePrompt() }
+        menuBar.claudeSessionsProvider = { [weak self] in
+            guard let self else { return [] }
+            return self.mcpServer.sessions.list().map { session in
+                (session.id,
+                 "\(session.label) — active \(Self.relativeAge(session.lastSeen))",
+                 session.id == self.targetSessionId)
+            }
+        }
+        menuBar.onSelectClaudeSession = { [weak self] id in
+            guard let self else { return }
+            self.targetSessionId = id
+            if let session = self.mcpServer.sessions.session(id) {
+                self.replyBubble.showNote("Talk hotkeys now go to \(session.label).")
+            }
+        }
         menuBar.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
         menuBar.onShowChat = { [weak self] in self?.chatPanel.show() }
         menuBar.onQuit = { NSApp.terminate(nil) }
@@ -511,6 +533,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // with the collected screenshots when the session ends.
         recordingPurpose = .session
         recorder.start()
+        if !recorder.isRecording {
+            recordingPurpose = .dictation
+            replyBubble.showNote("Couldn't start the microphone — the session will capture screenshots only.")
+        }
 
         indicator.setSessionActive(true)
         menuBar.setSessionActive(true)
@@ -620,6 +646,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// "just now" / "3m ago" / "2h ago" for the sessions submenu.
+    private static func relativeAge(_ date: Date) -> String {
+        let seconds = Int(Date().timeIntervalSince(date))
+        switch seconds {
+        case ..<10: return "just now"
+        case ..<60: return "\(seconds)s ago"
+        case ..<3600: return "\(seconds / 60)m ago"
+        default: return "\(seconds / 3600)h ago"
+        }
+    }
+
     /// Menu-bar route to the same prompt the post-session bubble offers —
     /// for when that bubble is long dismissed.
     private func copyLatestCapturePrompt() {
@@ -657,7 +694,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 attachments.append(shot.path)
             }
             guard !interaction.resolved else {
-                inbox.add(text: text, attachments: attachments)
+                inbox.add(text: text, attachments: attachments, session: interaction.sessionId)
                 replyBubble.showNote("Claude had stopped waiting — your answer is queued for its next check-in.")
                 return
             }
@@ -668,8 +705,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// No question pending — queue a talk-hotkey message in Claude's inbox
-    /// (delivered instantly when Claude is parked in wait_for_message).
+    /// No question pending — queue a talk-hotkey message in the target
+    /// Claude session's inbox (delivered instantly when it's parked in
+    /// wait_for_message).
     private func queueInboxMessage(text: String, includeScreenshot: Bool) {
         Task { @MainActor in
             var attachments: [String] = []
@@ -678,11 +716,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                let shot = CaptureStore.saveShot(raw) {
                 attachments.append(shot.path)
             }
-            let delivered = inbox.hasWaiter
-            inbox.add(text: text, attachments: attachments)
+            // A vanished target (session gone, none left) degrades to an
+            // unscoped message any session may pick up.
+            let target = mcpServer.sessions.session(targetSessionId)
+            let name = (mcpServer.sessions.count > 1 ? target?.label : nil) ?? "Claude"
+            let delivered = inbox.hasWaiter(for: target?.id)
+            inbox.add(text: text, attachments: attachments, session: target?.id)
             replyBubble.showNote(delivered
-                ? "Sent to Claude."
-                : "Queued for Claude — delivered when he next checks in.")
+                ? "Sent to \(name)."
+                : "Queued for \(name) — delivered when it next checks in.")
         }
     }
 
@@ -768,6 +810,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         playSound("Tink")
         state = .recording
         recorder.start()
+        guard recorder.isRecording else {
+            state = .idle
+            recordingPurpose = .dictation
+            replyBubble.showNote("Couldn't start the microphone — check it's connected, or restart Voice Flow.")
+            return
+        }
         vflog("talk-to-agent recording started (\(purpose))")
     }
 
@@ -790,6 +838,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         playSound("Tink")
         state = .recording
         recorder.start()
+        if !recorder.isRecording {
+            state = .idle
+            replyBubble.showNote("Couldn't start the microphone — check it's connected, or restart Voice Flow.")
+        }
     }
 
     private func stopRecording() {
@@ -841,6 +893,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let purpose = self.recordingPurpose
                 self.recordingPurpose = .dictation
                 self.state = .idle
+                if self.recorder.lastCaptureBytes == 0 {
+                    self.replyBubble.showNote("The microphone delivered no audio — it may have changed or be in use. Restart Voice Flow if this keeps happening.")
+                }
                 if purpose == .session {
                     self.finishSession(transcript: nil)
                 }
@@ -1291,14 +1346,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         mcpServer = MCPServer()
-        mcpServer.callTool = { [weak self] name, arguments in
+        mcpServer.callTool = { [weak self] name, arguments, session in
             guard let self else {
                 return MCPServer.ToolResult.fail("Voice Flow is shutting down.")
             }
-            return self.handleMCPTool(name, arguments)
+            return self.handleMCPTool(name, arguments, session)
         }
-        localAPIServer.onMCP = { [weak self] body in
-            self?.mcpServer.handle(body: body) ?? (503, nil)
+        mcpServer.onSessionConnected = { [weak self] session in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.targetSessionId = session.id
+                self.replyBubble.showNote(self.mcpServer.sessions.count > 1
+                    ? "\(session.label) connected — your talk hotkeys now go to it (switch in the menu bar)."
+                    : "Claude Code connected to Voice Flow.")
+            }
+        }
+        localAPIServer.onMCP = { [weak self] body, sessionId in
+            self?.mcpServer.handle(body: body, sessionId: sessionId) ?? (503, nil, nil)
+        }
+        localAPIServer.onMCPSessionEnd = { [weak self] sessionId in
+            guard let self, let closed = self.mcpServer.sessions.close(sessionId) else { return }
+            DispatchQueue.main.async {
+                if self.targetSessionId == closed.id {
+                    self.targetSessionId = self.mcpServer.sessions.list().first?.id
+                    if let next = self.mcpServer.sessions.session(self.targetSessionId) {
+                        self.replyBubble.showNote("\(closed.label) disconnected — talk hotkeys go to \(next.label) now.")
+                        return
+                    }
+                }
+                self.replyBubble.showNote("\(closed.label) disconnected.")
+            }
         }
         localAPIServer.start()
     }
@@ -1394,12 +1471,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     //  Runs on a background HTTP thread; anything touching UI hops to main.
     //  ask_user deliberately blocks — its result IS the user's answer.
 
-    private func handleMCPTool(_ name: String, _ args: [String: Any]) -> MCPServer.ToolResult {
+    private func handleMCPTool(_ name: String, _ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         switch name {
-        case "ask_user": return mcpAskUser(args)
-        case "notify_user": return mcpNotifyUser(args)
-        case "check_messages": return mcpCheckMessages()
-        case "wait_for_message": return mcpWaitForMessage(args)
+        case "ask_user": return mcpAskUser(args, session)
+        case "notify_user": return mcpNotifyUser(args, session)
+        case "check_messages": return mcpCheckMessages(session)
+        case "wait_for_message": return mcpWaitForMessage(args, session)
         case "get_latest_capture": return mcpLatestCapture()
         case "list_captures": return mcpListCaptures(args)
         case "take_screenshot": return mcpTakeScreenshot()
@@ -1429,7 +1506,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return text
     }
 
-    private func mcpAskUser(_ args: [String: Any]) -> MCPServer.ToolResult {
+    private func mcpAskUser(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         let prompt = (args["prompt"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else {
             return .fail("ask_user needs a non-empty `prompt`.")
@@ -1441,10 +1518,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         var interaction: PendingInteraction?
         DispatchQueue.main.sync {
             guard self.pendingInteraction == nil else { return }
-            let created = PendingInteraction(prompt: prompt)
+            let created = PendingInteraction(prompt: prompt, sessionId: session?.id,
+                                             sessionLabel: session?.label)
             self.pendingInteraction = created
             interaction = created
-            self.presentAsk(prompt: prompt, speakAloud: speakAloud)
+            self.presentAsk(prompt: prompt, speakAloud: speakAloud, from: self.askerName(created))
         }
         guard let interaction else {
             return .fail("Another ask_user request is already waiting for the user — wait for it to resolve.")
@@ -1473,13 +1551,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return result
     }
 
+    /// "Claude #2" when several sessions are connected, plain "Claude"
+    /// when there's only one. Main thread.
+    private func askerName(_ interaction: PendingInteraction) -> String {
+        guard mcpServer.sessions.count > 1, let label = interaction.sessionLabel else {
+            return "Claude"
+        }
+        return label
+    }
+
     /// Main thread. Put Claude's question where the user will see it.
-    private func presentAsk(prompt: String, speakAloud: Bool) {
+    private func presentAsk(prompt: String, speakAloud: Bool, from asker: String) {
         let settings = UserSettings.shared
         let hint = "Hold \(settings.talkHotkey.label) to answer · \(settings.snapTalkHotkey.label) +screen · \(settings.sessionHotkey.label) demo"
-        replyBubble.showAsk(prompt: "Claude asks: \(prompt)", hint: hint)
+        replyBubble.showAsk(prompt: "\(asker) asks: \(prompt)", hint: hint)
         if chatPanel.isVisible {
-            chatPanel.addNote("Claude asks: \(prompt)")
+            chatPanel.addNote("\(asker) asks: \(prompt)")
         }
         playSound("Glass")
         if speakAloud {
@@ -1557,7 +1644,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // ── Inbox tools ─────────────────────────────────────
 
-    private func mcpNotifyUser(_ args: [String: Any]) -> MCPServer.ToolResult {
+    private func mcpNotifyUser(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         let text = (args["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             return .fail("notify_user needs non-empty `text`.")
@@ -1565,8 +1652,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let speakAloud = args["speak_aloud"] as? Bool ?? false
         DispatchQueue.main.sync {
             let settings = UserSettings.shared
+            let sender = (self.mcpServer.sessions.count > 1 ? session?.label : nil) ?? "Claude"
             self.replyBubble.showNote(
-                "Claude: \(text)",
+                "\(sender): \(text)",
                 actionTitle: nil, action: nil
             )
             self.replyBubble.setStatus("Reply anytime: hold \(settings.talkHotkey.label) · \(settings.snapTalkHotkey.label) +screen")
@@ -1596,18 +1684,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ])
     }
 
-    private func mcpCheckMessages() -> MCPServer.ToolResult {
-        let messages = inbox.drain()
+    private func mcpCheckMessages(_ session: MCPSession?) -> MCPServer.ToolResult {
+        let messages = inbox.drain(session: session?.id)
         guard !messages.isEmpty else {
             return .ok("No messages from the user.")
         }
         return .ok(inboxPayload(messages))
     }
 
-    private func mcpWaitForMessage(_ args: [String: Any]) -> MCPServer.ToolResult {
+    private func mcpWaitForMessage(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 600
         timeout = min(max(timeout, 5), 3600)
-        let messages = inbox.wait(timeout: timeout)
+        let messages = inbox.wait(timeout: timeout, session: session?.id)
         guard !messages.isEmpty else {
             return .ok("No message arrived within \(Int(timeout))s. That's normal — call wait_for_message again to keep listening, or move on.")
         }

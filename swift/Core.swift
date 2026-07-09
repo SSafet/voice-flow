@@ -839,6 +839,9 @@ class AudioRecorder {
     private var audioData = Data()
     private(set) var isRecording = false
     private(set) var clippingDetected = false
+    /// Bytes captured by the last completed recording (0 = the tap never
+    /// fired — a wedged engine or missing device, not a short press).
+    private(set) var lastCaptureBytes = 0
     private let sampleRate: Double = 16000
     private let audioLock = DispatchQueue(label: "com.voiceflow.audioData")
 
@@ -884,12 +887,25 @@ class AudioRecorder {
         let desiredFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
         let hwFormat = inputNode.outputFormat(forBus: 0)
 
+        // After a sleep/wake or input-device change the input node can report
+        // a garbage format; recording would silently produce zero bytes.
+        // Fail fast and loudly instead.
+        guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
+            vflog("audio: input reports invalid format (\(hwFormat.sampleRate)Hz, \(hwFormat.channelCount)ch) — no usable microphone")
+            isRecording = false
+            return
+        }
+
         // Install tap with converter — smaller buffer (1024) for lower tail latency
-        let converter = AVAudioConverter(from: hwFormat, to: desiredFormat)
-        converter?.sampleRateConverterQuality = AVAudioQuality.medium.rawValue
+        guard let converter = AVAudioConverter(from: hwFormat, to: desiredFormat) else {
+            vflog("audio: no converter from \(hwFormat.sampleRate)Hz to \(Int(sampleRate))Hz")
+            isRecording = false
+            return
+        }
+        converter.sampleRateConverterQuality = AVAudioQuality.medium.rawValue
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: hwFormat) { [weak self] buffer, _ in
-            guard let self, let converter else { return }
+            guard let self else { return }
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * self.sampleRate / hwFormat.sampleRate)
             guard capacity > 0,
                   let converted = AVAudioPCMBuffer(pcmFormat: desiredFormat, frameCapacity: capacity) else { return }
@@ -994,7 +1010,11 @@ class AudioRecorder {
             vflog("warning: clipping detected in recording")
         }
 
+        lastCaptureBytes = audioData.count
         guard audioData.count > 3200 else { // < 100ms at 16kHz int16
+            vflog(audioData.isEmpty
+                ? "audio: no audio arrived from the microphone — engine wedged or device gone"
+                : "audio: recording too short (\(audioData.count) bytes) — discarded")
             completion(nil)
             return
         }

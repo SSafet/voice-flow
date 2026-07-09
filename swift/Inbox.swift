@@ -14,6 +14,9 @@ struct InboxMessage: Codable {
     let time: String            // ISO8601
     let text: String
     let attachments: [String]   // absolute screenshot paths
+    // Target MCP session id; nil = any session may take it (also what
+    // pre-session inbox.json files decode to).
+    let session: String?
 }
 
 final class MessageInbox {
@@ -23,7 +26,7 @@ final class MessageInbox {
 
     private let queue = DispatchQueue(label: "voiceflow.inbox")
     private var messages: [InboxMessage] = []
-    private var waiters: [DispatchSemaphore] = []
+    private var waiters: [(session: String?, semaphore: DispatchSemaphore)] = []
 
     init() {
         if let data = try? Data(contentsOf: Self.url),
@@ -32,21 +35,28 @@ final class MessageInbox {
         }
     }
 
-    /// True while an MCP wait_for_message call is parked — the user's
-    /// message will be delivered instantly rather than queued.
-    var hasWaiter: Bool {
-        queue.sync { !waiters.isEmpty }
+    /// A message for `session` matches a waiter/drainer of `candidate` when
+    /// either side is unscoped (nil) or the ids agree.
+    private static func matches(_ session: String?, _ candidate: String?) -> Bool {
+        session == nil || candidate == nil || session == candidate
+    }
+
+    /// True while an MCP wait_for_message call that would receive a message
+    /// for `session` is parked — it will be delivered instantly, not queued.
+    func hasWaiter(for session: String?) -> Bool {
+        queue.sync { waiters.contains { Self.matches(session, $0.session) } }
     }
 
     var pendingCount: Int {
         queue.sync { messages.count }
     }
 
-    func add(text: String, attachments: [String]) {
+    func add(text: String, attachments: [String], session: String? = nil) {
         let message = InboxMessage(
             time: ISO8601DateFormatter().string(from: Date()),
             text: text,
-            attachments: attachments
+            attachments: attachments,
+            session: session
         )
         queue.sync {
             messages.append(message)
@@ -54,53 +64,48 @@ final class MessageInbox {
                 messages.removeFirst(messages.count - Self.maxQueued)
             }
             persistLocked()
-            for waiter in waiters {
-                waiter.signal()
+            for waiter in waiters where Self.matches(session, waiter.session) {
+                waiter.semaphore.signal()
             }
-            waiters.removeAll()
+            waiters.removeAll { Self.matches(session, $0.session) }
         }
         vflog("inbox: queued message (\(text.prefix(60))…)")
     }
 
-    /// Return all queued messages and clear the queue.
-    func drain() -> [InboxMessage] {
-        queue.sync {
-            let drained = messages
-            messages = []
-            if !drained.isEmpty {
-                persistLocked()
-            }
-            return drained
-        }
+    /// Return the messages visible to `session` and remove them from the
+    /// queue (other sessions' messages stay).
+    func drain(session: String?) -> [InboxMessage] {
+        queue.sync { drainLocked(session: session) }
     }
 
-    /// Block until at least one message exists (or the timeout passes),
+    /// Block until a message for `session` exists (or the timeout passes),
     /// then drain. Returns [] on timeout.
-    func wait(timeout: TimeInterval) -> [InboxMessage] {
+    func wait(timeout: TimeInterval, session: String?) -> [InboxMessage] {
         let semaphore = DispatchSemaphore(value: 0)
         let immediate: [InboxMessage] = queue.sync {
-            if !messages.isEmpty {
-                let drained = messages
-                messages = []
-                persistLocked()
-                return drained
+            let drained = drainLocked(session: session)
+            if drained.isEmpty {
+                waiters.append((session, semaphore))
             }
-            waiters.append(semaphore)
-            return []
+            return drained
         }
         if !immediate.isEmpty {
             return immediate
         }
         _ = semaphore.wait(timeout: .now() + timeout)
         return queue.sync {
-            waiters.removeAll { $0 === semaphore }
-            let drained = messages
-            messages = []
-            if !drained.isEmpty {
-                persistLocked()
-            }
-            return drained
+            waiters.removeAll { $0.semaphore === semaphore }
+            return drainLocked(session: session)
         }
+    }
+
+    /// Must be called on `queue`.
+    private func drainLocked(session: String?) -> [InboxMessage] {
+        let drained = messages.filter { Self.matches($0.session, session) }
+        guard !drained.isEmpty else { return [] }
+        messages.removeAll { Self.matches($0.session, session) }
+        persistLocked()
+        return drained
     }
 
     /// Must be called on `queue`.

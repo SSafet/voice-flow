@@ -74,7 +74,16 @@ via `claude mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp` —
 Settings → Assistant shows connection status and copies that command;
 `MCPServer.lastActivity` tracks the most recent client request).
 Tool handlers live in `AppDelegate.handleMCPTool` (`App.swift`); they run on
-background HTTP threads and hop to main for UI. 16 tools in three groups:
+background HTTP threads and hop to main for UI.
+
+**Sessions**: each Claude Code instance gets an `Mcp-Session-Id` on
+initialize (`MCPSessionRegistry` in `MCP.swift`, labeled "Claude #N");
+`DELETE /mcp` closes one. Talk hotkeys feed the **target session**
+(`AppDelegate.targetSessionId` — newest connection by default, switchable
+via the menu bar's "Voice Goes To" submenu). The inbox is per-session
+(`InboxMessage.session`; nil = any session may drain it), and `ask_user` /
+`notify_user` bubbles are labeled with the asking session when several are
+connected. 16 tools in three groups:
 
 **Hearing from the user**
 - `ask_user` — **blocks** until the human answers (`PendingInteraction`
