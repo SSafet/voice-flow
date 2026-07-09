@@ -247,8 +247,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     "\(waiting) session\(waiting == 1 ? "" : "s") waiting — ⌃⌥1–6", seconds: 4)
             }
         }
-        // Trash deletes: cancels a waiting ask and clears the session's
-        // whole push stack.
+        // Trash means "I'm done with this one": it cancels a waiting ask,
+        // clears the whole push stack, AND disconnects the session — its
+        // picker dot goes too (a live session quietly re-adopts on its
+        // next tool call, so this is always safe).
         replyBubble.onTrashed = { [weak self] in
             guard let self else { return }
             if let interaction = self.pendingInteraction {
@@ -257,6 +259,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if let id = self.currentPushSessionId {
                 self.sessionPushes.removeValue(forKey: id)
+                if let closed = self.mcpServer.sessions.close(id) {
+                    if self.targetSessionId == id {
+                        self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
+                    }
+                    self.refreshSessionIndicator()
+                    // The receipt has to wait for the collapse to land.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                        guard !self.indicator.isGrownVisible else { return }
+                        self.indicator.flashMessage("\(closed.label) removed", seconds: 4)
+                    }
+                }
             }
             self.currentPushSessionId = nil
             self.refreshUnreadIndicator()

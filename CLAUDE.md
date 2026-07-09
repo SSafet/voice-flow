@@ -84,7 +84,8 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   grown view's speaker icon does the same. `ReplyBubble` is now only a facade forwarding to the pill: ✕
   closes-and-keeps (asks stay pending, stacks survive; a "N sessions
   waiting" receipt flashes if others queued meanwhile), trash deletes
-  (cancels a waiting ask, clears the stack), speaker reads aloud.
+  stack AND session (cancels a waiting ask, drops the picker dot — a live
+  session re-adopts on its next call), speaker reads aloud.
 - With voice replies on (speaker toggle), `AgentReplySpeaker` (`swift/TTS.swift`)
   cuts the streaming reply at sentence boundaries into
   `TTSController.beginLiveSpeech/feedLiveSpeech/endLiveSpeech`, so speech starts
