@@ -24,6 +24,9 @@ final class PendingInteraction {
     var responseText: String?
     var attachments: [String] = []   // absolute screenshot/frame paths
     var cancelled = false
+    /// Set (on main) once the blocked tool call has returned — a late
+    /// answer must go to the inbox instead of this dead interaction.
+    var resolved = false
 
     init(prompt: String) {
         self.prompt = prompt
@@ -628,16 +631,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Hand the user's answer to the MCP tool call that's blocked on it.
+    /// If that call already timed out, the answer goes to the inbox instead
+    /// so Claude still gets it on its next check-in.
     private func fulfillInteraction(_ interaction: PendingInteraction, text: String, includeScreenshot: Bool) {
-        replyBubble.showNote("Answer sent to Claude.")
         Task { @MainActor in
+            var attachments: [String] = []
             if includeScreenshot,
                let raw = try? await screenCapture.captureScreen(),
                let shot = CaptureStore.saveShot(raw) {
-                interaction.attachments.append(shot.path)
+                attachments.append(shot.path)
             }
+            guard !interaction.resolved else {
+                inbox.add(text: text, attachments: attachments)
+                replyBubble.showNote("Claude had stopped waiting — your answer is queued for its next check-in.")
+                return
+            }
+            interaction.attachments.append(contentsOf: attachments)
             interaction.responseText = text
             interaction.semaphore.signal()
+            replyBubble.showNote("Answer sent to Claude.")
         }
     }
 
@@ -1427,6 +1439,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         var result = MCPServer.ToolResult.fail("Internal error resolving the interaction.")
         DispatchQueue.main.sync {
+            interaction.resolved = true
             self.pendingInteraction = nil
             if let text = interaction.responseText {
                 var payload: [String: Any] = ["response": text]
@@ -1462,7 +1475,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func mcpLatestCapture() -> MCPServer.ToolResult {
-        guard let (directory, meta) = CaptureStore.listBundles(limit: 1).first else {
+        guard let (directory, meta) = CaptureStore.latestBundle() else {
             return .fail("No captures yet. The user records one with the session hotkey — or use ask_user to request a demonstration.")
         }
         var payload: [String: Any] = [

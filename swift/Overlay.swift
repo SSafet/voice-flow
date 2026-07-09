@@ -302,9 +302,16 @@ private final class OverlayPanelWindow {
     private var userMoved = false
     private var repositioning = false
     private var lastPositionKey = ""
+    private var moveObserver: NSObjectProtocol?
 
     init(id: String) {
         self.id = id
+    }
+
+    deinit {
+        if let moveObserver {
+            NotificationCenter.default.removeObserver(moveObserver)
+        }
     }
 
     func render(_ doc: OverlayDoc) {
@@ -599,7 +606,7 @@ private final class OverlayPanelWindow {
         newPanel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         newPanel.isReleasedWhenClosed = false
         newPanel.isMovableByWindowBackground = true
-        NotificationCenter.default.addObserver(
+        moveObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didMoveNotification, object: newPanel, queue: .main
         ) { [weak self] _ in
             guard let self, !self.repositioning else { return }

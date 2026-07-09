@@ -62,7 +62,7 @@ final class CaptureStore {
     }()
 
     private let maxStoredBundles = 40
-    private let maxStoredShots = 60
+    private static let maxStoredShots = 60
     private let writeQueue = DispatchQueue(label: "voiceflow.capture-store", qos: .utility)
 
     // Active session state (main thread only)
@@ -122,16 +122,22 @@ final class CaptureStore {
         let duration = ended.timeIntervalSince(started)
         let id = activeDir.lastPathComponent
         let iso = ISO8601DateFormatter()
-        let meta = CaptureBundleMeta(
-            id: id,
-            startedAt: iso.string(from: started),
-            endedAt: iso.string(from: ended),
-            durationSeconds: duration,
-            transcript: text,
-            frames: collected
-        )
 
         writeQueue.async { [maxStoredBundles] in
+            // The frame writes were queued ahead of us on this serial queue,
+            // so every frame that could be written now exists — drop the
+            // rare ones whose JPEG encode failed from the index.
+            let written = collected.filter {
+                FileManager.default.fileExists(atPath: activeDir.appendingPathComponent($0.file).path)
+            }
+            let meta = CaptureBundleMeta(
+                id: id,
+                startedAt: iso.string(from: started),
+                endedAt: iso.string(from: ended),
+                durationSeconds: duration,
+                transcript: text,
+                frames: written
+            )
             if let data = try? JSONEncoder().encode(meta) {
                 try? data.write(to: activeDir.appendingPathComponent("meta.json"), options: .atomic)
             }
@@ -259,7 +265,7 @@ final class CaptureStore {
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: shotsDir, includingPropertiesForKeys: nil) else { return }
         let sorted = entries.sorted { $0.lastPathComponent > $1.lastPathComponent }
-        for stale in sorted.dropFirst(60) {
+        for stale in sorted.dropFirst(maxStoredShots) {
             try? FileManager.default.removeItem(at: stale)
         }
     }
