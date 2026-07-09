@@ -1368,11 +1368,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if self.targetSessionId == closed.id {
                     self.targetSessionId = self.mcpServer.sessions.list().first?.id
                     if let next = self.mcpServer.sessions.session(self.targetSessionId) {
-                        self.replyBubble.showTransient("\(closed.label) disconnected — talk hotkeys go to \(next.label) now.", seconds: 5)
+                        self.replyBubble.showTransient("\(closed.label) session ended — talk hotkeys now go to \(next.label).", seconds: 5)
                         return
                     }
                 }
-                self.replyBubble.showTransient("\(closed.label) disconnected.", seconds: 5)
+                self.replyBubble.showTransient("\(closed.label) session ended.", seconds: 5)
             }
         }
         localAPIServer.start()
