@@ -131,7 +131,7 @@ ticks every 5 s while the user is active (input within the last 90 s, screen
 unlocked): one metadata line — frontmost app, window title, browser-tab URL
 (per-browser AppleScript; needs the one-time Automation grant) — appended to
 `<yyyy-mm-dd>/activity.jsonl`, plus a deduped ≤1568-px screenshot. Day folders
-are pruned to the newest 7. A LaunchAgent
+are pruned to the newest 30. A LaunchAgent
 (`~/Library/LaunchAgents/com.voiceflow.watcher-analyze.plist`, 21:37 nightly)
 runs headless Claude Code against `watcher/ANALYZE.md`, which aggregates the
 log by script (never raw into context), maintains the observations ledger

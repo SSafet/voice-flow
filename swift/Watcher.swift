@@ -28,7 +28,7 @@ final class WorkflowWatcher {
     private let interval: TimeInterval = 5
     private let idleCutoff: TimeInterval = 90
     private let diffThreshold: Double = 0.01
-    private let keepDays = 7
+    private let keepDays = 30
     private let writeQueue = DispatchQueue(label: "voiceflow.watcher", qos: .utility)
 
     private var timer: Timer?
