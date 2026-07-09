@@ -257,18 +257,23 @@ class FloatingIndicator: NSObject {
     /// Current panel size — the classic pill, or the expanded shell.
     private var panelSize: NSSize { expandedSize ?? NSSize(width: W, height: H) }
 
-    func dock(above bubbleFrame: NSRect) {
+    /// The reply bubble grows upward from the pill's home spot; the pill
+    /// docks INTO its bottom edge — the exact screen position it always
+    /// has — floating above the bubble so the dots stay visible inside it.
+    func dock(into bubbleFrame: NSRect) {
         dockFrame = bubbleFrame
         guard let panel else { return }
         let size = panelSize
         let x = (bubbleFrame.midX - size.width / 2).rounded()
-        let y = (bubbleFrame.maxY + 3).rounded()
+        let y = (bubbleFrame.minY + 3).rounded()
+        panel.level = .floating + 2
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
         panel.orderFront(nil)
     }
 
     func undock() {
         dockFrame = nil
+        panel?.level = .floating
         recenter()
     }
 
@@ -315,7 +320,7 @@ class FloatingIndicator: NSObject {
         let shellW = max(W, min(340, textWidth + 30))
         let shellH = H + 6
         expandedSize = NSSize(width: shellW, height: shellH)
-        if let dockFrame { dock(above: dockFrame) } else { recenter() }
+        if let dockFrame { dock(into: dockFrame) } else { recenter() }
 
         capsuleLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
         pillLayer.frame = CGRect(x: 1, y: 1, width: shellW - 2, height: shellH - 2)
@@ -352,7 +357,7 @@ class FloatingIndicator: NSObject {
         watcherRingLayer.cornerRadius = H / 2
         dotLayers.forEach { $0.isHidden = false }
         applyBadge()
-        if let dockFrame { dock(above: dockFrame) } else { recenter() }
+        if let dockFrame { dock(into: dockFrame) } else { recenter() }
         applyState(force: true)
     }
 
@@ -483,7 +488,7 @@ class FloatingIndicator: NSObject {
     private func recenter() {
         // Docked to the reply bubble? Stay there.
         if let dockFrame {
-            dock(above: dockFrame)
+            dock(into: dockFrame)
             return
         }
         // Follow the user: the screen holding the mouse pointer, not the

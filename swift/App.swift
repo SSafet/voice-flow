@@ -211,7 +211,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         replyBubble.onFrameChanged = { [weak self] frame in
             guard let self else { return }
             if let frame {
-                self.indicator.dock(above: frame)
+                self.indicator.dock(into: frame)
             } else {
                 self.indicator.undock()
             }

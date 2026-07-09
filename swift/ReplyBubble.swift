@@ -17,7 +17,9 @@ final class ReplyBubble {
     private let maxWidth: CGFloat = 400
     private let maxTextHeight: CGFloat = 320
     private let headerHeight: CGFloat = 26
-    private let bottomInset: CGFloat = 9
+    /// Bottom band left free for the pill — it docks into the bubble's
+    /// lower edge (its usual screen spot) so the dots never move.
+    private let pillZone: CGFloat = 26
     private let actionRowHeight: CGFloat = 34
 
     private var panel: NSPanel?
@@ -227,27 +229,28 @@ final class ReplyBubble {
         let textHeight = min(max(used + 6, 22), maxTextHeight)
 
         let topSpace: CGFloat = hasStatus ? headerHeight : 7
-        let bottomPad: CGFloat = hasStatus ? bottomInset : 7
-        let totalHeight = topSpace + textHeight + actionSpace + bottomPad
+        let totalHeight = topSpace + textHeight + actionSpace + pillZone
 
         guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
         let frame = screen.frame
         let x = frame.midX - width / 2
-        let y = frame.minY + 6  // the pill hides while we're up — take its spot
+        // Grow upward from the very bottom: the docked pill lands at
+        // minY+5 — its normal home — inside our bottom band.
+        let y = frame.minY + 2
         panel.setFrame(NSRect(x: x, y: y, width: width, height: totalHeight), display: true)
 
-        scrollView.frame = NSRect(x: 10, y: bottomPad + actionSpace, width: scrollWidth, height: textHeight)
+        scrollView.frame = NSRect(x: 10, y: pillZone + actionSpace, width: scrollWidth, height: textHeight)
         statusLabel.isHidden = !hasStatus
         statusLabel.frame = NSRect(x: 12, y: totalHeight - headerHeight + 5, width: width - 52, height: 16)
         if hasStatus {
             closeButton.frame = NSRect(x: width - 30, y: totalHeight - headerHeight + 3, width: 20, height: 20)
         } else {
             // Centered on the text row — no empty header band above.
-            closeButton.frame = NSRect(x: width - 30, y: bottomPad + actionSpace + (textHeight - 20) / 2, width: 20, height: 20)
+            closeButton.frame = NSRect(x: width - 30, y: pillZone + actionSpace + (textHeight - 20) / 2, width: 20, height: 20)
         }
         if hasAction {
             let buttonWidth = min(width - 32, max(140, actionButton.intrinsicContentSize.width + 24))
-            actionButton.frame = NSRect(x: 16, y: 8, width: buttonWidth, height: 22)
+            actionButton.frame = NSRect(x: 16, y: pillZone + 6, width: buttonWidth, height: 22)
         }
 
         if panel.isVisible {
