@@ -490,7 +490,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         ttsHotkeyManager = HotkeyManager(spec: UserSettings.shared.ttsHotkey)
-        ttsHotkeyManager.onPress = { [weak self] in self?.speakSelectedTextOrStop() }
+        ttsHotkeyManager.onPress = { [weak self] in
+            self?.indicator.collapseNow()
+            self?.speakSelectedTextOrStop()
+        }
 
         sessionHotkeyManager = HotkeyManager(spec: UserSettings.shared.sessionHotkey)
         sessionHotkeyManager.onPress = { [weak self] in self?.toggleSession() }
@@ -504,7 +507,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         snapTalkHotkeyManager.onRelease = { [weak self] in self?.stopTalkRecording() }
 
         annotateHotkeyManager = HotkeyManager(spec: UserSettings.shared.annotateHotkey)
-        annotateHotkeyManager.onPress = { [weak self] in self?.annotationOverlay.toggleEditing() }
+        annotateHotkeyManager.onPress = { [weak self] in
+            self?.indicator.collapseNow()
+            self?.annotationOverlay.toggleEditing()
+        }
 
         // ⌃⌥1–6: jump straight to a Claude session (order = connect order,
         // mirrored by the session strip's chip numbers).
@@ -765,33 +771,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The picker's view of the world: one entry per session in connect
+    /// order (active lit, pending amber) plus the active session's name.
+    /// Main thread.
+    private func pickerEntries() -> (entries: [FloatingIndicator.PickerEntry], activeName: String?) {
+        let ordered = mcpServer.sessions.ordered()
+        let entries = ordered.enumerated().map { index, session in
+            FloatingIndicator.PickerEntry(
+                number: index + 1,
+                active: session.id == targetSessionId,
+                pending: inbox.pendingCount(for: session.id) > 0
+                    || pendingInteraction?.sessionId == session.id)
+        }
+        return (entries, ordered.first { $0.id == targetSessionId }?.label)
+    }
+
     /// Single entry for changing which Claude session owns the user's
     /// voice + screen: routes hotkeys, swaps that session's overlays in,
-    /// and updates the pill (badge + expanded title flash). Main thread.
+    /// and updates the pill (middle-dot number + picker row). Main thread.
     func setTargetSession(_ id: String?, announce: Bool) {
         targetSessionId = id
         overlayManager.setActiveSession(id)
         refreshSessionIndicator()
-        if announce, let session = mcpServer.sessions.session(id) {
-            let ordered = mcpServer.sessions.ordered()
-            indicator.flashSession(title: session.label,
-                                   index: ordered.firstIndex { $0.id == session.id },
-                                   count: ordered.count)
+        if announce {
+            let (entries, activeName) = pickerEntries()
+            indicator.showPicker(entries: entries, activeName: activeName)
         }
     }
 
-    /// Keep the pill's tiny active-session number current.
+    /// Keep the pill's middle-dot session number current.
     func refreshSessionIndicator() {
         let ordered = mcpServer.sessions.ordered()
-        indicator.setSessionBadge(index: ordered.firstIndex { $0.id == targetSessionId },
-                                  count: ordered.count)
+        indicator.setActiveSessionNumber(
+            ordered.firstIndex { $0.id == targetSessionId }.map { $0 + 1 })
     }
 
-    /// ⌃⌥1–6. Misses answer inside the pill, never as a bubble. Main thread.
+    /// ⌃⌥1–6. Any select attempt — valid or aimed at a missing number —
+    /// opens the picker showing what's actually available. Main thread.
     private func switchToSession(at index: Int) {
         let ordered = mcpServer.sessions.ordered()
         guard index < ordered.count else {
-            indicator.flashMessage(ordered.isEmpty ? "no sessions" : "no #\(index + 1) session")
+            let (entries, activeName) = pickerEntries()
+            indicator.showPicker(entries: entries, activeName: activeName)
             return
         }
         setTargetSession(ordered[index].id, announce: true)
@@ -991,6 +1012,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // ── Talk to the agent (hold-to-record) ─────────────
 
     private func startTalkRecording(purpose: RecordingPurpose) {
+        indicator.collapseNow()   // any other hotkey closes the picker
         guard !recorder.isRecording else { return }
         stopSpeechPlayback()   // barge-in: don't record the agent's own voice
         recordingPurpose = purpose
@@ -1018,6 +1040,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     private func startRecording() {
+        indicator.collapseNow()   // any other hotkey closes the picker
         guard !recorder.isRecording else { return }
         stopSpeechPlayback()
         recordingPurpose = .dictation
@@ -1828,10 +1851,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.refreshSessionIndicator()
             // Renaming the active session? Show the user its new name.
             if renamed.id == self.targetSessionId {
-                let ordered = self.mcpServer.sessions.ordered()
-                self.indicator.flashSession(title: renamed.label,
-                                            index: ordered.firstIndex { $0.id == renamed.id },
-                                            count: ordered.count)
+                let (entries, activeName) = self.pickerEntries()
+                self.indicator.showPicker(entries: entries, activeName: activeName)
             }
         }
         return .ok("This session now appears to the user as \"\(renamed.label)\".")

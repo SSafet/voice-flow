@@ -235,11 +235,12 @@ class FloatingIndicator: NSObject {
     // Flash mode: the pill stretches into one wide capsule, the dots swap
     // out for the session title on a single line, 5s later it shrinks back.
     private var expandTitleLayer: CATextLayer!
-    private var sessionBadgeLayer: CATextLayer!
+    private var middleDigitLayer: CATextLayer!
+    private var pickerLayer: CALayer?
     private var expandTimer: Timer?
     private var expandedSize: NSSize?
-    private var badgeIndex: Int?
-    private var badgeCount = 0
+    private var activeNumber: Int?
+    private var clickMonitor: Any?
 
     private var state: AppState = .idle
     private var sessionActive = false
@@ -279,46 +280,147 @@ class FloatingIndicator: NSObject {
 
     // ── Session UI in the pill ──────────────────────────
 
-    /// Show/refresh the tiny active-session number on the pill.
-    func setSessionBadge(index: Int?, count: Int) {
-        badgeIndex = index
-        badgeCount = count
-        guard sessionBadgeLayer != nil, expandedSize == nil else { return }
-        applyBadge()
+    /// One entry per available session for the picker row.
+    struct PickerEntry {
+        let number: Int
+        let active: Bool
+        let pending: Bool
     }
 
-    private func applyBadge() {
-        if let badgeIndex, badgeCount > 1 {
-            sessionBadgeLayer.string = "\(badgeIndex + 1)"
-            sessionBadgeLayer.isHidden = false
+    /// The middle dot grows a touch and carries the active session's
+    /// number; nil (no sessions) restores the classic dot.
+    func setActiveSessionNumber(_ number: Int?) {
+        activeNumber = number
+        guard dotLayers.count == 3, let digit = middleDigitLayer else { return }
+        let cx = W / 2.0, cy = H / 2.0
+        if let number {
+            dotLayers[1].frame = CGRect(x: cx - 4.5, y: cy - 4.5, width: 9, height: 9)
+            dotLayers[1].cornerRadius = 4.5
+            digit.string = "\(number)"
+            digit.frame = CGRect(x: 0, y: 1, width: 9, height: 8)
+            digit.isHidden = false
         } else {
-            sessionBadgeLayer.isHidden = true
+            dotLayers[1].frame = CGRect(x: cx - DOT_R, y: cy - DOT_R, width: DOT_R * 2, height: DOT_R * 2)
+            dotLayers[1].cornerRadius = DOT_R
+            digit.isHidden = true
         }
     }
 
-    /// The pill stretches into one wide capsule: the dots swap out and the
-    /// session title takes their place on a single line; after 5s it
-    /// shrinks back to the classic pill. Selecting the same session again
-    /// re-flashes it — the on-demand peek.
-    func flashSession(title: String, index: Int?, count: Int) {
-        badgeIndex = index
-        badgeCount = count
-        expandPill((index.map { "\($0 + 1) · " } ?? "") + title, for: 5.0)
+    /// The session picker: the pill stretches into one line — "sessions",
+    /// a numbered dot per available session (active lit, pending amber),
+    /// the active session's name trailing. Collapses after `seconds`, on
+    /// any other hotkey, or on a click anywhere.
+    func showPicker(entries: [PickerEntry], activeName: String?, seconds: TimeInterval = 4.0) {
+        guard panel != nil else { return }
+        guard !entries.isEmpty else {
+            flashMessage("no sessions")
+            return
+        }
+        expandTimer?.invalidate()
+        pickerLayer?.removeFromSuperlayer()
+        expandTitleLayer.isHidden = true
+
+        let shellH = H + 8
+        let labelFont = NSFont.systemFont(ofSize: 10.5)
+        let nameFont = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+        let labelW = ceil(("sessions" as NSString).size(withAttributes: [.font: labelFont]).width)
+        let name = activeName ?? ""
+        let nameW = name.isEmpty ? 0 : min(220, ceil((name as NSString).size(withAttributes: [.font: nameFont]).width))
+        let dotsW = CGFloat(entries.count) * 12 + CGFloat(max(0, entries.count - 1)) * 6
+        let shellW = max(W, min(440, 14 + labelW + 10 + dotsW + (nameW > 0 ? 10 + nameW : 0) + 14))
+        expandShell(width: shellW, height: shellH)
+
+        let row = CALayer()
+        row.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
+        var x: CGFloat = 14
+
+        let label = CATextLayer()
+        label.string = "sessions"
+        label.font = labelFont
+        label.fontSize = 10.5
+        label.foregroundColor = NSColor(r: 168, g: 158, b: 141).cgColor
+        label.contentsScale = 2
+        label.frame = CGRect(x: x, y: (shellH - 13) / 2, width: labelW + 2, height: 13)
+        row.addSublayer(label)
+        x += labelW + 10
+
+        for entry in entries {
+            let dot = CALayer()
+            dot.frame = CGRect(x: x, y: (shellH - 12) / 2, width: 12, height: 12)
+            dot.cornerRadius = 6
+            let digit = CATextLayer()
+            digit.string = "\(entry.number)"
+            digit.font = NSFont.systemFont(ofSize: 7.5, weight: .bold)
+            digit.fontSize = 7.5
+            digit.alignmentMode = .center
+            digit.contentsScale = 2
+            digit.frame = CGRect(x: 0, y: 1.5, width: 12, height: 9)
+            if entry.active {
+                dot.backgroundColor = NSColor(r: 216, g: 207, b: 192).cgColor
+                digit.foregroundColor = NSColor(r: 23, g: 21, b: 15).cgColor
+            } else if entry.pending {
+                dot.borderWidth = 1
+                dot.borderColor = NSColor(r: 255, g: 194, b: 75, a: 217).cgColor
+                digit.foregroundColor = NSColor(r: 255, g: 194, b: 75).cgColor
+            } else {
+                dot.borderWidth = 1
+                dot.borderColor = NSColor(r: 111, g: 103, b: 92).cgColor
+                digit.foregroundColor = NSColor(r: 168, g: 158, b: 141).cgColor
+            }
+            dot.addSublayer(digit)
+            row.addSublayer(dot)
+            x += 18
+        }
+
+        if nameW > 0 {
+            let nameLayer = CATextLayer()
+            nameLayer.string = name
+            nameLayer.font = nameFont
+            nameLayer.fontSize = 11.5
+            nameLayer.truncationMode = .end
+            nameLayer.foregroundColor = Theme.text.cgColor
+            nameLayer.contentsScale = 2
+            nameLayer.frame = CGRect(x: x + 4, y: (shellH - 14) / 2, width: shellW - x - 18, height: 14)
+            row.addSublayer(nameLayer)
+        }
+
+        capsuleLayer.addSublayer(row)
+        pickerLayer = row
+
+        expandTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
+            self?.collapseNow()
+        }
     }
 
-    /// Short in-pill feedback ("no sessions") — same stretch, quicker collapse.
-    func flashMessage(_ text: String) {
-        expandPill(text, for: 2.0)
-    }
-
-    private func expandPill(_ display: String, for duration: TimeInterval) {
+    /// Short in-pill feedback ("no sessions", receipts) — one-line stretch.
+    func flashMessage(_ text: String, seconds: TimeInterval = 2.0, isError: Bool = false) {
         guard panel != nil else { return }
         expandTimer?.invalidate()
+        pickerLayer?.removeFromSuperlayer()
+        pickerLayer = nil
 
         let font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
-        let textWidth = ceil((display as NSString).size(withAttributes: [.font: font]).width)
+        let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
         let shellW = max(W, min(340, textWidth + 30))
         let shellH = H + 6
+        expandShell(width: shellW, height: shellH)
+
+        expandTitleLayer.font = font
+        expandTitleLayer.fontSize = 11.5
+        expandTitleLayer.foregroundColor = isError
+            ? NSColor(r: 255, g: 138, b: 138).cgColor
+            : Theme.text.cgColor
+        expandTitleLayer.string = text
+        expandTitleLayer.frame = CGRect(x: 15, y: (shellH - 14) / 2, width: shellW - 30, height: 14)
+        expandTitleLayer.isHidden = false
+
+        expandTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
+            self?.collapseNow()
+        }
+    }
+
+    /// Stretch the shell around the capsule and hide the classic dots.
+    private func expandShell(width shellW: CGFloat, height shellH: CGFloat) {
         expandedSize = NSSize(width: shellW, height: shellH)
         if let dockFrame { dock(into: dockFrame) } else { recenter() }
 
@@ -330,23 +432,26 @@ class FloatingIndicator: NSObject {
         watcherRingLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
         watcherRingLayer.cornerRadius = shellH / 2
         dotLayers.forEach { $0.isHidden = true }
-        sessionBadgeLayer.isHidden = true
 
-        expandTitleLayer.font = font
-        expandTitleLayer.fontSize = 11.5
-        expandTitleLayer.string = display
-        expandTitleLayer.frame = CGRect(x: 15, y: (shellH - 14) / 2, width: shellW - 30, height: 14)
-        expandTitleLayer.isHidden = false
-
-        expandTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
-            self?.collapseSessionFlash()
+        if clickMonitor == nil {
+            clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                self?.collapseNow()
+            }
         }
     }
 
-    private func collapseSessionFlash() {
+    /// Back to the classic pill — timer, click-anywhere, or another hotkey.
+    func collapseNow() {
+        guard expandedSize != nil else { return }
         expandTimer?.invalidate()
         expandTimer = nil
         expandedSize = nil
+        if let clickMonitor {
+            NSEvent.removeMonitor(clickMonitor)
+            self.clickMonitor = nil
+        }
+        pickerLayer?.removeFromSuperlayer()
+        pickerLayer = nil
         expandTitleLayer.isHidden = true
         capsuleLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
         pillLayer.frame = CGRect(x: 1, y: 1, width: W - 2, height: H - 2)
@@ -356,7 +461,6 @@ class FloatingIndicator: NSObject {
         watcherRingLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
         watcherRingLayer.cornerRadius = H / 2
         dotLayers.forEach { $0.isHidden = false }
-        applyBadge()
         if let dockFrame { dock(into: dockFrame) } else { recenter() }
         applyState(force: true)
     }
@@ -431,17 +535,17 @@ class FloatingIndicator: NSObject {
             dotLayers.append(dot)
         }
 
-        // Tiny active-session number at the capsule's top-right (only shown
-        // when several Claude sessions are connected).
-        sessionBadgeLayer = CATextLayer()
-        sessionBadgeLayer.alignmentMode = .center
-        sessionBadgeLayer.contentsScale = 2
-        sessionBadgeLayer.fontSize = 7.5
-        sessionBadgeLayer.font = NSFont.systemFont(ofSize: 7.5, weight: .bold)
-        sessionBadgeLayer.foregroundColor = NSColor(r: 255, g: 194, b: 75).cgColor
-        sessionBadgeLayer.frame = CGRect(x: W - 11, y: H - 10, width: 9, height: 9)
-        sessionBadgeLayer.isHidden = true
-        capsuleLayer.addSublayer(sessionBadgeLayer)
+        // The active session's number, carried inside the middle dot
+        // (which setActiveSessionNumber grows to 9px while it's shown).
+        middleDigitLayer = CATextLayer()
+        middleDigitLayer.alignmentMode = .center
+        middleDigitLayer.contentsScale = 2
+        middleDigitLayer.fontSize = 6.5
+        middleDigitLayer.font = NSFont.systemFont(ofSize: 6.5, weight: .bold)
+        middleDigitLayer.foregroundColor = NSColor(r: 23, g: 21, b: 15).cgColor
+        middleDigitLayer.frame = CGRect(x: 0, y: 1, width: 9, height: 8)
+        middleDigitLayer.isHidden = true
+        dotLayers[1].addSublayer(middleDigitLayer)
 
         // Session title shown while the pill is stretched (replaces the dots).
         expandTitleLayer = CATextLayer()
