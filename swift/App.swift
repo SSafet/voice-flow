@@ -793,10 +793,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// No question pending — queue a talk-hotkey message in the target
-    /// Claude session's inbox (delivered instantly when it's parked in
-    /// wait_for_message).
-    private func queueInboxMessage(text: String, includeScreenshot: Bool) {
+    /// No question pending — a talk message is delivered only if the target
+    /// Claude session is listening RIGHT NOW (parked in wait_for_message).
+    /// Otherwise nothing is queued: the message (with its screenshot path)
+    /// goes to the clipboard and into the dictation history for later.
+    private func deliverTalkMessage(text: String, includeScreenshot: Bool) {
         Task { @MainActor in
             var attachments: [String] = []
             if includeScreenshot,
@@ -804,35 +805,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                let shot = CaptureStore.saveShot(raw) {
                 attachments.append(shot.path)
             }
-            // No known destination? Don't queue into the void — hand the
-            // message straight to the clipboard and let the user aim it.
-            guard let target = mcpServer.sessions.session(targetSessionId) else {
-                copyMessageToClipboard(text: text, attachments: attachments)
-                replyBubble.showTransient("No Claude session to send this to — copied it instead. Paste it where you want it.", seconds: 8)
+            let target = mcpServer.sessions.session(targetSessionId)
+            if let target, inbox.hasWaiter(for: target.id) {
+                inbox.add(text: text, attachments: attachments, session: target.id)
+                replyBubble.showTransient("Sent to \(sessionName(for: target.id)).", seconds: 5)
                 return
             }
-            let name = sessionName(for: target.id)
-            let delivered = inbox.hasWaiter(for: target.id)
-            inbox.add(text: text, attachments: attachments, session: target.id)
-            if delivered {
-                replyBubble.showTransient("Sent to \(name).", seconds: 5)
-            } else {
-                replyBubble.showTransient(
-                    "Queued for \(name) — it's told about it on its next Voice Flow call, or copy to paste it yourself.",
-                    seconds: 10,
-                    actionTitle: "Copy for Claude",
-                    action: { [weak self] in self?.copyQueuedMessages() })
-            }
+            let prompt = Self.messagePrompt(text: text, attachments: attachments)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(prompt, forType: .string)
+            chatPanel.addDictation(text: prompt, time: Self.timestamp())
+            let note = target.map { "\(sessionName(for: $0.id)) isn't listening — copied to clipboard (also in History). Paste it where you want it." }
+                ?? "No Claude session connected — copied to clipboard (also in History). Paste it where you want it."
+            replyBubble.showTransient(note, seconds: 8)
         }
     }
 
-    private func copyMessageToClipboard(text: String, attachments: [String]) {
-        var prompt = text
-        if !attachments.isEmpty {
-            prompt += "\n(Screenshot of what I was looking at: \(attachments.joined(separator: ", ")) — read it.)"
-        }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(prompt, forType: .string)
+    private static func messagePrompt(text: String, attachments: [String]) -> String {
+        guard !attachments.isEmpty else { return text }
+        return text + "\n(Screenshot of what I was looking at: \(attachments.joined(separator: ", ")) — read it.)"
     }
 
     /// Hand-deliver the queue: every pending message goes to the clipboard
@@ -1109,7 +1100,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 } else if UserSettings.shared.talkSendToAgent {
                     sendToAgent(text: note, includeFreshScreenshot: false)
                 } else {
-                    queueInboxMessage(text: note, includeScreenshot: false)
+                    deliverTalkMessage(text: note, includeScreenshot: false)
                 }
             case .snapTalk:
                 guard !note.isEmpty else { return }
@@ -1119,7 +1110,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 } else if UserSettings.shared.talkSendToAgent {
                     sendToAgent(text: note, includeFreshScreenshot: true, forceScreenshot: true)
                 } else {
-                    queueInboxMessage(text: note, includeScreenshot: true)
+                    deliverTalkMessage(text: note, includeScreenshot: true)
                 }
             case .session:
                 playSound("Pop")

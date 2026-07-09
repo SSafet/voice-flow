@@ -632,7 +632,7 @@ private struct ShortcutsSettingsView: View {
 
             Section {
                 ShortcutRow(title: "Talk to Claude",
-                            subtitle: "Hold to speak — answers a waiting question, or queues a voice message. Claude is told about queued messages on its next Voice Flow call; the menu bar can copy them for pasting",
+                            subtitle: "Hold to speak — answers a waiting question; delivered instantly when Claude is listening, otherwise copied to your clipboard and saved in History",
                             spec: store.talkHotkey) { store.setHotkey(.talk, $0) }
                 ShortcutRow(title: "Talk + snap for Claude",
                             subtitle: "Hold to speak and attach a screenshot of what you're looking at",

@@ -150,11 +150,13 @@ final class MCPServer {
         Hearing from the user:
         - ask_user: put a prompt on their screen and BLOCK until they answer (voice, voice + \
         screenshot, typing, or a recorded demonstration). Use when you can't proceed without them.
-        - notify_user + check_messages / wait_for_message: the asynchronous alternative. The \
-        user can press their talk hotkey AT ANY TIME — messages queue in an inbox. Call \
-        check_messages when you come back from work; call wait_for_message in a loop to be \
-        their live companion while they read or work (each message may carry a screenshot of \
-        what they were looking at). A wait_for_message timeout is normal — call it again.
+        - notify_user + check_messages / wait_for_message: the asynchronous alternative. Talk \
+        messages reach you ONLY while you are parked in wait_for_message — call it in a loop \
+        to be their live companion while they read or work (each message may carry a \
+        screenshot of what they were looking at); a timeout is normal, call it again. When \
+        nothing is listening, the user's message is copied to their clipboard for manual \
+        pasting instead. Deferred or late answers to your ask_user prompts DO queue — fetch \
+        those with check_messages.
         - get_latest_capture / list_captures: recorded demonstrations — spoken narration plus \
         ordered screenshots. When the user says they recorded/captured/showed something, fetch it.
         - The ambient workflow watcher (when the user enables it) logs their workday to \
@@ -339,10 +341,10 @@ final class MCPServer {
             "name": "notify_user",
             "description": """
             Show the user a short message in a floating on-screen bubble (optionally spoken) \
-            and return IMMEDIATELY — the non-blocking counterpart of ask_user. Any reply they \
-            make with their talk hotkeys lands in the message inbox; fetch it later with \
-            check_messages or wait_for_message. Use for status updates ("deploying now, ~2 min") \
-            and questions you don't need answered right away.
+            and return IMMEDIATELY — the non-blocking counterpart of ask_user. To hear their \
+            reply, park in wait_for_message: talk messages are delivered only while you are \
+            listening. Use for status updates ("deploying now, ~2 min") and heads-ups that \
+            need no reply.
             """,
             "inputSchema": [
                 "type": "object",
@@ -356,10 +358,10 @@ final class MCPServer {
         [
             "name": "check_messages",
             "description": """
-            Fetch (and clear) the voice/text messages the user queued for you with their talk \
-            hotkeys since you last checked. Non-blocking. Messages may include screenshot paths \
-            of what they were looking at — read them. Check whenever you return from a stretch \
-            of work, and after a notify_user question.
+            Fetch (and clear) messages queued for you — deferred or late answers to your \
+            ask_user prompts ("Seen — I'll answer later", answers after a timeout). Live talk \
+            messages arrive only through wait_for_message, not here. Non-blocking. Messages \
+            may include screenshot paths of what they were looking at — read them.
             """,
             "inputSchema": [
                 "type": "object",
