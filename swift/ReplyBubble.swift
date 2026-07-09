@@ -11,7 +11,7 @@ final class ReplyBubble {
     /// pending ask from Claude).
     var onClosed: (() -> Void)?
 
-    private let width: CGFloat = 400
+    private let maxWidth: CGFloat = 400
     private let maxTextHeight: CGFloat = 320
     private let headerHeight: CGFloat = 28
     private let bottomInset: CGFloat = 12
@@ -141,6 +141,7 @@ final class ReplyBubble {
     func setStatus(_ text: String) {
         guard isVisible else { return }
         statusLabel.stringValue = text
+        relayout()   // a status line changes the whole geometry
     }
 
     private func cancelAutoHide() {
@@ -195,11 +196,34 @@ final class ReplyBubble {
     private func relayout() {
         guard let panel, let container = textView.textContainer,
               let layoutManager = textView.layoutManager else { return }
+
+        let hasStatus = !statusLabel.stringValue.isEmpty || streaming
+        let hasAction = !actionButton.isHidden
+        let actionSpace: CGFloat = hasAction ? actionRowHeight : 0
+
+        // Bare notes shrink to their text; anything with a status line or a
+        // streaming reply keeps the full width.
+        var width = maxWidth
+        if !hasStatus {
+            let natural = ceil(textView.textStorage?.size().width ?? maxWidth)
+            var ideal = natural + 64   // left inset + text padding + ✕ clearance
+            if hasAction {
+                ideal = max(ideal, actionButton.intrinsicContentSize.width + 56)
+            }
+            width = min(maxWidth, max(220, ideal))
+        }
+
+        // In compact mode the ✕ sits beside the text, so keep clear of it.
+        let scrollWidth = width - (hasStatus ? 24 : 52)
+        scrollView.frame.size.width = scrollWidth
+        textView.frame.size.width = scrollWidth
         layoutManager.ensureLayout(for: container)
         let used = layoutManager.usedRect(for: container).height
         let textHeight = min(max(used + 8, 24), maxTextHeight)
-        let actionSpace: CGFloat = actionButton.isHidden ? 0 : actionRowHeight
-        let totalHeight = headerHeight + textHeight + actionSpace + bottomInset
+
+        let topSpace: CGFloat = hasStatus ? headerHeight : 9
+        let bottomPad: CGFloat = hasStatus ? bottomInset : 9
+        let totalHeight = topSpace + textHeight + actionSpace + bottomPad
 
         guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
         let frame = screen.frame
@@ -207,10 +231,16 @@ final class ReplyBubble {
         let y = frame.minY + 30  // just above the pill, same anchor as the panel
         panel.setFrame(NSRect(x: x, y: y, width: width, height: totalHeight), display: true)
 
-        scrollView.frame = NSRect(x: 12, y: bottomInset + actionSpace, width: width - 24, height: textHeight)
+        scrollView.frame = NSRect(x: 12, y: bottomPad + actionSpace, width: scrollWidth, height: textHeight)
+        statusLabel.isHidden = !hasStatus
         statusLabel.frame = NSRect(x: 16, y: totalHeight - headerHeight + 5, width: width - 60, height: 16)
-        closeButton.frame = NSRect(x: width - 32, y: totalHeight - headerHeight + 3, width: 20, height: 20)
-        if !actionButton.isHidden {
+        if hasStatus {
+            closeButton.frame = NSRect(x: width - 32, y: totalHeight - headerHeight + 3, width: 20, height: 20)
+        } else {
+            // Centered on the text row — no empty header band above.
+            closeButton.frame = NSRect(x: width - 32, y: bottomPad + actionSpace + (textHeight - 20) / 2, width: 20, height: 20)
+        }
+        if hasAction {
             let buttonWidth = min(width - 32, max(140, actionButton.intrinsicContentSize.width + 24))
             actionButton.frame = NSRect(x: 16, y: 8, width: buttonWidth, height: 22)
         }
@@ -222,7 +252,7 @@ final class ReplyBubble {
         // KeyablePanel: borderless windows refuse key status by default,
         // which breaks scrolling long content inside the bubble.
         let newPanel = KeyablePanel(
-            contentRect: NSRect(x: 0, y: 0, width: width, height: 120),
+            contentRect: NSRect(x: 0, y: 0, width: maxWidth, height: 120),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false
         )
@@ -233,7 +263,7 @@ final class ReplyBubble {
         newPanel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         newPanel.isReleasedWhenClosed = false
 
-        let root = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width, height: 120))
+        let root = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: maxWidth, height: 120))
         root.material = .hudWindow
         root.state = .active
         root.appearance = NSAppearance(named: .darkAqua)
@@ -268,7 +298,7 @@ final class ReplyBubble {
         actionButton.isHidden = true
         root.addSubview(actionButton)
 
-        textView = NSTextView(frame: NSRect(x: 0, y: 0, width: width - 24, height: 24))
+        textView = NSTextView(frame: NSRect(x: 0, y: 0, width: maxWidth - 24, height: 24))
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
