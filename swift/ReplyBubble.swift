@@ -10,11 +10,14 @@ final class ReplyBubble {
     /// Fired when the user dismisses the bubble with ✕ (used to cancel a
     /// pending ask from Claude).
     var onClosed: (() -> Void)?
+    /// The bubble replaces the pill while visible ("the pill expands") —
+    /// the app hides/restores the indicator on this signal.
+    var onVisibilityChanged: ((Bool) -> Void)?
 
     private let maxWidth: CGFloat = 400
     private let maxTextHeight: CGFloat = 320
-    private let headerHeight: CGFloat = 28
-    private let bottomInset: CGFloat = 12
+    private let headerHeight: CGFloat = 26
+    private let bottomInset: CGFloat = 9
     private let actionRowHeight: CGFloat = 34
 
     private var panel: NSPanel?
@@ -153,6 +156,7 @@ final class ReplyBubble {
         streaming = false
         cancelAutoHide()
         guard let panel, panel.isVisible else { return }
+        onVisibilityChanged?(false)
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.14
             panel.animator().alphaValue = 0
@@ -177,6 +181,7 @@ final class ReplyBubble {
         }
         panel.alphaValue = 0
         panel.orderFront(nil)
+        onVisibilityChanged?(true)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.16
             panel.animator().alphaValue = 1
@@ -214,7 +219,7 @@ final class ReplyBubble {
         }
 
         // In compact mode the ✕ sits beside the text, so keep clear of it.
-        let scrollWidth = width - (hasStatus ? 24 : 46)
+        let scrollWidth = width - (hasStatus ? 20 : 46)
         scrollView.frame.size.width = scrollWidth
         textView.frame.size.width = scrollWidth
         layoutManager.ensureLayout(for: container)
@@ -228,14 +233,14 @@ final class ReplyBubble {
         guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
         let frame = screen.frame
         let x = frame.midX - width / 2
-        let y = frame.minY + 30  // just above the pill, same anchor as the panel
+        let y = frame.minY + 6  // the pill hides while we're up — take its spot
         panel.setFrame(NSRect(x: x, y: y, width: width, height: totalHeight), display: true)
 
-        scrollView.frame = NSRect(x: 12, y: bottomPad + actionSpace, width: scrollWidth, height: textHeight)
+        scrollView.frame = NSRect(x: 10, y: bottomPad + actionSpace, width: scrollWidth, height: textHeight)
         statusLabel.isHidden = !hasStatus
-        statusLabel.frame = NSRect(x: 16, y: totalHeight - headerHeight + 5, width: width - 60, height: 16)
+        statusLabel.frame = NSRect(x: 12, y: totalHeight - headerHeight + 5, width: width - 52, height: 16)
         if hasStatus {
-            closeButton.frame = NSRect(x: width - 32, y: totalHeight - headerHeight + 3, width: 20, height: 20)
+            closeButton.frame = NSRect(x: width - 30, y: totalHeight - headerHeight + 3, width: 20, height: 20)
         } else {
             // Centered on the text row — no empty header band above.
             closeButton.frame = NSRect(x: width - 30, y: bottomPad + actionSpace + (textHeight - 20) / 2, width: 20, height: 20)
@@ -274,8 +279,10 @@ final class ReplyBubble {
         root.layer?.borderColor = Theme.border.cgColor
         root.autoresizingMask = [.width, .height]
 
+        // Same size as the body so the "title" never looks smaller than
+        // the text under it.
         statusLabel = NSTextField(labelWithString: "")
-        statusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        statusLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
         statusLabel.textColor = Theme.accent
         statusLabel.lineBreakMode = .byTruncatingTail
         root.addSubview(statusLabel)

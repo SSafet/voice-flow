@@ -239,6 +239,16 @@ class FloatingIndicator: NSObject {
     private var appliedVisual: Visual?
     private var appliedRing: (session: Bool, watcher: Bool)?
 
+    /// Hidden while the reply bubble is visible — it takes the pill's spot
+    /// at the bottom edge ("the pill expands into the bubble").
+    func setSuppressed(_ suppressed: Bool) {
+        if suppressed {
+            panel?.orderOut(nil)
+        } else {
+            panel?.orderFront(nil)
+        }
+    }
+
     func show() {
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: W, height: H),

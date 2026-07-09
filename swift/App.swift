@@ -209,6 +209,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             interaction.cancelled = true
             interaction.semaphore.signal()
         }
+        replyBubble.onVisibilityChanged = { [weak self] visible in
+            self?.indicator.setSuppressed(visible)
+        }
 
         overlayManager = OverlayManager()
         overlayManager.start()
@@ -809,6 +812,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let target, inbox.hasWaiter(for: target.id) {
                 inbox.add(text: text, attachments: attachments, session: target.id)
                 replyBubble.showTransient("Sent to \(sessionName(for: target.id)).", seconds: 5)
+                return
+            }
+            // A session parked in wait_for_message takes it even when no
+            // target is registered — clients from before session ids exist
+            // send no id, yet a live listener is unambiguous.
+            if inbox.hasWaiter(for: nil) {
+                inbox.add(text: text, attachments: attachments, session: nil)
+                replyBubble.showTransient("Sent to Claude.", seconds: 5)
                 return
             }
             let prompt = Self.messagePrompt(text: text, attachments: attachments)
