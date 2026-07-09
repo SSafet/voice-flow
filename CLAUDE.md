@@ -29,15 +29,18 @@ swiftc swift/*.swift -framework Cocoa -framework AVFoundation -framework CoreGra
 ## Primary surface: the ChatPanel
 
 The app's main window is **`ChatPanel`** (`swift/Panel.swift`) — a borderless
-floating panel anchored to the little pill (`FloatingIndicator`). It has three
+floating panel anchored to the little pill (`FloatingIndicator`). It has four
 tabs (`ChatTab`):
 
+- **Messages** — the MAIN tab (default on open): persistent history of
+  everything agents pushed over MCP (notify / ask / speak), kept in
+  `messages.json` so it outlives the sessions and app restarts that produced it.
 - **Chat** — converse with the screen agent (type / snap / talk), streamed replies.
 - **Dictations** — browsable, copyable history of past dictations.
 - **Speech** — paste text and play it through the TTS engine (voice / preset / speed).
 
-The Dictations and Speech tab contents are the `DictationsView` and `TTSView`
-classes in `swift/UI.swift`. (They previously lived in a separate
+The Messages, Dictations and Speech tab contents are the `MessagesView`,
+`DictationsView` and `TTSView` classes in `swift/UI.swift`. (They previously lived in a separate
 `HistoryWindowController` window, now retired.) The menu-bar "Dictation History"
 item and the pill's context menu open the panel on the Dictations tab.
 
@@ -65,15 +68,16 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   collapses after ~4s, on any other hotkey, or click-anywhere), and `grown`
   (`showGrown`: amber title, selectable text, ask hint line, speaker/trash/✕
   icon cluster, live dots in the bottom band; streamed replies grow it live).
-  Pushes queue **per session** (`sessionPushes`, a stack capped at 8): a
-  second push appends below the first — older ones dim, newest bright —
-  instead of replacing it (`deliverPush`/`showPushStack` in `App.swift`). A
-  push that actually displays retargets voice to its session (the number dot
-  follows what's on screen); pushes arriving mid-recording or while ANOTHER
-  session's content is up don't take the screen — they stay amber-pending in
-  the picker and the pushing tool is told "queued". Switching onto a session
-  with waiting pushes grows into its whole stack with the picker row as the
-  bottom band. `ReplyBubble` is now only a facade forwarding to the pill: ✕
+  Pushes queue **per session** (`sessionPushes`, a stack capped at 8;
+  sessionless clients share the anonymous `""` pool): a second push appends
+  below the first — older ones dim, newest bright — instead of replacing it
+  (`deliverPush`/`showPushStack` in `App.swift`). ONLY the target session's
+  pushes take the screen; a foreign session's push queues instead — Glass
+  sound, amber picker dot, and a small pulsing unread ring around the pill's
+  number dot (`setUnreadIndicator`) until the user switches to it (the
+  pushing tool is told "queued"). Every push also lands in the panel's
+  persistent Messages tab. Switching onto a session with waiting pushes
+  grows into its whole stack with the picker row as the bottom band. `ReplyBubble` is now only a facade forwarding to the pill: ✕
   closes-and-keeps (asks stay pending, stacks survive; a "N sessions
   waiting" receipt flashes if others queued meanwhile), trash deletes
   (cancels a waiting ask, clears the stack), speaker reads aloud.
@@ -178,6 +182,8 @@ on-demand analyze/optimize/status version.
 - `settings.json` — `UserSettings` (hotkeys, TTS voice/speed/instructions, agent model, …).
 - `dictations.json` — dictation history (`[HistoryEntry]`, JSON), written by
   `DictationsView` on each new dictation (render cap 60, store cap 200). Survives restarts.
+- `messages.json` — every agent push (`[AgentMessageEntry]`: time, session,
+  text, isAsk), written by `MessagesView` (same caps). The Messages tab's store.
 - `inbox.json` — queued talk-hotkey messages for Claude (`MessageInbox`).
 - `overlays/*.json` — live on-screen elements (`OverlayManager`); `_schema.md` documents the format.
 - `watcher/` — ambient workflow log (`WorkflowWatcher`): per-day `activity.jsonl` + deduped frames, plus `ANALYZE.md` / `ledger.md` / `reviews/` for the nightly review.
@@ -191,7 +197,7 @@ on-demand analyze/optimize/status version.
 | `main.swift` | — | Entry point: `NSApplication` + `AppDelegate`. |
 | `App.swift` | `AppDelegate` | Owns & wires everything: components, hotkeys, dictation flow (`handleResult`), TTS flow, agent session, windows. |
 | `Core.swift` | `UserSettings`, `KeychainStore`, `HotkeyManager`, `AudioRecorder`, `BackendBridge`, `Paster`, `HotkeySpec` | Audio capture, Python STT bridge (subprocess), paste/stream into the frontmost app, settings, global hotkeys. |
-| `UI.swift` | `Theme`, `MenuBarManager`, `FloatingIndicator`, `FloatingTranscriptPanel`, `DictationsView`, `TTSView`, `HoverCardView`, `KeyRecorderButton` | Menu bar, pill, live transcript overlay, and the Dictations/Speech tab surfaces. |
+| `UI.swift` | `Theme`, `MenuBarManager`, `FloatingIndicator`, `FloatingTranscriptPanel`, `MessagesView`, `DictationsView`, `TTSView`, `HoverCardView`, `KeyRecorderButton` | Menu bar, pill, live transcript overlay, and the Messages/Dictations/Speech tab surfaces. |
 | `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel and its tabs. |
 | `ReplyBubble.swift` | `ReplyBubble` | Facade over the pill's grown surface (no window of its own) — forwards messages/asks/streaming to `FloatingIndicator`. |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |

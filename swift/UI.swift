@@ -236,6 +236,7 @@ class FloatingIndicator: NSObject {
     // out for the session title on a single line, 5s later it shrinks back.
     private var expandTitleLayer: CATextLayer!
     private var middleDigitLayer: CATextLayer!
+    private var unreadRingLayer: CALayer!
     private var pickerLayer: CALayer?
     private var expandTimer: Timer?
     private var expandedSize: NSSize?
@@ -349,6 +350,25 @@ class FloatingIndicator: NSObject {
             dotLayers[1].cornerRadius = DOT_R
             digit.isHidden = true
         }
+        layoutUnreadRing()
+    }
+
+    /// Small pulsing halo around the middle dot — "something unread in a
+    /// session you're not on". Deliberately tiny; the picker's amber dots
+    /// carry the detail.
+    func setUnreadIndicator(_ on: Bool) {
+        guard unreadRingLayer != nil else { return }
+        withoutAnimation {
+            layoutUnreadRing()
+            unreadRingLayer.isHidden = !on
+        }
+    }
+
+    private func layoutUnreadRing() {
+        guard let ring = unreadRingLayer, dotLayers.count == 3 else { return }
+        let ringRect = dotLayers[1].bounds.insetBy(dx: -3, dy: -3)
+        ring.frame = ringRect
+        ring.cornerRadius = ringRect.width / 2
     }
 
     /// The session picker: the pill stretches into one line — "sessions",
@@ -886,6 +906,24 @@ class FloatingIndicator: NSObject {
         middleDigitLayer.frame = CGRect(x: 0, y: 1, width: 9, height: 8)
         middleDigitLayer.isHidden = true
         dotLayers[1].addSublayer(middleDigitLayer)
+
+        // Unread ring — a small pulsing halo around the middle dot while a
+        // session the user is NOT on holds pushes they haven't seen. Rides
+        // the dot as a sublayer so it follows every mode and animation.
+        unreadRingLayer = CALayer()
+        unreadRingLayer.backgroundColor = NSColor.clear.cgColor
+        unreadRingLayer.borderColor = NSColor(r: 255, g: 194, b: 75, a: 217).cgColor
+        unreadRingLayer.borderWidth = 1
+        unreadRingLayer.isHidden = true
+        let unreadPulse = CABasicAnimation(keyPath: "opacity")
+        unreadPulse.fromValue = 0.2
+        unreadPulse.toValue = 0.95
+        unreadPulse.duration = 1.1
+        unreadPulse.autoreverses = true
+        unreadPulse.repeatCount = .infinity
+        unreadRingLayer.add(unreadPulse, forKey: "unreadPulse")
+        dotLayers[1].addSublayer(unreadRingLayer)
+        layoutUnreadRing()
 
         // Session title shown while the pill is stretched (replaces the dots).
         expandTitleLayer = CATextLayer()
@@ -1697,6 +1735,223 @@ final class DictationsView: NSView {
     }
 
     private static func saveEntries(_ entries: [HistoryEntry]) {
+        let dir = storeURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(entries) {
+            try? data.write(to: storeURL, options: .atomic)
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Messages view — everything agents pushed over MCP
+//  Hosted as the ChatPanel's MAIN tab. Persists to
+//  ~/.config/voice-flow/messages.json so the history outlives the
+//  sessions (and app restarts) that produced it.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+struct AgentMessageEntry: Codable {
+    let time: String
+    let session: String
+    let text: String
+    let isAsk: Bool
+}
+
+final class MessagesView: NSView {
+    private var entries: [AgentMessageEntry] = []
+    private var contentStack: NSView!          // flipped document view
+    private var emptyView: NSView!
+    private var scrollView: NSScrollView!
+
+    private let renderCap = 60
+    private let storeCap = 200
+    private static let storeURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/voice-flow/messages.json")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        entries = MessagesView.loadEntries()
+        setupUI()
+        rebuildContent()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    convenience init() { self.init(frame: .zero) }
+
+    private func setupUI() {
+        let secLabel = NSTextField(labelWithString: "FROM YOUR AGENTS")
+        secLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        secLabel.textColor = Theme.text3
+        secLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        contentStack = FlippedView()
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+
+        emptyView = makeEmptyState()
+        emptyView.translatesAutoresizingMaskIntoConstraints = false
+
+        scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.scrollerStyle = .overlay
+        scrollView.documentView = contentStack
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(secLabel)
+        addSubview(scrollView)
+
+        NSLayoutConstraint.activate([
+            secLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            secLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            scrollView.topAnchor.constraint(equalTo: secLabel.bottomAnchor, constant: 8),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+        ])
+    }
+
+    func addEntry(time: String, session: String, text: String, isAsk: Bool) {
+        entries.insert(AgentMessageEntry(time: time, session: session, text: text, isAsk: isAsk), at: 0)
+        if entries.count > storeCap { entries = Array(entries.prefix(storeCap)) }
+        MessagesView.saveEntries(entries)
+        rebuildContent()
+    }
+
+    private func rebuildContent() {
+        contentStack.subviews.forEach { $0.removeFromSuperview() }
+
+        if entries.isEmpty {
+            contentStack.addSubview(emptyView)
+            NSLayoutConstraint.activate([
+                emptyView.topAnchor.constraint(equalTo: contentStack.topAnchor, constant: 60),
+                emptyView.centerXAnchor.constraint(equalTo: contentStack.centerXAnchor),
+            ])
+            return
+        }
+
+        var topAnchor = contentStack.topAnchor
+        for entry in entries.prefix(renderCap) {
+            let card = makeCard(entry)
+            card.translatesAutoresizingMaskIntoConstraints = false
+            contentStack.addSubview(card)
+            NSLayoutConstraint.activate([
+                card.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+                card.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor),
+                card.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor),
+            ])
+            topAnchor = card.bottomAnchor
+        }
+
+        let bottom = topAnchor.constraint(equalTo: contentStack.bottomAnchor, constant: -12)
+        bottom.priority = .defaultLow
+        bottom.isActive = true
+    }
+
+    private func makeCard(_ entry: AgentMessageEntry) -> NSView {
+        let card = HoverCardView()
+        card.wantsLayer = true
+        card.layer?.cornerRadius = 8
+        card.layer?.backgroundColor = Theme.card.cgColor
+        card.layer?.borderWidth = 1
+        card.layer?.borderColor = Theme.border.cgColor
+
+        let sessionLabel = NSTextField(labelWithString: entry.isAsk ? "\(entry.session) · ask" : entry.session)
+        sessionLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        sessionLabel.textColor = Theme.accent
+        sessionLabel.lineBreakMode = .byTruncatingTail
+
+        let textLabel = NSTextField(wrappingLabelWithString: entry.text)
+        textLabel.font = .systemFont(ofSize: 13)
+        textLabel.textColor = Theme.text
+        textLabel.maximumNumberOfLines = 0
+        textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let timeLabel = NSTextField(labelWithString: entry.time)
+        timeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        timeLabel.textColor = Theme.text3
+
+        let copyBtn = NSButton(title: "Copy", target: self, action: #selector(copyClicked(_:)))
+        copyBtn.bezelStyle = .inline
+        copyBtn.font = .systemFont(ofSize: 11)
+        copyBtn.toolTip = entry.text
+        copyBtn.setContentHuggingPriority(.required, for: .horizontal)
+        copyBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        card.addSubview(sessionLabel)
+        card.addSubview(textLabel)
+        card.addSubview(timeLabel)
+        card.addSubview(copyBtn)
+        sessionLabel.translatesAutoresizingMaskIntoConstraints = false
+        textLabel.translatesAutoresizingMaskIntoConstraints = false
+        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        copyBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            sessionLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
+            sessionLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            sessionLabel.trailingAnchor.constraint(lessThanOrEqualTo: copyBtn.leadingAnchor, constant: -10),
+
+            textLabel.topAnchor.constraint(equalTo: sessionLabel.bottomAnchor, constant: 4),
+            textLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            textLabel.trailingAnchor.constraint(equalTo: copyBtn.leadingAnchor, constant: -10),
+
+            copyBtn.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            copyBtn.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+
+            timeLabel.topAnchor.constraint(equalTo: textLabel.bottomAnchor, constant: 3),
+            timeLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            timeLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
+        ])
+
+        return card
+    }
+
+    @objc private func copyClicked(_ sender: NSButton) {
+        guard let text = sender.toolTip else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+
+        if let card = sender.superview as? HoverCardView {
+            card.layer?.backgroundColor = NSColor(r: 120, g: 180, b: 100, a: 15).cgColor
+            card.layer?.borderColor = NSColor(r: 120, g: 180, b: 100, a: 30).cgColor
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                card.layer?.backgroundColor = Theme.card.cgColor
+                card.layer?.borderColor = Theme.border.cgColor
+            }
+        }
+    }
+
+    private func makeEmptyState() -> NSView {
+        let v = NSStackView()
+        v.orientation = .vertical
+        v.alignment = .centerX
+        v.spacing = 8
+
+        let t = NSTextField(labelWithString: "Nothing from your agents yet")
+        t.font = .systemFont(ofSize: 14, weight: .medium)
+        t.textColor = Theme.text2
+        t.alignment = .center
+        v.addArrangedSubview(t)
+
+        let h = NSTextField(labelWithString: "notify · ask · speak messages land here — and stay after their session ends")
+        h.font = .systemFont(ofSize: 12)
+        h.textColor = Theme.text3
+        h.alignment = .center
+        v.addArrangedSubview(h)
+
+        return v
+    }
+
+    // ── Persistence ────────────────────────────────────
+
+    private static func loadEntries() -> [AgentMessageEntry] {
+        guard let data = try? Data(contentsOf: storeURL),
+              let list = try? JSONDecoder().decode([AgentMessageEntry].self, from: data) else { return [] }
+        return list
+    }
+
+    private static func saveEntries(_ entries: [AgentMessageEntry]) {
         let dir = storeURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         if let data = try? JSONEncoder().encode(entries) {

@@ -73,13 +73,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var sessionSwitchHotkeyManagers: [HotkeyManager] = []
     /// Pushes waiting per session, oldest first — the stack the grown
     /// surface renders and the picker previews. A new push APPENDS; it
-    /// never replaces what the user hasn't seen yet.
+    /// never replaces what the user hasn't seen yet. Sessionless clients
+    /// share the anonymous "" pool. `seen` flips when the stack displays —
+    /// unseen pushes in non-target sessions light the pill's unread ring.
     struct SessionPush {
         let id = UUID()
         let title: String
         let text: String
         let hint: String?
         let isAsk: Bool
+        var seen = false
     }
     var sessionPushes: [String: [SessionPush]] = [:]
     private let maxQueuedPushes = 8
@@ -245,6 +248,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.sessionPushes.removeValue(forKey: id)
             }
             self.currentPushSessionId = nil
+            self.refreshUnreadIndicator()
         }
         replyBubble.onSpeakRequested = { [weak self] text in
             guard let self, !text.isEmpty else { return }
@@ -830,6 +834,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         targetSessionId = id
         overlayManager.setActiveSession(id)
         refreshSessionIndicator()
+        refreshUnreadIndicator()
         if announce {
             let (entries, activeName) = pickerEntries()
             if let id, sessionPushes[id]?.isEmpty == false {
@@ -850,33 +855,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ordered.firstIndex { $0.id == targetSessionId }.map { $0 + 1 })
     }
 
-    /// Queue a push from a session and put its whole stack on screen.
-    /// The screen is NOT taken when that would misroute or bury something:
-    /// while the user records / a transcription is in flight (their words
-    /// must land where they aimed them), or while ANOTHER session's content
-    /// is up. Queued pushes stay amber in the picker until the user
-    /// switches. Returns true when the push is actually showing. Main thread.
+    /// Queue a push and, ONLY if it belongs to the session the user is
+    /// already on (the target), put its whole stack on screen. A foreign
+    /// session never takes the screen or the voice route — it queues:
+    /// Glass sound, amber picker dot, and the pill's small unread ring,
+    /// shown when the user switches to it. Sessionless clients share the
+    /// anonymous "" pool, which behaves like the current screen owner.
+    /// Returns true when the push is actually showing. Main thread.
     @discardableResult
     func deliverPush(_ push: SessionPush, from sessionId: String?) -> Bool {
-        guard let sid = sessionId else {
-            // Sessionless client — nothing to queue against; just show it.
-            replyBubble.showMessage(from: push.title, text: push.text,
-                                    hint: push.hint, isAsk: push.isAsk)
-            return true
-        }
+        let sid = sessionId ?? ""
         var queue = sessionPushes[sid] ?? []
         queue.append(push)
         if queue.count > maxQueuedPushes { queue.removeFirst(queue.count - maxQueuedPushes) }
         sessionPushes[sid] = queue
+        // The permanent record — the Messages tab keeps every push even
+        // after its session expires or the stack is trashed.
+        chatPanel.addAgentMessage(time: Self.timestamp(), session: push.title,
+                                  text: push.text, isAsk: push.isAsk)
 
-        let voiceBusy = state == .recording || state == .processing || state == .handsFree
-        let showingAnotherSession = indicator.isGrownVisible && currentPushSessionId != sid
-        let needsRetarget = targetSessionId != sid
-        if showingAnotherSession || (voiceBusy && needsRetarget) { return false }
-
-        // What's on screen is who the voice goes to — the number dot (and
-        // the session's overlays) follow the push.
-        if needsRetarget, mcpServer.sessions.session(sid) != nil {
+        let foreign = !sid.isEmpty && targetSessionId != nil && sid != targetSessionId
+        defer { refreshUnreadIndicator() }
+        if foreign { return false }
+        if targetSessionId == nil, !sid.isEmpty, mcpServer.sessions.session(sid) != nil {
+            // Nothing was targeted yet — this session takes the route.
             setTargetSession(sid, announce: false)
         }
         currentPushSessionId = sid
@@ -886,7 +888,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Render a session's queued pushes as one grown surface: older ones
     /// dim above, the newest bright; the hint line (and brighter border)
-    /// appear when an ask is anywhere in the stack. Main thread.
+    /// appear when an ask is anywhere in the stack. Displaying marks the
+    /// stack seen (it stays queued for previews until trashed). Main thread.
     private func showPushStack(for sessionId: String,
                                bottomPicker: (entries: [FloatingIndicator.PickerEntry], activeName: String?)? = nil,
                                autoHide: TimeInterval? = nil) {
@@ -901,6 +904,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 isAsk: ask != nil),
             bottomPicker: bottomPicker,
             autoHide: autoHide)
+        sessionPushes[sessionId] = queue.map { push in
+            var seen = push
+            seen.seen = true
+            return seen
+        }
+        refreshUnreadIndicator()
+    }
+
+    /// The pill's small pulsing ring around the number dot: on while any
+    /// session the user is NOT on holds pushes they haven't seen. Main thread.
+    func refreshUnreadIndicator() {
+        let unread = sessionPushes.contains { sid, queue in
+            !sid.isEmpty && sid != targetSessionId && queue.contains { !$0.seen }
+        }
+        indicator.setUnreadIndicator(unread)
     }
 
     /// ⌃⌥1–6. Any select attempt — valid or aimed at a missing number —
@@ -1993,6 +2011,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if self.sessionPushes[sid]?.isEmpty == true {
                     self.sessionPushes.removeValue(forKey: sid)
                 }
+                self.refreshUnreadIndicator()
             }
             if interaction.sessionId == nil || self.currentPushSessionId == interaction.sessionId {
                 self.replyBubble.hide()

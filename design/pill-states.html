@@ -333,9 +333,9 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
 </div>
 
 <h2>3b · Multiple pushes — a stack, not a replacement. A second push from the same session appends
-below the first (older ones dim, newest bright). A push that DISPLAYS also moves the number dot to its
-session — what you see is who your voice goes to. While you record (or another session's content is up),
-foreign pushes never take the screen: Glass sound, amber dot in the picker, shown when you switch.</h2>
+below the first (older ones dim, newest bright). ONLY the session you are on may take the screen:
+a foreign session's push never interrupts — it queues with a sound, marks its picker dot amber, and
+lights a small pulsing ring around the number dot until you switch to it (⌃⌥1–6 shows its whole stack).</h2>
 <div class="row">
   <div class="stage wide"><div class="label"><b>Stacked pushes</b> — the agent pushed twice; both are here.
       Older messages dim, the newest bright. Trash clears the whole stack, ✕ keeps it pending.</div>
@@ -377,9 +377,9 @@ foreign pushes never take the screen: Glass sound, amber dot in the picker, show
   <div class="stage wide"><div class="label"><b>Pushed while you were busy</b> — closing the current view
       flashes a receipt when other sessions queued something; the picker carries the amber dots.</div>
     <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--accent)">2 sessions waiting — ⌃⌥1–6</span></div></div></div>
-  <div class="stage"><div class="label"><b>Mid-recording</b> — foreign pushes never move the number dot while
-      you talk (your words would land in the wrong session); they queue with a sound.</div>
-    <div class="screen"><div class="shape pill rec"><div class="dots"><i class="dot"></i><i class="dot num">2</i><i class="dot"></i></div></div></div></div>
+  <div class="stage"><div class="label"><b>Unread ring</b> — a session you're not on pushed something:
+      a tiny amber halo pulses around the number dot until you look. Really small on purpose.</div>
+    <div class="screen"><div class="shape pill idle"><div class="dots"><i class="dot"></i><i class="dot num" style="position:relative">2<span style="position:absolute; inset:-4px; border:1px solid rgba(255,194,75,.85); border-radius:50%; animation: breathe 1.4s ease-in-out infinite;"></span></i><i class="dot"></i></div></div></div></div>
 </div>
 
 <h2>4 · The morph — one element through all three sizes</h2>
