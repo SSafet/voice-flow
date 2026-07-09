@@ -369,7 +369,9 @@ class FloatingIndicator: NSObject {
 
     private func layoutUnreadRing() {
         guard let ring = unreadRingLayer, dotLayers.count == 3 else { return }
-        let ringRect = dotLayers[1].bounds.insetBy(dx: -3, dy: -3)
+        // Exactly the dot's own size — the ring reads as the dot's edge
+        // pulsing amber, not a halo floating around it.
+        let ringRect = dotLayers[1].bounds
         ring.frame = ringRect
         ring.cornerRadius = ringRect.width / 2
     }
