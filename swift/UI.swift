@@ -242,6 +242,9 @@ class FloatingIndicator: NSObject {
     private var unreadRingLayer: CALayer!
     private var pickerLayer: CALayer?
     private var expandTimer: Timer?
+    /// Set when an action pauses a preview's auto-hide (revertGrownBandToDots);
+    /// the hide re-arms once the state returns to idle.
+    private var resumeAutoHideOnIdle = false
     private var expandedSize: NSSize?
     private var activeNumber: Int?
     private var clickMonitor: Any?
@@ -365,6 +368,20 @@ class FloatingIndicator: NSObject {
             layoutUnreadRing()
             unreadRingLayer.isHidden = !on
         }
+        if on { ensureUnreadPulse() }
+    }
+
+    /// Sleep/wake and display changes silently kill CA animations; re-add
+    /// the ring's pulse whenever it might have been dropped.
+    private func ensureUnreadPulse() {
+        guard let ring = unreadRingLayer, ring.animation(forKey: "unreadPulse") == nil else { return }
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 0.2
+        pulse.toValue = 0.95
+        pulse.duration = 1.1
+        pulse.autoreverses = true
+        pulse.repeatCount = .infinity
+        ring.add(pulse, forKey: "unreadPulse")
     }
 
     private func layoutUnreadRing() {
@@ -505,6 +522,10 @@ class FloatingIndicator: NSObject {
     /// activity animation. The grown container itself stays put.
     private func revertGrownBandToDots() {
         guard mode == .grown, pickerLayer != nil, let size = expandedSize else { return }
+        // A seen-stack preview carries a 5s auto-hide; pause it while the
+        // user acts and re-arm it when the state settles back to idle —
+        // otherwise the "preview" outlives its welcome forever.
+        resumeAutoHideOnIdle = expandTimer != nil
         expandTimer?.invalidate()
         expandTimer = nil
         pickerLayer?.removeFromSuperlayer()
@@ -607,6 +628,7 @@ class FloatingIndicator: NSObject {
         mode = .pill
         expandTimer?.invalidate()
         expandTimer = nil
+        resumeAutoHideOnIdle = false
         if let clickMonitor {
             NSEvent.removeMonitor(clickMonitor)
             self.clickMonitor = nil
@@ -679,6 +701,7 @@ class FloatingIndicator: NSObject {
         pickerLayer = nil
         expandTitleLayer.isHidden = true
         grownStreaming = false
+        resumeAutoHideOnIdle = false
 
         let entering = mode != .grown
         // Remember where the surface visually is, to grow out of it.
@@ -734,7 +757,9 @@ class FloatingIndicator: NSObject {
     }
 
     func finishGrownStream(_ fullText: String, title: String?) {
-        guard mode == .grown else { return }
+        // Without the streaming guard, a reply finishing AFTER the user
+        // switched to a push stack would overwrite the stack's text.
+        guard mode == .grown, grownStreaming else { return }
         grownStreaming = false
         grownStatusLabel.stringValue = title ?? ""
         grownTextView.textStorage?.setAttributedString(NSAttributedString(
@@ -965,14 +990,8 @@ class FloatingIndicator: NSObject {
         unreadRingLayer.borderColor = NSColor(r: 255, g: 194, b: 75, a: 217).cgColor
         unreadRingLayer.borderWidth = 1
         unreadRingLayer.isHidden = true
-        let unreadPulse = CABasicAnimation(keyPath: "opacity")
-        unreadPulse.fromValue = 0.2
-        unreadPulse.toValue = 0.95
-        unreadPulse.duration = 1.1
-        unreadPulse.autoreverses = true
-        unreadPulse.repeatCount = .infinity
-        unreadRingLayer.add(unreadPulse, forKey: "unreadPulse")
         dotLayers[1].addSublayer(unreadRingLayer)
+        ensureUnreadPulse()
         layoutUnreadRing()
 
         // Session title shown while the pill is stretched (replaces the dots).
@@ -1059,6 +1078,7 @@ class FloatingIndicator: NSObject {
     @objc private func screenChanged() {
         recenter()
         applyState(force: true)
+        ensureUnreadPulse()
         // Display layouts often settle a beat after the notification —
         // recenter again so the pill doesn't strand on stale coordinates.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
@@ -1069,6 +1089,7 @@ class FloatingIndicator: NSObject {
     @objc private func wokeUp() {
         recenter()
         applyState(force: true)
+        ensureUnreadPulse()
     }
 
     private func recenter() {
@@ -1097,6 +1118,15 @@ class FloatingIndicator: NSObject {
         recordingPurpose = purpose
         if newState == .recording || newState == .handsFree || newState == .processing {
             revertGrownBandToDots()
+        }
+        if newState == .idle, resumeAutoHideOnIdle {
+            resumeAutoHideOnIdle = false
+            if mode == .grown {
+                expandTimer?.invalidate()
+                expandTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: false) { [weak self] _ in
+                    self?.hideGrown()
+                }
+            }
         }
         applyState()
         if newState == .done {

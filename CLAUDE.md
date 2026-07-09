@@ -113,14 +113,14 @@ as ghosts (a live one self-heals — its next request is re-adopted by
 `touch()`). Talk hotkeys feed the **target
 session** (`AppDelegate.targetSessionId`, changed only via
 `setTargetSession` — newest connection by default, switchable with
-**⌃⌥1–6** or the menu bar's "Voice Goes To" submenu). Switching flashes
-the pill: it expands into a shell with the session title above the dots
-(`FloatingIndicator.flashSession`, 5 s), and a tiny number badge on the
-pill marks the active session when several are connected; re-selecting the
-current session re-flashes the title. **Overlays are session-scoped**
-(`"session"` field, stamped by the tools): only the active session's
-elements render; a background session's push triggers a transient note
-instead of drawing over the user. The inbox is per-session
+**⌃⌥1–6** or the menu bar's "Voice Goes To" submenu, which lists sessions
+in the same order/numbering). Switching grows the pill into the session's
+push stack (or the one-line picker when it has none); the middle dot
+carries the active session's number; re-selecting the current session
+while its stack shows reads it aloud (`double_select_speak`). **Overlays
+are session-scoped** (`"session"` field, stamped by the tools): only the
+active session's elements render; a background session's overlay triggers
+a transient note instead of drawing over the user. The inbox is per-session
 (`InboxMessage.session`; nil = any session may drain it), and `ask_user` /
 `notify_user` bubbles are labeled with the asking session when several are
 connected. 17 tools in three groups (plus `set_session_name` above):
@@ -157,8 +157,9 @@ Tools: `show_guide` / `update_guide` / `show_panel` / `annotate_screen` /
 A session writes every deduped frame live via `CaptureStore`
 (`swift/Capture.swift`): `frames/frame-NN-tXXXs.jpg`, then `transcript.md` +
 `meta.json` when transcription lands (bundles pruned to 40; ad-hoc shots in
-`captures/shots/`). On session end the bubble offers **Copy prompt for
-Claude**; Claude Code can also pull bundles through the MCP tools.
+`captures/shots/`). On session end the capture is auto-announced to the
+active session (a menu-bar item keeps the manual **Copy Capture Prompt**
+fallback); Claude Code can also pull bundles through the MCP tools.
 
 ## Workflow watcher (`~/.config/voice-flow/watcher/`)
 

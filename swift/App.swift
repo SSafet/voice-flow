@@ -25,8 +25,6 @@ final class PendingInteraction {
     var responseText: String?
     var attachments: [String] = []   // absolute screenshot/frame paths
     var cancelled = false
-    /// "Seen — I'll answer later": unblocks Claude without an answer.
-    var acknowledged = false
     /// Set (on main) once the blocked tool call has returned — a late
     /// answer must go to the inbox instead of this dead interaction.
     var resolved = false
@@ -73,9 +71,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var sessionSwitchHotkeyManagers: [HotkeyManager] = []
     /// Pushes waiting per session, oldest first — the stack the grown
     /// surface renders and the picker previews. A new push APPENDS; it
-    /// never replaces what the user hasn't seen yet. Sessionless clients
-    /// share the anonymous "" pool. `seen` flips when the stack displays —
-    /// unseen pushes in non-target sessions light the pill's unread ring.
+    /// never replaces what the user hasn't seen yet. (Sessionless tool
+    /// calls are folded into the "anonymous" registry session by
+    /// MCPServer, so every queue key is a real session id.) `seen` flips
+    /// when the stack displays — unseen pushes light the pill's unread ring.
     struct SessionPush {
         let id = UUID()
         let title: String
@@ -177,9 +176,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onCopyInbox = { [weak self] in self?.copyQueuedMessages() }
         menuBar.claudeSessionsProvider = { [weak self] in
             guard let self else { return [] }
-            return self.mcpServer.sessions.list().map { session in
+            // Same order and numbering as the picker and ⌃⌥1–6 — two
+            // orderings of the same sessions would be a routing trap.
+            return self.mcpServer.sessions.ordered().enumerated().map { index, session in
                 (session.id,
-                 "\(session.label) — active \(Self.relativeAge(session.lastSeen))",
+                 "\(index + 1) · \(session.label) — active \(Self.relativeAge(session.lastSeen))",
                  session.id == self.targetSessionId)
             }
         }
@@ -202,6 +203,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.onRemoveSession = { [weak self] id in
             guard let self, let closed = self.mcpServer.sessions.close(id) else { return }
             self.sessionPushes.removeValue(forKey: id)
+            // Its stack may be the thing on screen right now.
+            if self.currentPushSessionId == id {
+                self.currentPushSessionId = nil
+                self.replyBubble.hide()
+            }
             if self.targetSessionId == id {
                 self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
             }
@@ -239,7 +245,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // are otherwise their only trace.
         replyBubble.onClosed = { [weak self] in
             guard let self else { return }
-            let waiting = self.unseenSessions(excluding: self.currentPushSessionId)
+            let closed = self.currentPushSessionId
+            self.currentPushSessionId = nil
+            let waiting = self.unseenSessions(excluding: closed)
             guard waiting > 0 else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                 guard !self.indicator.isGrownVisible else { return }
@@ -253,7 +261,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // next tool call, so this is always safe).
         replyBubble.onTrashed = { [weak self] in
             guard let self else { return }
-            if let interaction = self.pendingInteraction {
+            // Cancel only an ask that belongs to the trashed stack — a
+            // DIFFERENT session's pending ask must survive this click.
+            if let interaction = self.pendingInteraction,
+               interaction.sessionId == self.currentPushSessionId {
                 interaction.cancelled = true
                 interaction.semaphore.signal()
             }
@@ -496,6 +507,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.chatPanel.beginAssistantMessage()
             if !self.chatPanel.isVisible {
+                // The grown surface now shows a reply, not a push stack —
+                // trash/double-select must not hit a stale session.
+                self.currentPushSessionId = nil
                 self.replyBubble.beginStreaming()
             }
             if UserSettings.shared.voiceRepliesEnabled {
@@ -560,7 +574,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         sessionHotkeyManager = HotkeyManager(spec: UserSettings.shared.sessionHotkey)
-        sessionHotkeyManager.onPress = { [weak self] in self?.toggleSession() }
+        sessionHotkeyManager.onPress = { [weak self] in
+            self?.indicator.collapseNow()   // any other hotkey closes the picker
+            self?.toggleSession()
+        }
 
         talkHotkeyManager = HotkeyManager(spec: UserSettings.shared.talkHotkey)
         talkHotkeyManager.onPress = { [weak self] in self?.startTalkRecording(purpose: .talk) }
@@ -844,9 +861,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             FloatingIndicator.PickerEntry(
                 number: index + 1,
                 active: session.id == targetSessionId,
+                // Amber means "something is waiting on you" — an unseen
+                // push, an unanswered ask, or an undelivered inbox message.
+                // A fully-read stack stays previewable but not amber.
                 pending: inbox.pendingCount(for: session.id) > 0
                     || pendingInteraction?.sessionId == session.id
-                    || !(sessionPushes[session.id]?.isEmpty ?? true))
+                    || sessionPushes[session.id]?.contains { !$0.seen } == true)
         }
         return (entries, ordered.first { $0.id == targetSessionId }?.label)
     }
@@ -906,10 +926,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                   text: push.text, isAsk: push.isAsk)
         refreshUnreadIndicator()
 
+        // A push for the stack that's ALREADY on screen refreshes it in
+        // place — updating what the user is reading isn't taking the screen.
+        if indicator.isGrownVisible, currentPushSessionId == sid {
+            showPushStack(for: sid)
+            return
+        }
+
         // The receipt: one line, ~4s, only when nothing else owns the
         // surface — never over grown content, never while the user talks.
-        let voiceBusy = state == .recording || state == .processing || state == .handsFree
-        guard !indicator.isGrownVisible, !voiceBusy else { return }
+        guard !surfaceBusy else { return }
         var receipt = push.isAsk ? push.title : "\(push.title) · new message"
         if let index = mcpServer.sessions.ordered().firstIndex(where: { $0.id == sid }) {
             receipt += " — ⌃⌥\(index + 1)"
@@ -943,16 +969,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         refreshUnreadIndicator()
     }
 
+    /// Something the user is looking at or doing that background events
+    /// (session connects, renames, receipts) must never stomp. Main thread.
+    private var surfaceBusy: Bool {
+        indicator.isGrownVisible
+            || state == .recording || state == .processing || state == .handsFree
+    }
+
     /// Sessions (other than `excluded`) holding pushes the user hasn't
     /// seen. Drops orphan queues of dead sessions on the way — a queue
     /// nobody can switch to must never count as "waiting" (its history
     /// lives on in the Messages tab). Main thread.
     private func unseenSessions(excluding excluded: String? = nil) -> Int {
         sessionPushes = sessionPushes.filter { sid, queue in
-            !queue.isEmpty && (sid.isEmpty || mcpServer.sessions.session(sid) != nil)
+            !queue.isEmpty && mcpServer.sessions.session(sid) != nil
         }
         return sessionPushes.filter { sid, queue in
-            !sid.isEmpty && sid != excluded && queue.contains { !$0.seen }
+            sid != excluded && queue.contains { !$0.seen }
         }.count
     }
 
@@ -989,6 +1022,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             sessionPushes.removeValue(forKey: id)
             refreshUnreadIndicator()
         }
+        currentPushSessionId = nil
         replyBubble.hide()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
             self.replyBubble.showTransient(note, seconds: 6)
@@ -1053,7 +1087,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             interaction.semaphore.signal()
             answeredSession(interaction.sessionId,
                             note: "answer sent to \(sessionName(for: interaction.sessionId))",
-                            clearStack: false)
+                            clearStack: true)
         }
     }
 
@@ -1127,6 +1161,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func sendToAgent(text: String?, includeFreshScreenshot: Bool, forceScreenshot: Bool = false) {
         if !chatPanel.isVisible {
+            currentPushSessionId = nil   // grown shows agent content now
             replyBubble.showThinking(echo: text)
         }
 
@@ -1851,7 +1886,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mcpServer.onSessionConnected = { [weak self] session in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.setTargetSession(session.id, announce: true)
+                // A background connect must not stomp what the user is
+                // reading or their recording — switch silently then.
+                self.setTargetSession(session.id, announce: !self.surfaceBusy)
             }
         }
         localAPIServer.onMCP = { [weak self] body, sessionId in
@@ -2033,8 +2070,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         DispatchQueue.main.async {
             self.refreshSessionIndicator()
-            // Renaming the active session? Show the user its new name.
-            if renamed.id == self.targetSessionId {
+            // Renaming the active session? Show the user its new name —
+            // but never over grown content or while they're talking.
+            if renamed.id == self.targetSessionId, !self.surfaceBusy {
                 let (entries, activeName) = self.pickerEntries()
                 self.indicator.showPicker(entries: entries, activeName: activeName)
             }
@@ -2096,8 +2134,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     payload["note"] = "Screenshot file paths, in order — read them to see what the user showed you."
                 }
                 result = .ok(self.mcpJSON(payload))
-            } else if interaction.acknowledged {
-                result = .ok("The user saw your question but isn't answering right now. Don't re-ask and don't block on it — continue with what you can, and pick their reply up later with check_messages or wait_for_message.")
             } else if interaction.cancelled {
                 result = .fail("The user dismissed the prompt without answering. Don't immediately re-ask; continue as best you can or try another approach.")
             } else {
@@ -2122,7 +2158,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return "Hold \(settings.talkHotkey.label) to answer · \(settings.snapTalkHotkey.label) +screen · \(settings.sessionHotkey.label) demo"
     }
 
-    /// Main thread. Put Claude's question where the user will see it.
     private func mcpLatestCapture() -> MCPServer.ToolResult {
         guard let (directory, meta) = CaptureStore.latestBundle() else {
             return .fail("No captures yet. The user records one with the session hotkey — or use ask_user to request a demonstration.")
@@ -2277,7 +2312,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         var hidden = false
         DispatchQueue.main.sync {
             hidden = session.id != self.targetSessionId
-            if hidden {
+            // The note waits its turn like any receipt — never over grown
+            // content or the user's recording.
+            if hidden, !self.surfaceBusy {
                 let index = self.mcpServer.sessions.ordered().firstIndex { $0.id == session.id }
                 let hint = index.map { " (⌃⌥\($0 + 1))" } ?? ""
                 self.replyBubble.showTransient(

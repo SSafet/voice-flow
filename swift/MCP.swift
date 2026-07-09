@@ -357,9 +357,9 @@ final class MCPServer {
             screenshots). The result contains their words plus absolute file paths of any \
             screenshots — read those files. Use when you cannot proceed without their input. \
             If you'd rather keep working while they decide, use notify_user and collect the \
-            reply later with check_messages or wait_for_message. The user may also tap "Seen — \
-            I'll answer later": you get that back immediately as a non-error result — continue \
-            working and collect their eventual reply from the message inbox.
+            reply later with check_messages or wait_for_message. If they dismiss the prompt \
+            or the timeout passes, you get a non-error explanation — continue as best you can \
+            and pick up any late answer from the message inbox.
             """,
             "inputSchema": [
                 "type": "object",
@@ -398,7 +398,7 @@ final class MCPServer {
             "name": "check_messages",
             "description": """
             Fetch (and clear) messages queued for you — deferred or late answers to your \
-            ask_user prompts ("Seen — I'll answer later", answers after a timeout). Live talk \
+            ask_user prompts (answers that arrived after a timeout). Live talk \
             messages arrive only through wait_for_message, not here. Non-blocking. Messages \
             may include screenshot paths of what they were looking at — read them.
             """,
