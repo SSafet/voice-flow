@@ -143,6 +143,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onShowSettings = { [weak self] in self?.showSettings() }
         menuBar.onToggleSession = { [weak self] in self?.toggleSession() }
         menuBar.onToggleWatcher = { [weak self] in self?.toggleWorkflowWatcher() }
+        menuBar.onRunReview = { [weak self] in self?.runWatcherReviewNow() }
+        menuBar.onOpenLatestReview = { [weak self] in self?.openLatestWatcherReview() }
+        menuBar.onOpenWatcherFolder = { NSWorkspace.shared.open(WorkflowWatcher.baseDir) }
+        menuBar.watcherStatusProvider = { [weak self] in self?.workflowWatcher?.statusLine() ?? "Off" }
         menuBar.setWatcherActive(UserSettings.shared.workflowWatcherEnabled)
         menuBar.onCopyCapturePrompt = { [weak self] in self?.copyLatestCapturePrompt() }
         menuBar.claudeSessionsProvider = { [weak self] in
@@ -523,6 +527,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         replyBubble.showTransient(workflowWatcher.isRunning
             ? "Watching your workflow — activity log + deduped screenshots every 5s, reviewed by Claude nightly."
             : "Stopped watching your workflow.", seconds: 6)
+    }
+
+    /// Kick the nightly-review LaunchAgent by hand — same run as 21:37.
+    private func runWatcherReviewNow() {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        proc.arguments = ["kickstart", "gui/\(getuid())/com.voiceflow.watcher-analyze"]
+        do {
+            try proc.run()
+            replyBubble.showTransient("Workflow review started — Claude is reading today's activity; results appear on screen in a few minutes.", seconds: 8)
+        } catch {
+            replyBubble.showTransient("Couldn't start the review — is the com.voiceflow.watcher-analyze LaunchAgent loaded?", seconds: 8)
+        }
+    }
+
+    private func openLatestWatcherReview() {
+        let dir = WorkflowWatcher.baseDir.appendingPathComponent("reviews")
+        let newest = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "md" }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+            .first
+        if let newest {
+            NSWorkspace.shared.open(newest)
+        } else {
+            replyBubble.showTransient("No reviews yet — the first one runs tonight at 21:37, or pick Run Review Now.", seconds: 6)
+        }
     }
 
     /// Make the running watcher match the setting (menu toggle and the

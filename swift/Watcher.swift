@@ -74,6 +74,15 @@ final class WorkflowWatcher {
         vflog("watcher: stopped")
     }
 
+    /// Menu-bar status one-liner, computed on demand.
+    func statusLine() -> String {
+        guard isRunning else { return "Off" }
+        let dir = Self.baseDir.appendingPathComponent(Self.dayFormatter.string(from: Date()))
+        let frames = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [])
+            .filter { $0.hasSuffix(".jpg") }.count
+        return "Watching — \(frames) frames today"
+    }
+
     private func tick() {
         guard !capturing else { return }
         guard !Self.screenIsLocked() else { return }

@@ -125,7 +125,8 @@ Claude**; Claude Code can also pull bundles through the MCP tools.
 
 ## Workflow watcher (`~/.config/voice-flow/watcher/`)
 
-The ambient watcher (menu bar → "Watch Workflow", or Settings → Assistant;
+The ambient watcher (menu bar → "Workflow Watcher" submenu — live frame count,
+toggle, Run Review Now, open latest review / data folder — or Settings → Assistant;
 `WorkflowWatcher` in `swift/Watcher.swift`, `workflow_watcher_enabled` setting)
 ticks every 5 s while the user is active (input within the last 90 s, screen
 unlocked): one metadata line — frontmost app, window title, browser-tab URL

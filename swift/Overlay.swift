@@ -297,7 +297,11 @@ private final class OverlayPanelWindow {
     let id: String
     var onClose: ((String) -> Void)?    // ✕ → delete the backing file
 
-    private let maxBodyHeight: CGFloat = 560
+    /// Tallest a panel may grow before it scrolls — capped to the screen.
+    private var maxBodyHeight: CGFloat {
+        let screenHeight = (NSScreen.screens.first ?? NSScreen.main)?.visibleFrame.height ?? 900
+        return min(560, screenHeight - 80)
+    }
     private var panel: NSPanel?
     private var userMoved = false
     private var repositioning = false
@@ -340,9 +344,13 @@ private final class OverlayPanelWindow {
         let contentWidth = width - 30
 
         // Header: title + close
+        // Every wrapping label needs preferredMaxLayoutWidth — without it
+        // fittingSize measures the text unwrapped and the panel comes out
+        // too short for its content.
         let titleLabel = NSTextField(wrappingLabelWithString: doc.title.isEmpty ? " " : doc.title)
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.textColor = Theme.text
+        titleLabel.preferredMaxLayoutWidth = contentWidth - 28
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let closeButton = NSButton(
@@ -366,6 +374,7 @@ private final class OverlayPanelWindow {
             let noteLabel = NSTextField(wrappingLabelWithString: note)
             noteLabel.font = .systemFont(ofSize: 11)
             noteLabel.textColor = Theme.accent
+            noteLabel.preferredMaxLayoutWidth = contentWidth
             column.addArrangedSubview(noteLabel)
             noteLabel.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
         }
@@ -373,7 +382,7 @@ private final class OverlayPanelWindow {
         switch doc.kind {
         case .guide:
             for (index, step) in doc.steps.enumerated() {
-                let row = makeStepRow(step, number: index + 1, activeStep: doc.activeStep)
+                let row = makeStepRow(step, number: index + 1, activeStep: doc.activeStep, width: contentWidth)
                 column.addArrangedSubview(row)
                 row.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
             }
@@ -393,22 +402,22 @@ private final class OverlayPanelWindow {
 
         root.frame = NSRect(x: 0, y: 0, width: width, height: bodyHeight)
         if fitting.height > maxBodyHeight {
+            // Frame-based document view (autolayout documentViews scroll
+            // unreliably); the column is pinned to its top-left.
             let document = FlippedView(frame: NSRect(x: 0, y: 0, width: width, height: fitting.height))
-            document.translatesAutoresizingMaskIntoConstraints = false
             document.addSubview(column)
             NSLayoutConstraint.activate([
                 column.topAnchor.constraint(equalTo: document.topAnchor),
                 column.leadingAnchor.constraint(equalTo: document.leadingAnchor),
-                column.trailingAnchor.constraint(equalTo: document.trailingAnchor),
-                column.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+                column.widthAnchor.constraint(equalToConstant: width),
             ])
             let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: bodyHeight))
             scroll.drawsBackground = false
             scroll.hasVerticalScroller = true
             scroll.scrollerStyle = .overlay
+            scroll.verticalScrollElasticity = .allowed
             scroll.documentView = document
             scroll.autoresizingMask = [.width, .height]
-            document.widthAnchor.constraint(equalToConstant: width).isActive = true
             root.addSubview(scroll)
         } else {
             root.addSubview(column)
@@ -457,7 +466,7 @@ private final class OverlayPanelWindow {
 
     // ── Content pieces ──────────────────────────────────
 
-    private func makeStepRow(_ step: OverlayStep, number: Int, activeStep: Int) -> NSView {
+    private func makeStepRow(_ step: OverlayStep, number: Int, activeStep: Int, width: CGFloat) -> NSView {
         let state: (symbol: String, color: NSColor)
         if number < activeStep {
             state = ("checkmark.circle.fill", NSColor(r: 120, g: 200, b: 120))
@@ -477,9 +486,11 @@ private final class OverlayPanelWindow {
 
         let isActive = number == activeStep
         let isDone = number < activeStep
+        let textWidth = width - 26   // icon 18 + spacing 8
         let textLabel = NSTextField(wrappingLabelWithString: step.text)
         textLabel.font = .systemFont(ofSize: 12.5, weight: isActive ? .semibold : .regular)
         textLabel.textColor = isDone ? Theme.text3 : (isActive ? Theme.text : Theme.text2)
+        textLabel.preferredMaxLayoutWidth = textWidth
         textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let textColumn = NSStackView(views: [textLabel])
@@ -490,6 +501,7 @@ private final class OverlayPanelWindow {
             let detailLabel = NSTextField(wrappingLabelWithString: detail)
             detailLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
             detailLabel.textColor = Theme.text3
+            detailLabel.preferredMaxLayoutWidth = textWidth
             textColumn.addArrangedSubview(detailLabel)
             detailLabel.widthAnchor.constraint(equalTo: textColumn.widthAnchor).isActive = true
         }
@@ -508,12 +520,14 @@ private final class OverlayPanelWindow {
             let label = NSTextField(wrappingLabelWithString: text)
             label.font = .systemFont(ofSize: 12.5, weight: .semibold)
             label.textColor = Theme.text
+            label.preferredMaxLayoutWidth = width
             return label
 
         case .text(let text):
             let label = NSTextField(wrappingLabelWithString: text)
             label.font = .systemFont(ofSize: 12)
             label.textColor = Theme.text2
+            label.preferredMaxLayoutWidth = width
             return label
 
         case .code(let text):
@@ -528,6 +542,7 @@ private final class OverlayPanelWindow {
             label.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
             label.textColor = Theme.text
             label.isSelectable = true
+            label.preferredMaxLayoutWidth = width - 20   // 10px insets each side
             label.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(label)
             NSLayoutConstraint.activate([
@@ -547,6 +562,7 @@ private final class OverlayPanelWindow {
                 let label = NSTextField(wrappingLabelWithString: "•  \(item)")
                 label.font = .systemFont(ofSize: 12)
                 label.textColor = Theme.text2
+                label.preferredMaxLayoutWidth = width
                 stack.addArrangedSubview(label)
                 label.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
             }

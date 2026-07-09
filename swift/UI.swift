@@ -59,6 +59,12 @@ class MenuBarManager: NSObject {
     var onShowPermissions: (() -> Void)?
     var onToggleSession: (() -> Void)?
     var onToggleWatcher: (() -> Void)?
+    var onRunReview: (() -> Void)?
+    var onOpenLatestReview: (() -> Void)?
+    var onOpenWatcherFolder: (() -> Void)?
+    /// Live one-liner for the watcher submenu, rebuilt every time it opens
+    /// (e.g. "Watching — 71 frames today").
+    var watcherStatusProvider: (() -> String)?
     var onCopyCapturePrompt: (() -> Void)?
     var onToggleAnnotate: (() -> Void)?
     var onShowChat: (() -> Void)?
@@ -71,7 +77,9 @@ class MenuBarManager: NSObject {
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
     private var sessionMenuItem: NSMenuItem!
-    private var watcherMenuItem: NSMenuItem!
+    private var watcherMenu: NSMenu!
+    private var watcherStatusItem: NSMenuItem!
+    private var watcherToggleItem: NSMenuItem!
     private var claudeSessionsMenu: NSMenu!
 
     override init() {
@@ -96,8 +104,18 @@ class MenuBarManager: NSObject {
         menu.addItem(.separator())
         sessionMenuItem = menu.addItem(withTitle: "Start Session", action: #selector(toggleSessionAction), keyEquivalent: "")
         sessionMenuItem.target = self
-        watcherMenuItem = menu.addItem(withTitle: "Watch Workflow", action: #selector(toggleWatcherAction), keyEquivalent: "")
-        watcherMenuItem.target = self
+        let watcherRootItem = menu.addItem(withTitle: "Workflow Watcher", action: nil, keyEquivalent: "")
+        watcherMenu = NSMenu(title: "Workflow Watcher")
+        watcherMenu.delegate = self
+        watcherStatusItem = watcherMenu.addItem(withTitle: "Off", action: nil, keyEquivalent: "")
+        watcherStatusItem.isEnabled = false
+        watcherToggleItem = watcherMenu.addItem(withTitle: "Watch Workflow", action: #selector(toggleWatcherAction), keyEquivalent: "")
+        watcherToggleItem.target = self
+        watcherMenu.addItem(.separator())
+        watcherMenu.addItem(withTitle: "Run Review Now", action: #selector(runReviewAction), keyEquivalent: "").target = self
+        watcherMenu.addItem(withTitle: "Open Latest Review", action: #selector(openLatestReviewAction), keyEquivalent: "").target = self
+        watcherMenu.addItem(withTitle: "Open Data Folder", action: #selector(openWatcherFolderAction), keyEquivalent: "").target = self
+        menu.setSubmenu(watcherMenu, for: watcherRootItem)
         menu.addItem(withTitle: "Copy Prompt for Latest Capture", action: #selector(copyCaptureAction), keyEquivalent: "").target = self
         let voiceTargetItem = menu.addItem(withTitle: "Voice Goes To", action: nil, keyEquivalent: "")
         claudeSessionsMenu = NSMenu(title: "Voice Goes To")
@@ -124,7 +142,7 @@ class MenuBarManager: NSObject {
     }
 
     func setWatcherActive(_ active: Bool) {
-        watcherMenuItem?.state = active ? .on : .off
+        watcherToggleItem?.state = active ? .on : .off
     }
 
     @objc private func historyAction() { onShowHistory?() }
@@ -132,6 +150,9 @@ class MenuBarManager: NSObject {
     @objc private func settingsAction() { onShowSettings?() }
     @objc private func toggleSessionAction() { onToggleSession?() }
     @objc private func toggleWatcherAction() { onToggleWatcher?() }
+    @objc private func runReviewAction() { onRunReview?() }
+    @objc private func openLatestReviewAction() { onOpenLatestReview?() }
+    @objc private func openWatcherFolderAction() { onOpenWatcherFolder?() }
     @objc private func copyCaptureAction() { onCopyCapturePrompt?() }
     @objc private func annotateAction() { onToggleAnnotate?() }
     @objc private func chatAction() { onShowChat?() }
@@ -144,6 +165,10 @@ class MenuBarManager: NSObject {
 
 extension MenuBarManager: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === watcherMenu {
+            watcherStatusItem.title = watcherStatusProvider?() ?? "Off"
+            return
+        }
         guard menu === claudeSessionsMenu else { return }
         menu.removeAllItems()
         let sessions = claudeSessionsProvider?() ?? []
