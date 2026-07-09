@@ -104,6 +104,7 @@
     font-size: 8px; font-weight: 700; font-style: normal;
     background: transparent; border: 1px solid var(--dot-dim); color: var(--text2);
   }
+  .picker .dot, .picker .title-line { transition: background .18s ease, border-color .18s ease, color .18s ease, opacity .18s ease; }
 
   /* ───────── dot animations (essence of the real pill) ───────── */
   @keyframes pulse   { 0%,100% { transform: scale(1); } 50% { transform: scale(1.35); } }
@@ -157,25 +158,35 @@ bottom. Nothing overlays anything.</p>
     <div class="screen"><div class="shape pill idle"><div class="dots"><i class="dot"></i><i class="dot num">2</i><i class="dot"></i></div></div></div></div>
 </div>
 
-<h2>2 · One-line stretch (temporary, then shrink back)</h2>
+<h2>2 · Session picker — stays 3–5s after a choice; any other hotkey or a click anywhere collapses it early</h2>
 <div class="row">
-  <div class="stage wide"><div class="label"><b>Session picker</b> — ANY select attempt (valid, closed, whatever) expands this:
-      "sessions" + one numbered dot per available session, active one lit. Here: 3 sessions, #2 active, user pressed the closed #1.</div>
-    <div class="screen"><div class="shape stretch"><div class="picker">
-      <span class="lbl">sessions</span>
-      <i class="dot numoff">1</i><i class="dot num">2</i><i class="dot numoff">3</i>
-    </div></div></div></div>
-  <div class="stage wide"><div class="label"><b>Many sessions</b> — scales 1–9; #4 active</div>
-    <div class="screen"><div class="shape stretch"><div class="picker">
-      <span class="lbl">sessions</span>
-      <i class="dot numoff">1</i><i class="dot numoff">2</i><i class="dot numoff">3</i><i class="dot num">4</i><i class="dot numoff">5</i><i class="dot numoff">6</i>
-    </div></div></div></div>
-  <div class="stage wide"><div class="label"><b>Variant to confirm</b> — picker with the active session's name trailing?</div>
+  <div class="stage wide"><div class="label"><b>The picker</b> — any select attempt opens it: "sessions", one numbered dot per
+      available session (1–9), active lit, its NAME trailing. Here: 3 sessions, #2 active, user pressed the closed #1.</div>
     <div class="screen"><div class="shape stretch"><div class="picker">
       <span class="lbl">sessions</span>
       <i class="dot numoff">1</i><i class="dot num">2</i><i class="dot numoff">3</i>
       <span class="title-line" style="margin-left:6px">voice-flow — routing</span>
     </div></div></div></div>
+  <div class="stage wide"><div class="label"><b>Many sessions</b> — scales 1–9; #4 active</div>
+    <div class="screen"><div class="shape stretch"><div class="picker">
+      <span class="lbl">sessions</span>
+      <i class="dot numoff">1</i><i class="dot numoff">2</i><i class="dot numoff">3</i><i class="dot num">4</i><i class="dot numoff">5</i><i class="dot numoff">6</i>
+      <span class="title-line" style="margin-left:6px">atika — onboarding</span>
+    </div></div></div></div>
+  <div class="stage wide">
+    <div class="label"><b>LIVE: what changing looks like</b> — ⌃⌥3 lands: the lit dot hops, the name crossfades, the
+      timer restarts; then it collapses to the active-session pill. Proposal: the picker itself is the change indicator — nothing extra.</div>
+    <div class="screen">
+      <div id="pickdemo" class="shape stretch morph">
+        <div class="picker" id="pickerRow">
+          <span class="lbl" id="pickLbl">sessions</span>
+          <i class="dot numoff" id="pd1">1</i><i class="dot num" id="pd2">2</i><i class="dot numoff" id="pd3">3</i>
+          <span class="title-line" id="pickTitle" style="margin-left:6px">voice-flow — routing</span>
+        </div>
+      </div>
+    </div>
+    <div class="morph-note" id="pickNote">state: picker open (active 2)</div>
+  </div>
   <div class="stage"><div class="label"><b>Receipt</b> — short confirmations as a one-liner</div>
     <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">Sent to voice-flow ✓</span></div></div></div>
 </div>
@@ -274,6 +285,43 @@ bottom. Nothing overlays anything.</p>
     states[i].apply();
     note.textContent = 'state: ' + states[i].name;
   }, 2200);
+
+  // ── picker change demo: hop the lit dot, crossfade the name, collapse ──
+  const pd = { shape: document.getElementById('pickdemo'), row: document.getElementById('pickerRow'),
+               lbl: document.getElementById('pickLbl'), t: document.getElementById('pickTitle'),
+               d: [document.getElementById('pd1'), document.getElementById('pd2'), document.getElementById('pd3')],
+               note: document.getElementById('pickNote') };
+  function pickerOpen(active, name, label) {
+    pd.row.style.display = 'flex';
+    pd.shape.classList.add('stretch'); pd.shape.classList.remove('pill', 'idle');
+    pd.shape.style.width = ''; pd.shape.style.height = '24px'; pd.shape.style.borderRadius = '12px';
+    pd.d.forEach((el, idx) => { el.className = 'dot ' + (idx === active - 1 ? 'num' : 'numoff'); el.style.display = 'flex'; el.textContent = idx + 1; });
+    pd.lbl.style.display = '';
+    pd.t.style.opacity = 0;
+    setTimeout(() => { pd.t.textContent = name; pd.t.style.opacity = 1; }, 180);
+    pd.note.textContent = 'state: ' + label;
+  }
+  function pickerCollapse(active) {
+    // collapse to the active-session pill: 3 dots, middle one numbered
+    pd.lbl.style.display = 'none'; pd.t.style.opacity = 0;
+    pd.shape.style.width = '52px'; pd.shape.style.height = '18px'; pd.shape.style.borderRadius = '9px';
+    pd.d.forEach((el, idx) => {
+      el.style.display = 'flex';
+      el.className = idx === 1 ? 'dot num' : 'dot';
+      el.textContent = idx === 1 ? String(active) : '';
+      if (idx !== 1) { el.className = 'dot'; }
+    });
+    setTimeout(() => { pd.t.textContent = ''; }, 200);
+    pd.note.textContent = 'state: collapsed — active session pill (' + active + ' in the middle dot)';
+  }
+  const script_ = [
+    () => pickerOpen(2, 'voice-flow — routing', 'picker open (active 2)'),
+    () => pickerOpen(3, 'atika — onboarding', '⌃⌥3 pressed — dot hops, name crossfades, timer restarts'),
+    () => pickerCollapse(3),
+  ];
+  let pi = 0;
+  script_[0]();
+  setInterval(() => { pi = (pi + 1) % script_.length; script_[pi](); }, 2600);
 </script>
 
 </body>
