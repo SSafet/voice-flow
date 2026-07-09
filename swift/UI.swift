@@ -247,6 +247,18 @@ class FloatingIndicator: NSObject {
     /// persists until ✕/trash or an explicit hide.
     private enum SurfaceMode { case pill, flash, picker, grown }
     private var mode: SurfaceMode = .pill
+    /// Bumped on every transition — in-flight animation completions check
+    /// it so a new expand can't be clobbered by a stale collapse.
+    private var transitionGeneration = 0
+
+    /// Window frames snap instantly while layers animate implicitly — do
+    /// layout in here so both worlds agree, then animate deliberately.
+    private func withoutAnimation(_ body: () -> Void) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        body()
+        CATransaction.commit()
+    }
     var isGrownVisible: Bool { mode == .grown }
 
     // Grown mode — message content above, live dots at the bottom band.
@@ -447,14 +459,16 @@ class FloatingIndicator: NSObject {
         let shellH = H + 6
         expandShell(width: shellW, height: shellH, as: .flash)
 
-        expandTitleLayer.font = font
-        expandTitleLayer.fontSize = 11.5
-        expandTitleLayer.foregroundColor = isError
-            ? NSColor(r: 255, g: 138, b: 138).cgColor
-            : Theme.text.cgColor
-        expandTitleLayer.string = text
-        expandTitleLayer.frame = CGRect(x: 15, y: (shellH - 14) / 2, width: shellW - 30, height: 14)
-        expandTitleLayer.isHidden = false
+        withoutAnimation {
+            expandTitleLayer.font = font
+            expandTitleLayer.fontSize = 11.5
+            expandTitleLayer.foregroundColor = isError
+                ? NSColor(r: 255, g: 138, b: 138).cgColor
+                : Theme.text.cgColor
+            expandTitleLayer.string = text
+            expandTitleLayer.frame = CGRect(x: 15, y: (shellH - 14) / 2, width: shellW - 30, height: 14)
+            expandTitleLayer.isHidden = false
+        }
 
         expandTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
             self?.collapseNow()
@@ -462,21 +476,38 @@ class FloatingIndicator: NSObject {
     }
 
     /// Stretch the one-line shell around the capsule, hiding the classic dots.
+    /// The window snaps to the target size instantly; the capsule is re-seeded
+    /// at its current visual spot in the new coordinates and then animates —
+    /// so nothing gets clipped or flies in from a stale corner.
     private func expandShell(width shellW: CGFloat, height shellH: CGFloat, as newMode: SurfaceMode) {
+        transitionGeneration += 1
+        let previousWindowW = panelSize.width
+        let previousCapsule = capsuleLayer.frame
         mode = newMode
         expandedSize = NSSize(width: shellW, height: shellH)
         recenter()
 
+        withoutAnimation {
+            // Same screen position, expressed in the new window's coords.
+            let seedX = (shellW - previousWindowW) / 2 + previousCapsule.origin.x
+            capsuleLayer.frame = CGRect(x: seedX, y: previousCapsule.origin.y,
+                                        width: previousCapsule.width, height: previousCapsule.height)
+            grownBackdropLayer.isHidden = true
+            hideGrownChrome()
+            dotLayers.forEach { $0.isHidden = true }
+            pillLayer.isHidden = false
+            sessionRingLayer.isHidden = false
+            watcherRingLayer.isHidden = false
+        }
+
+        // Deliberate morph to the stretched shell.
         capsuleLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
-        pillLayer.isHidden = false
         pillLayer.frame = CGRect(x: 1, y: 1, width: shellW - 2, height: shellH - 2)
         pillLayer.cornerRadius = (shellH - 2) / 2
         sessionRingLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
         sessionRingLayer.cornerRadius = shellH / 2
         watcherRingLayer.frame = CGRect(x: 0, y: 0, width: shellW, height: shellH)
         watcherRingLayer.cornerRadius = shellH / 2
-        dotLayers.forEach { $0.isHidden = true }
-        hideGrownChrome()
 
         if clickMonitor == nil {
             clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
@@ -500,21 +531,30 @@ class FloatingIndicator: NSObject {
     }
 
     private func collapseToPill() {
+        transitionGeneration += 1
+        let generation = transitionGeneration
+        let wasExpanded = expandedSize
         mode = .pill
         expandTimer?.invalidate()
         expandTimer = nil
-        expandedSize = nil
         if let clickMonitor {
             NSEvent.removeMonitor(clickMonitor)
             self.clickMonitor = nil
         }
+
+        // Phase 1 — while the window is still large, shrink everything back
+        // to a pill CENTERED in it (same screen spot the small window will
+        // occupy), fading the expanded chrome. Snapping the window first
+        // would clip the animation mid-flight.
+        hideGrownChrome()
+        expandTitleLayer.isHidden = true
+        grownBackdropLayer.isHidden = true
         pickerLayer?.removeFromSuperlayer()
         pickerLayer = nil
-        expandTitleLayer.isHidden = true
-        hideGrownChrome()
-        grownBackdropLayer.isHidden = true
+
+        let windowW = wasExpanded?.width ?? W
         pillLayer.isHidden = false
-        capsuleLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
+        capsuleLayer.frame = CGRect(x: (windowW - W) / 2, y: 0, width: W, height: H)
         pillLayer.frame = CGRect(x: 1, y: 1, width: W - 2, height: H - 2)
         pillLayer.cornerRadius = (H - 2) / 2
         sessionRingLayer.isHidden = false
@@ -524,8 +564,23 @@ class FloatingIndicator: NSObject {
         watcherRingLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
         watcherRingLayer.cornerRadius = H / 2
         dotLayers.forEach { $0.isHidden = false }
-        recenter()
-        applyState(force: true)
+
+        // Phase 2 — after the shrink lands, snap the window to pill size and
+        // re-anchor the capsule at the origin (same screen position).
+        let finish = { [weak self] in
+            guard let self, self.transitionGeneration == generation else { return }
+            self.expandedSize = nil
+            self.withoutAnimation {
+                self.capsuleLayer.frame = CGRect(x: 0, y: 0, width: self.W, height: self.H)
+            }
+            self.recenter()
+            self.applyState(force: true)
+        }
+        if wasExpanded == nil {
+            finish()
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.28, execute: finish)
+        }
     }
 
     // ── Grown mode: message content above, live dots at the bottom ──
@@ -555,16 +610,25 @@ class FloatingIndicator: NSObject {
         expandTitleLayer.isHidden = true
         grownStreaming = false
 
+        let entering = mode != .grown
+        // Remember where the surface visually is, to grow out of it.
+        let previousWindowW = panelSize.width
+        let previousCapsule = capsuleLayer.frame
         mode = .grown
+        transitionGeneration += 1
+
         grownStatusLabel.stringValue = spec.title ?? ""
         grownHintLabel.stringValue = spec.hint ?? ""
         grownTextView.textStorage?.setAttributedString(NSAttributedString(
             string: spec.text,
             attributes: [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: Theme.text]))
-        grownBackdropLayer.borderColor = spec.isAsk
-            ? NSColor(r: 255, g: 194, b: 75, a: 217).cgColor
-            : NSColor(r: 255, g: 170, b: 60, a: 140).cgColor
-        relayoutGrown(bottomPicker: bottomPicker)
+        withoutAnimation {
+            grownBackdropLayer.borderColor = spec.isAsk
+                ? NSColor(r: 255, g: 194, b: 75, a: 217).cgColor
+                : NSColor(r: 255, g: 170, b: 60, a: 140).cgColor
+        }
+        relayoutGrown(bottomPicker: bottomPicker,
+                      enteringFrom: entering ? (previousWindowW, previousCapsule) : nil)
 
         if let autoHide {
             expandTimer = Timer.scheduledTimer(withTimeInterval: autoHide, repeats: false) { [weak self] _ in
@@ -598,7 +662,11 @@ class FloatingIndicator: NSObject {
         relayoutGrown(bottomPicker: nil)
     }
 
-    private func relayoutGrown(bottomPicker: (entries: [PickerEntry], activeName: String?)?) {
+    /// Lay out grown mode. `enteringFrom` (previous window width + capsule
+    /// frame) seeds a grow-out-of-the-pill morph; nil relayouts (streaming
+    /// deltas) apply instantly so nothing animates from stale frames.
+    private func relayoutGrown(bottomPicker: (entries: [PickerEntry], activeName: String?)?,
+                               enteringFrom seed: (windowW: CGFloat, capsule: CGRect)? = nil) {
         guard mode == .grown, let container = grownTextView.textContainer,
               let layoutManager = grownTextView.layoutManager else { return }
 
@@ -607,8 +675,10 @@ class FloatingIndicator: NSObject {
         let hasHint = !grownHintLabel.stringValue.isEmpty
         let bottomBand: CGFloat = 26
 
-        grownScroll.frame.size.width = width - 24
-        grownTextView.frame.size.width = width - 24
+        withoutAnimation {
+            grownScroll.frame.size.width = width - 24
+            grownTextView.frame.size.width = width - 24
+        }
         layoutManager.ensureLayout(for: container)
         let used = layoutManager.usedRect(for: container).height
         let textHeight = min(max(used + 6, 22), grownMaxTextHeight)
@@ -619,28 +689,50 @@ class FloatingIndicator: NSObject {
         expandedSize = NSSize(width: width, height: totalH)
         recenter()
 
-        grownBackdropLayer.isHidden = false
-        grownBackdropLayer.frame = CGRect(x: 0, y: 0, width: width, height: totalH)
-
-        // Bottom band: naked capsule dots (skin hidden) or the picker row.
-        pillLayer.isHidden = true
-        sessionRingLayer.isHidden = true
-        watcherRingLayer.isHidden = true
-        pickerLayer?.removeFromSuperlayer()
-        pickerLayer = nil
-        if let bottomPicker {
-            dotLayers.forEach { $0.isHidden = true }
-            capsuleLayer.frame = CGRect(x: 0, y: 0, width: width, height: bottomBand)
-            let row = buildPickerRow(entries: bottomPicker.entries, activeName: bottomPicker.activeName,
-                                     shellW: width, shellH: bottomBand)
-            capsuleLayer.addSublayer(row)
-            pickerLayer = row
-        } else {
-            dotLayers.forEach { $0.isHidden = false }
-            capsuleLayer.frame = CGRect(x: (width - W) / 2, y: 3, width: W, height: H)
+        if let seed {
+            // Seed the backdrop at the pill's current visual rect (in the
+            // new window's coordinates) so the container grows out of it.
+            withoutAnimation {
+                let seedX = (width - seed.windowW) / 2 + seed.capsule.origin.x
+                let seedRect = CGRect(x: seedX, y: seed.capsule.origin.y,
+                                      width: seed.capsule.width, height: seed.capsule.height)
+                grownBackdropLayer.isHidden = false
+                grownBackdropLayer.frame = seedRect
+                grownBackdropLayer.cornerRadius = seed.capsule.height / 2
+                capsuleLayer.frame = seedRect
+            }
         }
 
-        // Content views (panel coords, bottom-up).
+        let layout = {
+            self.grownBackdropLayer.isHidden = false
+            self.grownBackdropLayer.frame = CGRect(x: 0, y: 0, width: width, height: totalH)
+            self.grownBackdropLayer.cornerRadius = 14
+
+            // Bottom band: naked capsule dots (skin hidden) or the picker row.
+            self.pillLayer.isHidden = true
+            self.sessionRingLayer.isHidden = true
+            self.watcherRingLayer.isHidden = true
+            self.pickerLayer?.removeFromSuperlayer()
+            self.pickerLayer = nil
+            if let bottomPicker {
+                self.dotLayers.forEach { $0.isHidden = true }
+                self.capsuleLayer.frame = CGRect(x: 0, y: 0, width: width, height: bottomBand)
+                let row = self.buildPickerRow(entries: bottomPicker.entries, activeName: bottomPicker.activeName,
+                                              shellW: width, shellH: bottomBand)
+                self.capsuleLayer.addSublayer(row)
+                self.pickerLayer = row
+            } else {
+                self.dotLayers.forEach { $0.isHidden = false }
+                self.capsuleLayer.frame = CGRect(x: (width - self.W) / 2, y: 3, width: self.W, height: self.H)
+            }
+        }
+        if seed != nil {
+            layout()   // implicit animation from the seeded rects
+        } else {
+            withoutAnimation(layout)
+        }
+
+        // Content views (panel coords, bottom-up); fade in on entry.
         grownScroll.isHidden = false
         grownScroll.frame = NSRect(x: 12, y: bottomBand + hintSpace, width: width - 24, height: textHeight)
         grownHintLabel.isHidden = !hasHint
@@ -657,6 +749,17 @@ class FloatingIndicator: NSObject {
         iconTrash.frame = NSRect(x: width - 48, y: totalH - 24, width: 16, height: 16)
         iconSpeaker.isHidden = false
         iconSpeaker.frame = NSRect(x: width - 70, y: totalH - 24, width: 16, height: 16)
+        if seed != nil {
+            for view in [grownScroll, grownHintLabel, grownStatusLabel, iconClose, iconTrash, iconSpeaker] as [NSView] {
+                view.alphaValue = 0
+            }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                for view in [grownScroll, grownHintLabel, grownStatusLabel, iconClose, iconTrash, iconSpeaker] as [NSView] {
+                    view.animator().alphaValue = 1
+                }
+            }
+        }
     }
 
     @objc private func grownSpeakTapped() {
