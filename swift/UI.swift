@@ -863,6 +863,13 @@ final class DictationsView: NSView {
     }
 
     // ── Persistence ────────────────────────────────────
+
+    /// Newest-first dictations straight from the store (used by the MCP
+    /// get_recent_dictations tool — no UI involved).
+    static func recentEntries(limit: Int) -> [HistoryEntry] {
+        Array(loadEntries().prefix(max(0, limit)))
+    }
+
     private static func loadEntries() -> [HistoryEntry] {
         guard let data = try? Data(contentsOf: storeURL),
               let list = try? JSONDecoder().decode([HistoryEntry].self, from: data) else { return [] }

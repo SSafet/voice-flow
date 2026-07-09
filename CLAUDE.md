@@ -50,9 +50,12 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   annotations are real windows, so they appear in it).
 - **Session** (toggle): records the mic continuously and buffers deduped
   screenshots (`CaptureScheduler`, plus a forced shot whenever annotate mode
-  ends); on stop, the transcript + up to 8 frames go to the agent as one turn
-  (`sendSessionBundle`). `RecordingPurpose` in `App.swift` routes each
-  transcription result (dictation / talk / snapTalk / session).
+  ends); on stop, everything becomes a **capture bundle** on disk
+  (`CaptureStore`, see below) offered to Claude Code — the legacy
+  send-to-in-app-agent path (`sendSessionBundle`, 8-frame cap) is behind the
+  off-by-default `session_send_to_agent` setting. `RecordingPurpose` in
+  `App.swift` routes each transcription result (dictation / talk / snapTalk /
+  session).
 - Replies stream into the **`ReplyBubble`** (`swift/ReplyBubble.swift`), a
   floating bubble above the pill, whenever the ChatPanel is closed; ✕ dismisses.
 - With voice replies on (speaker toggle), `AgentReplySpeaker` (`swift/TTS.swift`)
@@ -63,11 +66,56 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
 - Escape commits a pending annotation text note, then exits annotate mode; it
   stays the panic button while the agent is acting.
 
+## MCP server — Voice Flow as Claude Code's interaction layer
+
+`LocalAPIServer` (port 8792) also serves **MCP over Streamable HTTP** at
+`http://127.0.0.1:8792/mcp` (`MCPServer` in `swift/MCP.swift`; registered once
+via `claude mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp`).
+Tool handlers live in `AppDelegate.handleMCPTool` (`App.swift`); they run on
+background HTTP threads and hop to main for UI. 16 tools in three groups:
+
+**Hearing from the user**
+- `ask_user` — **blocks** until the human answers (`PendingInteraction`
+  semaphore; `handleResult` / `sendTypedMessage` / `finishSession` route the
+  answer to it). Reply modes: talk hotkey, snap-talk (+screenshot), typing,
+  or a whole demonstration session.
+- `notify_user` / `check_messages` / `wait_for_message` — the async path.
+  Talk hotkeys queue into `MessageInbox` (`swift/Inbox.swift`, persisted at
+  `inbox.json`) **by default** — the in-app agent only receives them when
+  `talk_send_to_agent` is on. `wait_for_message` parks until the user talks
+  ("listening mode").
+- `get_latest_capture` / `list_captures` / `get_recent_dictations`,
+  `take_screenshot` (fixed ≤1440-px geometry via `CaptureStore.shotGeometry`,
+  includes the cursor position in image space).
+
+**Showing the user — file-backed overlays (`swift/Overlay.swift`)**
+Every on-screen element is a live JSON file in
+`~/.config/voice-flow/overlays/` (schema written to `_schema.md` there).
+`OverlayManager` polls at 0.5 s and re-renders on any change, so MCP tools
+and direct file edits are equivalent; deleting a file (or the panel's ✕)
+removes the element. Types: `guide` (step list, done/active/pending),
+`panel` (heading/text/code/bullets blocks), `annotations` (circle, arrow,
+label, rect, line — click-through, coordinates in take_screenshot pixels).
+Tools: `show_guide` / `update_guide` / `show_panel` / `annotate_screen` /
+`clear_annotations` / `remove_overlay` / `list_overlays`.
+
+**Voice**: `speak` — TTS through the shared engine.
+
+## Capture bundles (`~/.config/voice-flow/captures/<id>/`)
+
+A session writes every deduped frame live via `CaptureStore`
+(`swift/Capture.swift`): `frames/frame-NN-tXXXs.jpg`, then `transcript.md` +
+`meta.json` when transcription lands (bundles pruned to 40; ad-hoc shots in
+`captures/shots/`). On session end the bubble offers **Copy prompt for
+Claude**; Claude Code can also pull bundles through the MCP tools.
+
 ## Persistent data (`~/.config/voice-flow/`)
 
 - `settings.json` — `UserSettings` (hotkeys, TTS voice/speed/instructions, agent model, …).
 - `dictations.json` — dictation history (`[HistoryEntry]`, JSON), written by
   `DictationsView` on each new dictation (render cap 60, store cap 200). Survives restarts.
+- `inbox.json` — queued talk-hotkey messages for Claude (`MessageInbox`).
+- `overlays/*.json` — live on-screen elements (`OverlayManager`); `_schema.md` documents the format.
 - `app.log` — `vflog` output.
 - OpenAI / agent API keys live in the **Keychain** (`KeychainStore`), not on disk.
 
@@ -80,7 +128,11 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
 | `Core.swift` | `UserSettings`, `KeychainStore`, `HotkeyManager`, `AudioRecorder`, `BackendBridge`, `Paster`, `HotkeySpec` | Audio capture, Python STT bridge (subprocess), paste/stream into the frontmost app, settings, global hotkeys. |
 | `UI.swift` | `Theme`, `MenuBarManager`, `FloatingIndicator`, `FloatingTranscriptPanel`, `DictationsView`, `TTSView`, `HoverCardView`, `KeyRecorderButton` | Menu bar, pill, live transcript overlay, and the Dictations/Speech tab surfaces. |
 | `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel and its tabs. |
-| `ReplyBubble.swift` | `ReplyBubble` | Floating streamed-reply bubble shown when the ChatPanel is closed. |
+| `ReplyBubble.swift` | `ReplyBubble` | Floating streamed-reply bubble (also shows Claude's `ask_user` prompts + capture-saved notes with an action button). |
+| `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
+| `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of talk-hotkey messages for Claude (check/wait semantics). |
+| `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
+| `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Claude Code. |
 | `Agent.swift` | `AgentSession`, `ComputerControl` | LLM loop that reasons over screenshots and issues screen-control tool calls. |
 | `Annotation.swift` | `AnnotationOverlay` | Draw-on-screen overlay (pen + multiline text notes with size presets). |
 | `Settings.swift` | `SettingsStore`, `SettingsWindowController`, `PermissionsWindowController`, `KeyRecorderView` | SwiftUI settings & permissions windows. |

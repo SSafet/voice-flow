@@ -154,6 +154,12 @@ class UserSettings {
     var agentModel: String = DefaultAgentModel
     var agentBaseURL: String = DefaultAgentBaseURL
     var voiceRepliesEnabled: Bool = false
+    // Sessions save capture bundles for Claude Code; the legacy path that
+    // also feeds them to the in-app agent is opt-in.
+    var sessionSendToAgent: Bool = false
+    // Talk hotkeys queue messages for Claude Code (MCP inbox) unless the
+    // in-app agent is explicitly re-enabled as their destination.
+    var talkSendToAgent: Bool = false
 
     private let url: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
@@ -209,6 +215,8 @@ class UserSettings {
             agentBaseURL = Self.trimmed(v, fallback: DefaultAgentBaseURL)
         }
         if let v = dict["voice_replies_enabled"] as? Bool { voiceRepliesEnabled = v }
+        if let v = dict["session_send_to_agent"] as? Bool { sessionSendToAgent = v }
+        if let v = dict["talk_send_to_agent"] as? Bool { talkSendToAgent = v }
         if let v = dict["custom_vocabulary"] as? [String] {
             customVocabulary = v.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
@@ -235,6 +243,8 @@ class UserSettings {
             "agent_model": agentModel,
             "agent_base_url": agentBaseURL,
             "voice_replies_enabled": voiceRepliesEnabled,
+            "session_send_to_agent": sessionSendToAgent,
+            "talk_send_to_agent": talkSendToAgent,
             "custom_vocabulary": customVocabulary,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted) {

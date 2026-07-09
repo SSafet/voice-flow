@@ -1138,8 +1138,15 @@ final class LocalAPIServer {
     var onSeek: ((TTSAPIUpdatePayload) -> LocalAPIResponse)?
     var onStop: (() -> LocalAPIResponse)?
     var onServerMessage: ((String) -> Void)?
+    /// MCP endpoint: raw JSON-RPC body in → (status, body) out. May block
+    /// for minutes (ask_user), hence the concurrent client queue below.
+    var onMCP: ((Data) -> (status: Int, payload: Data?))?
 
     private let queue = DispatchQueue(label: "voiceflow.local-api", qos: .userInitiated)
+    // Each connection is served on its own thread so one long-running MCP
+    // tool call can't block TTS control or other MCP requests.
+    private let clientQueue = DispatchQueue(
+        label: "voiceflow.local-api.clients", qos: .userInitiated, attributes: .concurrent)
     private var listenFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
 
@@ -1212,7 +1219,7 @@ final class LocalAPIServer {
         var addrLen: socklen_t = socklen_t(MemoryLayout<sockaddr>.size)
         let clientFD = Darwin.accept(listenFD, &addr, &addrLen)
         guard clientFD >= 0 else { return }
-        queue.async { [weak self] in
+        clientQueue.async { [weak self] in
             self?.handleClient(fd: clientFD)
         }
     }
@@ -1228,8 +1235,28 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/mcp" {
+            handleMCPRequest(request, fd: fd)
+            return
+        }
+
         let response = route(request)
         writeResponse(response, to: fd)
+    }
+
+    private func handleMCPRequest(_ request: LocalHTTPRequest, fd: Int32) {
+        guard request.method == "POST" else {
+            // Streamable HTTP allows a server without an SSE listening stream
+            // to reject GET; DELETE (session teardown) has nothing to do.
+            writeRawResponse(status: 405, payload: Data("{}".utf8), to: fd)
+            return
+        }
+        guard let onMCP else {
+            writeRawResponse(status: 503, payload: Data("{}".utf8), to: fd)
+            return
+        }
+        let (status, payload) = onMCP(request.body)
+        writeRawResponse(status: status, payload: payload, to: fd)
     }
 
     private func route(_ request: LocalHTTPRequest) -> LocalAPIResponse {
@@ -1343,18 +1370,24 @@ final class LocalAPIServer {
 
     private func writeResponse(_ response: LocalAPIResponse, to fd: Int32) {
         let payloadData = (try? JSONSerialization.data(withJSONObject: response.body, options: [.prettyPrinted])) ?? Data("{}".utf8)
+        writeRawResponse(status: response.statusCode, payload: payloadData, to: fd)
+    }
+
+    private func writeRawResponse(status: Int, payload: Data?, to fd: Int32) {
         let statusText: String
-        switch response.statusCode {
+        switch status {
         case 200: statusText = "OK"
         case 202: statusText = "Accepted"
         case 400: statusText = "Bad Request"
         case 404: statusText = "Not Found"
+        case 405: statusText = "Method Not Allowed"
         case 503: statusText = "Service Unavailable"
         default: statusText = "Error"
         }
+        let payloadData = payload ?? Data()
 
         let header = [
-            "HTTP/1.1 \(response.statusCode) \(statusText)",
+            "HTTP/1.1 \(status) \(statusText)",
             "Content-Type: application/json",
             "Content-Length: \(payloadData.count)",
             "Connection: close",
@@ -1363,7 +1396,9 @@ final class LocalAPIServer {
         ].joined(separator: "\r\n")
 
         writeAll(fd: fd, data: Data(header.utf8))
-        writeAll(fd: fd, data: payloadData)
+        if !payloadData.isEmpty {
+            writeAll(fd: fd, data: payloadData)
+        }
     }
 
     private func writeAll(fd: Int32, data: Data) {

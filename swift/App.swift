@@ -15,6 +15,21 @@ enum RecordingPurpose {
     case session     // continuous session audio, bundled at session end
 }
 
+// A question Claude (over MCP) asked the user; the tool call blocks on the
+// semaphore until the user answers by voice/typing/demonstration, dismisses
+// the prompt, or the timeout passes.
+final class PendingInteraction {
+    let prompt: String
+    let semaphore = DispatchSemaphore(value: 0)
+    var responseText: String?
+    var attachments: [String] = []   // absolute screenshot/frame paths
+    var cancelled = false
+
+    init(prompt: String) {
+        self.prompt = prompt
+    }
+}
+
 // ── App Delegate ────────────────────────────────────────
 class AppDelegate: NSObject, NSApplicationDelegate {
     var menuBar: MenuBarManager!
@@ -37,6 +52,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var localAPIServer: LocalAPIServer!
     var replyBubble: ReplyBubble!
     var replySpeaker: AgentReplySpeaker!
+    var captureStore: CaptureStore!
+    var overlayManager: OverlayManager!
+    var inbox: MessageInbox!
+    var mcpServer: MCPServer!
+    /// Set while an MCP ask_user call is waiting for the human. Main thread only.
+    var pendingInteraction: PendingInteraction?
 
     // Agent session
     var screenCapture: ScreenCapture!
@@ -144,6 +165,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         replyBubble = ReplyBubble()
+        replyBubble.onClosed = { [weak self] in
+            // ✕ on a pending Claude question = "not answering this one".
+            guard let self, let interaction = self.pendingInteraction else { return }
+            interaction.cancelled = true
+            interaction.semaphore.signal()
+        }
+
+        overlayManager = OverlayManager()
+        overlayManager.start()
 
         chatPanel = ChatPanel()
         chatPanel.onShown = { [weak self] in self?.replyBubble.hide() }
@@ -250,6 +280,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupCore() {
         recorder = AudioRecorder()
         paster = Paster()
+        captureStore = CaptureStore()
+        inbox = MessageInbox()
         ttsController = TTSController()
         ttsController.onStatusChanged = { [weak self] snapshot in
             DispatchQueue.main.async {
@@ -283,8 +315,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self.replyBubble.showNote("Couldn't transcribe that — try again.")
                 }
             case .session:
-                self.chatPanel.addNote("Couldn't transcribe the session audio — sending the screenshots on their own.")
-                self.sendSessionBundle(transcript: nil)
+                self.chatPanel.addNote("Couldn't transcribe the session audio — keeping the screenshots on their own.")
+                self.finishSession(transcript: nil)
             case .dictation:
                 break
             }
@@ -452,9 +484,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startSession() {
         guard !sessionActive else { return }
-        guard KeychainStore.shared.hasAgentAPIKey else {
+        if UserSettings.shared.sessionSendToAgent, !KeychainStore.shared.hasAgentAPIKey {
             chatPanel.show(focusInput: false)
-            chatPanel.addNote("Add your OpenRouter key in Settings to start a session.")
+            chatPanel.addNote("Add your OpenRouter key in Settings, or turn off sending sessions to the assistant.")
             showSettings()
             return
         }
@@ -467,18 +499,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ambientScreenshots.removeAll()
         pendingSessionShots.removeAll()
         lastCaptureData = nil
+        captureStore.beginSession()
         captureScheduler.interval = TimeInterval(max(1, UserSettings.shared.captureIntervalSeconds))
         captureScheduler.start()
 
-        // The whole session is one long voice note — transcribed and sent
-        // together with the collected screenshots when the session ends.
+        // The whole session is one long voice note — transcribed and bundled
+        // with the collected screenshots when the session ends.
         recordingPurpose = .session
         recorder.start()
 
         indicator.setSessionActive(true)
         menuBar.setSessionActive(true)
         chatPanel.setSessionActive(true)
-        chatPanel.addNote("Session started — I'm listening and watching. Stop the session to send everything to the agent.")
+        chatPanel.addNote(pendingInteraction != nil
+            ? "Recording a demonstration for Claude — stop the session to send it."
+            : "Session started — capturing your voice and screen. Stop to save the capture.")
         playSound("Tink")
         vflog("session started")
     }
@@ -501,12 +536,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Final frame: how the screen looks the moment the session ends.
             if let fresh = try? await screenCapture.captureScreen() {
                 pendingSessionShots.append(fresh)
+                captureStore.addFrame(fresh)
             }
             if recorder.isRecording, recordingPurpose == .session {
-                stopRecording()   // → transcribe → handleResult(.session) → sendSessionBundle
+                stopRecording()   // → transcribe → handleResult(.session) → finishSession
             } else {
                 recordingPurpose = .dictation
-                sendSessionBundle(transcript: nil)
+                finishSession(transcript: nil)
             }
         }
     }
@@ -524,16 +560,103 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func appendSessionShot(_ imageData: Data) {
         indicator.flashCapturePulse()
+        captureStore.addFrame(imageData)
         ambientScreenshots.append(imageData)
         if ambientScreenshots.count > maxAmbientScreenshots {
             ambientScreenshots.removeFirst(ambientScreenshots.count - maxAmbientScreenshots)
         }
     }
 
+    /// A session just produced its transcript (or failed to) — turn
+    /// everything collected into a capture bundle and route it: to the
+    /// waiting MCP interaction if Claude asked, to the in-app agent when
+    /// that legacy path is enabled, otherwise offer it to the user for
+    /// Claude Code.
+    private func finishSession(transcript: String?) {
+        let summary = captureStore.endSession(transcript: transcript)
+
+        // Claude is literally waiting on this demonstration.
+        if let interaction = pendingInteraction, let summary {
+            pendingSessionShots.removeAll()
+            interaction.attachments = summary.framePaths
+            interaction.responseText = summary.transcript.isEmpty
+                ? "(no narration — the screenshots are the demonstration)"
+                : summary.transcript
+            interaction.semaphore.signal()
+            replyBubble.showNote("Demonstration sent to Claude — \(summary.frameCount) frames.")
+            return
+        }
+
+        if UserSettings.shared.sessionSendToAgent {
+            sendSessionBundle(transcript: transcript)
+            if let summary, chatPanel.isVisible {
+                chatPanel.addNote("Capture also saved to \(summary.directory.path)")
+            }
+            return
+        }
+
+        pendingSessionShots.removeAll()
+        guard let summary else {
+            chatPanel.addNote("Session ended — nothing captured.")
+            if !chatPanel.isVisible {
+                replyBubble.showNote("Session ended — nothing captured.")
+            }
+            return
+        }
+
+        let frames = "\(summary.frameCount) frame\(summary.frameCount == 1 ? "" : "s")"
+        let text = "Capture saved — \(frames) · \(Int(summary.durationSeconds))s.\nTell Claude Code to get your latest capture, or copy a ready-made prompt."
+        let prompt = summary.claudePrompt
+        replyBubble.showNote(text, actionTitle: "Copy prompt for Claude", action: {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(prompt, forType: .string)
+        })
+        if chatPanel.isVisible {
+            chatPanel.addNote("Capture saved to \(summary.directory.path)")
+        }
+    }
+
     // ── Sending to the agent ────────────────────────────
 
     private func sendTypedMessage(_ text: String) {
+        if let interaction = pendingInteraction {
+            chatPanel.addNote("Sent to Claude.")
+            fulfillInteraction(interaction, text: text, includeScreenshot: false)
+            return
+        }
         sendToAgent(text: text, includeFreshScreenshot: sessionActive)
+    }
+
+    /// Hand the user's answer to the MCP tool call that's blocked on it.
+    private func fulfillInteraction(_ interaction: PendingInteraction, text: String, includeScreenshot: Bool) {
+        replyBubble.showNote("Answer sent to Claude.")
+        Task { @MainActor in
+            if includeScreenshot,
+               let raw = try? await screenCapture.captureScreen(),
+               let shot = CaptureStore.saveShot(raw) {
+                interaction.attachments.append(shot.path)
+            }
+            interaction.responseText = text
+            interaction.semaphore.signal()
+        }
+    }
+
+    /// No question pending — queue a talk-hotkey message in Claude's inbox
+    /// (delivered instantly when Claude is parked in wait_for_message).
+    private func queueInboxMessage(text: String, includeScreenshot: Bool) {
+        Task { @MainActor in
+            var attachments: [String] = []
+            if includeScreenshot,
+               let raw = try? await screenCapture.captureScreen(),
+               let shot = CaptureStore.saveShot(raw) {
+                attachments.append(shot.path)
+            }
+            let delivered = inbox.hasWaiter
+            inbox.add(text: text, attachments: attachments)
+            replyBubble.showNote(delivered
+                ? "Sent to Claude."
+                : "Queued for Claude — delivered when he next checks in.")
+        }
     }
 
     private func snapAndSend() {
@@ -670,8 +793,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         case .talk, .snapTalk:
                             self.chatPanel.addNote("Add your OpenAI key in Settings to transcribe voice notes.")
                         case .session:
-                            self.chatPanel.addNote("No OpenAI key — sending the session screenshots without a transcript.")
-                            self.sendSessionBundle(transcript: nil)
+                            self.chatPanel.addNote("No OpenAI key — keeping the session screenshots without a transcript.")
+                            self.finishSession(transcript: nil)
                         }
                         return
                     }
@@ -692,7 +815,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.recordingPurpose = .dictation
                 self.state = .idle
                 if purpose == .session {
-                    self.sendSessionBundle(transcript: nil)
+                    self.finishSession(transcript: nil)
                 }
             }
         }
@@ -771,14 +894,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             case .talk:
                 guard !note.isEmpty else { return }
                 playSound("Pop")
-                sendToAgent(text: note, includeFreshScreenshot: false)
+                if let interaction = pendingInteraction {
+                    fulfillInteraction(interaction, text: note, includeScreenshot: false)
+                } else if UserSettings.shared.talkSendToAgent {
+                    sendToAgent(text: note, includeFreshScreenshot: false)
+                } else {
+                    queueInboxMessage(text: note, includeScreenshot: false)
+                }
             case .snapTalk:
                 guard !note.isEmpty else { return }
                 playSound("Pop")
-                sendToAgent(text: note, includeFreshScreenshot: true, forceScreenshot: true)
+                if let interaction = pendingInteraction {
+                    fulfillInteraction(interaction, text: note, includeScreenshot: true)
+                } else if UserSettings.shared.talkSendToAgent {
+                    sendToAgent(text: note, includeFreshScreenshot: true, forceScreenshot: true)
+                } else {
+                    queueInboxMessage(text: note, includeScreenshot: true)
+                }
             case .session:
                 playSound("Pop")
-                sendSessionBundle(transcript: note)
+                finishSession(transcript: note)
             case .dictation:
                 break
             }
@@ -1127,6 +1262,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return response
         }
+
+        mcpServer = MCPServer()
+        mcpServer.callTool = { [weak self] name, arguments in
+            guard let self else {
+                return MCPServer.ToolResult.fail("Voice Flow is shutting down.")
+            }
+            return self.handleMCPTool(name, arguments)
+        }
+        localAPIServer.onMCP = { [weak self] body in
+            self?.mcpServer.handle(body: body) ?? (503, nil)
+        }
         localAPIServer.start()
     }
 
@@ -1213,6 +1359,427 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "position": ttsController.status.currentTime,
             "duration": ttsController.status.duration,
         ])
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  MCP tools — Voice Flow as Claude Code's interaction layer
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  Runs on a background HTTP thread; anything touching UI hops to main.
+    //  ask_user deliberately blocks — its result IS the user's answer.
+
+    private func handleMCPTool(_ name: String, _ args: [String: Any]) -> MCPServer.ToolResult {
+        switch name {
+        case "ask_user": return mcpAskUser(args)
+        case "notify_user": return mcpNotifyUser(args)
+        case "check_messages": return mcpCheckMessages()
+        case "wait_for_message": return mcpWaitForMessage(args)
+        case "get_latest_capture": return mcpLatestCapture()
+        case "list_captures": return mcpListCaptures(args)
+        case "take_screenshot": return mcpTakeScreenshot()
+        case "show_guide": return mcpShowGuide(args)
+        case "update_guide": return mcpUpdateGuide(args)
+        case "show_panel": return mcpShowPanel(args)
+        case "annotate_screen": return mcpAnnotateScreen(args)
+        case "clear_annotations":
+            let removed = overlayManager.removeAll(annotationsOnly: true)
+            DispatchQueue.main.sync { self.annotationOverlay.clear() }
+            return .ok("Cleared \(removed) annotation overlay\(removed == 1 ? "" : "s") and the user's own marks.")
+        case "remove_overlay": return mcpRemoveOverlay(args)
+        case "list_overlays": return mcpListOverlays()
+        case "speak": return mcpSpeak(args)
+        case "get_recent_dictations": return mcpRecentDictations(args)
+        default:
+            return .fail("Unknown tool: \(name)")
+        }
+    }
+
+    private func mcpJSON(_ object: Any) -> String {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return text
+    }
+
+    private func mcpAskUser(_ args: [String: Any]) -> MCPServer.ToolResult {
+        let prompt = (args["prompt"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            return .fail("ask_user needs a non-empty `prompt`.")
+        }
+        let speakAloud = args["speak_aloud"] as? Bool ?? false
+        var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 900
+        timeout = min(max(timeout, 10), 3600)
+
+        var interaction: PendingInteraction?
+        DispatchQueue.main.sync {
+            guard self.pendingInteraction == nil else { return }
+            let created = PendingInteraction(prompt: prompt)
+            self.pendingInteraction = created
+            interaction = created
+            self.presentAsk(prompt: prompt, speakAloud: speakAloud)
+        }
+        guard let interaction else {
+            return .fail("Another ask_user request is already waiting for the user — wait for it to resolve.")
+        }
+
+        _ = interaction.semaphore.wait(timeout: .now() + timeout)
+
+        var result = MCPServer.ToolResult.fail("Internal error resolving the interaction.")
+        DispatchQueue.main.sync {
+            self.pendingInteraction = nil
+            if let text = interaction.responseText {
+                var payload: [String: Any] = ["response": text]
+                if !interaction.attachments.isEmpty {
+                    payload["screenshots"] = interaction.attachments
+                    payload["note"] = "Screenshot file paths, in order — read them to see what the user showed you."
+                }
+                result = .ok(self.mcpJSON(payload))
+            } else if interaction.cancelled {
+                result = .fail("The user dismissed the prompt without answering. Don't immediately re-ask; continue as best you can or try another approach.")
+            } else {
+                self.replyBubble.showNote("Claude stopped waiting for an answer.")
+                result = .fail("The user didn't respond within \(Int(timeout))s. The prompt was removed from their screen.")
+            }
+        }
+        return result
+    }
+
+    /// Main thread. Put Claude's question where the user will see it.
+    private func presentAsk(prompt: String, speakAloud: Bool) {
+        let settings = UserSettings.shared
+        let hint = "Hold \(settings.talkHotkey.label) to answer · \(settings.snapTalkHotkey.label) +screen · \(settings.sessionHotkey.label) demo"
+        replyBubble.showAsk(prompt: "Claude asks: \(prompt)", hint: hint)
+        if chatPanel.isVisible {
+            chatPanel.addNote("Claude asks: \(prompt)")
+        }
+        playSound("Glass")
+        if speakAloud {
+            var request = chatPanel.currentTTSRequest()
+            request.text = prompt
+            _ = handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
+        }
+    }
+
+    private func mcpLatestCapture() -> MCPServer.ToolResult {
+        guard let (directory, meta) = CaptureStore.listBundles(limit: 1).first else {
+            return .fail("No captures yet. The user records one with the session hotkey — or use ask_user to request a demonstration.")
+        }
+        var payload: [String: Any] = [
+            "id": meta.id,
+            "directory": directory.path,
+            "recorded_at": meta.startedAt,
+            "duration_seconds": Int(meta.durationSeconds),
+            "transcript": meta.transcript,
+            "frames": meta.frames.map { directory.appendingPathComponent($0.file).path },
+            "note": "Frames are ordered by time — read them alongside the transcript.",
+        ]
+        var recording = false
+        DispatchQueue.main.sync { recording = self.captureStore.isCapturing }
+        if recording {
+            payload["warning"] = "A new session is being recorded right now; this is the latest COMPLETED capture."
+        }
+        return .ok(mcpJSON(payload))
+    }
+
+    private func mcpListCaptures(_ args: [String: Any]) -> MCPServer.ToolResult {
+        let limit = min(max((args["limit"] as? NSNumber)?.intValue ?? 10, 1), 40)
+        let bundles = CaptureStore.listBundles(limit: limit)
+        guard !bundles.isEmpty else {
+            return .ok("No captures recorded yet. The user records one with the session hotkey, or you can request a demonstration via ask_user.")
+        }
+        let items: [[String: Any]] = bundles.map { directory, meta in
+            [
+                "id": meta.id,
+                "directory": directory.path,
+                "recorded_at": meta.startedAt,
+                "duration_seconds": Int(meta.durationSeconds),
+                "frame_count": meta.frames.count,
+                "transcript_preview": String(meta.transcript.prefix(160)),
+            ]
+        }
+        return .ok(mcpJSON([
+            "captures": items,
+            "note": "Newest first. Each directory has transcript.md and a frames/ folder.",
+        ]))
+    }
+
+    private func mcpTakeScreenshot() -> MCPServer.ToolResult {
+        let semaphore = DispatchSemaphore(value: 0)
+        var outcome = MCPServer.ToolResult.fail("Screenshot failed — screen recording permission may be missing.")
+        Task { @MainActor in
+            defer { semaphore.signal() }
+            guard let raw = try? await self.screenCapture.captureScreen(),
+                  let shot = CaptureStore.saveShot(raw) else { return }
+            // Cursor position in the same pixel space as the saved image —
+            // "circle the thing I'm pointing at" needs no extra round-trip.
+            let location = CGEvent(source: nil)?.location ?? .zero
+            let scale = CaptureStore.annotationPointScale()
+            outcome = .ok(self.mcpJSON([
+                "path": shot.path,
+                "width": shot.width,
+                "height": shot.height,
+                "cursor": [Int(location.x / scale), Int(location.y / scale)],
+                "note": "Read this file to see the screen. Overlay/annotation coordinates are pixels in this \(shot.width)x\(shot.height) image; `cursor` is where the user's pointer is right now.",
+            ]))
+        }
+        _ = semaphore.wait(timeout: .now() + 15)
+        return outcome
+    }
+
+    // ── Inbox tools ─────────────────────────────────────
+
+    private func mcpNotifyUser(_ args: [String: Any]) -> MCPServer.ToolResult {
+        let text = (args["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            return .fail("notify_user needs non-empty `text`.")
+        }
+        let speakAloud = args["speak_aloud"] as? Bool ?? false
+        DispatchQueue.main.sync {
+            let settings = UserSettings.shared
+            self.replyBubble.showNote(
+                "Claude: \(text)",
+                actionTitle: nil, action: nil
+            )
+            self.replyBubble.setStatus("Reply anytime: hold \(settings.talkHotkey.label) · \(settings.snapTalkHotkey.label) +screen")
+            if self.chatPanel.isVisible {
+                self.chatPanel.addNote("Claude: \(text)")
+            }
+            self.playSound("Glass")
+            if speakAloud {
+                var request = self.chatPanel.currentTTSRequest()
+                request.text = text
+                _ = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
+            }
+        }
+        return .ok("Shown to the user. Any reply lands in the inbox — fetch it with check_messages or wait_for_message.")
+    }
+
+    private func inboxPayload(_ messages: [InboxMessage]) -> String {
+        mcpJSON([
+            "messages": messages.map { message -> [String: Any] in
+                var entry: [String: Any] = ["time": message.time, "text": message.text]
+                if !message.attachments.isEmpty {
+                    entry["screenshots"] = message.attachments
+                }
+                return entry
+            },
+            "note": "Oldest first. Screenshot paths show what the user was looking at — read them.",
+        ])
+    }
+
+    private func mcpCheckMessages() -> MCPServer.ToolResult {
+        let messages = inbox.drain()
+        guard !messages.isEmpty else {
+            return .ok("No messages from the user.")
+        }
+        return .ok(inboxPayload(messages))
+    }
+
+    private func mcpWaitForMessage(_ args: [String: Any]) -> MCPServer.ToolResult {
+        var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 600
+        timeout = min(max(timeout, 5), 3600)
+        let messages = inbox.wait(timeout: timeout)
+        guard !messages.isEmpty else {
+            return .ok("No message arrived within \(Int(timeout))s. That's normal — call wait_for_message again to keep listening, or move on.")
+        }
+        return .ok(inboxPayload(messages))
+    }
+
+    // ── Overlay tools (file-backed; see swift/Overlay.swift) ──
+
+    private static func overlayStepDicts(_ raw: Any?) -> [[String: Any]]? {
+        if let strings = raw as? [String], !strings.isEmpty {
+            return strings.map { ["text": $0] }
+        }
+        guard let array = raw as? [[String: Any]] else { return nil }
+        let steps = array.compactMap { dict -> [String: Any]? in
+            guard let text = dict["text"] as? String,
+                  !text.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+            var step: [String: Any] = ["text": text]
+            if let detail = dict["detail"] as? String, !detail.isEmpty {
+                step["detail"] = detail
+            }
+            return step
+        }
+        return steps.isEmpty ? nil : steps
+    }
+
+    private func overlayWrittenResult(_ kind: String, id: String, path: String?, extra: String = "") -> MCPServer.ToolResult {
+        guard let path else {
+            return .fail("Couldn't write the \(kind) overlay file.")
+        }
+        return .ok("\(kind.capitalized) \"\(id)\" is on the user's screen. \(extra)Its live file is \(path) — edit it directly (or via the tools) and the screen updates within ~0.5s; delete it (or remove_overlay) to dismiss. Schema: \(OverlayManager.schemaPath)")
+    }
+
+    private func mcpShowGuide(_ args: [String: Any]) -> MCPServer.ToolResult {
+        guard let steps = Self.overlayStepDicts(args["steps"]) else {
+            return .fail("show_guide needs a non-empty `steps` array of {text, detail?} objects.")
+        }
+        let id = OverlayManager.sanitize(id: args["id"] as? String) ?? "guide"
+        var doc: [String: Any] = [
+            "type": "guide",
+            "title": args["title"] as? String ?? "Guide",
+            "steps": steps,
+            "active_step": max(1, (args["active_step"] as? NSNumber)?.intValue ?? 1),
+            "position": args["position"] as? String ?? "center-right",
+        ]
+        if let note = args["note"] as? String, !note.isEmpty {
+            doc["note"] = note
+        }
+        let path = overlayManager.write(id: id, dict: doc)
+        return overlayWrittenResult("guide", id: id, path: path,
+                                    extra: "\(steps.count) steps. Advance with update_guide as the user progresses. ")
+    }
+
+    private func mcpUpdateGuide(_ args: [String: Any]) -> MCPServer.ToolResult {
+        let id = OverlayManager.sanitize(id: args["id"] as? String) ?? "guide"
+        guard var doc = overlayManager.read(id: id), doc["type"] as? String == "guide" else {
+            return .fail("No guide overlay \"\(id)\" exists — call show_guide first.")
+        }
+        if let active = (args["active_step"] as? NSNumber)?.intValue {
+            doc["active_step"] = max(1, active)
+        }
+        if let note = args["note"] as? String {
+            if note.isEmpty { doc.removeValue(forKey: "note") } else { doc["note"] = note }
+        }
+        if let title = args["title"] as? String, !title.isEmpty {
+            doc["title"] = title
+        }
+        if let steps = Self.overlayStepDicts(args["steps"]) {
+            doc["steps"] = steps
+        }
+        if let position = args["position"] as? String, !position.isEmpty {
+            doc["position"] = position
+        }
+        guard overlayManager.write(id: id, dict: doc) != nil else {
+            return .fail("Couldn't write the guide overlay file.")
+        }
+        return .ok("Guide \"\(id)\" updated.")
+    }
+
+    private func mcpShowPanel(_ args: [String: Any]) -> MCPServer.ToolResult {
+        guard let rawBlocks = args["blocks"] as? [[String: Any]], !rawBlocks.isEmpty else {
+            return .fail("show_panel needs a non-empty `blocks` array.")
+        }
+        let validKinds: Set<String> = ["heading", "text", "code", "bullets"]
+        let blocks = rawBlocks.filter { validKinds.contains($0["kind"] as? String ?? "") }
+        guard !blocks.isEmpty else {
+            return .fail("No valid blocks — each needs kind heading|text|code|bullets plus text (or items for bullets).")
+        }
+        let id = OverlayManager.sanitize(id: args["id"] as? String) ?? "panel"
+        var doc: [String: Any] = [
+            "type": "panel",
+            "blocks": blocks,
+            "position": args["position"] as? String ?? "center-right",
+        ]
+        if let title = args["title"] as? String, !title.isEmpty {
+            doc["title"] = title
+        }
+        if let note = args["note"] as? String, !note.isEmpty {
+            doc["note"] = note
+        }
+        if let width = (args["width"] as? NSNumber)?.doubleValue {
+            doc["width"] = min(max(width, 240), 620)
+        }
+        let path = overlayManager.write(id: id, dict: doc)
+        return overlayWrittenResult("panel", id: id, path: path)
+    }
+
+    private func mcpAnnotateScreen(_ args: [String: Any]) -> MCPServer.ToolResult {
+        guard let actions = args["actions"] as? [[String: Any]], !actions.isEmpty else {
+            return .fail("annotate_screen needs a non-empty `actions` array.")
+        }
+        var valid: [[String: Any]] = []
+        var problems: [String] = []
+        for (index, action) in actions.enumerated() {
+            if OverlayShape.parse(action) != nil {
+                valid.append(action)
+            } else {
+                problems.append("actions[\(index)] (\(action["type"] as? String ?? "?")) is malformed — see the annotate_screen schema")
+            }
+        }
+        guard !valid.isEmpty else {
+            return .fail("No valid actions. " + problems.joined(separator: "; "))
+        }
+
+        let id = OverlayManager.sanitize(id: args["id"] as? String) ?? "annotations"
+        let clearFirst = args["clear_first"] as? Bool ?? false
+        var items = valid
+        if !clearFirst,
+           let existing = overlayManager.read(id: id),
+           existing["type"] as? String == "annotations",
+           let previous = existing["items"] as? [[String: Any]] {
+            items = previous + valid
+        }
+        let path = overlayManager.write(id: id, dict: ["type": "annotations", "items": items])
+        guard let path else {
+            return .fail("Couldn't write the annotations overlay file.")
+        }
+        var text = "Drew \(valid.count) shape\(valid.count == 1 ? "" : "s") on the user's screen (\(items.count) total in overlay \"\(id)\"). They stay visible — and appear in screenshots — until cleared. Live file: \(path)"
+        if !problems.isEmpty {
+            text += " Skipped: " + problems.joined(separator: "; ")
+        }
+        return .ok(text)
+    }
+
+    private func mcpRemoveOverlay(_ args: [String: Any]) -> MCPServer.ToolResult {
+        guard let rawId = args["id"] as? String, !rawId.isEmpty else {
+            return .fail("remove_overlay needs an `id` (or \"all\").")
+        }
+        if rawId == "all" {
+            let removed = overlayManager.removeAll(annotationsOnly: false)
+            return .ok("Removed \(removed) overlay\(removed == 1 ? "" : "s") from the user's screen.")
+        }
+        guard let id = OverlayManager.sanitize(id: rawId) else {
+            return .fail("Invalid overlay id.")
+        }
+        guard overlayManager.remove(id: id) else {
+            return .fail("No overlay \"\(id)\" exists. list_overlays shows what's on screen.")
+        }
+        return .ok("Overlay \"\(id)\" removed.")
+    }
+
+    private func mcpListOverlays() -> MCPServer.ToolResult {
+        let overlays = overlayManager.list()
+        guard !overlays.isEmpty else {
+            return .ok("No overlays on screen. Create one with show_guide / show_panel / annotate_screen, or write a JSON file into \(OverlayManager.dir.path) (schema: \(OverlayManager.schemaPath)).")
+        }
+        return .ok(mcpJSON([
+            "overlays": overlays.map { overlay -> [String: Any] in
+                ["id": overlay.id, "type": overlay.type, "path": overlay.path, "visible": overlay.visible]
+            },
+            "note": "Edit any file directly and the screen re-renders within ~0.5s. Schema: \(OverlayManager.schemaPath)",
+        ]))
+    }
+
+    private func mcpSpeak(_ args: [String: Any]) -> MCPServer.ToolResult {
+        let text = (args["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            return .fail("speak needs non-empty `text`.")
+        }
+        var failure: String?
+        DispatchQueue.main.sync {
+            var request = self.chatPanel.currentTTSRequest()
+            request.text = text
+            failure = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
+        }
+        if let failure {
+            return .fail("Couldn't speak: \(failure)")
+        }
+        return .ok("Speaking to the user now.")
+    }
+
+    private func mcpRecentDictations(_ args: [String: Any]) -> MCPServer.ToolResult {
+        let limit = min(max((args["limit"] as? NSNumber)?.intValue ?? 10, 1), 50)
+        let entries = DictationsView.recentEntries(limit: limit)
+        guard !entries.isEmpty else {
+            return .ok("No dictations recorded yet.")
+        }
+        return .ok(mcpJSON([
+            "dictations": entries.map { ["time": $0.time, "text": $0.text] },
+            "note": "Newest first; times are HH:mm:ss, local, from today's app session or earlier.",
+        ]))
     }
 
     private func makeTTSStatusResponse() -> LocalAPIResponse {

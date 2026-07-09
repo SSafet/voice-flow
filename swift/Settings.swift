@@ -25,6 +25,8 @@ final class SettingsStore: ObservableObject {
     @Published var ttsSpeed: Double { didSet { commit() } }
     @Published var agentModel: String { didSet { commit() } }
     @Published var agentBaseURL: String { didSet { commit() } }
+    @Published var sessionSendToAgent: Bool { didSet { commit() } }
+    @Published var talkSendToAgent: Bool { didSet { commit() } }
 
     // Keychain state
     @Published var hasOpenAIKey: Bool
@@ -56,6 +58,8 @@ final class SettingsStore: ObservableObject {
         ttsSpeed = s.ttsSpeed
         agentModel = s.agentModel
         agentBaseURL = s.agentBaseURL
+        sessionSendToAgent = s.sessionSendToAgent
+        talkSendToAgent = s.talkSendToAgent
         hasOpenAIKey = KeychainStore.shared.hasOpenAIAPIKey
         hasAgentKey = KeychainStore.shared.hasAgentAPIKey
         hotkey = s.hotkey
@@ -87,6 +91,8 @@ final class SettingsStore: ObservableObject {
         s.agentModel = model.isEmpty ? DefaultAgentModel : model
         let url = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         s.agentBaseURL = url.isEmpty ? DefaultAgentBaseURL : url
+        s.sessionSendToAgent = sessionSendToAgent
+        s.talkSendToAgent = talkSendToAgent
         s.save()
         onSettingsChanged?()
     }
@@ -427,6 +433,21 @@ private struct AssistantSettingsView: View {
                 Text("Intelligence")
             }
 
+            Section {
+                Toggle(isOn: $store.talkSendToAgent) {
+                    SettingRowLabel(title: "Talk hotkeys go to the in-app assistant",
+                                    subtitle: "Off: talking with the Talk / Talk + snap shortcuts sends your words to Claude Code — instantly when Claude is listening, queued otherwise")
+                }
+                Toggle(isOn: $store.sessionSendToAgent) {
+                    SettingRowLabel(title: "Sessions go to the in-app assistant",
+                                    subtitle: "Off: session recordings are saved as capture bundles (voice + ordered screenshots) for Claude Code")
+                }
+            } header: {
+                Text("Claude Code")
+            } footer: {
+                Text("Voice Flow is connected to Claude Code through its MCP server (http://127.0.0.1:8792/mcp). Claude can ask you questions on screen, receive your voice messages and captures, place guides and panels, draw on your screen, and speak to you. These switches re-route the hotkeys to the built-in assistant instead.")
+            }
+
             Section("Advanced") {
                 LabeledContent {
                     TextField("", text: $store.agentBaseURL, prompt: Text(DefaultAgentBaseURL))
@@ -466,19 +487,23 @@ private struct ShortcutsSettingsView: View {
                 Text("Click a shortcut, then press the key or combination you'd like to use. Press Esc to cancel.")
             }
 
-            Section("Assistant") {
-                ShortcutRow(title: "Talk to the assistant",
-                            subtitle: "Hold to speak — your words become the prompt",
+            Section {
+                ShortcutRow(title: "Talk to Claude",
+                            subtitle: "Hold to speak — answers a waiting question, or queues a voice message Claude picks up when it checks in",
                             spec: store.talkHotkey) { store.setHotkey(.talk, $0) }
-                ShortcutRow(title: "Talk + snap the screen",
-                            subtitle: "Hold to speak and send one screenshot with it",
+                ShortcutRow(title: "Talk + snap for Claude",
+                            subtitle: "Hold to speak and attach a screenshot of what you're looking at",
                             spec: store.snapTalkHotkey) { store.setHotkey(.snapTalk, $0) }
-                ShortcutRow(title: "Start or stop a session",
-                            subtitle: "Records your voice and screen while you work, then sends it all when you stop",
+                ShortcutRow(title: "Record a capture session",
+                            subtitle: "Records your voice and screen while you demonstrate something; saves a capture bundle for Claude when you stop",
                             spec: store.sessionHotkey) { store.setHotkey(.session, $0) }
                 ShortcutRow(title: "Draw on the screen",
-                            subtitle: "Circle or write on the screen — Esc or the same key exits",
+                            subtitle: "Circle or write on the screen — your marks appear in every screenshot Claude sees",
                             spec: store.annotateHotkey) { store.setHotkey(.annotate, $0) }
+            } header: {
+                Text("Claude & assistant")
+            } footer: {
+                Text("These shortcuts talk to Claude Code through the Voice Flow MCP server. Flip the switches in the Assistant tab to route them to the built-in assistant instead.")
             }
         }
         .formStyle(.grouped)
@@ -517,9 +542,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
                view: DictationSettingsView(store: store))
         addTab("Voice", symbol: "speaker.wave.2.fill", height: 300,
                view: VoiceSettingsView(store: store))
-        addTab("Assistant", symbol: "sparkles", height: 440,
+        addTab("Assistant", symbol: "sparkles", height: 620,
                view: AssistantSettingsView(store: store))
-        addTab("Shortcuts", symbol: "keyboard.fill", height: 520,
+        addTab("Shortcuts", symbol: "keyboard.fill", height: 560,
                view: ShortcutsSettingsView(store: store))
 
         window.contentViewController = tabController

@@ -7,16 +7,23 @@ import Cocoa
 //  bubble anchored above the pill. It stays until dismissed with ✕.
 
 final class ReplyBubble {
+    /// Fired when the user dismisses the bubble with ✕ (used to cancel a
+    /// pending ask from Claude).
+    var onClosed: (() -> Void)?
+
     private let width: CGFloat = 400
     private let maxTextHeight: CGFloat = 240
     private let headerHeight: CGFloat = 28
     private let bottomInset: CGFloat = 12
+    private let actionRowHeight: CGFloat = 34
 
     private var panel: NSPanel?
     private var textView: NSTextView!
     private var scrollView: NSScrollView!
     private var statusLabel: NSTextField!
     private var closeButton: NSButton!
+    private var actionButton: NSButton!
+    private var actionHandler: (() -> Void)?
     private var streaming = false
     private var suppressed = false
 
@@ -47,6 +54,7 @@ final class ReplyBubble {
             setText("", attributes: textAttributes)
         }
         statusLabel.stringValue = "Thinking…"
+        configureAction(title: nil, handler: nil)
         reveal()
     }
 
@@ -56,6 +64,7 @@ final class ReplyBubble {
         streaming = true
         setText("", attributes: textAttributes)
         statusLabel.stringValue = "Replying…"
+        configureAction(title: nil, handler: nil)
         reveal()
     }
 
@@ -75,11 +84,42 @@ final class ReplyBubble {
     }
 
     func showNote(_ text: String) {
+        showNote(text, actionTitle: nil, action: nil)
+    }
+
+    /// A note with an optional action button underneath (e.g. "Copy prompt
+    /// for Claude" after a capture is saved).
+    func showNote(_ text: String, actionTitle: String?, action: (() -> Void)?) {
+        suppressed = false
         ensurePanel()
         streaming = false
         setText(text, attributes: echoAttributes)
         statusLabel.stringValue = ""
+        configureAction(title: actionTitle, handler: action)
         reveal()
+    }
+
+    /// A question from Claude waiting for the user — prompt in the body,
+    /// how-to-answer hint in the status line.
+    func showAsk(prompt: String, hint: String) {
+        suppressed = false
+        ensurePanel()
+        streaming = false
+        setText(prompt, attributes: textAttributes)
+        statusLabel.stringValue = hint
+        configureAction(title: nil, handler: nil)
+        reveal()
+    }
+
+    private func configureAction(title: String?, handler: (() -> Void)?) {
+        actionHandler = handler
+        if let title {
+            actionButton.title = title
+            actionButton.isHidden = false
+        } else {
+            actionButton.isHidden = true
+        }
+        relayout()
     }
 
     func setStatus(_ text: String) {
@@ -123,6 +163,11 @@ final class ReplyBubble {
     @objc private func closeTapped() {
         suppressed = true
         hide()
+        onClosed?()
+    }
+
+    @objc private func actionTapped() {
+        actionHandler?()
     }
 
     private func relayout() {
@@ -131,7 +176,8 @@ final class ReplyBubble {
         layoutManager.ensureLayout(for: container)
         let used = layoutManager.usedRect(for: container).height
         let textHeight = min(max(used + 8, 24), maxTextHeight)
-        let totalHeight = headerHeight + textHeight + bottomInset
+        let actionSpace: CGFloat = actionButton.isHidden ? 0 : actionRowHeight
+        let totalHeight = headerHeight + textHeight + actionSpace + bottomInset
 
         guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
         let frame = screen.frame
@@ -139,9 +185,13 @@ final class ReplyBubble {
         let y = frame.minY + 30  // just above the pill, same anchor as the panel
         panel.setFrame(NSRect(x: x, y: y, width: width, height: totalHeight), display: true)
 
-        scrollView.frame = NSRect(x: 12, y: bottomInset, width: width - 24, height: textHeight)
+        scrollView.frame = NSRect(x: 12, y: bottomInset + actionSpace, width: width - 24, height: textHeight)
         statusLabel.frame = NSRect(x: 16, y: totalHeight - headerHeight + 5, width: width - 60, height: 16)
         closeButton.frame = NSRect(x: width - 32, y: totalHeight - headerHeight + 3, width: 20, height: 20)
+        if !actionButton.isHidden {
+            let buttonWidth = min(width - 32, max(140, actionButton.intrinsicContentSize.width + 24))
+            actionButton.frame = NSRect(x: 16, y: 8, width: buttonWidth, height: 22)
+        }
     }
 
     private func ensurePanel() {
@@ -185,6 +235,14 @@ final class ReplyBubble {
         closeButton.contentTintColor = Theme.text2
         closeButton.toolTip = "Dismiss"
         root.addSubview(closeButton)
+
+        actionButton = NSButton(title: "", target: self, action: #selector(actionTapped))
+        actionButton.bezelStyle = .inline
+        actionButton.controlSize = .small
+        actionButton.font = .systemFont(ofSize: 11, weight: .semibold)
+        actionButton.contentTintColor = Theme.accent
+        actionButton.isHidden = true
+        root.addSubview(actionButton)
 
         textView = NSTextView(frame: NSRect(x: 0, y: 0, width: width - 24, height: 24))
         textView.isEditable = false
