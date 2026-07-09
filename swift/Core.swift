@@ -154,6 +154,9 @@ class UserSettings {
     var agentModel: String = DefaultAgentModel
     var agentBaseURL: String = DefaultAgentBaseURL
     var voiceRepliesEnabled: Bool = false
+    // Re-selecting the already-active session (⌃⌥N again / menu) reads its
+    // queued messages aloud — pushes themselves never auto-play audio.
+    var doubleSelectSpeak: Bool = true
     // Sessions save capture bundles for Claude Code; the legacy path that
     // also feeds them to the in-app agent is opt-in.
     var sessionSendToAgent: Bool = false
@@ -223,6 +226,7 @@ class UserSettings {
             agentBaseURL = Self.trimmed(v, fallback: DefaultAgentBaseURL)
         }
         if let v = dict["voice_replies_enabled"] as? Bool { voiceRepliesEnabled = v }
+        if let v = dict["double_select_speak"] as? Bool { doubleSelectSpeak = v }
         if let v = dict["session_send_to_agent"] as? Bool { sessionSendToAgent = v }
         if let v = dict["talk_send_to_agent"] as? Bool { talkSendToAgent = v }
         if let v = dict["workflow_watcher_enabled"] as? Bool { workflowWatcherEnabled = v }
@@ -256,6 +260,7 @@ class UserSettings {
             "agent_model": agentModel,
             "agent_base_url": agentBaseURL,
             "voice_replies_enabled": voiceRepliesEnabled,
+            "double_select_speak": doubleSelectSpeak,
             "session_send_to_agent": sessionSendToAgent,
             "talk_send_to_agent": talkSendToAgent,
             "workflow_watcher_enabled": workflowWatcherEnabled,

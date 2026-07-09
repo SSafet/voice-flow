@@ -27,6 +27,7 @@ final class SettingsStore: ObservableObject {
     @Published var agentBaseURL: String { didSet { commit() } }
     @Published var sessionSendToAgent: Bool { didSet { commit() } }
     @Published var talkSendToAgent: Bool { didSet { commit() } }
+    @Published var doubleSelectSpeak: Bool { didSet { commit() } }
     @Published var workflowWatcherEnabled: Bool { didSet { commit() } }
     @Published var watcherInterval: Double { didSet { commit() } }
     @Published var watcherIdlePause: Double { didSet { commit() } }
@@ -65,6 +66,7 @@ final class SettingsStore: ObservableObject {
         agentBaseURL = s.agentBaseURL
         sessionSendToAgent = s.sessionSendToAgent
         talkSendToAgent = s.talkSendToAgent
+        doubleSelectSpeak = s.doubleSelectSpeak
         workflowWatcherEnabled = s.workflowWatcherEnabled
         watcherInterval = Double(s.watcherIntervalSeconds)
         watcherIdlePause = Double(s.watcherIdlePauseSeconds)
@@ -103,6 +105,7 @@ final class SettingsStore: ObservableObject {
         s.agentBaseURL = url.isEmpty ? DefaultAgentBaseURL : url
         s.sessionSendToAgent = sessionSendToAgent
         s.talkSendToAgent = talkSendToAgent
+        s.doubleSelectSpeak = doubleSelectSpeak
         s.workflowWatcherEnabled = workflowWatcherEnabled
         s.watcherIntervalSeconds = Int(watcherInterval)
         s.watcherIdlePauseSeconds = Int(watcherIdlePause)
@@ -450,6 +453,10 @@ private struct AssistantSettingsView: View {
 
             Section {
                 ClaudeConnectionRow()
+                Toggle(isOn: $store.doubleSelectSpeak) {
+                    SettingRowLabel(title: "Re-select a session to hear its messages",
+                                    subtitle: "Selecting the already-active session again (⌃⌥number or the menu) reads its waiting messages aloud. Messages never auto-play on arrival.")
+                }
                 Toggle(isOn: $store.talkSendToAgent) {
                     SettingRowLabel(title: "Talk hotkeys go to the in-app assistant",
                                     subtitle: "Off: talking with the Talk / Talk + snap shortcuts sends your words to Claude Code — instantly when Claude is listening, queued otherwise")

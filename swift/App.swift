@@ -184,7 +184,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         menuBar.onSelectClaudeSession = { [weak self] id in
-            self?.setTargetSession(id, announce: true)
+            self?.userSelectSession(id)
         }
         menuBar.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
         menuBar.onShowChat = { [weak self] in self?.chatPanel.show() }
@@ -848,11 +848,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         refreshUnreadIndicator()
         if announce {
             let (entries, activeName) = pickerEntries()
-            if let id, sessionPushes[id]?.isEmpty == false {
+            if let id, let queue = sessionPushes[id], !queue.isEmpty {
                 // The session has something to show — the picker grows
                 // straight into its whole stack, picker row at the bottom.
+                // Unseen content stays up until ✕ (this IS the reading
+                // path); an already-seen stack is just a 5s re-preview.
                 currentPushSessionId = id
-                showPushStack(for: id, bottomPicker: (entries, activeName), autoHide: 5.0)
+                let hasUnseen = queue.contains { !$0.seen }
+                showPushStack(for: id, bottomPicker: (entries, activeName),
+                              autoHide: hasUnseen ? nil : 5.0)
             } else {
                 indicator.showPicker(entries: entries, activeName: activeName)
             }
@@ -866,15 +870,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ordered.firstIndex { $0.id == targetSessionId }.map { $0 + 1 })
     }
 
-    /// Queue a push and, ONLY if it belongs to the session the user is
-    /// already on (the target), put its whole stack on screen. A foreign
-    /// session never takes the screen or the voice route — it queues:
-    /// Glass sound, amber picker dot, and the pill's small unread ring,
-    /// shown when the user switches to it. Sessionless clients share the
-    /// anonymous "" pool, which behaves like the current screen owner.
-    /// Returns true when the push is actually showing. Main thread.
-    @discardableResult
-    func deliverPush(_ push: SessionPush, from sessionId: String?) -> Bool {
+    /// Queue a push and announce it with a one-line receipt — the full
+    /// text NEVER takes the screen on arrival, no matter whose session it
+    /// is, and audio never auto-plays. The user reads it by switching onto
+    /// the session (⌃⌥1–6 grows its whole stack), re-selects to hear it,
+    /// or opens the Messages tab; the ring + amber picker dot persist
+    /// until the stack is actually viewed. Main thread.
+    func deliverPush(_ push: SessionPush, from sessionId: String?) {
         let sid = sessionId ?? ""
         var queue = sessionPushes[sid] ?? []
         queue.append(push)
@@ -884,17 +886,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // after its session expires or the stack is trashed.
         chatPanel.addAgentMessage(time: Self.timestamp(), session: push.title,
                                   text: push.text, isAsk: push.isAsk)
+        refreshUnreadIndicator()
 
-        let foreign = !sid.isEmpty && targetSessionId != nil && sid != targetSessionId
-        defer { refreshUnreadIndicator() }
-        if foreign { return false }
-        if targetSessionId == nil, !sid.isEmpty, mcpServer.sessions.session(sid) != nil {
-            // Nothing was targeted yet — this session takes the route.
-            setTargetSession(sid, announce: false)
+        // The receipt: one line, ~4s, only when nothing else owns the
+        // surface — never over grown content, never while the user talks.
+        let voiceBusy = state == .recording || state == .processing || state == .handsFree
+        guard !indicator.isGrownVisible, !voiceBusy else { return }
+        var receipt = push.isAsk ? push.title : "\(push.title) · new message"
+        if let index = mcpServer.sessions.ordered().firstIndex(where: { $0.id == sid }) {
+            receipt += " — ⌃⌥\(index + 1)"
         }
-        currentPushSessionId = sid
-        showPushStack(for: sid)
-        return true
+        indicator.flashMessage(receipt, seconds: 4)
     }
 
     /// Render a session's queued pushes as one grown surface: older ones
@@ -923,24 +925,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         refreshUnreadIndicator()
     }
 
-    /// Sessions other than `excluded` (and than the target's own) holding
-    /// pushes the user hasn't seen. Drops orphan queues of dead sessions
-    /// on the way — a queue nobody can switch to must never count as
-    /// "waiting" (its history lives on in the Messages tab). Main thread.
+    /// Sessions (other than `excluded`) holding pushes the user hasn't
+    /// seen. Drops orphan queues of dead sessions on the way — a queue
+    /// nobody can switch to must never count as "waiting" (its history
+    /// lives on in the Messages tab). Main thread.
     private func unseenSessions(excluding excluded: String? = nil) -> Int {
         sessionPushes = sessionPushes.filter { sid, queue in
             !queue.isEmpty && (sid.isEmpty || mcpServer.sessions.session(sid) != nil)
         }
         return sessionPushes.filter { sid, queue in
-            !sid.isEmpty && sid != targetSessionId && sid != excluded
-                && queue.contains { !$0.seen }
+            !sid.isEmpty && sid != excluded && queue.contains { !$0.seen }
         }.count
     }
 
-    /// The pill's small pulsing ring around the number dot: on while any
-    /// session the user is NOT on holds pushes they haven't seen. Main thread.
+    /// The pill's small pulsing ring around the number dot: on while ANY
+    /// session holds pushes the user hasn't viewed yet (viewing = growing
+    /// its stack by switching onto it). Main thread.
     func refreshUnreadIndicator() {
         indicator.setUnreadIndicator(unseenSessions() > 0)
+    }
+
+    /// User-initiated selection (⌃⌥N / menu bar). Re-selecting the session
+    /// that's already active reads its queued messages aloud (Settings
+    /// toggle "Re-select a session to hear its messages") — arrival never
+    /// auto-plays audio. Main thread.
+    private func userSelectSession(_ id: String) {
+        if id == targetSessionId, UserSettings.shared.doubleSelectSpeak,
+           let queue = sessionPushes[id], !queue.isEmpty {
+            var request = chatPanel.currentTTSRequest()
+            request.text = queue.map(\.text).joined(separator: "\n\n")
+            _ = handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
+        }
+        setTargetSession(id, announce: true)
     }
 
     /// ⌃⌥1–6. Any select attempt — valid or aimed at a missing number —
@@ -952,7 +968,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             indicator.showPicker(entries: entries, activeName: activeName)
             return
         }
-        setTargetSession(ordered[index].id, announce: true)
+        userSelectSession(ordered[index].id)
     }
 
     /// Menu-bar route to the same prompt the post-session bubble offers —
@@ -1992,7 +2008,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard !prompt.isEmpty else {
             return .fail("ask_user needs a non-empty `prompt`.")
         }
-        let speakAloud = args["speak_aloud"] as? Bool ?? false
         var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 900
         timeout = min(max(timeout, 10), 3600)
 
@@ -2003,7 +2018,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.pendingInteraction = created
             interaction = created
             let asker = self.sessionName(for: created.sessionId)
-            let shown = self.deliverPush(
+            self.deliverPush(
                 SessionPush(title: "\(asker) asks", text: prompt,
                             hint: self.askHint(), isAsk: true),
                 from: session?.id)
@@ -2011,13 +2026,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.chatPanel.addNote("\(asker) asks: \(prompt)")
             }
             self.playSound("Glass")
-            // Never speak over the user's own recording — a queued ask
-            // stays silent until they switch to it.
-            if speakAloud, shown {
-                var request = self.chatPanel.currentTTSRequest()
-                request.text = prompt
-                _ = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
-            }
         }
         guard let interaction else {
             return .fail("Another ask_user request is already waiting for the user — wait for it to resolve.")
@@ -2149,28 +2157,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard !text.isEmpty else {
             return .fail("notify_user needs non-empty `text`.")
         }
-        let speakAloud = args["speak_aloud"] as? Bool ?? false
-        var shown = false
         DispatchQueue.main.sync {
             let sender = self.sessionName(for: session?.id)
-            shown = self.deliverPush(
+            self.deliverPush(
                 SessionPush(title: sender, text: text, hint: nil, isAsk: false),
                 from: session?.id)
             if self.chatPanel.isVisible {
                 self.chatPanel.addNote("Claude: \(text)")
             }
             self.playSound("Glass")
-            // Never speak over the user's own recording or another
-            // session's content — a queued push waits for its switch.
-            if speakAloud, shown {
-                var request = self.chatPanel.currentTTSRequest()
-                request.text = text
-                _ = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
-            }
         }
-        return .ok(shown
-            ? "Shown to the user. Any reply lands in the inbox — fetch it with check_messages or wait_for_message."
-            : "The user is busy (recording, or viewing another session) — your message is queued: it marks their session picker and shows when they switch to you. Replies land in the inbox.")
+        return .ok("The user got a small notification receipt (never the full text — that's by design). They read it by switching onto your session or in their Messages tab, and can opt in to hearing it aloud. Replies land in the inbox — fetch them with check_messages or wait_for_message.")
     }
 
     private func inboxPayload(_ messages: [InboxMessage]) -> String {
@@ -2411,19 +2408,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard !text.isEmpty else {
             return .fail("speak needs non-empty `text`.")
         }
-        // Never barge in with audio — the message waits in a bubble until
-        // the user taps Listen (or just reads it).
-        var shown = false
+        // Never barge in with audio — the user opts in: re-selecting this
+        // session speaks its waiting messages, or they tap the speaker
+        // icon on the grown view.
         DispatchQueue.main.sync {
             let sender = self.sessionName(for: session?.id)
-            shown = self.deliverPush(
+            self.deliverPush(
                 SessionPush(title: sender, text: text, hint: nil, isAsk: false),
                 from: session?.id)
             self.playSound("Glass")
         }
-        return .ok(shown
-            ? "Left on screen with a speaker icon — the user reads it or taps to hear it when ready."
-            : "The user is busy (recording, or viewing another session) — your message is queued: it marks their session picker and shows, with the speaker icon, when they switch to you.")
+        return .ok("Queued with a small receipt. The user hears it when they re-select your session (or tap the speaker icon on its messages) — audio never auto-plays.")
     }
 
     private func mcpRecentDictations(_ args: [String: Any]) -> MCPServer.ToolResult {

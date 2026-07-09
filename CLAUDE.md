@@ -69,15 +69,17 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   (`showGrown`: amber title, selectable text, ask hint line, speaker/trash/✕
   icon cluster, live dots in the bottom band; streamed replies grow it live).
   Pushes queue **per session** (`sessionPushes`, a stack capped at 8;
-  sessionless clients share the anonymous `""` pool): a second push appends
-  below the first — older ones dim, newest bright — instead of replacing it
-  (`deliverPush`/`showPushStack` in `App.swift`). ONLY the target session's
-  pushes take the screen; a foreign session's push queues instead — Glass
-  sound, amber picker dot, and a small pulsing unread ring around the pill's
-  number dot (`setUnreadIndicator`) until the user switches to it (the
-  pushing tool is told "queued"). Every push also lands in the panel's
-  persistent Messages tab. Switching onto a session with waiting pushes
-  grows into its whole stack with the picker row as the bottom band. `ReplyBubble` is now only a facade forwarding to the pill: ✕
+  sessionless clients share the anonymous `""` pool) and NEVER take the
+  screen on arrival, no matter whose session: the user gets a one-line
+  receipt ("name · new message — ⌃⌥N") plus the small pulsing unread ring
+  around the number dot (`setUnreadIndicator`) until viewed. Reading happens
+  by switching onto the session — ⌃⌥1–6 grows its whole stack (older pushes
+  dim, newest bright; persists until ✕ while unseen, 5 s re-preview when
+  already seen; `deliverPush`/`showPushStack` in `App.swift`) — or anytime
+  in the panel's persistent Messages tab. Audio never auto-plays:
+  re-selecting the already-active session reads its stack aloud
+  (`double_select_speak` setting, toggle in Settings → Assistant), and the
+  grown view's speaker icon does the same. `ReplyBubble` is now only a facade forwarding to the pill: ✕
   closes-and-keeps (asks stay pending, stacks survive; a "N sessions
   waiting" receipt flashes if others queued meanwhile), trash deletes
   (cancels a waiting ask, clears the stack), speaker reads aloud.

@@ -336,27 +336,24 @@ final class MCPServer {
         [
             "name": "ask_user",
             "description": """
-            Ask the user something through Voice Flow and BLOCK until they answer. A floating \
-            prompt appears on their screen; they can answer by voice (push-to-talk), voice plus \
-            a fresh screenshot, typing in the Voice Flow panel, or by recording a demonstration \
-            session (narration + ordered screenshots). The result contains their words plus \
-            absolute file paths of any screenshots — read those files. Use when you cannot \
-            proceed without their input. If you'd rather keep working while they decide, use \
-            notify_user and collect the reply later with check_messages or wait_for_message. \
-            The user may also tap "Seen — I'll answer later": you get that back immediately as \
-            a non-error result — continue working and collect their eventual reply from the \
-            message inbox.
+            Ask the user something through Voice Flow and BLOCK until they answer. They get a \
+            small notification receipt (never the full text — the user reads your question by \
+            switching onto your session or in their Messages tab; audio only when they opt in). \
+            They can answer by voice (push-to-talk), voice plus a fresh screenshot, typing in \
+            the Voice Flow panel, or by recording a demonstration session (narration + ordered \
+            screenshots). The result contains their words plus absolute file paths of any \
+            screenshots — read those files. Use when you cannot proceed without their input. \
+            If you'd rather keep working while they decide, use notify_user and collect the \
+            reply later with check_messages or wait_for_message. The user may also tap "Seen — \
+            I'll answer later": you get that back immediately as a non-error result — continue \
+            working and collect their eventual reply from the message inbox.
             """,
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "prompt": [
                         "type": "string",
-                        "description": "What to ask. One or two short sentences — it appears in a small on-screen bubble and may be spoken aloud.",
-                    ],
-                    "speak_aloud": [
-                        "type": "boolean",
-                        "description": "Also speak the prompt via text-to-speech so the user hears it while looking elsewhere. Default false.",
+                        "description": "What to ask. One or two short sentences — the user reads it when they switch onto your session.",
                     ],
                     "timeout_seconds": [
                         "type": "number",
@@ -369,17 +366,17 @@ final class MCPServer {
         [
             "name": "notify_user",
             "description": """
-            Show the user a short message in a floating on-screen bubble (optionally spoken) \
-            and return IMMEDIATELY — the non-blocking counterpart of ask_user. To hear their \
-            reply, park in wait_for_message: talk messages are delivered only while you are \
-            listening. Use for status updates ("deploying now, ~2 min") and heads-ups that \
-            need no reply.
+            Send the user a message and return IMMEDIATELY — the non-blocking counterpart of \
+            ask_user. They get a small notification receipt (never the full text, and no audio \
+            — that's by design); they read it by switching onto your session or in their \
+            Messages tab, which keeps it forever. To hear their reply, park in \
+            wait_for_message: talk messages are delivered only while you are listening. Use \
+            for status updates ("deploying now, ~2 min") and heads-ups that need no reply.
             """,
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "text": ["type": "string", "description": "The message. Keep it short — it's a bubble, not a report."],
-                    "speak_aloud": ["type": "boolean", "description": "Also speak it via text-to-speech. Default false."],
+                    "text": ["type": "string", "description": "The message. Keep it short — it's read in a small stack, not a report."],
                 ],
                 "required": ["text"],
             ],
@@ -647,7 +644,7 @@ final class MCPServer {
         ],
         [
             "name": "speak",
-            "description": "Leave the user a short spoken-style message. It does NOT auto-play: it appears as a small bubble with a Listen button, and the user reads it or taps to hear it when they're ready (audio barging in uninvited interrupts their work). Keep it to a sentence or two.",
+            "description": "Leave the user a short spoken-style message. It does NOT auto-play: they get a small receipt, and they hear it by re-selecting your session (or tapping the speaker icon on its messages) when they're ready — audio barging in uninvited interrupts their work. Keep it to a sentence or two.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
