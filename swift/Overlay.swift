@@ -304,9 +304,12 @@ private final class OverlayPanelWindow {
     }
     private var panel: NSPanel?
     private var userMoved = false
+    /// Height the user chose by dragging an edge — honored over the cap.
+    private var userHeight: CGFloat?
     private var repositioning = false
     private var lastPositionKey = ""
     private var moveObserver: NSObjectProtocol?
+    private var resizeObserver: NSObjectProtocol?
 
     init(id: String) {
         self.id = id
@@ -315,6 +318,9 @@ private final class OverlayPanelWindow {
     deinit {
         if let moveObserver {
             NotificationCenter.default.removeObserver(moveObserver)
+        }
+        if let resizeObserver {
+            NotificationCenter.default.removeObserver(resizeObserver)
         }
     }
 
@@ -398,10 +404,13 @@ private final class OverlayPanelWindow {
 
         column.translatesAutoresizingMaskIntoConstraints = false
         let fitting = column.fittingSize
-        let bodyHeight = min(fitting.height, maxBodyHeight)
+        // Viewport: content height, capped by the screen and any height the
+        // user chose by dragging an edge.
+        let cap = min(maxBodyHeight, userHeight ?? .greatestFiniteMagnitude)
+        let bodyHeight = min(fitting.height, max(160, cap))
 
         root.frame = NSRect(x: 0, y: 0, width: width, height: bodyHeight)
-        if fitting.height > maxBodyHeight {
+        if fitting.height > bodyHeight {
             // Frame-based document view (autolayout documentViews scroll
             // unreliably); the column is pinned to its top-left.
             let document = FlippedView(frame: NSRect(x: 0, y: 0, width: width, height: fitting.height))
@@ -434,6 +443,9 @@ private final class OverlayPanelWindow {
         let shouldPlace = !panel.isVisible || (positionKey != lastPositionKey) || !userMoved
         let previousFrame = panel.frame
         panel.contentView = root
+        // Height-only resizing: width comes from the overlay doc.
+        panel.minSize = NSSize(width: width, height: min(160, bodyHeight))
+        panel.maxSize = NSSize(width: width, height: max(fitting.height, bodyHeight))
         repositioning = true
         if shouldPlace {
             panel.setFrame(frameFor(doc: doc, width: width, height: bodyHeight), display: true)
@@ -610,9 +622,12 @@ private final class OverlayPanelWindow {
 
     private func ensurePanel() -> NSPanel {
         if let panel { return panel }
-        let newPanel = NSPanel(
+        // KeyablePanel: borderless windows refuse key status by default,
+        // which breaks interactive scrolling inside the panel. .resizable
+        // lets the user drag the bottom edge to see more.
+        let newPanel = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: 340, height: 200),
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless, .nonactivatingPanel, .resizable],
             backing: .buffered, defer: false
         )
         newPanel.level = .floating + 1
@@ -627,6 +642,12 @@ private final class OverlayPanelWindow {
         ) { [weak self] _ in
             guard let self, !self.repositioning else { return }
             self.userMoved = true
+        }
+        resizeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: newPanel, queue: .main
+        ) { [weak self, weak newPanel] _ in
+            guard let self, let newPanel, !self.repositioning else { return }
+            self.userHeight = newPanel.frame.height
         }
         panel = newPanel
         return newPanel

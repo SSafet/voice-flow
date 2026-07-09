@@ -218,7 +218,9 @@ final class ReplyBubble {
     private func ensurePanel() {
         if panel != nil { return }
 
-        let newPanel = NSPanel(
+        // KeyablePanel: borderless windows refuse key status by default,
+        // which breaks scrolling long content inside the bubble.
+        let newPanel = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: 120),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false
