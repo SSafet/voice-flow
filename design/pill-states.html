@@ -177,8 +177,10 @@ bottom. Nothing overlays anything.</p>
     <div class="screen"><div class="shape pill idle"><div class="dots"><i class="dot"></i><i class="dot num">2</i><i class="dot"></i></div></div></div></div>
 </div>
 
-<h2>2 · Session picker — a grown container: picker row at the bottom, the selected session's message above.
-Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it early.</h2>
+<h2>2 · Session picker — a grown container: the session title at the TOP, centered numbered dots as the
+bottom band (no name repeated next to them). The moment you start talking the numbered row yields back to
+the three live dots — in place, no collapse — so the activity animation always shows. A seen stack
+re-previews for 5s; unseen content stays until ✕.</h2>
 <div class="row">
   <div class="stage wide"><div class="label"><b>THE session picker</b> — bottom band: "sessions" + numbered dots + active name.
       Above: that session's latest message, so you see what you're choosing.</div>
@@ -193,10 +195,8 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
           <div class="status">voice-flow — session routing</div>
           <div class="msg">All done — everything is committed, pushed, and the app is running the latest build.</div>
         </div>
-        <div class="picker" style="height: 28px;">
-          <span class="lbl">sessions</span>
+        <div class="picker" style="height: 28px; justify-content: center;">
           <i class="dot numoff">1</i><i class="dot num">2</i><i class="dot numoff">3</i>
-          <span class="title-line" style="margin-left:6px">voice-flow — routing</span>
         </div>
       </div>
     </div>
@@ -218,10 +218,8 @@ Stays 3–5s after a choice; any other hotkey or a click anywhere collapses it e
           <div class="msg bright">Should I keep the waitlist gate on for new signups?</div>
           <div class="hint">hold Fn1 to answer · Fn2 +screen</div>
         </div>
-        <div class="picker" style="height: 28px;">
-          <span class="lbl">sessions</span>
+        <div class="picker" style="height: 28px; justify-content: center;">
           <i class="dot numoff">1</i><i class="dot numoff">2</i><i class="dot num pending">3</i>
-          <span class="title-line" style="margin-left:6px">atika — onboarding</span>
         </div>
       </div>
     </div>
@@ -453,12 +451,13 @@ Audio never auto-plays: re-selecting the already-active session reads its stack 
     document.getElementById('pickIcons').style.display = '';
     pd.shape.style.width = '400px'; pd.shape.style.height = '128px'; pd.shape.style.borderRadius = '14px'; pd.shape.style.padding = '10px 14px 0';
     pd.row.style.height = '28px';
-    pd.lbl.style.display = '';
+    pd.row.style.justifyContent = 'center';
+    pd.lbl.style.display = 'none';
     pd.d.forEach((el, idx) => {
       el.textContent = idx + 1;
       el.className = 'dot ' + (idx === active - 1 ? 'num' : 'numoff') + (idx === pendingIdx ? ' pending' : '');
     });
-    pd.t.textContent = name;
+    pd.t.textContent = '';
     pd.content.style.display = '';
     pd.content.style.opacity = 0;
     setTimeout(() => { pd.status.textContent = header; pd.msg.textContent = message; pd.content.style.opacity = 1; }, 180);

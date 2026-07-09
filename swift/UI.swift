@@ -434,29 +434,8 @@ class FloatingIndicator: NSObject {
         x += labelW + 10
 
         for entry in entries {
-            let dot = CALayer()
-            dot.frame = CGRect(x: x, y: (shellH - 12) / 2, width: 12, height: 12)
-            dot.cornerRadius = 6
-            let digit = CATextLayer()
-            digit.string = "\(entry.number)"
-            digit.font = NSFont.systemFont(ofSize: 7.5, weight: .bold)
-            digit.fontSize = 7.5
-            digit.alignmentMode = .center
-            digit.contentsScale = 2
-            digit.frame = CGRect(x: 0, y: 1.5, width: 12, height: 9)
-            if entry.active {
-                dot.backgroundColor = NSColor(r: 216, g: 207, b: 192).cgColor
-                digit.foregroundColor = NSColor(r: 23, g: 21, b: 15).cgColor
-            } else if entry.pending {
-                dot.borderWidth = 1
-                dot.borderColor = NSColor(r: 255, g: 194, b: 75, a: 217).cgColor
-                digit.foregroundColor = NSColor(r: 255, g: 194, b: 75).cgColor
-            } else {
-                dot.borderWidth = 1
-                dot.borderColor = NSColor(r: 111, g: 103, b: 92).cgColor
-                digit.foregroundColor = NSColor(r: 168, g: 158, b: 141).cgColor
-            }
-            dot.addSublayer(digit)
+            let dot = makeSessionDot(entry)
+            dot.frame.origin = CGPoint(x: x, y: (shellH - 12) / 2)
             row.addSublayer(dot)
             x += 18
         }
@@ -473,6 +452,68 @@ class FloatingIndicator: NSObject {
             row.addSublayer(nameLayer)
         }
         return row
+    }
+
+    /// One numbered session dot (active lit, pending amber) — shared by
+    /// the one-line picker row and the grown band.
+    private func makeSessionDot(_ entry: PickerEntry) -> CALayer {
+        let dot = CALayer()
+        dot.frame = CGRect(x: 0, y: 0, width: 12, height: 12)
+        dot.cornerRadius = 6
+        let digit = CATextLayer()
+        digit.string = "\(entry.number)"
+        digit.font = NSFont.systemFont(ofSize: 7.5, weight: .bold)
+        digit.fontSize = 7.5
+        digit.alignmentMode = .center
+        digit.contentsScale = 2
+        digit.frame = CGRect(x: 0, y: 1.5, width: 12, height: 9)
+        if entry.active {
+            dot.backgroundColor = NSColor(r: 216, g: 207, b: 192).cgColor
+            digit.foregroundColor = NSColor(r: 23, g: 21, b: 15).cgColor
+        } else if entry.pending {
+            dot.borderWidth = 1
+            dot.borderColor = NSColor(r: 255, g: 194, b: 75, a: 217).cgColor
+            digit.foregroundColor = NSColor(r: 255, g: 194, b: 75).cgColor
+        } else {
+            dot.borderWidth = 1
+            dot.borderColor = NSColor(r: 111, g: 103, b: 92).cgColor
+            digit.foregroundColor = NSColor(r: 168, g: 158, b: 141).cgColor
+        }
+        dot.addSublayer(digit)
+        return dot
+    }
+
+    /// The grown band's session row: JUST the numbered dots, centered —
+    /// the session title already sits at the top of the container.
+    private func buildGrownSessionDots(entries: [PickerEntry], width: CGFloat, bandH: CGFloat) -> CALayer {
+        let row = CALayer()
+        row.frame = CGRect(x: 0, y: 0, width: width, height: bandH)
+        let total = CGFloat(entries.count) * 12 + CGFloat(max(0, entries.count - 1)) * 6
+        var x = (width - total) / 2
+        for entry in entries {
+            let dot = makeSessionDot(entry)
+            dot.frame.origin = CGPoint(x: x, y: (bandH - 12) / 2)
+            row.addSublayer(dot)
+            x += 18
+        }
+        return row
+    }
+
+    /// The moment an action starts (recording, transcribing) the session
+    /// row in the grown band steps aside: the selection is decided, the
+    /// three live dots return to their centered spot and carry the
+    /// activity animation. The grown container itself stays put.
+    private func revertGrownBandToDots() {
+        guard mode == .grown, pickerLayer != nil, let size = expandedSize else { return }
+        expandTimer?.invalidate()
+        expandTimer = nil
+        pickerLayer?.removeFromSuperlayer()
+        pickerLayer = nil
+        withoutAnimation {
+            capsuleLayer.frame = CGRect(x: (size.width - W) / 2, y: 3, width: W, height: H)
+            dotLayers.forEach { $0.isHidden = false }
+        }
+        applyState(force: true)
     }
 
     /// Short in-pill feedback ("no sessions", receipts) — one-line stretch.
@@ -757,8 +798,8 @@ class FloatingIndicator: NSObject {
             if let bottomPicker {
                 self.dotLayers.forEach { $0.isHidden = true }
                 self.capsuleLayer.frame = CGRect(x: 0, y: 0, width: width, height: bottomBand)
-                let row = self.buildPickerRow(entries: bottomPicker.entries, activeName: bottomPicker.activeName,
-                                              shellW: width, shellH: bottomBand)
+                let row = self.buildGrownSessionDots(entries: bottomPicker.entries,
+                                                     width: width, bandH: bottomBand)
                 self.capsuleLayer.addSublayer(row)
                 self.pickerLayer = row
             } else {
@@ -1054,6 +1095,9 @@ class FloatingIndicator: NSObject {
     func setState(_ newState: AppState, recordingFor purpose: RecordingPurpose = .dictation) {
         state = newState
         recordingPurpose = purpose
+        if newState == .recording || newState == .handsFree || newState == .processing {
+            revertGrownBandToDots()
+        }
         applyState()
         if newState == .done {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {

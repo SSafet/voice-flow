@@ -963,18 +963,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.setUnreadIndicator(unseenSessions() > 0)
     }
 
-    /// User-initiated selection (⌃⌥N / menu bar). Re-selecting the session
-    /// that's already active reads its queued messages aloud (Settings
-    /// toggle "Re-select a session to hear its messages") — arrival never
-    /// auto-plays audio. Main thread.
+    /// User-initiated selection (⌃⌥N / menu bar). Double-select = a second
+    /// press while the first press's stack is already on screen: THAT reads
+    /// the messages aloud (Settings toggle). Merely being the default
+    /// target doesn't count — the first press must SHOW, never speak.
+    /// Main thread.
     private func userSelectSession(_ id: String) {
-        if id == targetSessionId, UserSettings.shared.doubleSelectSpeak,
+        if id == targetSessionId, indicator.isGrownVisible, currentPushSessionId == id,
+           UserSettings.shared.doubleSelectSpeak,
            let queue = sessionPushes[id], !queue.isEmpty {
             var request = chatPanel.currentTTSRequest()
             request.text = queue.map(\.text).joined(separator: "\n\n")
             _ = handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
+            return
         }
         setTargetSession(id, announce: true)
+    }
+
+    /// The user answered what was on screen by voice — the view collapses
+    /// and the receipt lands after it. When the answer actually reached a
+    /// session, its stack is also done with (the Messages tab keeps the
+    /// history). Main thread.
+    private func answeredSession(_ id: String?, note: String, clearStack: Bool) {
+        if clearStack, let id {
+            sessionPushes.removeValue(forKey: id)
+            refreshUnreadIndicator()
+        }
+        replyBubble.hide()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            self.replyBubble.showTransient(note, seconds: 6)
+        }
     }
 
     /// ⌃⌥1–6. Any select attempt — valid or aimed at a missing number —
@@ -1033,8 +1051,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             interaction.attachments.append(contentsOf: attachments)
             interaction.responseText = text
             interaction.semaphore.signal()
-            replyBubble.hide()
-            replyBubble.showTransient("answer sent to \(sessionName(for: interaction.sessionId))")
+            answeredSession(interaction.sessionId,
+                            note: "answer sent to \(sessionName(for: interaction.sessionId))",
+                            clearStack: false)
         }
     }
 
@@ -1053,7 +1072,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let target = mcpServer.sessions.session(targetSessionId)
             if let target, inbox.hasWaiter(for: target.id) {
                 inbox.add(text: text, attachments: attachments, session: target.id)
-                replyBubble.showTransient("sent to \(sessionName(for: target.id))", seconds: 5)
+                answeredSession(target.id, note: "sent to \(sessionName(for: target.id))", clearStack: true)
                 return
             }
             // A session parked in wait_for_message takes it even when no
@@ -1061,7 +1080,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // send no id, yet a live listener is unambiguous.
             if inbox.hasWaiter(for: nil) {
                 inbox.add(text: text, attachments: attachments, session: nil)
-                replyBubble.showTransient("sent to Claude", seconds: 5)
+                answeredSession(nil, note: "sent to Claude", clearStack: false)
                 return
             }
             let prompt = Self.messagePrompt(text: text, attachments: attachments)
@@ -1070,7 +1089,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             chatPanel.addDictation(text: prompt, time: Self.timestamp())
             let note = target.map { "\(sessionName(for: $0.id)) not listening — copied + saved in History" }
                 ?? "no session — copied + saved in History"
-            replyBubble.showTransient(note, seconds: 8)
+            // The stack stays (nothing was delivered), but the screen must
+            // still visibly react to having been spoken to.
+            answeredSession(nil, note: note, clearStack: false)
         }
     }
 
