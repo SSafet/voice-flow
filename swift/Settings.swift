@@ -28,6 +28,9 @@ final class SettingsStore: ObservableObject {
     @Published var sessionSendToAgent: Bool { didSet { commit() } }
     @Published var talkSendToAgent: Bool { didSet { commit() } }
     @Published var workflowWatcherEnabled: Bool { didSet { commit() } }
+    @Published var watcherInterval: Double { didSet { commit() } }
+    @Published var watcherIdlePause: Double { didSet { commit() } }
+    @Published var watcherKeepDays: Double { didSet { commit() } }
 
     // Keychain state
     @Published var hasOpenAIKey: Bool
@@ -62,6 +65,9 @@ final class SettingsStore: ObservableObject {
         sessionSendToAgent = s.sessionSendToAgent
         talkSendToAgent = s.talkSendToAgent
         workflowWatcherEnabled = s.workflowWatcherEnabled
+        watcherInterval = Double(s.watcherIntervalSeconds)
+        watcherIdlePause = Double(s.watcherIdlePauseSeconds)
+        watcherKeepDays = Double(s.watcherKeepDays)
         hasOpenAIKey = KeychainStore.shared.hasOpenAIAPIKey
         hasAgentKey = KeychainStore.shared.hasAgentAPIKey
         hotkey = s.hotkey
@@ -96,6 +102,9 @@ final class SettingsStore: ObservableObject {
         s.sessionSendToAgent = sessionSendToAgent
         s.talkSendToAgent = talkSendToAgent
         s.workflowWatcherEnabled = workflowWatcherEnabled
+        s.watcherIntervalSeconds = Int(watcherInterval)
+        s.watcherIdlePauseSeconds = Int(watcherIdlePause)
+        s.watcherKeepDays = Int(watcherKeepDays)
         s.save()
         onSettingsChanged?()
     }
@@ -438,10 +447,6 @@ private struct AssistantSettingsView: View {
 
             Section {
                 ClaudeConnectionRow()
-                Toggle(isOn: $store.workflowWatcherEnabled) {
-                    SettingRowLabel(title: "Watch my workflow",
-                                    subtitle: "Logs what app you're in plus deduped screenshots every 5 seconds (pauses when you're idle) so Claude's nightly review can spot repetitive, automatable work")
-                }
                 Toggle(isOn: $store.talkSendToAgent) {
                     SettingRowLabel(title: "Talk hotkeys go to the in-app assistant",
                                     subtitle: "Off: talking with the Talk / Talk + snap shortcuts sends your words to Claude Code — instantly when Claude is listening, queued otherwise")
@@ -469,6 +474,103 @@ private struct AssistantSettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct WatcherSettingsView: View {
+    @ObservedObject var store: SettingsStore
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(isOn: $store.workflowWatcherEnabled) {
+                    SettingRowLabel(title: "Watch my workflow",
+                                    subtitle: "An amber ring on the pill shows whenever it's recording")
+                }
+            } header: {
+                Text("Screen Watcher")
+            } footer: {
+                Text("Logs the frontmost app, window title, and browser page every few seconds, plus a screenshot when the screen changed. Pauses while you're idle or the screen is locked. Everything stays on this Mac in ~/.config/voice-flow/watcher.")
+            }
+
+            Section("Capture") {
+                HStack {
+                    SettingRowLabel(title: "Tick interval",
+                                    subtitle: "How often to sample the screen")
+                    Spacer()
+                    Slider(value: $store.watcherInterval, in: 2...15, step: 1)
+                        .frame(width: 170)
+                    Text("\(Int(store.watcherInterval)) s")
+                        .monospacedDigit()
+                        .frame(width: 40, alignment: .trailing)
+                }
+                HStack {
+                    SettingRowLabel(title: "Pause when idle",
+                                    subtitle: "Stop capturing after this much inactivity")
+                    Spacer()
+                    Slider(value: $store.watcherIdlePause, in: 30...300, step: 15)
+                        .frame(width: 170)
+                    Text("\(Int(store.watcherIdlePause)) s")
+                        .monospacedDigit()
+                        .frame(width: 40, alignment: .trailing)
+                }
+                HStack {
+                    SettingRowLabel(title: "Keep history",
+                                    subtitle: "Day folders older than this are deleted; reviews and the ledger are kept forever")
+                    Spacer()
+                    Slider(value: $store.watcherKeepDays, in: 7...90, step: 1)
+                        .frame(width: 170)
+                    Text("\(Int(store.watcherKeepDays)) d")
+                        .monospacedDigit()
+                        .frame(width: 40, alignment: .trailing)
+                }
+            }
+
+            Section {
+                LabeledContent {
+                    Button("Run Now") { WatcherActions.runReviewNow() }
+                } label: {
+                    SettingRowLabel(title: "Nightly review",
+                                    subtitle: "Claude Code reads the day's activity at 21:37 each night and suggests workflow optimizations (LaunchAgent com.voiceflow.watcher-analyze)")
+                }
+                LabeledContent {
+                    HStack {
+                        Button("Latest Review") { WatcherActions.openLatestReview() }
+                        Button("Data Folder") { WatcherActions.openDataFolder() }
+                    }
+                } label: {
+                    SettingRowLabel(title: "Files",
+                                    subtitle: "Reviews, the observations ledger, and captured frames")
+                }
+            } header: {
+                Text("Analysis")
+            } footer: {
+                Text("To stop the nightly review entirely: launchctl bootout gui/$UID ~/Library/LaunchAgents/com.voiceflow.watcher-analyze.plist")
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private enum WatcherActions {
+    static func runReviewNow() {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        proc.arguments = ["kickstart", "gui/\(getuid())/com.voiceflow.watcher-analyze"]
+        try? proc.run()
+    }
+
+    static func openLatestReview() {
+        let dir = WorkflowWatcher.baseDir.appendingPathComponent("reviews")
+        let newest = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "md" }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+            .first
+        NSWorkspace.shared.open(newest ?? dir)
+    }
+
+    static func openDataFolder() {
+        NSWorkspace.shared.open(WorkflowWatcher.baseDir)
     }
 }
 
@@ -585,6 +687,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
                view: VoiceSettingsView(store: store))
         addTab("Assistant", symbol: "sparkles", height: 620,
                view: AssistantSettingsView(store: store))
+        addTab("Watcher", symbol: "eye.fill", height: 560,
+               view: WatcherSettingsView(store: store))
         addTab("Shortcuts", symbol: "keyboard.fill", height: 560,
                view: ShortcutsSettingsView(store: store))
 

@@ -205,7 +205,7 @@ class FloatingIndicator: NSObject {
     private var panel: NSPanel!
     private var pillLayer: CALayer!
     private var sessionRingLayer: CALayer!
-    private var watcherDotLayer: CALayer!
+    private var watcherRingLayer: CALayer!
     private var dotLayers: [CALayer] = []
 
     private var state: AppState = .idle
@@ -215,7 +215,7 @@ class FloatingIndicator: NSObject {
     private var ttsSnapshot: TTSStatusSnapshot?
     private var recordingPurpose: RecordingPurpose = .dictation
     private var appliedVisual: Visual?
-    private var appliedRing: Bool?
+    private var appliedRing: (session: Bool, watcher: Bool)?
 
     func show() {
         panel = NSPanel(
@@ -244,6 +244,18 @@ class FloatingIndicator: NSObject {
         pillLayer.borderWidth = 1.0
         root.addSublayer(pillLayer)
 
+        // Watcher ring — a faint static amber outline while the ambient
+        // workflow watcher records. Sits under the session ring, which
+        // covers it whenever a session is live.
+        watcherRingLayer = CALayer()
+        watcherRingLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
+        watcherRingLayer.cornerRadius = H / 2
+        watcherRingLayer.backgroundColor = NSColor.clear.cgColor
+        watcherRingLayer.borderColor = NSColor(r: 255, g: 170, b: 60, a: 110).cgColor
+        watcherRingLayer.borderWidth = 1.0
+        watcherRingLayer.opacity = 0
+        root.addSublayer(watcherRingLayer)
+
         // Session ring — visible while a session is live.
         sessionRingLayer = CALayer()
         sessionRingLayer.frame = CGRect(x: 0, y: 0, width: W, height: H)
@@ -255,15 +267,6 @@ class FloatingIndicator: NSObject {
         sessionRingLayer.shadowColor = NSColor(r: 255, g: 128, b: 96, a: 255).cgColor
         sessionRingLayer.shadowOffset = .zero
         root.addSublayer(sessionRingLayer)
-
-        // Watcher dot — small amber marker at the pill's right edge while
-        // the ambient workflow watcher is recording.
-        watcherDotLayer = CALayer()
-        watcherDotLayer.frame = CGRect(x: W - 7, y: H / 2 - 2, width: 4, height: 4)
-        watcherDotLayer.cornerRadius = 2
-        watcherDotLayer.backgroundColor = NSColor(r: 255, g: 170, b: 60, a: 230).cgColor
-        watcherDotLayer.opacity = watcherActive ? 1 : 0
-        root.addSublayer(watcherDotLayer)
 
         // 3 dots, centered as a group on the pill
         let cy = H / 2.0
@@ -297,14 +300,25 @@ class FloatingIndicator: NSObject {
     @objc private func screenChanged() {
         recenter()
         applyState(force: true)
+        // Display layouts often settle a beat after the notification —
+        // recenter again so the pill doesn't strand on stale coordinates.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.recenter()
+        }
     }
 
     @objc private func wokeUp() {
+        recenter()
         applyState(force: true)
     }
 
     private func recenter() {
-        guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
+        // Follow the user: the screen holding the mouse pointer, not the
+        // primary display.
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
+            ?? NSScreen.main ?? NSScreen.screens.first
+        guard let screen else { return }
         let frame = screen.frame
         let x = (frame.minX + (frame.width - W) / 2).rounded()
         let y = (frame.minY + 5).rounded()
@@ -331,7 +345,7 @@ class FloatingIndicator: NSObject {
 
     func setWatcherActive(_ active: Bool) {
         watcherActive = active
-        watcherDotLayer?.opacity = active ? 1 : 0
+        applyState()
     }
 
     func setAgentActivity(_ activity: AgentActivity) {
@@ -353,7 +367,7 @@ class FloatingIndicator: NSObject {
     // activity emissions — must not reset a running loop to its first frame.
 
     private enum Visual: Equatable {
-        case idle, handsFree, processing, done
+        case idle, handsFree, processing, booting, done
         case recording(RecordingPurpose)
         case agent(AgentActivity)
         case ttsPlaying, ttsGenerating, ttsPaused
@@ -363,7 +377,8 @@ class FloatingIndicator: NSObject {
         switch state {
         case .recording: return .recording(recordingPurpose)
         case .handsFree: return .handsFree
-        case .processing, .loading: return .processing
+        case .processing: return .processing
+        case .loading: return .booting
         case .done: return .done
         case .idle: break
         }
@@ -382,14 +397,17 @@ class FloatingIndicator: NSObject {
     private func applyState(force: Bool = false) {
         guard pillLayer != nil else { return }
 
-        // The session ring is orthogonal to the pill visual — updating it
-        // alone must not restart the pill/dot loops.
-        if force || appliedRing != sessionActive {
-            appliedRing = sessionActive
+        // The rings are orthogonal to the pill visual — updating them
+        // alone must not restart the pill/dot loops. The watcher ring
+        // hides under a live session so only one ring reads at a time.
+        let rings = (session: sessionActive, watcher: watcherActive)
+        if force || appliedRing == nil || appliedRing! != rings {
+            appliedRing = rings
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             sessionRingLayer.borderWidth = sessionActive ? 1.5 : 0
             sessionRingLayer.opacity = sessionActive ? 1.0 : 0.0
+            watcherRingLayer.opacity = (watcherActive && !sessionActive) ? 1.0 : 0.0
             CATransaction.commit()
         }
 
@@ -442,6 +460,14 @@ class FloatingIndicator: NSObject {
             addPulse(duration: 1.8)
             addDotBounce(cycle: 2.1)
 
+        case .booting:
+            // Backend still starting — cool, quiet, all dots breathing in
+            // unison ("warming up"), unlike any working state.
+            paint(bg: NSColor(r: 48, g: 52, b: 62, a: 105),
+                  border: NSColor(r: 150, g: 170, b: 205, a: 32),
+                  dots: NSColor(r: 205, g: 218, b: 240, a: 150))
+            addDotBreathe(cycle: 2.4)
+
         case .done:
             paint(bg: NSColor(r: 60, g: 90, b: 50, a: 120),
                   border: NSColor(r: 160, g: 210, b: 140, a: 50),
@@ -454,8 +480,7 @@ class FloatingIndicator: NSObject {
             paint(bg: NSColor(r: 44, g: 84, b: 68, a: 125),
                   border: NSColor(r: 130, g: 220, b: 176, a: 60),
                   dots: NSColor(r: 228, g: 255, b: 244, a: 195))
-            addPulse(duration: 1.25)
-            addDotFadeSweep(cycle: 1.0)
+            addDotEqualizer(cycle: 0.95)
 
         case .ttsGenerating:
             paint(bg: NSColor(r: 62, g: 78, b: 54, a: 115),
@@ -583,6 +608,31 @@ class FloatingIndicator: NSObject {
             a.duration = cycle; a.repeatCount = .infinity
             a.beginTime = now - Double(i) * cycle / 3.0
             dot.add(a, forKey: "bounce")
+        }
+    }
+
+    /// All dots fade together, same phase — "warming up", not "working".
+    private func addDotBreathe(cycle: Double) {
+        let a = CABasicAnimation(keyPath: "opacity")
+        a.fromValue = 0.45; a.toValue = 1.0
+        a.duration = cycle; a.autoreverses = true; a.repeatCount = .infinity
+        a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        dotLayers.forEach { $0.add(a, forKey: "breathe") }
+    }
+
+    /// Dots stretch vertically out of phase — a small equalizer, reads as
+    /// "audio playing" without pulsing the whole pill.
+    private func addDotEqualizer(cycle: Double) {
+        let ease = CAMediaTimingFunction(name: .easeInEaseOut)
+        let now = CACurrentMediaTime()
+        for (i, dot) in dotLayers.enumerated() {
+            let a = CAKeyframeAnimation(keyPath: "transform.scale.y")
+            a.values = [1.0, 1.55, 0.85, 1.3, 1.0]
+            a.keyTimes = [0.0, 0.3, 0.55, 0.8, 1.0]
+            a.timingFunctions = [ease, ease, ease, ease]
+            a.duration = cycle; a.repeatCount = .infinity
+            a.beginTime = now - Double(i) * cycle / 3.0
+            dot.add(a, forKey: "equalizer")
         }
     }
 

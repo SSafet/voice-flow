@@ -25,11 +25,16 @@ final class WorkflowWatcher {
     private(set) var isRunning = false
 
     private let screenCapture: ScreenCapture
-    private let interval: TimeInterval = 5
-    private let idleCutoff: TimeInterval = 90
     private let diffThreshold: Double = 0.01
-    private let keepDays = 30
     private let writeQueue = DispatchQueue(label: "voiceflow.watcher", qos: .utility)
+
+    // Tunables live in Settings → Watcher; idle/retention apply per tick,
+    // the interval needs a timer restart (applySettings).
+    private var appliedInterval: TimeInterval = 5
+    private var idleCutoff: TimeInterval {
+        TimeInterval(max(30, UserSettings.shared.watcherIdlePauseSeconds))
+    }
+    private var keepDays: Int { max(3, UserSettings.shared.watcherKeepDays) }
 
     private var timer: Timer?
     private var lastFrameData: Data?
@@ -59,11 +64,20 @@ final class WorkflowWatcher {
     func start() {
         guard !isRunning else { return }
         isRunning = true
+        appliedInterval = TimeInterval(max(2, UserSettings.shared.watcherIntervalSeconds))
         pruneOldDays()
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: appliedInterval, repeats: true) { [weak self] _ in
             self?.tick()
         }
-        vflog("watcher: started — every \(Int(interval))s into \(Self.baseDir.path)")
+        vflog("watcher: started — every \(Int(appliedInterval))s into \(Self.baseDir.path)")
+    }
+
+    /// Pick up a changed interval without disturbing anything else.
+    func applySettings() {
+        let wanted = TimeInterval(max(2, UserSettings.shared.watcherIntervalSeconds))
+        guard isRunning, wanted != appliedInterval else { return }
+        stop()
+        start()
     }
 
     func stop() {

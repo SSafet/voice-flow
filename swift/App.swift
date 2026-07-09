@@ -579,6 +579,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else if !wanted, workflowWatcher.isRunning {
             workflowWatcher.stop()
         }
+        workflowWatcher.applySettings()
         menuBar.setWatcherActive(wanted)
         indicator.setWatcherActive(wanted)
     }

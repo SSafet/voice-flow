@@ -160,9 +160,12 @@ class UserSettings {
     // Talk hotkeys queue messages for Claude Code (MCP inbox) unless the
     // in-app agent is explicitly re-enabled as their destination.
     var talkSendToAgent: Bool = false
-    // Ambient workflow watcher: deduped screenshot + activity line every
-    // 5s into ~/.config/voice-flow/watcher for the daily Claude review.
+    // Ambient workflow watcher: deduped screenshot + activity line into
+    // ~/.config/voice-flow/watcher for the daily Claude review.
     var workflowWatcherEnabled: Bool = false
+    var watcherIntervalSeconds: Int = 5
+    var watcherIdlePauseSeconds: Int = 90
+    var watcherKeepDays: Int = 30
 
     private let url: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
@@ -221,6 +224,9 @@ class UserSettings {
         if let v = dict["session_send_to_agent"] as? Bool { sessionSendToAgent = v }
         if let v = dict["talk_send_to_agent"] as? Bool { talkSendToAgent = v }
         if let v = dict["workflow_watcher_enabled"] as? Bool { workflowWatcherEnabled = v }
+        if let v = dict["watcher_interval_seconds"] as? Int { watcherIntervalSeconds = max(2, v) }
+        if let v = dict["watcher_idle_pause_seconds"] as? Int { watcherIdlePauseSeconds = max(30, v) }
+        if let v = dict["watcher_keep_days"] as? Int { watcherKeepDays = max(3, v) }
         if let v = dict["custom_vocabulary"] as? [String] {
             customVocabulary = v.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
@@ -250,6 +256,9 @@ class UserSettings {
             "session_send_to_agent": sessionSendToAgent,
             "talk_send_to_agent": talkSendToAgent,
             "workflow_watcher_enabled": workflowWatcherEnabled,
+            "watcher_interval_seconds": watcherIntervalSeconds,
+            "watcher_idle_pause_seconds": watcherIdlePauseSeconds,
+            "watcher_keep_days": watcherKeepDays,
             "custom_vocabulary": customVocabulary,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted) {
