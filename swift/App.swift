@@ -75,16 +75,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// calls are folded into the "anonymous" registry session by
     /// MCPServer, so every queue key is a real session id.) `seen` flips
     /// when the stack displays — unseen pushes light the pill's unread ring.
-    struct SessionPush {
+    struct SessionPush: Codable {
         let id = UUID()
+        var at = Date()
         let title: String
         let text: String
         let hint: String?
         let isAsk: Bool
         var seen = false
     }
-    var sessionPushes: [String: [SessionPush]] = [:]
+    /// Persisted to pushes.json — unread stacks must survive app restarts,
+    /// not just session deaths. A session re-adopting its old id reclaims
+    /// its queue; the rest show as ghost picker entries.
+    var sessionPushes: [String: [SessionPush]] = [:] {
+        didSet { Self.savePushes(sessionPushes) }
+    }
     private let maxQueuedPushes = 8
+
+    private static let pushesURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/voice-flow/pushes.json")
+
+    private static func savePushes(_ pushes: [String: [SessionPush]]) {
+        if let data = try? JSONEncoder().encode(pushes) {
+            try? data.write(to: pushesURL, options: .atomic)
+        }
+    }
+
+    private static func loadPushes() -> [String: [SessionPush]] {
+        guard let data = try? Data(contentsOf: pushesURL),
+              let pushes = try? JSONDecoder().decode([String: [SessionPush]].self, from: data) else { return [:] }
+        return pushes.mapValues { queue in
+            queue.map { push in
+                // An ask can't outlive its blocked tool call across a
+                // restart — it degrades to a plain readable message.
+                push.isAsk
+                    ? SessionPush(at: push.at, title: push.title, text: push.text,
+                                  hint: nil, isAsk: false, seen: push.seen)
+                    : push
+            }
+        }
+    }
     /// Which session's push is currently displayed (trash targets it).
     var currentPushSessionId: String?
 
@@ -198,10 +228,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.onToggleWatcher = { [weak self] in self?.toggleWorkflowWatcher() }
         indicator.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
         indicator.onSessionRemovals = { [weak self] in
-            self?.mcpServer.sessions.ordered().map { ($0.id, $0.label) } ?? []
+            self?.pickerSessions() ?? []
         }
         indicator.onRemoveSession = { [weak self] id in
-            guard let self, let closed = self.mcpServer.sessions.close(id) else { return }
+            guard let self else { return }
+            let label = self.pickerSessions().first { $0.id == id }?.label ?? "session"
+            _ = self.mcpServer.sessions.close(id)   // nil for a ghost — fine
             self.sessionPushes.removeValue(forKey: id)
             // Its stack may be the thing on screen right now.
             if self.currentPushSessionId == id {
@@ -213,7 +245,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.refreshSessionIndicator()
             self.refreshUnreadIndicator()
-            self.replyBubble.showTransient("\(closed.label) removed", seconds: 4)
+            self.replyBubble.showTransient("\(label) removed", seconds: 4)
         }
         indicator.onQuit = { NSApp.terminate(nil) }
         indicator.show()
@@ -236,6 +268,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+
+        // Unread stacks from before the restart come back as ghost picker
+        // entries (their sessions reclaim them if they reconnect).
+        sessionPushes = Self.loadPushes()
 
         replyBubble = ReplyBubble(indicator: indicator)
         // ✕ closes and keeps: a pending ask stays pending (answer whenever,
@@ -852,12 +888,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// The picker's view of the world: one entry per session in connect
-    /// order (active lit, pending amber) plus the active session's name.
+    /// Everyone the picker can point at: live sessions in connect order,
+    /// then "ghost" stacks — messages whose session ended or expired
+    /// before the user read them. A ghost keeps its dot, its ⌃⌥ number,
+    /// and its stack until the user reads or trashes it; nothing marked
+    /// unread ever becomes unviewable. Main thread.
+    private func pickerSessions() -> [(id: String, label: String)] {
+        let live = mcpServer.sessions.ordered().map { (id: $0.id, label: $0.label) }
+        let liveIds = Set(live.map { $0.id })
+        let ghosts = sessionPushes
+            .filter { !liveIds.contains($0.key) && !$0.value.isEmpty }
+            .sorted { ($0.value.last?.at ?? .distantPast) < ($1.value.last?.at ?? .distantPast) }
+            .map { (id: $0.key, label: Self.senderLabel($0.value)) }
+        return live + ghosts
+    }
+
+    /// A ghost has no registry entry anymore — its newest push remembers
+    /// who sent it.
+    private static func senderLabel(_ queue: [SessionPush]) -> String {
+        let title = queue.last?.title ?? "Claude"
+        return title.hasSuffix(" asks") ? String(title.dropLast(5)) : title
+    }
+
+    /// The picker's view of the world: one entry per live-or-ghost session
+    /// (active lit, pending amber) plus the active entry's name.
     /// Main thread.
     private func pickerEntries() -> (entries: [FloatingIndicator.PickerEntry], activeName: String?) {
-        let ordered = mcpServer.sessions.ordered()
-        let entries = ordered.enumerated().map { index, session in
+        let sessions = pickerSessions()
+        let entries = sessions.enumerated().map { index, session in
             FloatingIndicator.PickerEntry(
                 number: index + 1,
                 active: session.id == targetSessionId,
@@ -868,7 +926,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     || pendingInteraction?.sessionId == session.id
                     || sessionPushes[session.id]?.contains { !$0.seen } == true)
         }
-        return (entries, ordered.first { $0.id == targetSessionId }?.label)
+        return (entries, sessions.first { $0.id == targetSessionId }?.label)
     }
 
     /// Single entry for changing which Claude session owns the user's
@@ -898,9 +956,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Keep the pill's middle-dot session number current.
     func refreshSessionIndicator() {
-        let ordered = mcpServer.sessions.ordered()
         indicator.setActiveSessionNumber(
-            ordered.firstIndex { $0.id == targetSessionId }.map { $0 + 1 })
+            pickerSessions().firstIndex { $0.id == targetSessionId }.map { $0 + 1 })
     }
 
     /// Queue a push and announce it with a one-line receipt — the full
@@ -937,7 +994,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // surface — never over grown content, never while the user talks.
         guard !surfaceBusy else { return }
         var receipt = push.isAsk ? push.title : "\(push.title) · new message"
-        if let index = mcpServer.sessions.ordered().firstIndex(where: { $0.id == sid }) {
+        if let index = pickerSessions().firstIndex(where: { $0.id == sid }) {
             receipt += " — ⌃⌥\(index + 1)"
         }
         indicator.flashMessage(receipt, seconds: 4)
@@ -977,13 +1034,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Sessions (other than `excluded`) holding pushes the user hasn't
-    /// seen. Drops orphan queues of dead sessions on the way — a queue
-    /// nobody can switch to must never count as "waiting" (its history
-    /// lives on in the Messages tab). Main thread.
+    /// seen — ghosts included: unread messages outlive their session and
+    /// stay reachable via the picker until read or trashed. Main thread.
     private func unseenSessions(excluding excluded: String? = nil) -> Int {
-        sessionPushes = sessionPushes.filter { sid, queue in
-            !queue.isEmpty && mcpServer.sessions.session(sid) != nil
-        }
+        sessionPushes = sessionPushes.filter { !$0.value.isEmpty }
         return sessionPushes.filter { sid, queue in
             sid != excluded && queue.contains { !$0.seen }
         }.count
@@ -1032,17 +1086,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// ⌃⌥1–6. Any select attempt — valid or aimed at a missing number —
     /// opens the picker showing what's actually available. Main thread.
     private func switchToSession(at index: Int) {
-        let ordered = mcpServer.sessions.ordered()
-        // The look itself may have just pruned ghosts — repaint the badge
-        // and ring against what actually exists before acting on it.
+        // Repaint the badge and ring against what actually exists before
+        // acting on it — the look itself may have expired live sessions.
         refreshSessionIndicator()
         refreshUnreadIndicator()
-        guard index < ordered.count else {
+        let sessions = pickerSessions()
+        guard index < sessions.count else {
             let (entries, activeName) = pickerEntries()
             indicator.showPicker(entries: entries, activeName: activeName)
             return
         }
-        userSelectSession(ordered[index].id)
+        userSelectSession(sessions[index].id)
     }
 
     /// Menu-bar route to the same prompt the post-session bubble offers —
@@ -1901,9 +1955,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         localAPIServer.onMCPSessionEnd = { [weak self] sessionId in
             guard let self, let closed = self.mcpServer.sessions.close(sessionId) else { return }
             DispatchQueue.main.async {
-                // Its stack has no picker dot to live behind anymore — drop
-                // it (the Messages tab keeps the history).
-                self.sessionPushes.removeValue(forKey: closed.id)
+                // An unread stack survives its session as a ghost picker
+                // entry; only read residue leaves with it.
+                if self.sessionPushes[closed.id]?.contains(where: { !$0.seen }) != true {
+                    self.sessionPushes.removeValue(forKey: closed.id)
+                }
                 self.refreshUnreadIndicator()
                 if self.targetSessionId == closed.id {
                     self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
@@ -1921,16 +1977,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Registry pruning is lazy (no callbacks): sessions idle 2h vanish
         // the next time someone LOOKS, so the number dot and the unread
         // ring could lie for hours (e.g. overnight). A periodic sweep
-        // keeps them honest and re-targets off a pruned session.
+        // keeps them honest. It NEVER touches unread stacks — those stay
+        // as readable ghost entries; it only clears read residue of dead
+        // sessions and re-targets off an entry that no longer exists.
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             guard let self else { return }
+            let live = Set(self.mcpServer.sessions.ordered().map { $0.id })
+            self.sessionPushes = self.sessionPushes.filter { sid, queue in
+                !queue.isEmpty && (live.contains(sid) || queue.contains { !$0.seen })
+            }
             if self.targetSessionId != nil,
-               self.mcpServer.sessions.session(self.targetSessionId) == nil {
+               !self.pickerSessions().contains(where: { $0.id == self.targetSessionId }) {
                 self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
             }
             self.refreshSessionIndicator()
             self.refreshUnreadIndicator()
         }
+        // Ghost stacks restored from disk should light the ring right away.
+        refreshSessionIndicator()
+        refreshUnreadIndicator()
     }
 
     private func mergedTTSRequest(_ payload: TTSAPIUpdatePayload) -> TTSRequest {

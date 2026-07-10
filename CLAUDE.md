@@ -110,7 +110,11 @@ via the `set_session_name` tool (server instructions + a one-time nudge in
 the first tool result push Claude to call it; unnamed sessions show as
 "Claude #N"). `DELETE /mcp` closes one; sessions silent for 2 h are pruned
 as ghosts (a live one self-heals — its next request is re-adopted by
-`touch()`). Talk hotkeys feed the **target
+`touch()`). **Unread messages outlive everything**: a session that ends or
+expires with unseen pushes stays in the picker as a readable ghost entry
+(label derived from its newest push), and stacks persist in `pushes.json`
+across app restarts; a 60 s sweep clears only read residue of dead sessions
+and repaints the number dot / unread ring. Talk hotkeys feed the **target
 session** (`AppDelegate.targetSessionId`, changed only via
 `setTargetSession` — newest connection by default, switchable with
 **⌃⌥1–6** or the menu bar's "Voice Goes To" submenu, which lists sessions
@@ -190,6 +194,8 @@ on-demand analyze/optimize/status version.
   `DictationsView` on each new dictation (render cap 60, store cap 200). Survives restarts.
 - `messages.json` — every agent push (`[AgentMessageEntry]`: time, session,
   text, isAsk), written by `MessagesView` (same caps). The Messages tab's store.
+- `pushes.json` — the live per-session push stacks (`sessionPushes`), saved on
+  every mutation so unread messages survive app restarts as ghost entries.
 - `inbox.json` — queued talk-hotkey messages for Claude (`MessageInbox`).
 - `overlays/*.json` — live on-screen elements (`OverlayManager`); `_schema.md` documents the format.
 - `watcher/` — ambient workflow log (`WorkflowWatcher`): per-day `activity.jsonl` + deduped frames, plus `ANALYZE.md` / `ledger.md` / `reviews/` for the nightly review.
