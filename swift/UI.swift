@@ -400,7 +400,7 @@ class FloatingIndicator: NSObject {
     func showPicker(entries: [PickerEntry], activeName: String?, seconds: TimeInterval = 4.0) {
         guard panel != nil else { return }
         guard !entries.isEmpty else {
-            flashMessage("no sessions")
+            flashMessage("no sessions — click me for Messages")
             return
         }
         expandTimer?.invalidate()

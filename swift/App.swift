@@ -1033,6 +1033,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// opens the picker showing what's actually available. Main thread.
     private func switchToSession(at index: Int) {
         let ordered = mcpServer.sessions.ordered()
+        // The look itself may have just pruned ghosts — repaint the badge
+        // and ring against what actually exists before acting on it.
+        refreshSessionIndicator()
+        refreshUnreadIndicator()
         guard index < ordered.count else {
             let (entries, activeName) = pickerEntries()
             indicator.showPicker(entries: entries, activeName: activeName)
@@ -1913,6 +1917,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         localAPIServer.start()
+
+        // Registry pruning is lazy (no callbacks): sessions idle 2h vanish
+        // the next time someone LOOKS, so the number dot and the unread
+        // ring could lie for hours (e.g. overnight). A periodic sweep
+        // keeps them honest and re-targets off a pruned session.
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            if self.targetSessionId != nil,
+               self.mcpServer.sessions.session(self.targetSessionId) == nil {
+                self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
+            }
+            self.refreshSessionIndicator()
+            self.refreshUnreadIndicator()
+        }
     }
 
     private func mergedTTSRequest(_ payload: TTSAPIUpdatePayload) -> TTSRequest {
