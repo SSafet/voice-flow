@@ -88,6 +88,25 @@ codesign --force --sign "$SIGN_ID" --identifier "com.voiceflow.app" \
     "$APP_DEST/Contents/MacOS/voice-flow"
 codesign --force --deep --sign "$SIGN_ID" "$APP_DEST"
 
+# ── deploy watcher assets ──────────────────────────────
+# Canonical sources for the workflow-watcher pieces that live outside the
+# app bundle (nightly-review LaunchAgent, its ANALYZE.md protocol + tool
+# grants, the /screenwatch skill) are in watcher/ — see watcher/README.md.
+WATCHER_SRC="$PROJECT_DIR/watcher"
+WATCHER_DATA="$HOME/.config/voice-flow/watcher"
+LA_NAME="com.voiceflow.watcher-analyze"
+LA_PLIST="$HOME/Library/LaunchAgents/$LA_NAME.plist"
+
+mkdir -p "$WATCHER_DATA/.claude" "$HOME/Library/LaunchAgents" "$HOME/.claude/skills/screenwatch"
+cp "$WATCHER_SRC/ANALYZE.md"                "$WATCHER_DATA/ANALYZE.md"
+cp "$WATCHER_SRC/claude-settings.json"      "$WATCHER_DATA/.claude/settings.json"
+cp "$WATCHER_SRC/screenwatch-skill/SKILL.md" "$HOME/.claude/skills/screenwatch/SKILL.md"
+sed "s|__HOME__|$HOME|g" "$WATCHER_SRC/$LA_NAME.plist" > "$LA_PLIST"
+launchctl bootout "gui/$(id -u)/$LA_NAME" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$LA_PLIST" \
+    && echo "  ✓ Watcher assets deployed ($LA_NAME loaded)" \
+    || echo "  ⚠ Watcher assets copied, but loading $LA_NAME failed — nightly review won't run"
+
 echo ""
 echo "✓ Installed to $APP_DEST"
 echo ""

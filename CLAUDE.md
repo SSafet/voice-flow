@@ -185,7 +185,11 @@ log by script (never raw into context), maintains the observations ledger
 (`ledger.md`, patterns suggested only after 3+ sightings on 2+ days), writes
 `reviews/<day>.md`, and surfaces suggestions via the MCP overlay tools. The
 user-level `/screenwatch` skill (`~/.claude/skills/screenwatch/`) is the
-on-demand analyze/optimize/status version.
+on-demand analyze/optimize/status version. The out-of-app pieces — the
+LaunchAgent plist, `ANALYZE.md` + its `.claude/settings.json` tool grants, and
+the `/screenwatch` skill — are vendored in the repo's `watcher/` directory and
+deployed by `install.sh` (see `watcher/README.md`); edit them there, the
+deployed copies are build outputs.
 
 ## Persistent data (`~/.config/voice-flow/`)
 

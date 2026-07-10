@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.voiceflow.watcher-analyze</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/.local/bin/claude</string>
+        <string>-p</string>
+        <string>Read ANALYZE.md in this directory and follow it exactly.</string>
+        <string>--allowedTools</string>
+        <string>Read,Glob,Grep,Write,Edit,WebSearch,Bash(python3:*),mcp__voice-flow</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__HOME__/.config/voice-flow/watcher</string>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>21</integer>
+        <key>Minute</key>
+        <integer>37</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.config/voice-flow/watcher/analyze.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.config/voice-flow/watcher/analyze.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

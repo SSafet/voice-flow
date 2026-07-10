@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "WebSearch",
+      "Bash(python3:*)",
+      "mcp__voice-flow"
+    ]
+  }
+}
