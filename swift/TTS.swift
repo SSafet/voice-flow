@@ -1222,6 +1222,8 @@ final class LocalAPIServer {
         var addrLen: socklen_t = socklen_t(MemoryLayout<sockaddr>.size)
         let clientFD = Darwin.accept(listenFD, &addr, &addrLen)
         guard clientFD >= 0 else { return }
+        var noSigPipe: Int32 = 1
+        setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
         clientQueue.async { [weak self] in
             self?.handleClient(fd: clientFD)
         }
