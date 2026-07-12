@@ -13,6 +13,37 @@ Your job: notice patterns — wasted motion, attention leaks, environmental
 conditions that help or hurt — and once a pattern is confirmed, say so
 concretely and suggest one fix or experiment per pattern.
 
+## Working hours & distractions
+
+Safet's day job runs **weekdays, from ~09:00–10:00 until ~18:00–19:00**.
+That window is committed work time; hold it to a different standard than
+the rest of the day.
+
+- **Distractions are the pinnacle of inefficiency** — hunt them as a
+  first-class finding, not a footnote. A distraction is in-window activity
+  that serves neither the day's work nor a deliberate break: entertainment
+  or algorithmic feeds (non-work YouTube, social media, news, shopping),
+  aimless tab-cycling, or a work block that bleeds mid-task into unrelated
+  browsing.
+- **Deliberate breaks are not distractions.** Meals, stepping away, a
+  chosen pause (visible as idle gaps) are healthy. The distinguishing mark
+  of a distraction is *drift*: the work context is still open, the feed is
+  on top.
+- **Quantify every one**: total in-window distraction minutes, each
+  drift's entry point (what the tick before it shows — that's the
+  trigger), the longest single drift, and time-of-day clustering. Give the
+  total its own line in the metrics table. Recurring sources become ledger
+  entries like any other pattern, with fixes (blockers, environment
+  changes, replacing the trigger moment) once confirmed.
+- **Evenings and weekends are his own.** Don't moralize leisure outside
+  the window; note it only when it plausibly costs the next workday (e.g.
+  the late-night pattern) or when he was demonstrably trying to work and
+  kept drifting.
+- **Day job vs side quests**: infer the day-job workstreams from what
+  recurs in-window across days. If you can't tell committed work from a
+  personal side project, say so plainly in the review and invite a
+  `note-*.md` naming the day-job projects — don't classify silently.
+
 ## Data layout: the day folder is an open observation bus
 
 Each `<yyyy-mm-dd>/` day directory can hold **any number of observation
@@ -60,7 +91,8 @@ moderation.
    ticks into activity blocks, then compute the day's metrics — per-app
    time, block durations, app-switch rate per hour, top titles/URLs by
    revisit count, churn bursts (>6 app switches in 2 minutes), longest
-   uninterrupted focus block, count of cam frames (each is a movement
+   uninterrupted focus block, in-window distraction minutes (see "Working
+   hours & distractions"), count of cam frames (each is a movement
    event). Merge other sources' lines by epoch. Read every `note-*` file.
 3. **Pick frames to actually look at**: block transitions, longest blocks,
    churn bursts — and cam frames nearest those same moments, so screen and
