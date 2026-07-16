@@ -314,7 +314,13 @@ private struct DictationSettingsView: View {
                     SettingRowLabel(title: "Record with",
                                     subtitle: "The mic used whenever you dictate or talk")
                 }
-                .onAppear { mics = AudioRecorder.availableMicrophones() }
+                .onAppear {
+                    AudioRecorder.monitorMicList()
+                    mics = AudioRecorder.availableMicrophones()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: AudioRecorder.micListChanged)) { _ in
+                    mics = AudioRecorder.availableMicrophones()
+                }
             } header: {
                 Text("Microphone")
             } footer: {

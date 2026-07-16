@@ -918,6 +918,25 @@ class AudioRecorder {
     private var speechBufferCount = 0
     private let minSpeechBuffers = 4
 
+    /// Posted whenever the set of audio devices changes (buds connecting,
+    /// USB mic unplugged, …) once monitorMicList() has been called.
+    static let micListChanged = Notification.Name("vfMicListChanged")
+    private static var micListListenerInstalled = false
+
+    /// Idempotent: installs a system-wide CoreAudio listener that reposts
+    /// device-list changes as `micListChanged` on the main queue.
+    static func monitorMicList() {
+        guard !micListListenerInstalled else { return }
+        micListListenerInstalled = true
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, .main) { _, _ in
+            NotificationCenter.default.post(name: micListChanged, object: nil)
+        }
+    }
+
     /// All connected input devices as (CoreAudio UID, display name).
     static func availableMicrophones() -> [(id: String, name: String)] {
         var addr = AudioObjectPropertyAddress(
