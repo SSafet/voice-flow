@@ -61,7 +61,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var overlayManager: OverlayManager!
     var inbox: MessageInbox!
     var mcpServer: MCPServer!
-    /// Set while an MCP ask_user call is waiting for the human. Main thread only.
+    /// Set while a report_to_user `question` is blocking on the human. Main thread only.
     var pendingInteraction: PendingInteraction?
     /// Which Claude Code session the talk hotkeys feed (newest connection
     /// by default; switchable via ⌃⌥1–6 or the menu bar — the pill flashes
@@ -206,12 +206,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onCopyInbox = { [weak self] in self?.copyQueuedMessages() }
         menuBar.claudeSessionsProvider = { [weak self] in
             guard let self else { return [] }
-            // Same order and numbering as the picker and ⌃⌥1–6 — two
-            // orderings of the same sessions would be a routing trap.
-            return self.mcpServer.sessions.ordered().enumerated().map { index, session in
-                (session.id,
-                 "\(index + 1) · \(session.label) — active \(Self.relativeAge(session.lastSeen))",
-                 session.id == self.targetSessionId)
+            // Same list, order, and numbering as the picker and ⌃⌥1–6 —
+            // two orderings of the same sessions would be a routing trap.
+            return self.pickerSessions().enumerated().map { index, entry in
+                let age = self.mcpServer.sessions.session(entry.id)
+                    .map { "active \(Self.relativeAge($0.lastSeen))" } ?? "ended — unread"
+                return (entry.id,
+                        "\(index + 1) · \(entry.label) — \(age)",
+                        entry.id == self.targetSessionId)
             }
         }
         menuBar.onSelectClaudeSession = { [weak self] id in
@@ -241,7 +243,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.replyBubble.hide()
             }
             if self.targetSessionId == id {
-                self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
+                self.setTargetSession(self.mcpServer.sessions.list().first { $0.engaged }?.id, announce: false)
             }
             self.refreshSessionIndicator()
             self.refreshUnreadIndicator()
@@ -308,7 +310,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.sessionPushes.removeValue(forKey: id)
                 if let closed = self.mcpServer.sessions.close(id) {
                     if self.targetSessionId == id {
-                        self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
+                        self.setTargetSession(self.mcpServer.sessions.list().first { $0.engaged }?.id, announce: false)
                     }
                     self.refreshSessionIndicator()
                     // The receipt has to wait for the collapse to land.
@@ -894,7 +896,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// and its stack until the user reads or trashes it; nothing marked
     /// unread ever becomes unviewable. Main thread.
     private func pickerSessions() -> [(id: String, label: String)] {
-        let live = mcpServer.sessions.ordered().map { (id: $0.id, label: $0.label) }
+        // Only ENGAGED sessions are user-visible — a connected-but-silent
+        // session (every Claude Code session initializes every MCP server)
+        // has nothing for the user to switch to.
+        let live = mcpServer.sessions.ordered().filter { $0.engaged }
+            .map { (id: $0.id, label: $0.label) }
         let liveIds = Set(live.map { $0.id })
         let ghosts = sessionPushes
             .filter { !liveIds.contains($0.key) && !$0.value.isEmpty }
@@ -1149,10 +1155,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// No question pending — a talk message is delivered only if the target
-    /// Claude session is listening RIGHT NOW (parked in wait_for_message).
-    /// Otherwise nothing is queued: the message (with its screenshot path)
-    /// goes to the clipboard and into the dictation history for later.
+    /// No question pending — a talk message goes to the target Claude
+    /// session: instantly when it's listening (parked in wait_for_message),
+    /// otherwise QUEUED in its inbox — a running session is nudged on its
+    /// next tool call, a finished one is woken by its background listener.
+    /// Only with no target session at all does the message fall back to the
+    /// clipboard + dictation history.
     private func deliverTalkMessage(text: String, includeScreenshot: Bool) {
         Task { @MainActor in
             var attachments: [String] = []
@@ -1162,9 +1170,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 attachments.append(shot.path)
             }
             let target = mcpServer.sessions.session(targetSessionId)
-            if let target, inbox.hasWaiter(for: target.id) {
+            if let target {
+                let live = inbox.hasWaiter(for: target.id)
                 inbox.add(text: text, attachments: attachments, session: target.id)
-                answeredSession(target.id, note: "sent to \(sessionName(for: target.id))", clearStack: true)
+                answeredSession(target.id,
+                                note: live ? "sent to \(sessionName(for: target.id))"
+                                           : "queued for \(sessionName(for: target.id)) — delivered on its next check-in",
+                                clearStack: live)
                 return
             }
             // A session parked in wait_for_message takes it even when no
@@ -1179,11 +1191,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(prompt, forType: .string)
             chatPanel.addDictation(text: prompt, time: Self.timestamp())
-            let note = target.map { "\(sessionName(for: $0.id)) not listening — copied + saved in History" }
-                ?? "no session — copied + saved in History"
             // The stack stays (nothing was delivered), but the screen must
             // still visibly react to having been spoken to.
-            answeredSession(nil, note: note, clearStack: false)
+            answeredSession(nil, note: "no session — copied + saved in History", clearStack: false)
         }
     }
 
@@ -1941,14 +1951,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return self.handleMCPTool(name, arguments, session)
         }
-        mcpServer.onSessionConnected = { [weak self] session in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                // A background connect must not stomp what the user is
-                // reading or their recording — switch silently then.
-                self.setTargetSession(session.id, announce: !self.surfaceBusy)
-            }
-        }
+        // Connecting is NOT engaging: every Claude Code session initializes
+        // every registered MCP server, so a fresh connection must neither
+        // appear in the picker nor steal the voice target. Presence (and
+        // target eligibility) starts with the first user-facing tool call —
+        // see the engagement hook in handleMCPTool.
+        mcpServer.onSessionConnected = nil
         localAPIServer.onMCP = { [weak self] body, sessionId in
             self?.mcpServer.handle(body: body, sessionId: sessionId) ?? (503, nil, nil)
         }
@@ -1962,7 +1970,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.refreshUnreadIndicator()
                 if self.targetSessionId == closed.id {
-                    self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
+                    self.setTargetSession(self.mcpServer.sessions.list().first { $0.engaged }?.id, announce: false)
                     if let next = self.mcpServer.sessions.session(self.targetSessionId) {
                         self.replyBubble.showTransient("\(closed.label) ended — now talking to \(next.label)", seconds: 5)
                         return
@@ -1988,7 +1996,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if self.targetSessionId != nil,
                !self.pickerSessions().contains(where: { $0.id == self.targetSessionId }) {
-                self.setTargetSession(self.mcpServer.sessions.list().first?.id, announce: false)
+                self.setTargetSession(self.mcpServer.sessions.list().first { $0.engaged }?.id, announce: false)
             }
             self.refreshSessionIndicator()
             self.refreshUnreadIndicator()
@@ -2087,9 +2095,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     //  MCP tools — Voice Flow as Claude Code's interaction layer
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  Runs on a background HTTP thread; anything touching UI hops to main.
-    //  ask_user deliberately blocks — its result IS the user's answer.
+    //  a report_to_user question deliberately blocks — its result IS the user's answer.
+
+    /// Tools whose call makes the session user-visible: it gets its picker
+    /// dot, its ⌃⌥N slot, and voice-target eligibility. Read-only tools
+    /// (screenshots, captures, dictations) and set_session_name do NOT
+    /// engage — a session the user never hears from stays invisible.
+    private static let engagingMCPTools: Set<String> = [
+        "report_to_user", "ask_user", "notify_user", "speak",
+        "wait_for_message", "show_guide", "update_guide", "show_panel",
+        "annotate_screen",
+    ]
 
     private func handleMCPTool(_ name: String, _ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
+        if let session, Self.engagingMCPTools.contains(name),
+           mcpServer.sessions.markEngaged(session.id) {
+            // First engagement: surface the session. It claims the voice
+            // target only when nobody engaged holds it — an active session
+            // is never stolen from; the receipt's "⌃⌥N" is how the user
+            // switches deliberately.
+            DispatchQueue.main.sync {
+                if self.mcpServer.sessions.session(self.targetSessionId)?.engaged != true {
+                    self.setTargetSession(session.id, announce: false)
+                }
+                self.refreshSessionIndicator()
+            }
+        }
         let result = dispatchMCPTool(name, args, session)
         // Queued voice messages piggyback on every tool result so they
         // can't rot in the inbox unnoticed.
@@ -2104,8 +2135,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func dispatchMCPTool(_ name: String, _ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         switch name {
         case "set_session_name": return mcpSetSessionName(args, session)
-        case "ask_user": return mcpAskUser(args, session)
-        case "notify_user": return mcpNotifyUser(args, session)
+        case "report_to_user": return mcpReportToUser(args, session)
+        // Legacy aliases — clients still running against the old catalog
+        // (long-lived Claude sessions, the previous vf script).
+        case "ask_user":
+            var mapped = args
+            mapped["question"] = args["prompt"]
+            return mcpReportToUser(mapped, session)
+        case "notify_user", "speak":
+            var mapped = args
+            mapped["summary"] = args["text"]
+            return mcpReportToUser(mapped, session)
         case "check_messages": return mcpCheckMessages(session)
         case "wait_for_message": return mcpWaitForMessage(args, session)
         case "get_latest_capture": return mcpLatestCapture()
@@ -2121,7 +2161,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return .ok("Cleared \(removed) annotation overlay\(removed == 1 ? "" : "s") and the user's own marks.")
         case "remove_overlay": return mcpRemoveOverlay(args)
         case "list_overlays": return mcpListOverlays()
-        case "speak": return mcpSpeak(args, session)
         case "get_recent_dictations": return mcpRecentDictations(args)
         default:
             return .fail("Unknown tool: \(name)")
@@ -2151,44 +2190,81 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let renamed = mcpServer.sessions.rename(session.id, to: name) else {
             return .fail("This session is no longer registered.")
         }
+        // Naming is silent by design: it must not create the impression of
+        // a session the user should look at. The label surfaces whenever
+        // the session actually engages.
         DispatchQueue.main.async {
             self.refreshSessionIndicator()
-            // Renaming the active session? Show the user its new name —
-            // but never over grown content or while they're talking.
-            if renamed.id == self.targetSessionId, !self.surfaceBusy {
-                let (entries, activeName) = self.pickerEntries()
-                self.indicator.showPicker(entries: entries, activeName: activeName)
-            }
         }
-        return .ok("This session now appears to the user as \"\(renamed.label)\".")
+        return .ok("This session now appears to the user as \"\(renamed.label)\". You stay invisible to them until your first report_to_user / wait_for_message / overlay call.")
     }
 
-    private func mcpAskUser(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
-        let prompt = (args["prompt"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty else {
-            return .fail("ask_user needs a non-empty `prompt`.")
+    /// The one messaging tool: a receipt-backed report (summary + details),
+    /// optionally blocking on a `question`. Legacy ask_user / notify_user /
+    /// speak calls are mapped onto it by the dispatcher.
+    private func mcpReportToUser(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
+        let trimmed = { (key: String) in
+            (args[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 900
-        timeout = min(max(timeout, 10), 3600)
+        var summary = trimmed("summary")
+        let details = trimmed("details")
+        let question = trimmed("question")
+        if summary.isEmpty { summary = question }
+        guard !summary.isEmpty else {
+            return .fail("report_to_user needs a non-empty `summary` (and `details` with the substance — what happened, where, what you need).")
+        }
+        // The user reads one text: summary, then details, then the question
+        // (skipped when it just repeats the summary, as legacy asks do).
+        var parts = [summary]
+        if !details.isEmpty { parts.append(details) }
+        if !question.isEmpty, question != summary { parts.append(question) }
+        let text = parts.joined(separator: "\n\n")
+
+        guard !question.isEmpty else {
+            let sessionId = session?.id
+            DispatchQueue.main.sync {
+                let sender = self.sessionName(for: sessionId)
+                self.deliverPush(
+                    SessionPush(title: sender, text: text, hint: nil, isAsk: false),
+                    from: sessionId)
+                if self.chatPanel.isVisible {
+                    self.chatPanel.addNote("\(sender): \(text)")
+                }
+                self.playSound("Glass")
+            }
+            var reply = "Delivered: the user got a one-line receipt and reads the full report when they switch onto your session (⌃⌥N) or in their Messages tab; audio plays only on their demand."
+            if let sessionId {
+                reply += """
+                 If they reply by voice while nothing is listening, it queues for your next tool call — it can NOT wake you once you stop. Finishing your turn? Start the reply listener as a background Bash task first:
+                ~/.claude/skills/communicate-with-user/scripts/vf listen --attach \(sessionId) --timeout 7200
+                When the user talks to your session, that task completes with their words and you are re-invoked.
+                """
+            }
+            return .ok(reply)
+        }
+
+        var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 1800
+        timeout = min(max(timeout, 10), 14400)
 
         var interaction: PendingInteraction?
         DispatchQueue.main.sync {
             guard self.pendingInteraction == nil else { return }
-            let created = PendingInteraction(prompt: prompt, sessionId: session?.id)
+            let created = PendingInteraction(prompt: text, sessionId: session?.id)
             self.pendingInteraction = created
             interaction = created
             let asker = self.sessionName(for: created.sessionId)
             self.deliverPush(
-                SessionPush(title: "\(asker) asks", text: prompt,
+                SessionPush(title: "\(asker) asks", text: text,
                             hint: self.askHint(), isAsk: true),
                 from: session?.id)
             if self.chatPanel.isVisible {
-                self.chatPanel.addNote("\(asker) asks: \(prompt)")
+                self.chatPanel.addNote("\(asker) asks: \(text)")
             }
             self.playSound("Glass")
         }
         guard let interaction else {
-            return .fail("Another ask_user request is already waiting for the user — wait for it to resolve.")
+            let busyWith = DispatchQueue.main.sync { self.pendingInteraction.map { self.sessionName(for: $0.sessionId) } }
+            return .fail("\(busyWith ?? "Another session") is already blocking on a question — only one can wait at a time. Send your report without `question` now and collect the answer later via check_messages / wait_for_message.")
         }
 
         _ = interaction.semaphore.wait(timeout: .now() + timeout)
@@ -2233,7 +2309,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func sessionName(for id: String?) -> String {
         guard let session = mcpServer.sessions.session(id) else { return "Claude" }
         if session.name != nil { return session.label }
-        return mcpServer.sessions.count > 1 ? session.label : "Claude"
+        // "#N" only disambiguates against sessions the user can SEE —
+        // engaged ones and ghosts, not idle connections.
+        return pickerSessions().count > 1 ? session.label : "Claude"
     }
 
     func askHint() -> String {
@@ -2243,7 +2321,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func mcpLatestCapture() -> MCPServer.ToolResult {
         guard let (directory, meta) = CaptureStore.latestBundle() else {
-            return .fail("No captures yet. The user records one with the session hotkey — or use ask_user to request a demonstration.")
+            return .fail("No captures yet. The user records one with the session hotkey — or ask for one with report_to_user (question).")
         }
         var payload: [String: Any] = [
             "id": meta.id,
@@ -2266,7 +2344,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let limit = min(max((args["limit"] as? NSNumber)?.intValue ?? 10, 1), 40)
         let bundles = CaptureStore.listBundles(limit: limit)
         guard !bundles.isEmpty else {
-            return .ok("No captures recorded yet. The user records one with the session hotkey, or you can request a demonstration via ask_user.")
+            return .ok("No captures recorded yet. The user records one with the session hotkey, or you can request a demonstration via report_to_user (question).")
         }
         let items: [[String: Any]] = bundles.map { directory, meta in
             [
@@ -2308,24 +2386,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // ── Inbox tools ─────────────────────────────────────
-
-    private func mcpNotifyUser(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
-        let text = (args["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
-            return .fail("notify_user needs non-empty `text`.")
-        }
-        DispatchQueue.main.sync {
-            let sender = self.sessionName(for: session?.id)
-            self.deliverPush(
-                SessionPush(title: sender, text: text, hint: nil, isAsk: false),
-                from: session?.id)
-            if self.chatPanel.isVisible {
-                self.chatPanel.addNote("Claude: \(text)")
-            }
-            self.playSound("Glass")
-        }
-        return .ok("The user got a small notification receipt (never the full text — that's by design). They read it by switching onto your session or in their Messages tab, and can opt in to hearing it aloud. Replies land in the inbox — fetch them with check_messages or wait_for_message.")
-    }
 
     private func inboxPayload(_ messages: [InboxMessage]) -> String {
         mcpJSON([
@@ -2398,7 +2458,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // The note waits its turn like any receipt — never over grown
             // content or the user's recording.
             if hidden, !self.surfaceBusy {
-                let index = self.mcpServer.sessions.ordered().firstIndex { $0.id == session.id }
+                let index = self.pickerSessions().firstIndex { $0.id == session.id }
                 let hint = index.map { " (⌃⌥\($0 + 1))" } ?? ""
                 self.replyBubble.showTransient(
                     "\(self.sessionName(for: session.id)) placed a \(kind) — switch to it\(hint) to view.",
@@ -2560,24 +2620,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             },
             "note": "Edit any file directly and the screen re-renders within ~0.5s. Schema: \(OverlayManager.schemaPath)",
         ]))
-    }
-
-    private func mcpSpeak(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
-        let text = (args["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
-            return .fail("speak needs non-empty `text`.")
-        }
-        // Never barge in with audio — the user opts in: re-selecting this
-        // session speaks its waiting messages, or they tap the speaker
-        // icon on the grown view.
-        DispatchQueue.main.sync {
-            let sender = self.sessionName(for: session?.id)
-            self.deliverPush(
-                SessionPush(title: sender, text: text, hint: nil, isAsk: false),
-                from: session?.id)
-            self.playSound("Glass")
-        }
-        return .ok("Queued with a small receipt. The user hears it when they re-select your session (or tap the speaker icon on its messages) — audio never auto-plays.")
     }
 
     private func mcpRecentDictations(_ args: [String: Any]) -> MCPServer.ToolResult {

@@ -18,6 +18,11 @@ struct MCPSession {
     /// Whether the one-time "name yourself" hint was already appended to a
     /// tool result of this session.
     var nudgedForName = false
+    /// False until the session first does something user-facing (report,
+    /// ask, listen, overlay). Merely connecting — every Claude Code session
+    /// initializes every registered MCP server — earns no picker dot, no
+    /// ⌃⌥N slot, and no voice-target eligibility.
+    var engaged = false
 
     var label: String { name ?? "Claude #\(number)" }
 }
@@ -86,12 +91,26 @@ final class MCPSessionRegistry {
     }
 
     /// True exactly once per unnamed session — marks the nudge as spent.
+    /// Only engaged sessions are nudged: a session the user never sees
+    /// doesn't need a name.
     func consumeNameNudge(_ id: String) -> Bool {
         lock.sync {
-            guard var session = sessions[id], session.name == nil, !session.nudgedForName else {
+            guard var session = sessions[id], session.engaged,
+                  session.name == nil, !session.nudgedForName else {
                 return false
             }
             session.nudgedForName = true
+            sessions[id] = session
+            return true
+        }
+    }
+
+    /// Mark a session engaged (user-visible). Returns true only on the
+    /// transition, so the caller can refresh UI exactly once.
+    func markEngaged(_ id: String) -> Bool {
+        lock.sync {
+            guard var session = sessions[id], !session.engaged else { return false }
+            session.engaged = true
             sessions[id] = session
             return true
         }
@@ -172,20 +191,30 @@ final class MCPServer {
         Voice Flow is a macOS voice + screen companion app the user is running. It is your \
         interaction layer with the user — richer than plain text, in both directions.
 
-        First, introduce yourself: call set_session_name with a short project/task name \
-        ("voice-flow — session routing"). The user may have several Claude sessions connected \
-        at once and picks which one their voice goes to by that name.
+        You are INVISIBLE to the user until you first interact (report_to_user, \
+        wait_for_message, or an overlay) — merely being connected shows them nothing. Call \
+        set_session_name early with a short project/task name ("voice-flow — session \
+        routing") so you appear already named when you do interact: several Claude sessions \
+        may be connected at once, and the user routes their voice input by that name.
+
+        Talking to the user — report_to_user, the one message tool:
+        - Always send substance: summary is the one-liner receipt, details carries what \
+        happened, what changed and where, and what they should do. A bare "done" helps nobody.
+        - Need an answer? Pass question — it BLOCKS until they respond (voice, voice + \
+        screenshot, typing, or a recorded demonstration). The user may be away for hours; \
+        prefer a long timeout_seconds over re-asking.
+        - Finishing your turn after a report? Their spoken reply cannot reach a stopped \
+        session on its own. Start the background listener first (the report_to_user result \
+        shows the exact command for your session) — when they talk to you, the background \
+        task completes and wakes you with their words.
 
         Hearing from the user:
-        - ask_user: put a prompt on their screen and BLOCK until they answer (voice, voice + \
-        screenshot, typing, or a recorded demonstration). Use when you can't proceed without them.
-        - notify_user + check_messages / wait_for_message: the asynchronous alternative. Talk \
-        messages reach you ONLY while you are parked in wait_for_message — call it in a loop \
-        to be their live companion while they read or work (each message may carry a \
-        screenshot of what they were looking at); a timeout is normal, call it again. When \
-        nothing is listening, the user's message is copied to their clipboard for manual \
-        pasting instead. Deferred or late answers to your ask_user prompts DO queue — fetch \
-        those with check_messages.
+        - wait_for_message: listening mode. Talk messages are delivered live ONLY while you \
+        are parked here — call it in a loop to be their companion while they read or work \
+        (messages may carry a screenshot of what they were looking at); a timeout is normal, \
+        call it again. When nobody is listening, talk messages QUEUE for the session the user \
+        is pointed at — you get them on your next tool call (results nudge you) or via \
+        check_messages, but only a running or background-listening session gets woken.
         - get_latest_capture / list_captures: recorded demonstrations — spoken narration plus \
         ordered screenshots. When the user says they recorded/captured/showed something, fetch it.
         - The ambient workflow watcher (when the user enables it) logs their workday to \
@@ -209,7 +238,8 @@ final class MCPServer {
         to their work.
         - Annotations: circles, arrows, labels, rects, lines drawn over the screen, using pixel \
         coordinates from take_screenshot (which also reports the user's cursor position).
-        - speak: talk to the user out loud. Keep it to a sentence or two.
+        - Audio is on demand: the user plays any of your messages aloud when they choose \
+        (re-selecting your session or the speaker icon). There is no way to auto-play sound.
 
         Screenshots, frames, and overlay files are absolute paths on this machine — read them.
         """
@@ -333,7 +363,9 @@ final class MCPServer {
             Name this Claude Code session inside Voice Flow — a short project/task label like \
             "voice-flow — session routing". The user can have several Claude sessions connected \
             at once; they route their voice input by this name (unnamed sessions show as \
-            "Claude #N"). Call it once right after connecting, and again if your focus changes.
+            "Claude #N"). Call it once right after connecting, and again if your focus changes. \
+            Naming is silent: nothing appears on the user's screen, and your session stays \
+            invisible to them until your first report_to_user / wait_for_message / overlay call.
             """,
             "inputSchema": [
                 "type": "object",
@@ -347,60 +379,51 @@ final class MCPServer {
             ],
         ],
         [
-            "name": "ask_user",
+            "name": "report_to_user",
             "description": """
-            Ask the user something through Voice Flow and BLOCK until they answer. They get a \
-            small notification receipt (never the full text — the user reads your question by \
-            switching onto your session or in their Messages tab; audio only when they opt in). \
-            They can answer by voice (push-to-talk), voice plus a fresh screenshot, typing in \
-            the Voice Flow panel, or by recording a demonstration session (narration + ordered \
-            screenshots). The result contains their words plus absolute file paths of any \
-            screenshots — read those files. Use when you cannot proceed without their input. \
-            If you'd rather keep working while they decide, use notify_user and collect the \
-            reply later with check_messages or wait_for_message. If they dismiss the prompt \
-            or the timeout passes, you get a non-error explanation — continue as best you can \
-            and pick up any late answer from the message inbox.
+            Tell the user something through Voice Flow — the ONE way to message them. They get \
+            a small notification receipt (never the full text; audio only on demand); they read \
+            the full report by switching onto your session (⌃⌥N) or in their Messages tab, \
+            which keeps it forever. Always send real context, not a headline: `summary` is the \
+            one-liner, `details` carries what happened, what changed and where, and what (if \
+            anything) they should do. Without `question` this returns immediately — use it for \
+            completed work and milestones. With `question` it BLOCKS until they answer (by \
+            voice, voice + fresh screenshot, typing, or a recorded demonstration; the result \
+            has their words plus absolute screenshot paths — read those files). Use `question` \
+            whenever you cannot proceed without their input; the user may be away, so pass a \
+            generous timeout_seconds — hours are fine. If they dismiss or the timeout passes \
+            you get a non-error explanation; late answers queue in the inbox (check_messages).
             """,
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "prompt": [
+                    "summary": [
                         "type": "string",
-                        "description": "What to ask. One or two short sentences — the user reads it when they switch onto your session.",
+                        "description": "One or two sentences: what happened, or what you need. This is what the user sees first.",
+                    ],
+                    "details": [
+                        "type": "string",
+                        "description": "The substance: what was done / found, where (paths, PRs, commands), and what action you need from the user, if any. Markdown-free plain text, a short paragraph or a few lines.",
+                    ],
+                    "question": [
+                        "type": "string",
+                        "description": "Ask this and BLOCK until the user answers. Omit for fire-and-forget reports.",
                     ],
                     "timeout_seconds": [
                         "type": "number",
-                        "description": "How long to wait before giving up, in seconds (10–3600). Default 900. Use longer when you asked for a demonstration.",
+                        "description": "Only with `question`: how long to wait for the answer, in seconds (10–14400). Default 1800. The user may be away from the machine — prefer long timeouts over re-asking.",
                     ],
                 ],
-                "required": ["prompt"],
-            ],
-        ],
-        [
-            "name": "notify_user",
-            "description": """
-            Send the user a message and return IMMEDIATELY — the non-blocking counterpart of \
-            ask_user. They get a small notification receipt (never the full text, and no audio \
-            — that's by design); they read it by switching onto your session or in their \
-            Messages tab, which keeps it forever. To hear their reply, park in \
-            wait_for_message: talk messages are delivered only while you are listening. Use \
-            for status updates ("deploying now, ~2 min") and heads-ups that need no reply.
-            """,
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "text": ["type": "string", "description": "The message. Keep it short — it's read in a small stack, not a report."],
-                ],
-                "required": ["text"],
+                "required": ["summary", "details"],
             ],
         ],
         [
             "name": "check_messages",
             "description": """
-            Fetch (and clear) messages queued for you — deferred or late answers to your \
-            ask_user prompts (answers that arrived after a timeout). Live talk \
-            messages arrive only through wait_for_message, not here. Non-blocking. Messages \
-            may include screenshot paths of what they were looking at — read them.
+            Fetch (and clear) messages queued for you: late answers to a report_to_user \
+            question that timed out, and anything the user spoke at your session while you \
+            weren't listening. Non-blocking. Messages may include screenshot paths of what \
+            they were looking at — read them.
             """,
             "inputSchema": [
                 "type": "object",
@@ -415,7 +438,9 @@ final class MCPServer {
             while they read or work — they press talk anywhere, speak ("explain this part"), \
             optionally with a screenshot attached, and you get it instantly. Returns \
             immediately if messages are already queued. A timeout with NO message is a normal, \
-            non-error result — just call wait_for_message again to keep listening.
+            non-error result — just call wait_for_message again to keep listening. To keep \
+            receiving after your turn ends, run this via the background listener instead \
+            (report_to_user results show the exact command) so the user's reply wakes you.
             """,
             "inputSchema": [
                 "type": "object",
@@ -653,17 +678,6 @@ final class MCPServer {
             "inputSchema": [
                 "type": "object",
                 "properties": [String: Any](),
-            ],
-        ],
-        [
-            "name": "speak",
-            "description": "Leave the user a short spoken-style message. It does NOT auto-play: they get a small receipt, and they hear it by re-selecting your session (or tapping the speaker icon on its messages) when they're ready — audio barging in uninvited interrupts their work. Keep it to a sentence or two.",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "text": ["type": "string", "description": "What to say."],
-                ],
-                "required": ["text"],
             ],
         ],
         [

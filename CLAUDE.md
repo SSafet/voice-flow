@@ -33,7 +33,7 @@ floating panel anchored to the little pill (`FloatingIndicator`). It has four
 tabs (`ChatTab`):
 
 - **Messages** — the MAIN tab (default on open): persistent history of
-  everything agents pushed over MCP (notify / ask / speak), kept in
+  everything agents pushed over MCP (reports / asks), kept in
   `messages.json` so it outlives the sessions and app restarts that produced it.
 - **Chat** — converse with the screen agent (type / snap / talk), streamed replies.
 - **Dictations** — browsable, copyable history of past dictations.
@@ -105,9 +105,15 @@ Tool handlers live in `AppDelegate.handleMCPTool` (`App.swift`); they run on
 background HTTP threads and hop to main for UI.
 
 **Sessions**: each Claude Code instance gets an `Mcp-Session-Id` on
-initialize (`MCPSessionRegistry` in `MCP.swift`); sessions name themselves
-via the `set_session_name` tool (server instructions + a one-time nudge in
-the first tool result push Claude to call it; unnamed sessions show as
+initialize (`MCPSessionRegistry` in `MCP.swift`), but **connecting is not
+engaging**: a session stays invisible (no picker dot, no ⌃⌥ slot, not
+voice-target-eligible) until its first user-facing tool call —
+`report_to_user`, `wait_for_message`, or an overlay tool
+(`engagingMCPTools` in `App.swift`; `MCPSession.engaged`). First engagement
+claims the voice target only when no engaged session holds it — an active
+target is never stolen. Sessions name themselves via `set_session_name`
+(silent, no UI; server instructions + a one-time nudge on the first
+*engaging* tool result push Claude to call it; unnamed sessions show as
 "Claude #N"). `DELETE /mcp` closes one; sessions silent for 2 h are pruned
 as ghosts (a live one self-heals — its next request is re-adopted by
 `touch()`). **Unread messages outlive everything**: a session that ends or
@@ -116,29 +122,35 @@ expires with unseen pushes stays in the picker as a readable ghost entry
 across app restarts; a 60 s sweep clears only read residue of dead sessions
 and repaints the number dot / unread ring. Talk hotkeys feed the **target
 session** (`AppDelegate.targetSessionId`, changed only via
-`setTargetSession` — newest connection by default, switchable with
-**⌃⌥1–6** or the menu bar's "Voice Goes To" submenu, which lists sessions
-in the same order/numbering). Switching grows the pill into the session's
+`setTargetSession`, switchable with **⌃⌥1–6** or the menu bar's "Voice
+Goes To" submenu, which lists the same `pickerSessions()`
+order/numbering). Switching grows the pill into the session's
 push stack (or the one-line picker when it has none); the middle dot
 carries the active session's number; re-selecting the current session
 while its stack shows reads it aloud (`double_select_speak`). **Overlays
 are session-scoped** (`"session"` field, stamped by the tools): only the
 active session's elements render; a background session's overlay triggers
 a transient note instead of drawing over the user. The inbox is per-session
-(`InboxMessage.session`; nil = any session may drain it), and `ask_user` /
-`notify_user` bubbles are labeled with the asking session when several are
-connected. 17 tools in three groups (plus `set_session_name` above):
+(`InboxMessage.session`; nil = any session may drain it), and ask bubbles
+are labeled with the asking session when several are connected. 14 tools
+in three groups (plus `set_session_name` above):
 
-**Hearing from the user**
-- `ask_user` — **blocks** until the human answers (`PendingInteraction`
-  semaphore; `handleResult` / `sendTypedMessage` / `finishSession` route the
-  answer to it). Reply modes: talk hotkey, snap-talk (+screenshot), typing,
-  or a whole demonstration session.
-- `notify_user` / `check_messages` / `wait_for_message` — the async path.
-  Talk hotkeys queue into `MessageInbox` (`swift/Inbox.swift`, persisted at
-  `inbox.json`) **by default** — the in-app agent only receives them when
-  `talk_send_to_agent` is on. `wait_for_message` parks until the user talks
-  ("listening mode").
+**Talking with the user**
+- `report_to_user` — the ONE messaging tool: `summary` + `details`
+  (schema-required context), optional `question` which **blocks** until the
+  human answers (`PendingInteraction` semaphore; `handleResult` /
+  `sendTypedMessage` / `finishSession` route the answer to it; timeout up
+  to 4 h). Reply modes: talk hotkey, snap-talk (+screenshot), typing, or a
+  whole demonstration session. Legacy `ask_user` / `notify_user` / `speak`
+  calls are dispatched onto it for old clients.
+- `check_messages` / `wait_for_message` — the async path. A talk message
+  is delivered live to a listening target (parked in `wait_for_message`),
+  otherwise **queued in the target session's `MessageInbox`**
+  (`swift/Inbox.swift`, `inbox.json`) and surfaced by the piggyback nudge
+  on its next tool call; only with no target at all does it fall back to
+  clipboard + history. The wake-up pattern for a finished turn: the agent
+  backgrounds `vf listen --attach <session-id>` (the `communicate-with-user`
+  skill's script) so a reply completes the task and re-invokes it.
 - `get_latest_capture` / `list_captures` / `get_recent_dictations`,
   `take_screenshot` (fixed ≤1440-px geometry via `CaptureStore.shotGeometry`,
   includes the cursor position in image space).
@@ -154,7 +166,9 @@ label, rect, line — click-through, coordinates in take_screenshot pixels).
 Tools: `show_guide` / `update_guide` / `show_panel` / `annotate_screen` /
 `clear_annotations` / `remove_overlay` / `list_overlays`.
 
-**Voice**: `speak` — TTS through the shared engine.
+**Voice** is on demand only: the user plays any agent message aloud by
+re-selecting the session or via the speaker icon (there is no agent-side
+auto-play tool; `speak` was folded into `report_to_user`).
 
 ## Capture bundles (`~/.config/voice-flow/captures/<id>/`)
 
