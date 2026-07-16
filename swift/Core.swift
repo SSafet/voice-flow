@@ -1,5 +1,7 @@
 import Cocoa
 import AVFoundation
+import CoreAudio
+import AudioToolbox
 import CoreGraphics
 import Accelerate
 import Security
@@ -144,6 +146,9 @@ class UserSettings {
     var ttsSpeed: Double = 1.0
     var ttsInstructions: String = DefaultTTSInstructions
     var customVocabulary: [String] = []
+    // CoreAudio device UID of the preferred dictation microphone
+    // ("" = follow the system default input).
+    var micDeviceUID: String = ""
 
     // Assistant (agent sessions)
     var captureIntervalSeconds: Int = 2
@@ -234,6 +239,7 @@ class UserSettings {
         if let v = dict["watcher_idle_pause_seconds"] as? Int { watcherIdlePauseSeconds = max(30, v) }
         if let v = dict["watcher_keep_days"] as? Int { watcherKeepDays = max(3, v) }
         if let v = dict["watcher_camera_id"] as? String { watcherCameraId = v }
+        if let v = dict["mic_device_uid"] as? String { micDeviceUID = v }
         if let v = dict["custom_vocabulary"] as? [String] {
             customVocabulary = v.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
@@ -268,6 +274,7 @@ class UserSettings {
             "watcher_idle_pause_seconds": watcherIdlePauseSeconds,
             "watcher_keep_days": watcherKeepDays,
             "watcher_camera_id": watcherCameraId,
+            "mic_device_uid": micDeviceUID,
             "custom_vocabulary": customVocabulary,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted) {
@@ -911,6 +918,63 @@ class AudioRecorder {
     private var speechBufferCount = 0
     private let minSpeechBuffers = 4
 
+    /// All connected input devices as (CoreAudio UID, display name).
+    static func availableMicrophones() -> [(id: String, name: String)] {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) == noErr,
+              size > 0 else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) == noErr else { return [] }
+
+        var mics: [(id: String, name: String)] = []
+        for id in ids {
+            var streamsAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreams,
+                mScope: kAudioDevicePropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMain)
+            var streamsSize: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(id, &streamsAddr, 0, nil, &streamsSize) == noErr,
+                  streamsSize > 0,
+                  let uid = stringProperty(id, kAudioDevicePropertyDeviceUID) else { continue }
+            mics.append((uid, stringProperty(id, kAudioObjectPropertyName) ?? uid))
+        }
+        return mics
+    }
+
+    private static func stringProperty(_ id: AudioDeviceID, _ selector: AudioObjectPropertySelector) -> String? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var value: CFString?
+        var size = UInt32(MemoryLayout<CFString?>.size)
+        let status = withUnsafeMutablePointer(to: &value) {
+            AudioObjectGetPropertyData(id, &addr, 0, nil, &size, $0)
+        }
+        guard status == noErr, let value else { return nil }
+        return value as String
+    }
+
+    private static func deviceID(forUID uid: String) -> AudioDeviceID? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var cfuid: CFString? = uid as CFString
+        var devID = AudioDeviceID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = withUnsafeMutablePointer(to: &cfuid) {
+            AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr,
+                                       UInt32(MemoryLayout<CFString?>.size), $0, &size, &devID)
+        }
+        guard status == noErr, devID != AudioDeviceID(kAudioObjectUnknown) else { return nil }
+        return devID
+    }
+
     func start() {
         // Pre-allocate for up to 60 seconds of 16kHz int16 audio
         audioData = Data(capacity: Int(sampleRate) * 2 * 60)
@@ -925,6 +989,24 @@ class AudioRecorder {
 
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
+
+        // Pin the input to the mic chosen in Settings → Dictation. The bare
+        // inputNode follows the system default, which macOS silently switches
+        // to Bluetooth earbuds' (low-quality) mic when they connect. Must
+        // happen before the format is read below.
+        let preferredMic = UserSettings.shared.micDeviceUID
+        if !preferredMic.isEmpty {
+            if var devID = Self.deviceID(forUID: preferredMic), let unit = inputNode.audioUnit {
+                let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                                                  kAudioUnitScope_Global, 0, &devID,
+                                                  UInt32(MemoryLayout<AudioDeviceID>.size))
+                if status != noErr {
+                    vflog("audio: could not select mic \(preferredMic) (err \(status)) — using system default")
+                }
+            } else {
+                vflog("audio: preferred mic \(preferredMic) not connected — using system default")
+            }
+        }
 
         // Target format: 16kHz mono float32 (process in float, convert to int16 at end)
         let desiredFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!

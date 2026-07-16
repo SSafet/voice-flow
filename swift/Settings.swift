@@ -17,6 +17,7 @@ final class SettingsStore: ObservableObject {
     var onSettingsChanged: (() -> Void)?
 
     @Published var provider: DictationProvider { didSet { commit() } }
+    @Published var micDeviceUID: String { didSet { commit() } }
     @Published var soundsEnabled: Bool { didSet { commit() } }
     @Published var llmCleanupEnabled: Bool { didSet { commit() } }
     @Published var vocabularyText: String { didSet { commit() } }
@@ -56,6 +57,7 @@ final class SettingsStore: ObservableObject {
     init() {
         let s = UserSettings.shared
         provider = s.dictationProvider
+        micDeviceUID = s.micDeviceUID
         soundsEnabled = s.soundsEnabled
         llmCleanupEnabled = s.llmCleanupEnabled
         vocabularyText = s.customVocabulary.joined(separator: ", ")
@@ -90,6 +92,7 @@ final class SettingsStore: ObservableObject {
         guard loaded else { return }
         let s = UserSettings.shared
         s.dictationProvider = provider
+        s.micDeviceUID = micDeviceUID
         s.soundsEnabled = soundsEnabled
         s.llmCleanupEnabled = llmCleanupEnabled
         s.customVocabulary = vocabularyText
@@ -293,9 +296,31 @@ private struct APIKeyRow: View {
 
 private struct DictationSettingsView: View {
     @ObservedObject var store: SettingsStore
+    @State private var mics: [(id: String, name: String)] = []
 
     var body: some View {
         Form {
+            Section {
+                Picker(selection: $store.micDeviceUID) {
+                    Text("System default").tag("")
+                    ForEach(mics, id: \.id) { mic in
+                        Text(mic.name).tag(mic.id)
+                    }
+                    if !store.micDeviceUID.isEmpty,
+                       !mics.contains(where: { $0.id == store.micDeviceUID }) {
+                        Text("Disconnected microphone").tag(store.micDeviceUID)
+                    }
+                } label: {
+                    SettingRowLabel(title: "Record with",
+                                    subtitle: "The mic used whenever you dictate or talk")
+                }
+                .onAppear { mics = AudioRecorder.availableMicrophones() }
+            } header: {
+                Text("Microphone")
+            } footer: {
+                Text("Pick the Mac's built-in mic to keep Bluetooth earbuds from taking over recording when they connect. If the chosen mic isn't available, the system default is used.")
+            }
+
             Section {
                 Picker(selection: $store.provider) {
                     Text("OpenAI cloud — best quality").tag(DictationProvider.openai)
@@ -713,7 +738,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
 
         tabController.tabStyle = .toolbar
-        addTab("Dictation", symbol: "mic.fill", height: 560,
+        addTab("Dictation", symbol: "mic.fill", height: 680,
                view: DictationSettingsView(store: store))
         addTab("Voice", symbol: "speaker.wave.2.fill", height: 300,
                view: VoiceSettingsView(store: store))
