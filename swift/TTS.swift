@@ -604,7 +604,12 @@ final class TTSController: NSObject {
     private func makeOpenAIURLRequest(for request: TTSRequest, apiKey: String) throws -> URLRequest {
         var body: [String: Any] = [
             "model": OpenAITTSModel,
-            "input": request.text,
+            // gpt-4o-mini-tts reliably swallows the last words of its input
+            // (verified by transcribing its own output: a final short
+            // sentence was missing from the generated audio entirely). The
+            // trailing ellipsis is sacrificial padding — the truncation eats
+            // it instead of the real ending, and it is never voiced.
+            "input": request.text + "\n\n…",
             "voice": request.voice,
             "response_format": "pcm",
             "speed": request.speed,
