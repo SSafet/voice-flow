@@ -2102,9 +2102,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// (screenshots, captures, dictations) and set_session_name do NOT
     /// engage — a session the user never hears from stays invisible.
     private static let engagingMCPTools: Set<String> = [
-        "report_to_user", "ask_user", "notify_user", "speak",
-        "wait_for_message", "show_guide", "update_guide", "show_panel",
-        "annotate_screen",
+        "report_to_user", "wait_for_message",
+        "show_guide", "update_guide", "show_panel", "annotate_screen",
     ]
 
     private func handleMCPTool(_ name: String, _ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
@@ -2136,16 +2135,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         switch name {
         case "set_session_name": return mcpSetSessionName(args, session)
         case "report_to_user": return mcpReportToUser(args, session)
-        // Legacy aliases — clients still running against the old catalog
-        // (long-lived Claude sessions, the previous vf script).
-        case "ask_user":
-            var mapped = args
-            mapped["question"] = args["prompt"]
-            return mcpReportToUser(mapped, session)
-        case "notify_user", "speak":
-            var mapped = args
-            mapped["summary"] = args["text"]
-            return mcpReportToUser(mapped, session)
         case "check_messages": return mcpCheckMessages(session)
         case "wait_for_message": return mcpWaitForMessage(args, session)
         case "get_latest_capture": return mcpLatestCapture()
@@ -2200,21 +2189,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// The one messaging tool: a receipt-backed report (summary + details),
-    /// optionally blocking on a `question`. Legacy ask_user / notify_user /
-    /// speak calls are mapped onto it by the dispatcher.
+    /// optionally blocking on a `question`.
     private func mcpReportToUser(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         let trimmed = { (key: String) in
             (args[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        var summary = trimmed("summary")
+        let summary = trimmed("summary")
         let details = trimmed("details")
         let question = trimmed("question")
-        if summary.isEmpty { summary = question }
         guard !summary.isEmpty else {
             return .fail("report_to_user needs a non-empty `summary` (and `details` with the substance — what happened, where, what you need).")
         }
         // The user reads one text: summary, then details, then the question
-        // (skipped when it just repeats the summary, as legacy asks do).
+        // (skipped when it just repeats the summary).
         var parts = [summary]
         if !details.isEmpty { parts.append(details) }
         if !question.isEmpty, question != summary { parts.append(question) }
@@ -2235,9 +2222,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             var reply = "Delivered: the user got a one-line receipt and reads the full report when they switch onto your session (⌃⌥N) or in their Messages tab; audio plays only on their demand."
             if let sessionId {
                 reply += """
-                 If they reply by voice while nothing is listening, it queues for your next tool call — it can NOT wake you once you stop. Finishing your turn? Start the reply listener as a background Bash task first:
+                 If they might reply, start the reply listener as a background Bash task NOW — whether you keep working or are about to finish:
                 ~/.claude/skills/communicate-with-user/scripts/vf listen --attach \(sessionId) --timeout 7200
-                When the user talks to your session, that task completes with their words and you are re-invoked.
+                The moment they talk to your session it completes with their words and you are re-invoked. Without it, a reply sits queued until you happen to call another voice-flow tool — and can never reach you once you stop.
                 """
             }
             return .ok(reply)

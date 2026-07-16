@@ -141,16 +141,16 @@ in three groups (plus `set_session_name` above):
   human answers (`PendingInteraction` semaphore; `handleResult` /
   `sendTypedMessage` / `finishSession` route the answer to it; timeout up
   to 4 h). Reply modes: talk hotkey, snap-talk (+screenshot), typing, or a
-  whole demonstration session. Legacy `ask_user` / `notify_user` / `speak`
-  calls are dispatched onto it for old clients.
+  whole demonstration session.
 - `check_messages` / `wait_for_message` — the async path. A talk message
   is delivered live to a listening target (parked in `wait_for_message`),
   otherwise **queued in the target session's `MessageInbox`**
   (`swift/Inbox.swift`, `inbox.json`) and surfaced by the piggyback nudge
-  on its next tool call; only with no target at all does it fall back to
-  clipboard + history. The wake-up pattern for a finished turn: the agent
-  backgrounds `vf listen --attach <session-id>` (the `communicate-with-user`
-  skill's script) so a reply completes the task and re-invokes it.
+  on its next *voice-flow* call; only with no target at all does it fall
+  back to clipboard + history. The reply channel agents are steered to —
+  mid-task or after their turn ends — is backgrounding `vf listen --attach
+  <session-id>` (the `communicate-with-user` skill's script): the task
+  completes with the user's words and re-invokes the agent.
 - `get_latest_capture` / `list_captures` / `get_recent_dictations`,
   `take_screenshot` (fixed ≤1440-px geometry via `CaptureStore.shotGeometry`,
   includes the cursor position in image space).

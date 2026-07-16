@@ -203,18 +203,19 @@ final class MCPServer {
         - Need an answer? Pass question — it BLOCKS until they respond (voice, voice + \
         screenshot, typing, or a recorded demonstration). The user may be away for hours; \
         prefer a long timeout_seconds over re-asking.
-        - Finishing your turn after a report? Their spoken reply cannot reach a stopped \
-        session on its own. Start the background listener first (the report_to_user result \
-        shows the exact command for your session) — when they talk to you, the background \
-        task completes and wakes you with their words.
+        - Expecting a reply — mid-task or after you finish? Start the background listener \
+        (the report_to_user result shows the exact command for your session) as a background \
+        Bash task: when the user talks to you, it completes with their words and you are \
+        re-invoked, whether you were still working or had already ended your turn.
 
         Hearing from the user:
         - wait_for_message: listening mode. Talk messages are delivered live ONLY while you \
         are parked here — call it in a loop to be their companion while they read or work \
         (messages may carry a screenshot of what they were looking at); a timeout is normal, \
         call it again. When nobody is listening, talk messages QUEUE for the session the user \
-        is pointed at — you get them on your next tool call (results nudge you) or via \
-        check_messages, but only a running or background-listening session gets woken.
+        is pointed at — but a queued message cannot announce itself: you only see it via \
+        check_messages or the nudge on your next voice-flow tool call, and never after you \
+        stop. The background listener is what turns a queued reply into a wake-up.
         - get_latest_capture / list_captures: recorded demonstrations — spoken narration plus \
         ordered screenshots. When the user says they recorded/captured/showed something, fetch it.
         - The ambient workflow watcher (when the user enables it) logs their workday to \
@@ -438,9 +439,10 @@ final class MCPServer {
             while they read or work — they press talk anywhere, speak ("explain this part"), \
             optionally with a screenshot attached, and you get it instantly. Returns \
             immediately if messages are already queued. A timeout with NO message is a normal, \
-            non-error result — just call wait_for_message again to keep listening. To keep \
-            receiving after your turn ends, run this via the background listener instead \
-            (report_to_user results show the exact command) so the user's reply wakes you.
+            non-error result — just call wait_for_message again to keep listening. Calling \
+            it inline blocks you; to hear the user while you do other work — or after your \
+            turn ends — run it as the background listener instead (report_to_user results \
+            show the exact command), which completes with their words and re-invokes you.
             """,
             "inputSchema": [
                 "type": "object",
