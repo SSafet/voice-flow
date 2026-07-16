@@ -889,6 +889,15 @@ class AudioRecorder {
     private let sampleRate: Double = 16000
     private let audioLock = DispatchQueue(label: "com.voiceflow.audioData")
 
+    // Engine setup/teardown talks to CoreAudio, and when the HAL is wedged
+    // (e.g. a Bluetooth mic vanishing mid-recording) those calls dispatch_sync
+    // onto a dead internal queue and never return. They must never run on the
+    // main thread. Concurrent so one wedged attempt doesn't block the next.
+    private static let engineQueue = DispatchQueue(label: "com.voiceflow.audioEngine",
+                                                   qos: .userInitiated, attributes: .concurrent)
+    private final class EngineSetupBox { var engine: AVAudioEngine? }
+    private var startGeneration = 0
+
     // Drain state — wait for engine to flush after stop()
     private var drainCompletion: ((Data?) -> Void)?
     private var drainTimer: Timer?
@@ -1006,6 +1015,42 @@ class AudioRecorder {
         // Reset filter state
         hpX1 = 0; hpX2 = 0; hpY1 = 0; hpY2 = 0
 
+        // Build + start the engine off-main with a bounded wait: a healthy
+        // device completes in milliseconds; a wedged HAL makes this recording
+        // fail (callers see isRecording == false) instead of freezing the app.
+        // An abandoned attempt that eventually finishes tears itself down.
+        startGeneration &+= 1
+        let gen = startGeneration
+        let preferredMic = UserSettings.shared.micDeviceUID
+        let sema = DispatchSemaphore(value: 0)
+        let box = EngineSetupBox()
+        Self.engineQueue.async { [weak self] in
+            box.engine = self?.makeEngine(preferredMic: preferredMic)
+            sema.signal()
+            DispatchQueue.main.async {
+                guard let self, let engine = box.engine,
+                      self.startGeneration != gen || self.engine !== engine else { return }
+                Self.engineQueue.async {
+                    engine.inputNode.removeTap(onBus: 0)
+                    engine.stop()
+                }
+            }
+        }
+        if sema.wait(timeout: .now() + 2.0) == .timedOut {
+            vflog("audio: engine setup did not finish in 2s — audio system wedged, recording aborted")
+            isRecording = false
+            return
+        }
+        guard let engine = box.engine else {
+            isRecording = false
+            return
+        }
+        self.engine = engine
+    }
+
+    /// Builds, taps, and starts a capture engine. Runs on engineQueue — every
+    /// CoreAudio call in here can block indefinitely when the HAL is wedged.
+    private func makeEngine(preferredMic: String) -> AVAudioEngine? {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
 
@@ -1013,7 +1058,6 @@ class AudioRecorder {
         // inputNode follows the system default, which macOS silently switches
         // to Bluetooth earbuds' (low-quality) mic when they connect. Must
         // happen before the format is read below.
-        let preferredMic = UserSettings.shared.micDeviceUID
         if !preferredMic.isEmpty {
             if var devID = Self.deviceID(forUID: preferredMic), let unit = inputNode.audioUnit {
                 let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
@@ -1036,15 +1080,13 @@ class AudioRecorder {
         // Fail fast and loudly instead.
         guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
             vflog("audio: input reports invalid format (\(hwFormat.sampleRate)Hz, \(hwFormat.channelCount)ch) — no usable microphone")
-            isRecording = false
-            return
+            return nil
         }
 
         // Install tap with converter — smaller buffer (1024) for lower tail latency
         guard let converter = AVAudioConverter(from: hwFormat, to: desiredFormat) else {
             vflog("audio: no converter from \(hwFormat.sampleRate)Hz to \(Int(sampleRate))Hz")
-            isRecording = false
-            return
+            return nil
         }
         converter.sampleRateConverterQuality = AVAudioQuality.medium.rawValue
 
@@ -1112,10 +1154,10 @@ class AudioRecorder {
         engine.prepare()
         do {
             try engine.start()
-            self.engine = engine
+            return engine
         } catch {
             vflog("audio engine error: \(error)")
-            isRecording = false
+            return nil
         }
     }
 
@@ -1147,9 +1189,14 @@ class AudioRecorder {
         drainTimer?.invalidate()
         drainTimer = nil
 
-        engine?.inputNode.removeTap(onBus: 0)
-        engine?.stop()
-        engine = nil
+        // Teardown can hit the same wedged HAL queue as setup — never on main.
+        if let engine {
+            self.engine = nil
+            Self.engineQueue.async {
+                engine.inputNode.removeTap(onBus: 0)
+                engine.stop()
+            }
+        }
 
         if clippingDetected {
             vflog("warning: clipping detected in recording")
