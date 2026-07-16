@@ -871,16 +871,26 @@ class HotkeyManager {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  Audio Recorder (AVAudioEngine → PCM int16)
+//  Audio Recorder (AVCaptureSession → PCM int16)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-class AudioRecorder {
-    private var engine: AVAudioEngine?
+// Capture runs on AVCaptureSession, not AVAudioEngine. AVAudioEngine's
+// inputNode is welded to the system-default input device: when Bluetooth
+// buds with a wedged HFP mic are the default, the engine's HAL queue
+// deadlocks (freezing any thread that touches it), deallocating a failed
+// engine crashes in its own property-listener callbacks (EXC_BAD_ACCESS in
+// AVAudioIOUnit::IOUnitPropertyListener), and pinning another device via
+// kAudioOutputUnitProperty_CurrentDevice takes on the unit but the engine
+// keeps the stale default-device format (start fails with -10868 or runs
+// silent). AVCaptureSession pinned to the chosen device has none of that —
+// verified working while the engine path was wedged.
+class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+    private var session: AVCaptureSession?
     private var audioData = Data()
     private(set) var isRecording = false
     private(set) var clippingDetected = false
-    /// Bytes captured by the last completed recording (0 = the tap never
-    /// fired — a wedged engine or missing device, not a short press).
+    /// Bytes captured by the last completed recording (0 = no buffer ever
+    /// arrived — a wedged device or missing mic, not a short press).
     private(set) var lastCaptureBytes = 0
     /// The last recording never crossed the speech threshold — pure room
     /// tone. Transcribing it makes Whisper hallucinate words out of the
@@ -888,17 +898,17 @@ class AudioRecorder {
     private(set) var lastCaptureWasSilent = false
     private let sampleRate: Double = 16000
     private let audioLock = DispatchQueue(label: "com.voiceflow.audioData")
+    private let captureQueue = DispatchQueue(label: "com.voiceflow.audioCapture")
 
-    // Engine setup/teardown talks to CoreAudio, and when the HAL is wedged
-    // (e.g. a Bluetooth mic vanishing mid-recording) those calls dispatch_sync
-    // onto a dead internal queue and never return. They must never run on the
-    // main thread. Concurrent so one wedged attempt doesn't block the next.
-    private static let engineQueue = DispatchQueue(label: "com.voiceflow.audioEngine",
-                                                   qos: .userInitiated, attributes: .concurrent)
-    private final class EngineSetupBox { var engine: AVAudioEngine? }
+    // Capture setup/teardown talks to CoreAudio, and when a device is wedged
+    // those calls can block indefinitely. They must never run on the main
+    // thread. Concurrent so one wedged attempt doesn't block the next.
+    private static let setupQueue = DispatchQueue(label: "com.voiceflow.audioSetup",
+                                                  qos: .userInitiated, attributes: .concurrent)
+    private final class SessionBox { var session: AVCaptureSession? }
     private var startGeneration = 0
 
-    // Drain state — wait for engine to flush after stop()
+    // Drain state — wait for capture to flush after stop()
     private var drainCompletion: ((Data?) -> Void)?
     private var drainTimer: Timer?
 
@@ -921,11 +931,12 @@ class AudioRecorder {
     private let speechThreshold: Float = 0.01  // ~-40dBFS, above background noise
     private var speechSinceLastPartial = false
     private var lastSpeechDataLength: Int = 0  // audioData.count at last speech buffer
-    // Buffers (~21ms each) that peaked above the threshold. A hotkey click
-    // or breath spikes 1–2 buffers; the shortest spoken word spans many —
-    // the silence gate requires sustained signal, not one transient.
-    private var speechBufferCount = 0
-    private let minSpeechBuffers = 4
+    // 16kHz frames delivered in buffers that peaked above the threshold.
+    // A hotkey click or breath spikes one short buffer; the shortest spoken
+    // word spans ~85ms+ — the silence gate requires sustained signal, not
+    // one transient. (Frame-based so the gate doesn't depend on buffer size.)
+    private var voicedFrames = 0
+    private let minVoicedFrames = 1400  // ≈ 85ms at 16kHz
 
     /// Posted whenever the set of audio devices changes (buds connecting,
     /// USB mic unplugged, …) once monitorMicList() has been called.
@@ -1010,12 +1021,12 @@ class AudioRecorder {
         clippingDetected = false
         speechSinceLastPartial = false
         lastSpeechDataLength = 0
-        speechBufferCount = 0
+        voicedFrames = 0
 
         // Reset filter state
         hpX1 = 0; hpX2 = 0; hpY1 = 0; hpY2 = 0
 
-        // Build + start the engine off-main with a bounded wait: a healthy
+        // Build + start the capture off-main with a bounded wait: a healthy
         // device completes in milliseconds; a wedged HAL makes this recording
         // fail (callers see isRecording == false) instead of freezing the app.
         // An abandoned attempt that eventually finishes tears itself down.
@@ -1023,141 +1034,141 @@ class AudioRecorder {
         let gen = startGeneration
         let preferredMic = UserSettings.shared.micDeviceUID
         let sema = DispatchSemaphore(value: 0)
-        let box = EngineSetupBox()
-        Self.engineQueue.async { [weak self] in
-            box.engine = self?.makeEngine(preferredMic: preferredMic)
+        let box = SessionBox()
+        Self.setupQueue.async { [weak self] in
+            box.session = self?.makeSession(preferredMic: preferredMic)
             sema.signal()
             DispatchQueue.main.async {
-                guard let self, let engine = box.engine,
-                      self.startGeneration != gen || self.engine !== engine else { return }
-                Self.engineQueue.async {
-                    engine.inputNode.removeTap(onBus: 0)
-                    engine.stop()
-                }
+                guard let self, let session = box.session,
+                      self.startGeneration != gen || self.session !== session else { return }
+                Self.setupQueue.async { session.stopRunning() }
             }
         }
         if sema.wait(timeout: .now() + 2.0) == .timedOut {
-            vflog("audio: engine setup did not finish in 2s — audio system wedged, recording aborted")
+            vflog("audio: capture setup did not finish in 2s — device wedged, recording aborted")
             isRecording = false
             return
         }
-        guard let engine = box.engine else {
+        guard let session = box.session else {
             isRecording = false
             return
         }
-        self.engine = engine
+        self.session = session
     }
 
-    /// Builds, taps, and starts a capture engine. Runs on engineQueue — every
-    /// CoreAudio call in here can block indefinitely when the HAL is wedged.
-    private func makeEngine(preferredMic: String) -> AVAudioEngine? {
-        let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
-
-        // Pin the input to the mic chosen in Settings → Dictation. The bare
-        // inputNode follows the system default, which macOS silently switches
-        // to Bluetooth earbuds' (low-quality) mic when they connect. Must
-        // happen before the format is read below.
+    /// Builds and starts a capture session pinned to the chosen mic (system
+    /// default when none chosen). Runs on setupQueue — CoreAudio calls in
+    /// here can block indefinitely when a device is wedged.
+    private func makeSession(preferredMic: String) -> AVCaptureSession? {
+        // Pin the input to the mic chosen in Settings → Dictation. The system
+        // default silently switches to Bluetooth earbuds' (low-quality) mic
+        // when they connect.
+        var device: AVCaptureDevice?
         if !preferredMic.isEmpty {
-            if var devID = Self.deviceID(forUID: preferredMic), let unit = inputNode.audioUnit {
-                let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
-                                                  kAudioUnitScope_Global, 0, &devID,
-                                                  UInt32(MemoryLayout<AudioDeviceID>.size))
-                if status != noErr {
-                    vflog("audio: could not select mic \(preferredMic) (err \(status)) — using system default")
-                }
-            } else {
+            device = AVCaptureDevice(uniqueID: preferredMic)
+            if device == nil {
                 vflog("audio: preferred mic \(preferredMic) not connected — using system default")
             }
         }
-
-        // Target format: 16kHz mono float32 (process in float, convert to int16 at end)
-        let desiredFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
-        let hwFormat = inputNode.outputFormat(forBus: 0)
-
-        // After a sleep/wake or input-device change the input node can report
-        // a garbage format; recording would silently produce zero bytes.
-        // Fail fast and loudly instead.
-        guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
-            vflog("audio: input reports invalid format (\(hwFormat.sampleRate)Hz, \(hwFormat.channelCount)ch) — no usable microphone")
+        device = device ?? AVCaptureDevice.default(for: .audio)
+        guard let device else {
+            vflog("audio: no input device available")
             return nil
         }
 
-        // Install tap with converter — smaller buffer (1024) for lower tail latency
-        guard let converter = AVAudioConverter(from: hwFormat, to: desiredFormat) else {
-            vflog("audio: no converter from \(hwFormat.sampleRate)Hz to \(Int(sampleRate))Hz")
-            return nil
-        }
-        converter.sampleRateConverterQuality = AVAudioQuality.medium.rawValue
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: hwFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * self.sampleRate / hwFormat.sampleRate)
-            guard capacity > 0,
-                  let converted = AVAudioPCMBuffer(pcmFormat: desiredFormat, frameCapacity: capacity) else { return }
-            var error: NSError?
-            converter.convert(to: converted, error: &error) { _, outStatus in
-                outStatus.pointee = .haveData
-                return buffer
-            }
-            guard let floatData = converted.floatChannelData else { return }
-            let frameCount = Int(converted.frameLength)
-            let ptr = floatData[0]
-
-            // ── 1. High-pass filter (80Hz, removes rumble/HVAC) ──
-            for i in 0..<frameCount {
-                let x = ptr[i]
-                let y = self.hpB0 * x + self.hpB1 * self.hpX1 + self.hpB2 * self.hpX2
-                      - self.hpA1 * self.hpY1 - self.hpA2 * self.hpY2
-                self.hpX2 = self.hpX1; self.hpX1 = x
-                self.hpY2 = self.hpY1; self.hpY1 = y
-                ptr[i] = y
-            }
-
-            // ── 2. Clipping detection ──
-            var maxVal: Float = 0
-            vDSP_maxmgv(ptr, 1, &maxVal, vDSP_Length(frameCount))
-            if maxVal >= 0.99 {
-                self.clippingDetected = true
-            }
-
-            // ── 2b. Speech detection (gate partial transcription + trim silence) ──
-            if maxVal >= self.speechThreshold {
-                self.speechSinceLastPartial = true
-            }
-
-            // ── 3. Convert float32 → int16, accumulate ──
-            var scale: Float = 32767.0
-            var int16Buf = [Int16](repeating: 0, count: frameCount)
-            var scaled = [Float](repeating: 0, count: frameCount)
-            vDSP_vsmul(ptr, 1, &scale, &scaled, 1, vDSP_Length(frameCount))
-            vDSP_vfix16(scaled, 1, &int16Buf, 1, vDSP_Length(frameCount))
-
-            self.audioLock.sync {
-                int16Buf.withUnsafeBufferPointer { bufPtr in
-                    self.audioData.append(bufPtr)
-                }
-                if maxVal >= self.speechThreshold {
-                    // Mark end of speech region (+ this buffer) for trimming
-                    self.lastSpeechDataLength = self.audioData.count
-                    self.speechBufferCount += 1
-                }
-            }
-
-            // If we're draining (stop was called), this buffer confirms
-            // the engine has flushed — signal teardown on main thread
-            if !self.isRecording {
-                DispatchQueue.main.async { self.finishStop() }
-            }
-        }
-
-        engine.prepare()
         do {
-            try engine.start()
-            return engine
+            let input = try AVCaptureDeviceInput(device: device)
+            let session = AVCaptureSession()
+            guard session.canAddInput(input) else {
+                vflog("audio: cannot capture from \(device.localizedName)")
+                return nil
+            }
+            session.addInput(input)
+
+            // The output converts to the pipeline format for us:
+            // 16kHz mono float32, non-interleaved.
+            let output = AVCaptureAudioDataOutput()
+            output.audioSettings = [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: sampleRate,
+                AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 32,
+                AVLinearPCMIsFloatKey: true,
+                AVLinearPCMIsNonInterleaved: true,
+                AVLinearPCMIsBigEndianKey: false,
+            ]
+            output.setSampleBufferDelegate(self, queue: captureQueue)
+            guard session.canAddOutput(output) else {
+                vflog("audio: cannot add capture output for \(device.localizedName)")
+                return nil
+            }
+            session.addOutput(output)
+            session.startRunning()
+            return session
         } catch {
-            vflog("audio engine error: \(error)")
+            vflog("audio: capture setup error: \(error)")
             return nil
+        }
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        guard let fd = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fd),
+              let fmt = AVAudioFormat(streamDescription: asbd) else { return }
+        let frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
+        guard frames > 0, let pcm = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames) else { return }
+        pcm.frameLength = frames
+        guard CMSampleBufferCopyPCMDataIntoAudioBufferList(sampleBuffer, at: 0, frameCount: Int32(frames),
+                                                           into: pcm.mutableAudioBufferList) == noErr,
+              let floatData = pcm.floatChannelData else { return }
+        let frameCount = Int(frames)
+        let ptr = floatData[0]
+
+        // ── 1. High-pass filter (80Hz, removes rumble/HVAC) ──
+        for i in 0..<frameCount {
+            let x = ptr[i]
+            let y = hpB0 * x + hpB1 * hpX1 + hpB2 * hpX2
+                  - hpA1 * hpY1 - hpA2 * hpY2
+            hpX2 = hpX1; hpX1 = x
+            hpY2 = hpY1; hpY1 = y
+            ptr[i] = y
+        }
+
+        // ── 2. Clipping detection ──
+        var maxVal: Float = 0
+        vDSP_maxmgv(ptr, 1, &maxVal, vDSP_Length(frameCount))
+        if maxVal >= 0.99 {
+            clippingDetected = true
+        }
+
+        // ── 2b. Speech detection (gate partial transcription + trim silence) ──
+        if maxVal >= speechThreshold {
+            speechSinceLastPartial = true
+        }
+
+        // ── 3. Convert float32 → int16, accumulate ──
+        var scale: Float = 32767.0
+        var int16Buf = [Int16](repeating: 0, count: frameCount)
+        var scaled = [Float](repeating: 0, count: frameCount)
+        vDSP_vsmul(ptr, 1, &scale, &scaled, 1, vDSP_Length(frameCount))
+        vDSP_vfix16(scaled, 1, &int16Buf, 1, vDSP_Length(frameCount))
+
+        audioLock.sync {
+            int16Buf.withUnsafeBufferPointer { bufPtr in
+                audioData.append(bufPtr)
+            }
+            if maxVal >= speechThreshold {
+                // Mark end of speech region (+ this buffer) for trimming
+                lastSpeechDataLength = audioData.count
+                voicedFrames += frameCount
+            }
+        }
+
+        // If we're draining (stop was called), this buffer confirms
+        // the capture has flushed — signal teardown on main thread
+        if !isRecording {
+            DispatchQueue.main.async { self.finishStop() }
         }
     }
 
@@ -1189,13 +1200,10 @@ class AudioRecorder {
         drainTimer?.invalidate()
         drainTimer = nil
 
-        // Teardown can hit the same wedged HAL queue as setup — never on main.
-        if let engine {
-            self.engine = nil
-            Self.engineQueue.async {
-                engine.inputNode.removeTap(onBus: 0)
-                engine.stop()
-            }
+        // Teardown can block on a wedged device just like setup — never on main.
+        if let session {
+            self.session = nil
+            Self.setupQueue.async { session.stopRunning() }
         }
 
         if clippingDetected {
@@ -1206,16 +1214,16 @@ class AudioRecorder {
         lastCaptureWasSilent = false
         guard audioData.count > 3200 else { // < 100ms at 16kHz int16
             vflog(audioData.isEmpty
-                ? "audio: no audio arrived from the microphone — engine wedged or device gone"
+                ? "audio: no audio arrived from the microphone — device wedged or gone"
                 : "audio: recording too short (\(audioData.count) bytes) — discarded")
             completion(nil)
             return
         }
 
-        let voicedBuffers = audioLock.sync { speechBufferCount }
-        guard voicedBuffers >= minSpeechBuffers else {
+        let voiced = audioLock.sync { voicedFrames }
+        guard voiced >= minVoicedFrames else {
             lastCaptureWasSilent = true
-            vflog("audio: no sustained speech (\(voicedBuffers) voiced buffers in \(audioData.count) bytes) — discarded")
+            vflog("audio: no sustained speech (\(voiced) voiced frames in \(audioData.count) bytes) — discarded")
             completion(nil)
             return
         }
