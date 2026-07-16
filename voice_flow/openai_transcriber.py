@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import uuid
 import urllib.error
 import urllib.request
@@ -73,7 +74,33 @@ class OpenAITranscriber:
         text = str(payload.get("text", "")).strip()
         if text.lower().strip(".,!?") in FILLER_ONLY:
             return ""
+        if vocabulary and _is_prompt_echo(text, vocabulary):
+            return ""
         return text
+
+
+def _normalize(s: str) -> str:
+    return " ".join(re.sub(r"[^\w\s'-]", " ", s.lower()).split())
+
+
+def _is_prompt_echo(text: str, vocabulary: list[str]) -> bool:
+    """On short or unintelligible audio the model completes the vocabulary
+    prompt instead of transcribing, pasting the keyword list at the user.
+    An echo is a verbatim run of the prompt — real dictation that merely
+    uses vocab words has its own words around them, and a single vocab word
+    alone is legitimate dictation, so neither is flagged."""
+    t = _normalize(text)
+    if not t:
+        return False
+    if "correct spellings" in t:
+        return True
+    hits = sum(1 for w in vocabulary if _normalize(w) and _normalize(w) in t)
+    if hits < 2:
+        return False
+    # Every transcript word appears in the prompt, in prompt order
+    # (an echo may skip list items but never adds words of its own).
+    prompt_words = iter(_normalize(", ".join(vocabulary)).split())
+    return all(word in prompt_words for word in t.split())
 
 
 def _audio_to_wav_bytes(audio: np.ndarray, sample_rate: int) -> bytes:
