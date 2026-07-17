@@ -84,9 +84,14 @@ final class CodexExecBackend {
 
         // `exec` and `exec resume` diverge slightly in supported flags
         // (resume has no --sandbox/-C), so sandboxing goes through -c.
+        // mcp_servers={} neutralizes the user's ~/.codex MCP servers: they
+        // slow every turn's startup and tempt the model into "contacting"
+        // the user through tools instead of just answering the panel.
         var args = ["exec"]
         if let thread = resumeThread { args.append(contentsOf: ["resume", thread]) }
-        args.append(contentsOf: ["--json", "--skip-git-repo-check", "-c", "sandbox_mode=\"read-only\""])
+        args.append(contentsOf: ["--json", "--skip-git-repo-check",
+                                 "-c", "sandbox_mode=\"read-only\"",
+                                 "-c", "mcp_servers={}"])
         imagePaths.forEach { args.append(contentsOf: ["-i", $0]) }
         args.append(prompt)
 
