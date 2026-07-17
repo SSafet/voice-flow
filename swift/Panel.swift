@@ -13,10 +13,8 @@ enum ChatBubbleKind {
 }
 
 enum ChatTab: Int {
-    case messages = 0    // the main tab: everything agents pushed over MCP
-    case chat = 1
-    case dictations = 2
-    case speech = 3
+    case inbox = 0    // everything you said, with a destination (filter chips)
+    case agents = 1   // every agent talking to you: sessions + the assistant
 }
 
 final class ChatPanel {
@@ -39,10 +37,18 @@ final class ChatPanel {
 
     private var panel: KeyablePanel!
     private var tabControl: NSSegmentedControl!
-    private var messagesView: MessagesView!
+    private var messagesView: MessagesView!    // messages.json archive — store only, no longer a tab
     private var dictationsView: DictationsView!
+    private var agentsView: AgentsView!
+    private var assistantHeader: NSView!
+    private var speechButton: NSButton!
     private var ttsView: TTSView!
-    private var currentTab: ChatTab = .messages
+    private var currentTab: ChatTab = .agents
+    /// Inside the Agents tab: the assistant thread (the old Chat) is open.
+    private var assistantOpen = false
+    /// The ♪ toggle — the Speech drawer covers whichever tab is current.
+    private var speechOpen = false
+    private var lastAssistantText = ""
     private var statusRow: NSStackView!
     private var inputRow: NSStackView!
     private var bubbleStack: NSStackView!
@@ -84,9 +90,10 @@ final class ChatPanel {
             }
         }
         if focusInput {
-            selectTab(.messages)           // the panel lands on the agent-message history
+            selectTab(.agents)             // the panel lands on the agent list
             panel.makeKey()
         }
+        agentsView.refresh()
         installClickOutsideMonitor()
         onShown?()
     }
@@ -164,6 +171,7 @@ final class ChatPanel {
         } else if !fullText.isEmpty {
             appendBubble(kind: .assistant, text: fullText)
         }
+        if !fullText.isEmpty { lastAssistantText = fullText }
         streamingLabel = nil
         scrollToBottom()
     }
@@ -250,9 +258,9 @@ final class ChatPanel {
     // ── Tabs ────────────────────────────────────────────
 
     @objc private func tabTapped() {
-        let tab = ChatTab(rawValue: tabControl.selectedSegment) ?? .messages
+        let tab = ChatTab(rawValue: tabControl.selectedSegment) ?? .agents
+        speechOpen = false
         applyTab(tab)
-        if tab == .chat { panel.makeFirstResponder(inputField) }
     }
 
     func selectTab(_ tab: ChatTab) {
@@ -260,30 +268,80 @@ final class ChatPanel {
         applyTab(tab)
     }
 
+    /// Show the Speech surface (♪) over whatever tab is current.
+    func openSpeech() {
+        speechOpen = true
+        applyTab(currentTab)
+    }
+
     private func applyTab(_ tab: ChatTab) {
         currentTab = tab
-        let isChat = tab == .chat
-        scrollView.isHidden = !isChat
-        statusRow.isHidden = !isChat
-        inputRow.isHidden = !isChat
-        messagesView.isHidden = tab != .messages
-        dictationsView.isHidden = tab != .dictations
-        ttsView.isHidden = tab != .speech
+        let assistant = tab == .agents && assistantOpen && !speechOpen
+        let agentsList = tab == .agents && !assistantOpen && !speechOpen
+        scrollView.isHidden = !assistant
+        statusRow.isHidden = !assistant
+        inputRow.isHidden = !assistant
+        assistantHeader.isHidden = !assistant
+        agentsView.isHidden = !agentsList
+        dictationsView.isHidden = !(tab == .inbox && !speechOpen)
+        ttsView.isHidden = !speechOpen
+        speechButton.contentTintColor = speechOpen ? Theme.accent : Theme.text3
         updateEmptyLabel()
-        if isChat { scrollToBottom() }
+        if assistant {
+            panel.makeFirstResponder(inputField)
+            scrollToBottom()
+        }
+        if agentsList { agentsView.refresh() }
     }
 
     private func updateEmptyLabel() {
         let hasMessages = !bubbleStack.arrangedSubviews.isEmpty
-        emptyLabel.isHidden = currentTab != .chat || hasMessages
+        let assistant = currentTab == .agents && assistantOpen && !speechOpen
+        emptyLabel.isHidden = !assistant || hasMessages
     }
 
     // ── Messages + Dictations + Speech passthroughs ─────
 
     /// Everything an agent pushes (notify / ask / speak) lands here — the
-    /// permanent history, independent of what the pill showed.
+    /// permanent history (messages.json), independent of what the pill
+    /// showed — and the Agents surface repaints if it's on screen.
     func addAgentMessage(time: String, session: String, text: String, isAsk: Bool) {
         messagesView.addEntry(time: time, session: session, text: text, isAsk: isAsk)
+        refreshAgents()
+    }
+
+    /// The Agents tab reads sessions/threads through this — wired to
+    /// AppDelegate, which owns the push stacks and the MCP registry.
+    var agentsDataSource: AgentsDataSource? {
+        get { agentsView.dataSource }
+        set { agentsView.dataSource = newValue }
+    }
+
+    /// Repaint the Agents surface from fresh data (no-op when hidden).
+    func refreshAgents() {
+        if isVisible, !agentsView.isHidden { agentsView.refresh() }
+    }
+
+    private func openAssistant() {
+        assistantOpen = true
+        applyTab(.agents)
+    }
+
+    @objc private func assistantBackTapped() {
+        assistantOpen = false
+        applyTab(.agents)
+    }
+
+    @objc private func assistantSpeakTapped() {
+        guard !lastAssistantText.isEmpty else { return }
+        var request = ttsView.currentTTSRequest()
+        request.text = lastAssistantText
+        onTTSSpeak?(request)
+    }
+
+    @objc private func speechTapped() {
+        speechOpen.toggle()
+        applyTab(currentTab)
     }
 
     func addDictation(text: String, time: String,
@@ -435,31 +493,43 @@ final class ChatPanel {
         inputRow.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 12, right: 12)
         inputRow.translatesAutoresizingMaskIntoConstraints = false
 
-        // Tabs ----------------------------------------------------------------
+        // Tabs: two content surfaces + the ♪ speech toggle ---------------------
         tabControl = NSSegmentedControl(
-            labels: ["Messages", "Chat", "Dictations", "Speech"],
+            labels: ["Inbox", "Agents"],
             trackingMode: .selectOne,
             target: self, action: #selector(tabTapped)
         )
-        tabControl.selectedSegment = ChatTab.messages.rawValue
+        tabControl.selectedSegment = ChatTab.agents.rawValue
         tabControl.translatesAutoresizingMaskIntoConstraints = false
+
+        speechButton = NSButton(title: "♪", target: self, action: #selector(speechTapped))
+        speechButton.isBordered = false
+        speechButton.font = .systemFont(ofSize: 13, weight: .medium)
+        speechButton.contentTintColor = Theme.text3
+        speechButton.toolTip = "Speech — paste text and play it aloud"
+        speechButton.translatesAutoresizingMaskIntoConstraints = false
 
         let tabBar = NSView()
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         tabBar.addSubview(tabControl)
+        tabBar.addSubview(speechButton)
         NSLayoutConstraint.activate([
             tabControl.centerXAnchor.constraint(equalTo: tabBar.centerXAnchor),
             tabControl.topAnchor.constraint(equalTo: tabBar.topAnchor, constant: 2),
             tabControl.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: -6),
+            speechButton.leadingAnchor.constraint(equalTo: tabControl.trailingAnchor, constant: 10),
+            speechButton.centerYAnchor.constraint(equalTo: tabControl.centerYAnchor),
         ])
 
-        // Messages + Dictations + Speech surfaces (hidden until selected)
-        messagesView = MessagesView()
-        messagesView.isHidden = true
-        messagesView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        // Surfaces (hidden until selected) ------------------------------------
+        messagesView = MessagesView()   // archive store; not in the hierarchy
         dictationsView = DictationsView()
         dictationsView.isHidden = true
         dictationsView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        agentsView = AgentsView()
+        agentsView.isHidden = true
+        agentsView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        agentsView.onOpenAssistant = { [weak self] in self?.openAssistant() }
         ttsView = TTSView()
         ttsView.isHidden = true
         ttsView.setContentHuggingPriority(.defaultLow, for: .vertical)
@@ -467,8 +537,11 @@ final class ChatPanel {
         ttsView.onSeek = { [weak self] position in self?.onTTSSeek?(position) }
         ttsView.onStop = { [weak self] in self?.onTTSStop?() }
 
+        assistantHeader = buildAssistantHeader()
+        assistantHeader.isHidden = true
+
         // Assemble ------------------------------------------------------------
-        let column = NSStackView(views: [header, headerLine, tabBar, scrollView, messagesView, dictationsView, ttsView, statusRow, inputRow])
+        let column = NSStackView(views: [header, headerLine, tabBar, assistantHeader, scrollView, agentsView, dictationsView, ttsView, statusRow, inputRow])
         column.orientation = .vertical
         column.spacing = 4
         column.distribution = .fill
@@ -485,7 +558,7 @@ final class ChatPanel {
             emptyLabel.centerYAnchor.constraint(equalTo: root.centerYAnchor),
             emptyLabel.widthAnchor.constraint(lessThanOrEqualToConstant: width - 60),
         ])
-        for view in [header, headerLine, tabBar, scrollView, messagesView, dictationsView, ttsView, statusRow, inputRow] as [NSView] {
+        for view in [header, headerLine, tabBar, assistantHeader, scrollView, agentsView, dictationsView, ttsView, statusRow, inputRow] as [NSView] {
             view.leadingAnchor.constraint(equalTo: column.leadingAnchor).isActive = true
             view.trailingAnchor.constraint(equalTo: column.trailingAnchor).isActive = true
         }
@@ -495,7 +568,56 @@ final class ChatPanel {
         setVoiceReplies(false)
         setControlAllowed(false)
         setSessionActive(false)
-        selectTab(.messages)
+        selectTab(.agents)
+    }
+
+    /// Nav bar over the assistant thread: ‹ back, waveform + name centered,
+    /// 🔊 reads the last reply aloud.
+    private func buildAssistantHeader() -> NSView {
+        let headerView = NSView()
+        headerView.translatesAutoresizingMaskIntoConstraints = false
+
+        let back = NSButton(title: "‹", target: self, action: #selector(assistantBackTapped))
+        back.isBordered = false
+        back.font = .systemFont(ofSize: 16, weight: .medium)
+        back.contentTintColor = Theme.text2
+
+        let icon = WaveformIconView()
+        let name = NSTextField(labelWithString: "assistant")
+        name.font = .systemFont(ofSize: 12, weight: .semibold)
+        name.textColor = Theme.text
+
+        let mid = NSStackView(views: [icon, name])
+        mid.orientation = .horizontal
+        mid.spacing = 7
+
+        let speak = NSButton(image: symbol("speaker.wave.2") ?? NSImage(),
+                             target: self, action: #selector(assistantSpeakTapped))
+        speak.isBordered = false
+        speak.contentTintColor = Theme.text3
+
+        let line = NSView()
+        line.wantsLayer = true
+        line.layer?.backgroundColor = Theme.border.cgColor
+
+        for v in [back, mid, speak, line] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            headerView.addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            headerView.heightAnchor.constraint(equalToConstant: 30),
+            back.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 14),
+            back.centerYAnchor.constraint(equalTo: headerView.centerYAnchor, constant: -3),
+            mid.centerXAnchor.constraint(equalTo: headerView.centerXAnchor),
+            mid.centerYAnchor.constraint(equalTo: headerView.centerYAnchor, constant: -3),
+            speak.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -14),
+            speak.centerYAnchor.constraint(equalTo: headerView.centerYAnchor, constant: -3),
+            line.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 12),
+            line.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -12),
+            line.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
+            line.heightAnchor.constraint(equalToConstant: 1),
+        ])
+        return headerView
     }
 
     private func iconButton(_ symbolName: String, action: Selector, tip: String) -> NSButton {

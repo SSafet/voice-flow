@@ -84,6 +84,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let hint: String?
         let isAsk: Bool
         var seen = false
+        /// The user's reply, attached to the ask it answered — rendered as
+        /// the ↳ line in the panel's Agents thread.
+        var answer: String? = nil
     }
     /// Persisted to pushes.json — unread stacks must survive app restarts,
     /// not just session deaths. A session re-adopting its old id reclaims
@@ -109,7 +112,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             queue.map { push in
                 // An ask can't outlive its blocked tool call across a
                 // restart — it degrades to a plain readable message.
-                push.isAsk
+                push.isAsk && push.answer == nil
                     ? SessionPush(at: push.at, title: push.title, text: push.text,
                                   hint: nil, isAsk: false, seen: push.seen)
                     : push
@@ -337,6 +340,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         chatPanel = ChatPanel()
         chatPanel.onShown = { [weak self] in self?.replyBubble.hide() }
+        chatPanel.agentsDataSource = self
         chatPanel.onSendText = { [weak self] text in self?.sendTypedMessage(text) }
         chatPanel.onSnap = { [weak self] in self?.snapAndSend() }
         chatPanel.onToggleSession = { [weak self] in self?.toggleSession() }
@@ -1151,10 +1155,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             interaction.attachments.append(contentsOf: attachments)
             interaction.responseText = text
             interaction.semaphore.signal()
+            // The answer stays attached to its ask (↳ in the Agents thread);
+            // the stack survives as read history — trash still deletes it.
+            attachAnswer(text, to: interaction.sessionId)
             answeredSession(interaction.sessionId,
                             note: "answer sent to \(sessionName(for: interaction.sessionId))",
-                            clearStack: true)
+                            clearStack: false)
         }
+    }
+
+    /// Record the user's reply on the newest unanswered ask push of the
+    /// session, so the panel's thread shows question and answer together.
+    private func attachAnswer(_ text: String, to sessionId: String?) {
+        guard let sid = sessionId, var queue = sessionPushes[sid] else { return }
+        guard let index = queue.lastIndex(where: { $0.isAsk && $0.answer == nil }) else { return }
+        queue[index].answer = text
+        queue[index].seen = true
+        sessionPushes[sid] = queue
+        chatPanel.refreshAgents()
     }
 
     /// No question pending — a talk message goes to the target Claude
@@ -1866,7 +1884,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func toggleHistory() {
         chatPanel.show(focusInput: false)
-        chatPanel.selectTab(.dictations)
+        chatPanel.selectTab(.inbox)
     }
 
     private func showSettings() {
@@ -1887,7 +1905,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func revealSpeechTab() {
         chatPanel.show(focusInput: false)
-        chatPanel.selectTab(.speech)
+        chatPanel.openSpeech()
     }
 
     private func showDock() { NSApp.setActivationPolicy(.regular) }
@@ -2680,5 +2698,81 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 "POST /api/tts/stop",
             ],
         ])
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Agents tab data source — the panel's window onto the same per-session
+//  push stacks the pill shows. Numbering ≡ the picker (⌃⌥1–6); ghosts and
+//  unread state come along unchanged.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+extension AppDelegate: AgentsDataSource {
+    private static let pushTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    func agentSessionRows() -> [AgentSessionRow] {
+        pickerSessions().enumerated().map { index, session in
+            let queue = sessionPushes[session.id] ?? []
+            let newest = queue.last
+            var preview = newest.map { $0.text.replacingOccurrences(of: "\n", with: " ") } ?? ""
+            if hasPendingAsk(for: session.id),
+               let ask = queue.last(where: { $0.isAsk && $0.answer == nil }) {
+                preview = "asks: " + ask.text.replacingOccurrences(of: "\n", with: " ")
+            }
+            return AgentSessionRow(
+                id: session.id,
+                number: index + 1,
+                name: session.label,
+                preview: preview,
+                time: newest.map { Self.pushTimeFormatter.string(from: $0.at) } ?? "",
+                unread: queue.contains { !$0.seen },
+                ghost: mcpServer.sessions.session(session.id) == nil)
+        }
+    }
+
+    func agentThread(for sessionId: String) -> [SessionPush] {
+        sessionPushes[sessionId] ?? []
+    }
+
+    func markThreadSeen(_ sessionId: String) {
+        guard let queue = sessionPushes[sessionId] else { return }
+        sessionPushes[sessionId] = queue.map { push in
+            var seen = push
+            seen.seen = true
+            return seen
+        }
+        refreshUnreadIndicator()
+    }
+
+    func hasPendingAsk(for sessionId: String) -> Bool {
+        guard let interaction = pendingInteraction else { return false }
+        return interaction.sessionId == sessionId && !interaction.resolved
+    }
+
+    /// Typed in the panel's thread composer: resolves the session's blocked
+    /// ask if one waits, otherwise queues in its inbox (delivered live to a
+    /// listener, or on the session's next check-in).
+    func sendMessage(toSession sessionId: String, text: String) {
+        if let interaction = pendingInteraction, interaction.sessionId == sessionId, !interaction.resolved {
+            fulfillInteraction(interaction, text: text, includeScreenshot: false)
+            return
+        }
+        let live = inbox.hasWaiter(for: sessionId)
+        inbox.add(text: text, attachments: [], session: sessionId)
+        replyBubble.showTransient(live ? "sent to \(sessionName(for: sessionId))"
+                                       : "queued for \(sessionName(for: sessionId)) — delivered on its next check-in",
+                                  seconds: 5)
+    }
+
+    /// The thread header's 🔊 — same read-aloud as re-selecting the session.
+    func speakThread(_ sessionId: String) {
+        guard let queue = sessionPushes[sessionId], !queue.isEmpty else { return }
+        var request = chatPanel.currentTTSRequest()
+        request.text = queue.map(\.text).joined(separator: "\n\n")
+        _ = handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
     }
 }
