@@ -109,14 +109,6 @@
     width: 6px; height: 6px; border-radius: 3px; background: var(--accent);
     box-shadow: 0 0 6px rgba(212,168,83,.8);
   }
-  .item .acts {
-    display: flex; gap: 4px; justify-content: flex-end; margin-top: 7px;
-  }
-  .item .a {
-    font-size: 9.5px; font-weight: 600; color: var(--text2);
-    background: #2e2a25; border-radius: 5px; padding: 2px 7px;
-  }
-  .item .a.hot { color: var(--accent); }
 
   /* agents: chronological list → pushed thread (master-detail) */
   .vf {
@@ -258,7 +250,7 @@
 <h2>2 · Inbox — everything you said, with a destination</h2>
 <div class="row">
   <div class="stage">
-    <div class="label"><b>All view.</b> One reverse-chron list, nothing but the words. Destination is invisible data — the filter chips are the only place it surfaces. Hover reveals the actions.</div>
+    <div class="label"><b>All view.</b> One reverse-chron list, nothing but the words. Destination is invisible data — the filter chips are the only place it surfaces.</div>
     <div class="panel">
       <div class="titlebar"><span class="app">Voice Flow</span><span class="spacer"></span><span class="tic">⚙</span></div>
       <div class="tabs">
@@ -279,7 +271,6 @@
         </div>
         <div class="item hover">
           <div class="txt">let the overlay manager interpolate between anchor frames when the window moves</div>
-          <div class="acts"><span class="a">⧉</span><span class="a">🔊</span><span class="a hot">→ assistant</span><span class="a hot">ticket</span><span class="a">✕</span></div>
         </div>
         <div class="item">
           <div class="txt">hey voiceflow, structure these thoughts into a spec…</div>
@@ -291,7 +282,7 @@
     </div>
   </div>
   <div class="stage">
-    <div class="label"><b>Kept filter — the brain-dump review (ticket #2).</b> Only kept items; the chip count tracks what’s unrevisited, “✓ seen” clears one. This IS the inbox tab #2 asked for — as a filter, not a tab.</div>
+    <div class="label"><b>Kept filter — the brain-dump review (ticket #2).</b> Only kept items; the chip count tracks what’s unrevisited, opening an item clears it. This IS the inbox tab #2 asked for — as a filter, not a tab.</div>
     <div class="panel">
       <div class="titlebar"><span class="app">Voice Flow</span><span class="spacer"></span><span class="tic">⚙</span></div>
       <div class="tabs">
@@ -312,7 +303,6 @@
         </div>
         <div class="item hover">
           <div class="txt bright">Brain dump on pricing: talk stays free forever, agent actions are the unit…</div>
-          <div class="acts"><span class="a">⧉</span><span class="a hot">→ assistant</span><span class="a hot">ticket</span><span class="a">✓ seen</span><span class="a">✕</span></div>
         </div>
         <div class="item">
           <div class="txt">What if the watcher review posted straight into the tickets inbox…</div>
@@ -479,7 +469,7 @@ way to see and answer agent notifications, untouched by this redesign.</p>
     on the rows. The filter chips are the only surface of that field; ticket #2’s inbox is the Kept
     filter, never a fifth tab.</li>
   <li><b>Kept items are unread until revisited:</b> tracked silently — the Kept chip count and the
-    Inbox tab count carry it; “✓ seen” (or opening the item) clears one. No dots or markers on the rows.</li>
+    Inbox tab count carry it; opening the item clears it. No dots, markers, or action buttons on the rows.</li>
   <li><b>Agents nav ≡ pill picker:</b> sessions keep the picker’s numbers, unread rings and ghosts (#14) — gold numbered dots. The assistant is NOT a session: persistent first row, the VoiceFlow pill mark, never a number.</li>
   <li><b>A push is ONE flat block, question or not:</b> no cards, no timestamps, no repeated sender names, no edge decorations. The composer attaching to a block IS the ask signal; the answer then attaches beneath it (↳), in order. Otherwise a single composer sits at the bottom of the thread.</li>
   <li><b>The panel is secondary:</b> ⌃⌥1–9 on the pill remains the primary way to see and answer agent notifications; this tab is the browsable archive of the same stacks, and nothing here changes the pill flow.</li>
