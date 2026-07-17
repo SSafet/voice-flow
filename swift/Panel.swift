@@ -36,7 +36,8 @@ final class ChatPanel {
     private let height: CGFloat = 520
 
     private var panel: KeyablePanel!
-    private var tabControl: NSSegmentedControl!
+    private var inboxTabButton: NSButton!
+    private var agentsTabButton: NSButton!
     private var messagesView: MessagesView!    // messages.json archive — store only, no longer a tab
     private var dictationsView: DictationsView!
     private var agentsView: AgentsView!
@@ -257,15 +258,56 @@ final class ChatPanel {
 
     // ── Tabs ────────────────────────────────────────────
 
-    @objc private func tabTapped() {
-        let tab = ChatTab(rawValue: tabControl.selectedSegment) ?? .agents
+    @objc private func inboxTabTapped() {
         speechOpen = false
-        applyTab(tab)
+        applyTab(.inbox)
+    }
+
+    @objc private func agentsTabTapped() {
+        speechOpen = false
+        applyTab(.agents)
     }
 
     func selectTab(_ tab: ChatTab) {
-        tabControl.selectedSegment = tab.rawValue
         applyTab(tab)
+    }
+
+    private func tabButton(action: Selector) -> NSButton {
+        let button = NSButton(title: "", target: self, action: action)
+        button.isBordered = false
+        button.wantsLayer = true
+        button.layer?.cornerRadius = 7
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        return button
+    }
+
+    /// Amber active tab, quiet inactive; unread counts ride along.
+    private func styleTabs() {
+        guard inboxTabButton != nil, agentsTabButton != nil else { return }
+        let inboxCount = dictationsView?.unrevisitedCount ?? 0
+        let agentsCount = agentsView?.dataSource?.agentSessionRows()
+            .filter { $0.unread }.count ?? 0
+        styleTab(inboxTabButton, title: "Inbox", count: inboxCount, active: currentTab == .inbox)
+        styleTab(agentsTabButton, title: "Agents", count: agentsCount, active: currentTab == .agents)
+    }
+
+    private func styleTab(_ button: NSButton, title: String, count: Int, active: Bool) {
+        let dark = NSColor(r: 23, g: 21, b: 15)
+        let text = count > 0 ? "\(title)  \(count)" : title
+        let attributed = NSMutableAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+            .foregroundColor: active ? dark : Theme.text2,
+        ])
+        if count > 0 {
+            let countRange = NSRange(location: title.count + 2, length: text.count - title.count - 2)
+            attributed.addAttributes([
+                .font: NSFont.systemFont(ofSize: 10.5, weight: .bold),
+                .foregroundColor: active ? NSColor(r: 23, g: 21, b: 15, a: 190) : Theme.accent,
+            ], range: countRange)
+        }
+        button.attributedTitle = attributed
+        button.layer?.backgroundColor = active ? Theme.accent.cgColor : NSColor.clear.cgColor
     }
 
     /// Show the Speech surface (♪) over whatever tab is current.
@@ -286,6 +328,7 @@ final class ChatPanel {
         dictationsView.isHidden = !(tab == .inbox && !speechOpen)
         ttsView.isHidden = !speechOpen
         speechButton.contentTintColor = speechOpen ? Theme.accent : Theme.text3
+        styleTabs()
         updateEmptyLabel()
         if assistant {
             panel.makeFirstResponder(inputField)
@@ -320,6 +363,7 @@ final class ChatPanel {
     /// Repaint the Agents surface from fresh data (no-op when hidden).
     func refreshAgents() {
         if isVisible, !agentsView.isHidden { agentsView.refresh() }
+        styleTabs()
     }
 
     private func openAssistant() {
@@ -347,6 +391,7 @@ final class ChatPanel {
     func addDictation(text: String, time: String,
                       destination: CaptureDestination = .pasted, seen: Bool? = nil) {
         dictationsView.addEntry(text: text, time: time, destination: destination, seen: seen)
+        styleTabs()
     }
 
     func currentTTSRequest() -> TTSRequest { ttsView.currentTTSRequest() }
@@ -496,14 +541,11 @@ final class ChatPanel {
         inputRow.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 12, right: 12)
         inputRow.translatesAutoresizingMaskIntoConstraints = false
 
-        // Tabs: two content surfaces + the ♪ speech toggle ---------------------
-        tabControl = NSSegmentedControl(
-            labels: ["Inbox", "Agents"],
-            trackingMode: .selectOne,
-            target: self, action: #selector(tabTapped)
-        )
-        tabControl.selectedSegment = ChatTab.agents.rawValue
-        tabControl.translatesAutoresizingMaskIntoConstraints = false
+        // Tabs: two content surfaces + the ♪ speech toggle — custom warm strip
+        // (the mock's full-width amber tabs with unread counts; never the
+        // system-blue segmented control).
+        inboxTabButton = tabButton(action: #selector(inboxTabTapped))
+        agentsTabButton = tabButton(action: #selector(agentsTabTapped))
 
         speechButton = NSButton(title: "♪", target: self, action: #selector(speechTapped))
         speechButton.isBordered = false
@@ -511,17 +553,26 @@ final class ChatPanel {
         speechButton.contentTintColor = Theme.text3
         speechButton.toolTip = "Speech — paste text and play it aloud"
         speechButton.translatesAutoresizingMaskIntoConstraints = false
+        speechButton.widthAnchor.constraint(equalToConstant: 26).isActive = true
+
+        let strip = NSStackView(views: [inboxTabButton, agentsTabButton, speechButton])
+        strip.orientation = .horizontal
+        strip.spacing = 4
+        strip.edgeInsets = NSEdgeInsets(top: 3, left: 3, bottom: 3, right: 3)
+        strip.wantsLayer = true
+        strip.layer?.cornerRadius = 9
+        strip.layer?.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10).cgColor
+        strip.translatesAutoresizingMaskIntoConstraints = false
+        inboxTabButton.widthAnchor.constraint(equalTo: agentsTabButton.widthAnchor).isActive = true
 
         let tabBar = NSView()
         tabBar.translatesAutoresizingMaskIntoConstraints = false
-        tabBar.addSubview(tabControl)
-        tabBar.addSubview(speechButton)
+        tabBar.addSubview(strip)
         NSLayoutConstraint.activate([
-            tabControl.centerXAnchor.constraint(equalTo: tabBar.centerXAnchor),
-            tabControl.topAnchor.constraint(equalTo: tabBar.topAnchor, constant: 2),
-            tabControl.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: -6),
-            speechButton.leadingAnchor.constraint(equalTo: tabControl.trailingAnchor, constant: 10),
-            speechButton.centerYAnchor.constraint(equalTo: tabControl.centerYAnchor),
+            strip.leadingAnchor.constraint(equalTo: tabBar.leadingAnchor, constant: 12),
+            strip.trailingAnchor.constraint(equalTo: tabBar.trailingAnchor, constant: -12),
+            strip.topAnchor.constraint(equalTo: tabBar.topAnchor, constant: 2),
+            strip.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: -6),
         ])
 
         // Surfaces (hidden until selected) ------------------------------------
@@ -529,6 +580,7 @@ final class ChatPanel {
         dictationsView = DictationsView()
         dictationsView.isHidden = true
         dictationsView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        dictationsView.onUnreadChanged = { [weak self] _ in self?.styleTabs() }
         agentsView = AgentsView()
         agentsView.isHidden = true
         agentsView.setContentHuggingPriority(.defaultLow, for: .vertical)
