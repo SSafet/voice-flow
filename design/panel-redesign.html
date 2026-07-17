@@ -122,35 +122,8 @@
   }
   .item .a.hot { color: var(--accent); }
 
-  /* agents: session navigation variants */
-  .split { display: flex; gap: 10px; }
-  .rail { width: 128px; flex: none; display: flex; flex-direction: column; gap: 4px; }
-  .sess {
-    display: flex; align-items: center; gap: 7px;
-    border-radius: 8px; padding: 5px 7px;
-    font-size: 11px; font-weight: 600; color: var(--text2);
-  }
-  .sess.on { background: var(--card-hover); color: var(--text); }
-  /* option A: horizontal picker strip (≡ the pill picker) */
-  .strip { display: flex; align-items: center; gap: 5px; margin: 2px 0 10px; }
-  .schip {
-    display: flex; align-items: center; gap: 6px;
-    border-radius: 999px; padding: 3px 10px 3px 5px;
-    font-size: 11px; font-weight: 600; color: var(--text2);
-    border: 1px solid transparent;
-  }
-  .schip.on { background: var(--card-hover); color: var(--text); border-color: var(--border-hover); }
-  .strip .divider { width: 1px; height: 16px; background: var(--border-hover); margin: 0 3px; }
+  /* agents: chronological list → pushed thread (master-detail) */
   .sdot.ai { background: transparent; border: 1px solid var(--green); color: var(--green); }
-  /* option B: one feed, origin tag on each bubble */
-  .who .sd {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 12px; height: 12px; border-radius: 6px; margin-right: 4px;
-    font-size: 7px; font-weight: 700; color: #17150f; background: var(--accent);
-    vertical-align: -2px;
-  }
-  .who .sd.ai { background: transparent; border: 1px solid var(--green); color: var(--green); }
-  /* option D: chronological list → pushed thread (master-detail) */
   .lrow {
     display: flex; align-items: center; gap: 9px;
     padding: 6px 9px; border-radius: 8px;
@@ -167,16 +140,16 @@
   .thd .back { color: var(--text2); font-size: 13px; }
   .thd .nm { font-size: 12.5px; font-weight: 700; color: var(--text); }
   .thd .spk { margin-left: auto; color: var(--text3); font-size: 11px; }
-  /* option C: accordion */
-  .acc { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; margin-bottom: 8px; }
-  .acc .hd {
-    display: flex; align-items: center; gap: 8px; padding: 7px 10px;
-    font-size: 11.5px; font-weight: 600; color: var(--text2); background: var(--card);
-  }
-  .acc .hd .n { margin-left: auto; font-size: 9.5px; font-weight: 700; color: var(--accent); }
-  .acc .hd .chev { color: var(--text3); font-size: 9px; }
-  .acc.open .hd { color: var(--text); }
-  .acc .bd { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); }
+  /* flat thread: a push is ONE plain block, question or not; answers attach */
+  .fmsg { padding: 8px 2px 9px; border-bottom: 1px solid var(--border); }
+  .fmsg.last { border-bottom: none; }
+  .fmsg .t { font-size: 10px; color: var(--text3); margin-bottom: 2px; }
+  .fmsg .m { font-size: 12px; color: var(--text2); }
+  .fmsg .m.bright { color: var(--text); }
+  .fmsg.ask { box-shadow: inset 2px 0 0 var(--accent); padding-left: 10px; }
+  .ans { display: flex; gap: 7px; align-items: baseline; margin: 6px 0 0 12px; font-size: 11.5px; color: var(--text2); }
+  .ans .arw { color: var(--accent); font-weight: 700; }
+  .ans .at { font-size: 10px; color: var(--text3); }
   .sdot {
     position: relative;
     width: 14px; height: 14px; border-radius: 7px; flex: none;
@@ -192,18 +165,6 @@
   .sess .ghost { font-size: 8.5px; color: var(--text3); }
   .thread { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 
-  .bub {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 9px; padding: 8px 10px;
-  }
-  .bub .who { font-size: 10.5px; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
-  .bub .who .t { font-weight: 400; color: var(--text3); font-size: 9.5px; }
-  .bub .m { font-size: 12px; color: var(--text2); }
-  .bub .m.bright { color: var(--text); }
-  .bub.ask { border-color: rgba(212,168,83,.55); }
-  .bub.me { background: rgba(212,168,83,.07); border-color: transparent; margin-left: 34px; }
-  .bub.me .who { color: var(--text2); }
   .reply-line {
     display: flex; gap: 6px; margin-top: 7px;
   }
@@ -374,108 +335,13 @@
 <p class="sub">This tab holds <b>ALL of them</b>: every connected Claude/MCP session (gold numbered dots,
 numbering ≡ the pill picker ⌃⌥1–6, unread rings and ghosts included) <b>plus</b> the built-in
 assistant — which is not a session, so it gets its own mark: a green outlined <b>✦</b>, never a number.
-Four layout options for navigating them — no left rail.</p>
+<b>Chosen layout:</b> a minimal latest-first list of titles as the tab’s root; clicking pushes the
+thread over it. Threads are <b>flat</b> — an agent push is one plain block whether it asks or not,
+your answer attaches under the message it answers, and the composer either attaches to the ask
+being answered or sits once at the bottom.</p>
 <div class="row">
   <div class="stage">
-    <div class="label"><b>Option A — picker strip.</b> Sessions run horizontally under the tabs: the literal pill picker, relocated. Assistant sits apart behind a divider. The thread gets the full panel width.</div>
-    <div class="panel">
-      <div class="titlebar"><span class="app">Voice Flow</span><span class="session">Start session</span><span class="spacer"></span><span class="tic">⚙</span></div>
-      <div class="tabs">
-        <div class="tab">Inbox <span class="count">3</span></div>
-        <div class="tab active">Agents <span class="count">2</span></div>
-        <div class="tab util">♪</div>
-      </div>
-      <div class="body">
-        <div class="strip">
-          <span class="schip"><span class="sdot ai">✦</span></span>
-          <span class="divider"></span>
-          <span class="schip on"><span class="sdot">1</span><span class="nm">ticket #15 — panel…</span></span>
-          <span class="schip"><span class="sdot off ring">2</span></span>
-        </div>
-        <div class="thread">
-          <div class="bub">
-            <div class="who">ticket #15 — panel redesign <span class="t">· 23:52</span></div>
-            <div class="m">Mock is ready — design/panel-redesign.html. Two surfaces + speech drawer.</div>
-          </div>
-          <div class="bub ask">
-            <div class="who">ticket #15 — panel redesign <span class="t">· asks</span></div>
-            <div class="m bright">Approve the mock, or adjust the Agents layout?</div>
-            <div class="reply-line"><span class="fld">type an answer…</span><span class="go">send</span></div>
-            <div class="hint">or hold ⌃⌥ and talk — reply routes to this session</div>
-          </div>
-          <div class="bub me">
-            <div class="who">you <span class="t">· 23:58</span></div>
-            <div class="m">approved, ship step (a)</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="stage">
-    <div class="label"><b>Option B — one feed.</b> No session navigation at all: every message from every agent in one chronological stream, each bubble tagged with its origin dot. Tapping a tag filters to that agent. Closest to today’s Messages tab.</div>
-    <div class="panel">
-      <div class="titlebar"><span class="app">Voice Flow</span><span class="session">Start session</span><span class="spacer"></span><span class="tic">⚙</span></div>
-      <div class="tabs">
-        <div class="tab">Inbox <span class="count">3</span></div>
-        <div class="tab active">Agents <span class="count">2</span></div>
-        <div class="tab util">♪</div>
-      </div>
-      <div class="body">
-        <div class="thread">
-          <div class="bub">
-            <div class="who"><span class="sd ai">✦</span>assistant <span class="t">· gpt-5.6-luna · 22:58</span></div>
-            <div class="m">Here’s the structure: 1) capture, 2) route, 3) review</div>
-          </div>
-          <div class="bub">
-            <div class="who"><span class="sd">2</span>codex-turns <span class="t">· ghost · 23:10</span></div>
-            <div class="m">Refactor finished — 4 files, tests green.</div>
-          </div>
-          <div class="bub ask">
-            <div class="who"><span class="sd">1</span>ticket #15 — panel redesign <span class="t">· asks · 23:52</span></div>
-            <div class="m bright">Approve the mock, or adjust the Agents layout?</div>
-            <div class="reply-line"><span class="fld">type an answer…</span><span class="go">send</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="stage">
-    <div class="label"><b>Option C — accordion.</b> Each agent is a full-width section; the open one expands its thread in place. Assistant is just the first section, marked ✦. Unread counts sit on the closed headers.</div>
-    <div class="panel">
-      <div class="titlebar"><span class="app">Voice Flow</span><span class="session">Start session</span><span class="spacer"></span><span class="tic">⚙</span></div>
-      <div class="tabs">
-        <div class="tab">Inbox <span class="count">3</span></div>
-        <div class="tab active">Agents <span class="count">2</span></div>
-        <div class="tab util">♪</div>
-      </div>
-      <div class="body">
-        <div class="acc">
-          <div class="hd"><span class="sdot ai">✦</span>assistant<span class="chev">▸</span></div>
-        </div>
-        <div class="acc open">
-          <div class="hd"><span class="sdot">1</span>ticket #15 — panel redesign<span class="chev">▾</span></div>
-          <div class="bd">
-            <div class="bub ask">
-              <div class="who">asks <span class="t">· 23:52</span></div>
-              <div class="m bright">Approve the mock, or adjust the Agents layout?</div>
-              <div class="reply-line"><span class="fld">type an answer…</span><span class="go">send</span></div>
-            </div>
-            <div class="bub me">
-              <div class="who">you <span class="t">· 23:58</span></div>
-              <div class="m">approved, ship step (a)</div>
-            </div>
-          </div>
-        </div>
-        <div class="acc">
-          <div class="hd"><span class="sdot off ring">2</span>codex-turns <span class="ghost">ghost</span><span class="n">1 unread</span><span class="chev">▸</span></div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-<div class="row" style="margin-top:24px">
-  <div class="stage">
-    <div class="label"><b>Option D — chronological list → thread (master-detail).</b> The tab’s root is a minimal, latest-first list of titles — Claude Code Recents style. The unread glow dot and the session number are the only marks; the assistant is one row among them, wearing ✦.</div>
+    <div class="label"><b>Root — the session list.</b> Minimal, latest-first titles — Claude Code Recents style. The unread glow dot and the session number are the only marks; the assistant is one row among them, wearing ✦.</div>
     <div class="panel">
       <div class="titlebar"><span class="app">Voice Flow</span><span class="session">Start session</span><span class="spacer"></span><span class="tic">⚙</span></div>
       <div class="tabs">
@@ -503,7 +369,7 @@ Four layout options for navigating them — no left rail.</p>
     </div>
   </div>
   <div class="stage">
-    <div class="label"><b>Option D, opened.</b> Clicking a row pushes the thread over the list — full width, back chevron returns. ⌃⌥N still jumps straight into a session’s thread; the number lives in the header.</div>
+    <div class="label"><b>Thread — answering a blocking ask.</b> Flat blocks, no cards, no repeated names (the header already says who). A push that asks is still ONE block — amber edge — and the composer attaches directly to it while it’s unanswered.</div>
     <div class="panel">
       <div class="titlebar"><span class="app">Voice Flow</span><span class="session">Start session</span><span class="spacer"></span><span class="tic">⚙</span></div>
       <div class="tabs">
@@ -515,21 +381,15 @@ Four layout options for navigating them — no left rail.</p>
         <div class="thd">
           <span class="back">‹</span><span class="sdot">1</span><span class="nm">ticket #15 — panel redesign</span><span class="spk">🔊</span>
         </div>
-        <div class="thread">
-          <div class="bub">
-            <div class="who">ticket #15 — panel redesign <span class="t">· 23:52</span></div>
-            <div class="m">Mock is ready — design/panel-redesign.html. Two surfaces + speech drawer.</div>
-          </div>
-          <div class="bub ask">
-            <div class="who">asks</div>
-            <div class="m bright">Approve the mock, or adjust the Agents layout?</div>
-            <div class="reply-line"><span class="fld">type an answer…</span><span class="go">send</span></div>
-            <div class="hint">or hold ⌃⌥ and talk — reply routes to this session</div>
-          </div>
-          <div class="bub me">
-            <div class="who">you <span class="t">· 23:58</span></div>
-            <div class="m">approved, ship step (a)</div>
-          </div>
+        <div class="fmsg">
+          <div class="t">23:52</div>
+          <div class="m">Mock is ready — design/panel-redesign.html. Two surfaces + speech drawer.</div>
+        </div>
+        <div class="fmsg ask last">
+          <div class="t">23:55</div>
+          <div class="m bright">Approve the mock, or adjust the Agents layout?</div>
+          <div class="reply-line"><span class="fld">answer…</span><span class="go">send</span></div>
+          <div class="hint">or hold ⌃⌥ and talk — reply routes to this session</div>
         </div>
       </div>
     </div>
@@ -537,7 +397,7 @@ Four layout options for navigating them — no left rail.</p>
 </div>
 <div class="row" style="margin-top:24px">
   <div class="stage">
-    <div class="label"><b>Assistant thread — Chat folded in (shown in Option A layout).</b> Selecting ✦ opens the assistant thread; the old Chat composer (type / snap / talk) lives only here. #4’s wake-keyword exchanges land here too.</div>
+    <div class="label"><b>Thread — after the answer.</b> Your reply is not a separate card: it attaches under the message it answered (↳), in order, and the single composer sits at the bottom for talking to the latest.</div>
     <div class="panel">
       <div class="titlebar"><span class="app">Voice Flow</span><span class="session">Start session</span><span class="spacer"></span><span class="tic">⚙</span></div>
       <div class="tabs">
@@ -546,25 +406,53 @@ Four layout options for navigating them — no left rail.</p>
         <div class="tab util">♪</div>
       </div>
       <div class="body">
-        <div class="strip">
-          <span class="schip on"><span class="sdot ai">✦</span><span class="nm">assistant</span></span>
-          <span class="divider"></span>
-          <span class="schip"><span class="sdot off">1</span></span>
-          <span class="schip"><span class="sdot off ring">2</span></span>
+        <div class="thd">
+          <span class="back">‹</span><span class="sdot">1</span><span class="nm">ticket #15 — panel redesign</span><span class="spk">🔊</span>
         </div>
-        <div class="thread">
-          <div class="bub me">
-            <div class="who">you <span class="t">· via “hey voiceflow” · 22:58</span></div>
-            <div class="m">structure these thoughts into a spec…</div>
-          </div>
-          <div class="bub">
-            <div class="who">assistant <span class="t">· gpt-5.6-luna · streaming</span></div>
-            <div class="m">Here’s the structure: 1) capture, 2) route, 3) review<span class="stream"><i></i><i></i><i></i></span></div>
-          </div>
-          <div class="composer">
-            <span class="fld">message the assistant…</span>
-            <span class="cbtn">📷</span><span class="cbtn">🎙</span><span class="cbtn hot">send</span>
-          </div>
+        <div class="fmsg">
+          <div class="t">23:52</div>
+          <div class="m">Mock is ready — design/panel-redesign.html. Two surfaces + speech drawer.</div>
+        </div>
+        <div class="fmsg ask">
+          <div class="t">23:55</div>
+          <div class="m bright">Approve the mock, or adjust the Agents layout?</div>
+          <div class="ans"><span class="arw">↳</span>approved, ship step (a)<span class="at">23:58</span></div>
+        </div>
+        <div class="fmsg last">
+          <div class="t">00:04</div>
+          <div class="m">Starting step (a) — destination field + kept filter.</div>
+        </div>
+        <div class="composer">
+          <span class="fld">message this session…</span>
+          <span class="cbtn">🎙</span><span class="cbtn hot">send</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="stage">
+    <div class="label"><b>Assistant thread — Chat folded in.</b> Opening the ✦ row is the old Chat tab: same flat blocks, your prompts carry only a muted “you” meta line, and the composer (type / snap / talk) always sits at the bottom. #4’s wake-keyword exchanges land here too.</div>
+    <div class="panel">
+      <div class="titlebar"><span class="app">Voice Flow</span><span class="session">Start session</span><span class="spacer"></span><span class="tic">⚙</span></div>
+      <div class="tabs">
+        <div class="tab">Inbox <span class="count">3</span></div>
+        <div class="tab active">Agents <span class="count">2</span></div>
+        <div class="tab util">♪</div>
+      </div>
+      <div class="body">
+        <div class="thd">
+          <span class="back">‹</span><span class="sdot ai">✦</span><span class="nm">assistant</span><span class="spk">🔊</span>
+        </div>
+        <div class="fmsg">
+          <div class="t">22:58 · you · via “hey voiceflow”</div>
+          <div class="m">structure these thoughts into a spec…</div>
+        </div>
+        <div class="fmsg last">
+          <div class="t">22:58 · gpt-5.6-luna · streaming</div>
+          <div class="m bright">Here’s the structure: 1) capture, 2) route, 3) review<span class="stream"><i></i><i></i><i></i></span></div>
+        </div>
+        <div class="composer">
+          <span class="fld">message the assistant…</span>
+          <span class="cbtn">📷</span><span class="cbtn">🎙</span><span class="cbtn hot">send</span>
         </div>
       </div>
     </div>
@@ -608,7 +496,7 @@ Four layout options for navigating them — no left rail.</p>
     The Inbox filters are views over that field; ticket #2’s inbox is the Kept filter, never a fifth tab.</li>
   <li><b>Kept items are unread until revisited:</b> the amber glow dot; “✓ seen” (or opening the item) clears it. The Inbox tab count = unrevisited kept items.</li>
   <li><b>Agents nav ≡ pill picker:</b> whatever the layout, connected sessions keep the picker’s numbers, unread rings and ghosts (#14) — gold numbered dots. The built-in assistant is NOT a session: it always wears the green outlined ✦ and never a number.</li>
-  <li><b>Asks are brighter:</b> a push that wants an answer carries the amber border + inline answer box — the panel twin of the pill’s ask rule.</li>
+  <li><b>A push is ONE flat block, question or not:</b> no cards, no repeated sender names (the thread header carries them). An ask gets the amber left edge — the panel twin of the pill’s ask rule — and the composer attaches to it while unanswered; the answer then attaches beneath it (↳), in order. Otherwise a single composer sits at the bottom of the thread.</li>
   <li><b>Speech is a verb, not a place:</b> the drawer + per-row 🔊 replace the tab. Audio still never auto-plays.</li>
   <li><b>Sync boundary (#7):</b> Inbox = captures up, Agents = messages down — the two streams a future mobile client syncs, unchanged.</li>
 </ul>
