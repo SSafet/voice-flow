@@ -109,15 +109,6 @@
   .item .time { font-size: 10px; color: var(--text3); }
   .item .txt { font-size: 12px; color: var(--text2); overflow: hidden; }
   .item .txt.bright { color: var(--text); }
-  .badge {
-    font-size: 9px; font-weight: 700; letter-spacing: .04em;
-    border-radius: 5px; padding: 1px 6px;
-  }
-  .badge.pasted { color: var(--text3); background: rgba(255,245,230,.05); }
-  .badge.kept { color: #17150f; background: var(--accent); }
-  .badge.kept.seen { color: var(--accent); background: rgba(212,168,83,.14); }
-  .badge.assistant { color: var(--green); background: rgba(110,215,130,.1); }
-  .badge.session { color: var(--text); background: rgba(255,245,230,.09); }
   .unread-dot {
     width: 6px; height: 6px; border-radius: 3px; background: var(--accent);
     box-shadow: 0 0 6px rgba(212,168,83,.8);
@@ -227,7 +218,6 @@
   .rules { max-width: 760px; color: var(--text2); font-size: 12.5px; }
   .rules li { margin: 0 0 10px 18px; }
   .rules b { color: var(--text); }
-  .rules .badge { vertical-align: 1px; }
 </style>
 </head>
 <body>
@@ -263,7 +253,7 @@
 <h2>2 · Inbox — everything you said, with a destination</h2>
 <div class="row">
   <div class="stage">
-    <div class="label"><b>All view.</b> One reverse-chron list. Every capture carries a destination badge; hover reveals routing actions. Kept items glow until revisited.</div>
+    <div class="label"><b>All view.</b> One reverse-chron list. Each capture's destination reads as quiet meta text; hover reveals routing actions. Kept items glow until revisited.</div>
     <div class="panel">
       <div class="titlebar"><span class="app">Voice Flow</span><span class="session">Start session</span><span class="spacer"></span><span class="tic">⚙</span></div>
       <div class="tabs">
@@ -280,20 +270,20 @@
           <span class="search">⌕ search</span>
         </div>
         <div class="item">
-          <div class="meta"><span class="unread-dot"></span><span class="badge kept">KEPT</span><span class="time">23:41</span></div>
+          <div class="meta"><span class="unread-dot"></span><span class="time">23:41 · kept</span></div>
           <div class="txt bright">Idea for the mobile app — the pill could live in the dynamic island and hotkeys become…</div>
         </div>
         <div class="item hover">
-          <div class="meta"><span class="badge pasted">PASTED · Xcode</span><span class="time">23:12</span></div>
+          <div class="meta"><span class="time">23:12 · pasted into Xcode</span></div>
           <div class="txt">let the overlay manager interpolate between anchor frames when the window moves</div>
           <div class="acts"><span class="a">copy</span><span class="a">🔊</span><span class="a hot">→ assistant</span><span class="a hot">ticket</span><span class="a">✕</span></div>
         </div>
         <div class="item">
-          <div class="meta"><span class="badge assistant">→ ASSISTANT</span><span class="time">22:58</span></div>
+          <div class="meta"><span class="time">22:58 · → assistant</span></div>
           <div class="txt">hey voiceflow, structure these thoughts into a spec…</div>
         </div>
         <div class="item">
-          <div class="meta"><span class="badge session">→ SESSION 1</span><span class="time">22:40</span></div>
+          <div class="meta"><span class="time">22:40 · → session 1</span></div>
           <div class="txt">yes, ship it — and add the amber ring on unread</div>
         </div>
       </div>
@@ -317,16 +307,16 @@
           <span class="search">⌕ search</span>
         </div>
         <div class="item">
-          <div class="meta"><span class="unread-dot"></span><span class="badge kept">KEPT</span><span class="time">23:41</span></div>
+          <div class="meta"><span class="unread-dot"></span><span class="time">23:41</span></div>
           <div class="txt bright">Idea for the mobile app — the pill could live in the dynamic island and hotkeys become…</div>
         </div>
         <div class="item hover">
-          <div class="meta"><span class="unread-dot"></span><span class="badge kept">KEPT</span><span class="time">21:03</span></div>
+          <div class="meta"><span class="unread-dot"></span><span class="time">21:03</span></div>
           <div class="txt bright">Brain dump on pricing: talk stays free forever, agent actions are the unit…</div>
           <div class="acts"><span class="a">copy</span><span class="a hot">→ assistant</span><span class="a hot">ticket</span><span class="a">✓ seen</span><span class="a">✕</span></div>
         </div>
         <div class="item">
-          <div class="meta"><span class="badge kept seen">KEPT</span><span class="time">yesterday</span></div>
+          <div class="meta"><span class="time">yesterday</span></div>
           <div class="txt">What if the watcher review posted straight into the tickets inbox…</div>
         </div>
       </div>
@@ -429,7 +419,7 @@
       </div>
       <div class="body">
         <div class="item">
-          <div class="meta"><span class="badge kept">KEPT</span><span class="time">23:41</span></div>
+          <div class="meta"><span class="unread-dot"></span><span class="time">23:41 · kept</span></div>
           <div class="txt">Idea for the mobile app — the pill could live in the dynamic island…</div>
         </div>
       </div>
@@ -440,10 +430,10 @@
 <h2>5 · Rules</h2>
 <ul class="rules">
   <li><b>Destination is data, not UI state:</b> every capture stores one destination —
-    <span class="badge pasted">PASTED · app</span> <span class="badge kept">KEPT</span>
-    <span class="badge assistant">→ ASSISTANT</span> <span class="badge session">→ SESSION N</span>.
+    <i>pasted into app</i> · <i>kept</i> · <i>→ assistant</i> · <i>→ session N</i> — shown only as
+    quiet meta text next to the timestamp, never as a pill/badge.
     The Inbox filters are views over that field; ticket #2’s inbox is the Kept filter, never a fifth tab.</li>
-  <li><b>Kept items are unread until revisited:</b> amber badge + glow dot; “✓ seen” (or opening the item) clears it. The Inbox tab count = unrevisited kept items.</li>
+  <li><b>Kept items are unread until revisited:</b> the amber glow dot; “✓ seen” (or opening the item) clears it. The Inbox tab count = unrevisited kept items.</li>
   <li><b>Agents rail ≡ pill picker:</b> same sessions, same numbers, same unread rings, assistant pinned as A. One mental model in both surfaces; ghosts stay readable until their stack is cleared (#14).</li>
   <li><b>Asks are brighter:</b> a push that wants an answer carries the amber border + inline answer box — the panel twin of the pill’s ask rule.</li>
   <li><b>Speech is a verb, not a place:</b> the drawer + per-row 🔊 replace the tab. Audio still never auto-plays.</li>
