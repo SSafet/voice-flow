@@ -26,6 +26,7 @@ final class SettingsStore: ObservableObject {
     @Published var ttsSpeed: Double { didSet { commit() } }
     @Published var agentModel: String { didSet { commit() } }
     @Published var agentBaseURL: String { didSet { commit() } }
+    @Published var agentBackend: String { didSet { commit() } }
     @Published var sessionSendToAgent: Bool { didSet { commit() } }
     @Published var talkSendToAgent: Bool { didSet { commit() } }
     @Published var doubleSelectSpeak: Bool { didSet { commit() } }
@@ -66,6 +67,7 @@ final class SettingsStore: ObservableObject {
         ttsSpeed = s.ttsSpeed
         agentModel = s.agentModel
         agentBaseURL = s.agentBaseURL
+        agentBackend = s.agentBackend
         sessionSendToAgent = s.sessionSendToAgent
         talkSendToAgent = s.talkSendToAgent
         doubleSelectSpeak = s.doubleSelectSpeak
@@ -106,6 +108,7 @@ final class SettingsStore: ObservableObject {
         s.agentModel = model.isEmpty ? DefaultAgentModel : model
         let url = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         s.agentBaseURL = url.isEmpty ? DefaultAgentBaseURL : url
+        s.agentBackend = agentBackend == AgentBackendAPI ? AgentBackendAPI : AgentBackendCodex
         s.sessionSendToAgent = sessionSendToAgent
         s.talkSendToAgent = talkSendToAgent
         s.doubleSelectSpeak = doubleSelectSpeak
@@ -450,8 +453,36 @@ private struct VoiceSettingsView: View {
 private struct AssistantSettingsView: View {
     @ObservedObject var store: SettingsStore
 
+    private var codexStatus: String {
+        guard CodexExecBackend.findBinary() != nil else { return "Not installed" }
+        return CodexExecBackend.isLoggedIn ? "Signed in with ChatGPT" : "Installed — not signed in"
+    }
+
     var body: some View {
         Form {
+            Section {
+                Picker(selection: $store.agentBackend) {
+                    Text("ChatGPT subscription (Codex)").tag(AgentBackendCodex)
+                    Text("API key (OpenRouter)").tag(AgentBackendAPI)
+                } label: {
+                    SettingRowLabel(title: "Backend",
+                                    subtitle: "What powers the assistant's replies")
+                }
+                .pickerStyle(.menu)
+                if store.agentBackend == AgentBackendCodex {
+                    LabeledContent {
+                        Text(codexStatus).foregroundStyle(.secondary)
+                    } label: {
+                        SettingRowLabel(title: "Codex CLI",
+                                        subtitle: "Sign in once with “codex login” in Terminal — no API billing")
+                    }
+                }
+            } header: {
+                Text("Backend")
+            } footer: {
+                Text("The subscription backend answers through your ChatGPT plan's included Codex quota (weekly cap). When Codex is unavailable — quota exhausted, signed out, or not installed — the assistant falls back to the API key below for that turn.")
+            }
+
             Section {
                 APIKeyRow(
                     label: "OpenRouter API key",
@@ -465,7 +496,9 @@ private struct AssistantSettingsView: View {
             } header: {
                 Text("Account")
             } footer: {
-                Text("The assistant needs an OpenRouter key (openrouter.ai) to answer questions, see your screen, and help you work.")
+                Text(store.agentBackend == AgentBackendCodex
+                     ? "Optional with the subscription backend — used as the fallback, and for anything Codex can't do."
+                     : "The assistant needs an OpenRouter key (openrouter.ai) to answer questions, see your screen, and help you work.")
             }
 
             Section {

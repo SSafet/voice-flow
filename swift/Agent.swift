@@ -50,6 +50,13 @@ final class AgentSession {
     private let screenCapture: ScreenCapture
     private let control = ComputerControl()
 
+    // Codex subscription backend: the CLI keeps the conversation server-side,
+    // we hold the thread id; `messages` still accumulates so the API path can
+    // take over mid-conversation on fallback.
+    private let codex = CodexExecBackend()
+    private var codexThreadId: String?
+    private var pendingCodexTurn: (text: String, images: [Data])?
+
     // Screenshot geometry: everything sent to the model uses one fixed size
     // so computer-tool coordinates stay consistent across the session.
     private var imageWidth = 0
@@ -70,12 +77,14 @@ final class AgentSession {
     func reset() {
         interrupt()
         messages.removeAll()
+        codexThreadId = nil
     }
 
     var hasConversation: Bool { !messages.isEmpty }
 
     func interrupt() {
         interruptRequested = true
+        codex.interrupt()
         activeTask?.cancel()
     }
 
@@ -157,7 +166,9 @@ final class AgentSession {
             onError?("The agent is still working — stop it first or wait.")
             return
         }
-        guard KeychainStore.shared.loadAgentAPIKey() != nil else {
+        let usingCodex = UserSettings.shared.agentBackend == AgentBackendCodex
+        // Codex needs no key; problems there surface (or fall back) per turn.
+        guard usingCodex || KeychainStore.shared.loadAgentAPIKey() != nil else {
             onError?(AgentError.missingAPIKey.localizedDescription)
             return
         }
@@ -185,6 +196,14 @@ final class AgentSession {
         messages.append(["role": "user", "content": content])
         pruneOldImages()
 
+        if usingCodex {
+            let jpegs = screenshots.compactMap { ImageUtils.resizeExact($0, width: imageWidth, height: imageHeight) }
+            pendingCodexTurn = (
+                text: trimmed.isEmpty ? "(No note — the screenshots are the message.)" : trimmed,
+                images: jpegs
+            )
+        }
+
         activeTask = Task { [weak self] in
             await self?.runLoop()
         }
@@ -200,6 +219,13 @@ final class AgentSession {
     }
 
     private func runLoop() async {
+        if UserSettings.shared.agentBackend == AgentBackendCodex {
+            let fallBackToAPI = await runCodexTurn()
+            guard fallBackToAPI else { return }
+            // `messages` already holds the whole conversation, including this
+            // user turn — the API loop below continues it seamlessly.
+        }
+
         var turns = 0
         let maxTurns = 40  // hard stop for runaway tool loops
 
@@ -273,6 +299,71 @@ final class AgentSession {
 
         DispatchQueue.main.async { self.onError?("Stopped — too many steps in one request.") }
         finish(nil)
+    }
+
+    // ── Codex turn ──────────────────────────────────────
+
+    /// The persona preamble Codex gets on a thread's first turn; later turns
+    /// resume the same thread, so it isn't repeated.
+    private var codexPreamble: String {
+        """
+        You are the Voice Flow companion — an assistant living in a small floating panel on the user's Mac. \
+        The user talks by voice or types; screenshots of their screen may be attached — treat any drawn \
+        annotations on them as part of the message. Replies appear in a compact chat panel: keep them \
+        concise and plain text, no markdown headings or tables. If something on screen is ambiguous, \
+        say what you see and ask one focused question.
+        """
+    }
+
+    /// Runs one turn through the Codex CLI. Returns true when the turn should
+    /// be retried through the API path instead (Codex failed and a key exists).
+    private func runCodexTurn() async -> Bool {
+        activity = .thinking
+        let turn = pendingCodexTurn ?? (text: "", images: [])
+        pendingCodexTurn = nil
+        let prompt = (codexThreadId == nil ? codexPreamble + "\n\n" : "") + turn.text
+
+        do {
+            var started = false
+            let result = try await codex.run(
+                prompt: prompt,
+                images: turn.images,
+                resumeThread: codexThreadId,
+                onToolActivity: { [weak self] label in
+                    DispatchQueue.main.async { self?.onToolActivity?(label) }
+                },
+                onAgentText: { [weak self] piece in
+                    guard let self else { return }
+                    if !started {
+                        started = true
+                        self.activity = .responding
+                        DispatchQueue.main.async { self.onAssistantStart?() }
+                    }
+                    DispatchQueue.main.async { self.onAssistantDelta?(piece) }
+                }
+            )
+            codexThreadId = result.threadId ?? codexThreadId
+            messages.append(["role": "assistant", "content": result.text])
+            finish(result.text)
+            return false
+        } catch is CancellationError {
+            handleInterruption()
+            return false
+        } catch {
+            if interruptRequested {
+                handleInterruption()
+                return false
+            }
+            if KeychainStore.shared.loadAgentAPIKey() != nil {
+                vflog("codex turn failed, falling back to API: \(error.localizedDescription)")
+                DispatchQueue.main.async { self.onToolActivity?("Codex unavailable — using the API key") }
+                return true
+            }
+            let message = error.localizedDescription
+            DispatchQueue.main.async { self.onError?(message) }
+            finish(nil)
+            return false
+        }
     }
 
     private func handleInterruption() {

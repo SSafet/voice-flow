@@ -236,6 +236,7 @@ deployed copies are build outputs.
 | `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
 | `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Claude Code. |
 | `Agent.swift` | `AgentSession`, `ComputerControl` | LLM loop that reasons over screenshots and issues screen-control tool calls. |
+| `Codex.swift` | `CodexExecBackend` | ChatGPT-subscription assistant turns via `codex exec --json` (OAuth, thread resume, image attach); the default backend, API key is the fallback. |
 | `Annotation.swift` | `AnnotationOverlay` | Draw-on-screen overlay (pen + multiline text notes with size presets). |
 | `Settings.swift` | `SettingsStore`, `SettingsWindowController`, `PermissionsWindowController`, `KeyRecorderView` | SwiftUI settings & permissions windows. |
 | `ScreenCapture.swift` | `ScreenCapture`, `CaptureScheduler`, `ImageUtils` | ScreenCaptureKit screenshots for the agent. |

@@ -158,6 +158,9 @@ class UserSettings {
     var annotateHotkey = HotkeySpec(keyCode: 96, modifiers: [], label: "F5")
     var agentModel: String = DefaultAgentModel
     var agentBaseURL: String = DefaultAgentBaseURL
+    // "codex" = ChatGPT-subscription turns via the Codex CLI (OAuth, no
+    // per-token billing), falling back to the API key; "api" = key only.
+    var agentBackend: String = AgentBackendCodex
     var voiceRepliesEnabled: Bool = false
     // Re-selecting the already-active session (⌃⌥N again / menu) reads its
     // queued messages aloud — pushes themselves never auto-play audio.
@@ -230,6 +233,9 @@ class UserSettings {
         if let v = dict["agent_base_url"] as? String {
             agentBaseURL = Self.trimmed(v, fallback: DefaultAgentBaseURL)
         }
+        if let v = dict["agent_backend"] as? String {
+            agentBackend = v == AgentBackendAPI ? AgentBackendAPI : AgentBackendCodex
+        }
         if let v = dict["voice_replies_enabled"] as? Bool { voiceRepliesEnabled = v }
         if let v = dict["double_select_speak"] as? Bool { doubleSelectSpeak = v }
         if let v = dict["session_send_to_agent"] as? Bool { sessionSendToAgent = v }
@@ -265,6 +271,7 @@ class UserSettings {
             "annotate_hotkey": annotateHotkey.toDict(),
             "agent_model": agentModel,
             "agent_base_url": agentBaseURL,
+            "agent_backend": agentBackend,
             "voice_replies_enabled": voiceRepliesEnabled,
             "double_select_speak": doubleSelectSpeak,
             "session_send_to_agent": sessionSendToAgent,
