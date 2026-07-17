@@ -2723,6 +2723,7 @@ extension AppDelegate: AgentsDataSource {
                let ask = queue.last(where: { $0.isAsk && $0.answer == nil }) {
                 preview = "asks: " + ask.text.replacingOccurrences(of: "\n", with: " ")
             }
+            if preview.count > 120 { preview = String(preview.prefix(120)) + "…" }
             return AgentSessionRow(
                 id: session.id,
                 number: index + 1,

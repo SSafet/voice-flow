@@ -399,8 +399,11 @@ final class ChatPanel {
         let headerSpacer = NSView()
         headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        // "Start session" lives on the pill/menu/hotkey — not in the panel
+        // header (design remark, ticket #15). The button object stays alive
+        // for setSessionActive() state but is never added to the view.
         let header = NSStackView(views: [
-            title, sessionButton, headerSpacer,
+            title, headerSpacer,
             annotateButton, voiceButton, controlButton, clearButton, settingsButton,
         ])
         header.orientation = .horizontal

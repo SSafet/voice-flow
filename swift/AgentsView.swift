@@ -152,11 +152,16 @@ final class AgentsView: NSView {
         nameLabel.font = .systemFont(ofSize: 12.5, weight: unread ? .semibold : .regular)
         nameLabel.textColor = unread ? Theme.text : Theme.text2
         nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.maximumNumberOfLines = 1
+        // Long titles/previews must truncate, never stretch the panel.
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let previewLabel = NSTextField(labelWithString: preview)
         previewLabel.font = .systemFont(ofSize: 10.5)
         previewLabel.textColor = Theme.text3
         previewLabel.lineBreakMode = .byTruncatingTail
+        previewLabel.maximumNumberOfLines = 1
+        previewLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let timeLabel = NSTextField(labelWithString: time)
         timeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
@@ -222,6 +227,8 @@ final class AgentsView: NSView {
         titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = Theme.text
         titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.alignment = .center
 
         let speak = NSButton(image: NSImage(systemSymbolName: "speaker.wave.2",
