@@ -118,17 +118,18 @@
     padding: 6px 9px; border-radius: 8px;
     font-size: 12.5px; color: var(--text2);
   }
-  .lrow.hot { background: var(--card-hover); color: var(--text); font-weight: 600; }
   .lrow .tm { margin-left: auto; font-size: 10px; color: var(--text3); font-weight: 400; }
   .lrow .prev { display: block; font-size: 10.5px; color: var(--text3); font-weight: 400; margin-top: 1px; }
   .lrow .col { min-width: 0; }
+  .lrow .col b { display: block; color: var(--text); font-weight: 600; }
   .thd {
     display: flex; align-items: center; gap: 8px;
-    padding: 0 0 9px;
+    padding: 2px 2px 8px; border-bottom: 1px solid var(--border);
   }
-  .thd .back { color: var(--text2); font-size: 13px; }
-  .thd .nm { font-size: 12.5px; font-weight: 700; color: var(--text); }
-  .thd .spk { margin-left: auto; color: var(--text3); font-size: 11px; }
+  .thd .back { color: var(--text2); font-size: 13px; width: 16px; }
+  .thd .mid { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; min-width: 0; }
+  .thd .nm { font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .thd .spk { color: var(--text3); font-size: 11px; width: 16px; text-align: right; }
   /* flat thread: a push is ONE plain block, question or not; answers attach */
   .fmsg { padding: 8px 2px 9px; border-bottom: 1px solid var(--border); }
   .fmsg.last { border-bottom: none; }
@@ -136,17 +137,7 @@
   .fmsg .m.bright { color: var(--text); }
   .ans { display: flex; gap: 7px; align-items: baseline; margin: 6px 0 0 12px; font-size: 11.5px; color: var(--text2); }
   .ans .arw { color: var(--accent); font-weight: 700; }
-  .sdot {
-    position: relative;
-    width: 14px; height: 14px; border-radius: 7px; flex: none;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 8px; font-weight: 700; color: #17150f; background: var(--accent);
-  }
-  .sdot.off { background: transparent; border: 1px solid var(--text3); color: var(--text2); }
-  .sdot.ring::after {
-    content: ""; position: absolute; inset: -3px;
-    border: 1.5px solid rgba(212,168,83,.65); border-radius: 10px;
-  }
+  .snum { width: 12px; text-align: center; font-size: 10.5px; font-weight: 600; color: var(--text3); flex: none; }
   .sess .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sess .ghost { font-size: 8.5px; color: var(--text3); }
   .thread { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -320,7 +311,7 @@ only in the list view. The panel is the archive surface — the pill’s ⌃⌥1
 way to see and answer agent notifications, untouched by this redesign.</p>
 <div class="row">
   <div class="stage">
-    <div class="label"><b>Root — the session list.</b> Assistant first, persistent, wearing the VoiceFlow waveform icon; below it the sessions, latest first. Number dots ≡ ⌃⌥ numbering; the glow dot marks unread. The only timestamps in the whole panel live here.</div>
+    <div class="label"><b>Root — the session list.</b> Assistant first, persistent, wearing the VoiceFlow waveform icon; below it the sessions, latest first. Numbers are plain muted digits ≡ ⌃⌥; unread rows simply read bright. The only timestamps in the whole panel live here.</div>
     <div class="panel">
       <div class="titlebar"><span class="app">Voice Flow</span><span class="spacer"></span><span class="tic">⚙</span></div>
       <div class="tabs">
@@ -334,13 +325,13 @@ way to see and answer agent notifications, untouched by this redesign.</p>
           <span class="col">assistant<span class="prev">Here’s the structure: 1) capture, 2) route…</span></span>
           <span class="tm">22:58</span>
         </div>
-        <div class="lrow hot">
-          <span class="unread-dot"></span><span class="sdot">1</span>
-          <span class="col">ticket #15 — panel redesign<span class="prev">asks: approve the mock, or adjust…</span></span>
+        <div class="lrow">
+          <span class="snum">1</span>
+          <span class="col"><b>ticket #15 — panel redesign</b><span class="prev">asks: approve the mock, or adjust…</span></span>
           <span class="tm">23:52</span>
         </div>
         <div class="lrow">
-          <span class="sdot off ring">2</span>
+          <span class="snum">2</span>
           <span class="col">codex-turns <span class="ghost">ghost</span><span class="prev">Refactor finished — 4 files, tests green.</span></span>
           <span class="tm">23:10</span>
         </div>
@@ -358,7 +349,7 @@ way to see and answer agent notifications, untouched by this redesign.</p>
       </div>
       <div class="body">
         <div class="thd">
-          <span class="back">‹</span><span class="sdot">1</span><span class="nm">ticket #15 — panel redesign</span><span class="spk">🔊</span>
+          <span class="back">‹</span><span class="mid"><span class="nm">ticket #15 — panel redesign</span></span><span class="spk">🔊</span>
         </div>
         <div class="fmsg">
           <div class="m">Mock is ready — design/panel-redesign.html. Two surfaces + speech drawer.</div>
@@ -383,7 +374,7 @@ way to see and answer agent notifications, untouched by this redesign.</p>
       </div>
       <div class="body">
         <div class="thd">
-          <span class="back">‹</span><span class="sdot">1</span><span class="nm">ticket #15 — panel redesign</span><span class="spk">🔊</span>
+          <span class="back">‹</span><span class="mid"><span class="nm">ticket #15 — panel redesign</span></span><span class="spk">🔊</span>
         </div>
         <div class="fmsg">
           <div class="m">Mock is ready — design/panel-redesign.html. Two surfaces + speech drawer.</div>
@@ -413,7 +404,7 @@ way to see and answer agent notifications, untouched by this redesign.</p>
       </div>
       <div class="body">
         <div class="thd">
-          <span class="back">‹</span><span class="vf"><svg viewBox="0 0 24 16"><circle cx="2.5" cy="8" r="2" fill="currentColor"/><path d="M4.8 8 C7.2 2.2, 9.8 2.2, 12 8 S16.8 13.8, 19.2 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="21.5" cy="8" r="2" fill="currentColor"/></svg></span><span class="nm">assistant</span><span class="spk">🔊</span>
+          <span class="back">‹</span><span class="mid"><span class="vf"><svg viewBox="0 0 24 16"><circle cx="2.5" cy="8" r="2" fill="currentColor"/><path d="M4.8 8 C7.2 2.2, 9.8 2.2, 12 8 S16.8 13.8, 19.2 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="21.5" cy="8" r="2" fill="currentColor"/></svg></span><span class="nm">assistant</span></span><span class="spk">🔊</span>
         </div>
         <div class="fmsg">
           <div class="ans" style="margin-left:0"><span class="arw">↳</span>structure these thoughts into a spec…</div>
@@ -466,7 +457,7 @@ way to see and answer agent notifications, untouched by this redesign.</p>
     filter, never a fifth tab.</li>
   <li><b>Kept items are unread until revisited:</b> tracked silently — the Kept chip count and the
     Inbox tab count carry it; opening the item clears it. No dots, markers, or action buttons on the rows.</li>
-  <li><b>Agents nav ≡ pill picker:</b> sessions keep the picker’s numbers, unread rings and ghosts (#14) — gold numbered dots. The assistant is NOT a session: persistent first row, the VoiceFlow waveform icon, never a number.</li>
+  <li><b>Agents nav ≡ pill picker:</b> sessions keep the picker’s numbers — as plain muted digits, no circles or rings. Unread = the row reads bright (plus the tab count); ghosts (#14) persist until read. The assistant is NOT a session: persistent first row, the VoiceFlow waveform icon, never a number.</li>
   <li><b>A push is ONE flat block, question or not:</b> no cards, no timestamps, no repeated sender names, no edge decorations. The composer attaching to a block IS the ask signal; the answer then attaches beneath it (↳), in order. Otherwise a single composer sits at the bottom of the thread.</li>
   <li><b>The panel is secondary:</b> ⌃⌥1–9 on the pill remains the primary way to see and answer agent notifications; this tab is the browsable archive of the same stacks, and nothing here changes the pill flow.</li>
   <li><b>Speech is a verb, not a place:</b> the drawer + the thread header’s 🔊 replace the tab. Audio still never auto-plays.</li>
