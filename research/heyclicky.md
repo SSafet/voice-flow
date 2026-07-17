@@ -62,20 +62,24 @@
 
 ## 5. Takeaways for Voice Flow
 
-**Adopt:**
-1. **Onboarding that demonstrates itself.** Voice Flow has no first-run experience; theirs is the single most-praised thing. A 3-minute first run where the pill flashes, a dictation lands, an overlay guide draws itself, and a Claude Code session reports in would sell every core loop at once.
-2. **Inline point-while-talking.** Their `[POINT:x,y:label]` inline-tag mechanic is trivially portable: let the in-app agent (and MCP agents) embed annotation tags in *streamed* replies so arrows/circles appear synchronized with speech, instead of overlay calls arriving as separate tool calls after the fact. The synchronized talk+point is the demo-able magic moment.
-3. **Demo-video-first distribution.** The only acquisition channel that verifiably worked for them and it cost $0: short screen recordings of one real magic moment (talk-hotkey → agent answers → overlay points). Post to X + IG Reels. Voice Flow's session-capture + watcher could literally record its own demo material.
-4. **Own "local" loudly.** Their users beg for local models; HeyClicky is structurally cloud (AssemblyAI/ElevenLabs/proxy). Voice Flow's STT is local and the watcher never leaves disk — that's the privacy counter-position, and it should be stated as plainly as their "screenshots are never stored."
-5. **Value-metric pricing** (if ever monetized): unlimited talk/dictation, meter the agent actions.
+Split into the two things they actually teach: **how to demonstrate the product** and **what to change in the product**.
 
-**Avoid / validate against:**
-6. **Ambient tracking needs visible consent surfaces.** Even HeyClicky is "debating removing" their app/tab tracking under user pressure. Voice Flow's watcher goes far beyond that — the existing kill switches/visibility (menu bar, pill ring, Settings tab) are the right call; never let it become invisible.
-7. **Don't chase their consumer-agent platform.** Gmail/Notion voice agents for consumers is their funded lane. Voice Flow's uncontested lane (per the July market research) is the **voice HITL layer for real coding agents** — HeyClicky has nothing pointed at Claude Code / terminal-agent workflows.
-8. **Dictation confirms commoditized**: they give it away nearly unlimited on the free tier. It's table stakes, not a selling point.
+### A. How to demonstrate Voice Flow
 
-**Where to find users (the ticket's last question):**
-- Their audience (creative-tool learners, students) is reachable but contested. Voice Flow's natural, uncontested audience is **Claude Code / agent power users**: X build-in-public + AI-dev circles, r/ClaudeAI and r/macapps, Claude/dev Discords. The message that lands there: "your agents can talk to you, show you, and wait for you — locally."
-- Format matters more than venue: a single genuine magic-moment screen recording outperformed all their other marketing combined. Open-sourcing a piece (as they did) is the credibility multiplier if distribution ever stalls.
+1. **One magic-moment screen recording beats everything.** The only acquisition channel that verifiably worked for HeyClicky cost $0: a short (~100 s) screen recording of one genuinely magic moment, posted raw. For Voice Flow that moment is: talk-hotkey → a Claude Code session answers by voice → an overlay draws/points on screen → the user replies by talking. Record real use, not staged marketing — authenticity is what went viral for them.
+2. **Distribution venues, in order**: X (build-in-public / AI-dev circles) first, then Instagram Reels (their consumer virality channel), then r/ClaudeAI + r/macapps and dev Discords. No ads — HeyClicky spent nothing. Product Hunt demonstrably didn't matter (146 upvotes); skip the PH-first instinct.
+3. **The pitch that lands in the uncontested lane**: "your coding agents can talk to you, show you, and wait for you — locally." Aim at Claude Code / terminal-agent power users, not their creative-tool learner audience (contested, and consumer-shaped).
+4. **Say "local" as loudly as they say "never stored".** Their users beg for local models; HeyClicky is structurally cloud (AssemblyAI, ElevenLabs, key proxy). Voice Flow's STT is on-device and the watcher never leaves disk — put that sentence on every surface where the product is described.
+5. **Open-source a piece for credibility.** Their MIT repo produced stars, forks, tech-press coverage, and trust ("you can read how it works"). If distribution stalls, open-sourcing a component (e.g. the overlay/annotation layer or the pill) is the multiplier.
+6. **Let the product film itself.** Session capture bundles + the watcher already record narrated screen material — demo footage is a byproduct of daily use; harvest it.
+
+### B. What capabilities to change or add
+
+1. **Add: a self-demonstrating first run.** Their onboarding is the single most-praised thing in all feedback ("best onboarding I've had": in ~5 min it plays a video, builds you a website, runs a report — the agent demos itself). Voice Flow has no first-run at all. Build a 3-minute guided first run where the pill flashes a receipt, a dictation lands in a real app, an overlay guide draws itself, and a (bundled or simulated) agent session reports in and asks a question. This is both a capability and the demo engine for A1.
+2. **Add: inline point-while-talking.** Their whole pointing magic is `[POINT:x,y:label]` tags embedded in the *streamed* reply, rendered live on the overlay. Port it: let agents embed annotation tags inline in streamed replies so arrows/circles appear synchronized with the spoken/streamed sentence, instead of overlay tool calls landing separately after the fact. Cheap to build on the existing `OverlayManager`, and it's the demo-able moment for A1.
+3. **Change (double down, don't add): watcher visibility.** The #1 user fear in their feedback is being watched; even HeyClicky is "debating removing" its always-on app/tab tracking. Voice Flow's watcher goes further than theirs — the existing visibility (menu-bar submenu, amber pill ring, Settings tab, kill switches) is validated; never let recording become invisible, and consider a HeyClicky-style plain-language privacy FAQ in Settings.
+4. **Don't add: consumer-agent integrations.** Gmail/Notion/Calendar voice agents for consumers is their funded lane. Voice Flow's answer to the market's #1 request ("actually take actions") is already better for its audience: real Claude Code sessions doing real work, with Voice Flow as the human-in-the-loop layer. Deepen that instead of chasing mouse-control or consumer integrations.
+5. **Don't invest in dictation as a differentiator.** They give unlimited dictation away on paid tiers and generous amounts free — it's confirmed table stakes. Keep it excellent, stop expecting it to sell the product.
+6. **If ever monetized: meter agent interactions, not talk.** Their pricing (unlimited talk/dictation, metered agent messages) maps price to compute cost and is instantly understood.
 
 **Threat watch**: funded ($10M), YC, shipping fast, moving into hands-free Mac *control* and Windows. If they add a "talk to your coding agent" story, the overlap with Voice Flow's lane becomes direct. Their open-source repo is worth tracking (github.com/farzaa/clicky) — it previews their mechanics.
