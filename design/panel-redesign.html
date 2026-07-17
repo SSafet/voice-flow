@@ -111,12 +111,8 @@
   }
 
   /* agents: chronological list → pushed thread (master-detail) */
-  .vf {
-    width: 22px; height: 12px; border-radius: 6px; flex: none;
-    background: var(--panel2); border: 1px solid var(--accent-dim);
-    display: inline-flex; align-items: center; justify-content: center; gap: 2.5px;
-  }
-  .vf i { width: 3px; height: 3px; border-radius: 1.5px; background: var(--text2); display: block; }
+  .vf { display: inline-flex; flex: none; color: var(--text2); }
+  .vf svg { width: 17px; height: 12px; display: block; }
   .lrow {
     display: flex; align-items: center; gap: 9px;
     padding: 6px 9px; border-radius: 8px;
@@ -316,7 +312,7 @@
 <p class="sub">This tab holds <b>ALL of them</b>: every connected Claude/MCP session (gold numbered dots,
 numbering ≡ the pill picker ⌃⌥1–6, unread rings and ghosts included) <b>plus</b> the built-in
 assistant — which is not a session and never gets a number: it holds a <b>persistent first row</b>
-wearing the VoiceFlow pill mark. <b>Chosen layout:</b> a minimal latest-first list of titles as the
+wearing the VoiceFlow waveform mark. <b>Chosen layout:</b> a minimal latest-first list of titles as the
 tab’s root; clicking pushes the thread over it. Threads are <b>flat</b> — an agent push is one plain
 block whether it asks or not, your answer attaches under the message it answers (↳), and the
 composer either attaches to the ask being answered or sits once at the bottom. Timestamps exist
@@ -324,7 +320,7 @@ only in the list view. The panel is the archive surface — the pill’s ⌃⌥1
 way to see and answer agent notifications, untouched by this redesign.</p>
 <div class="row">
   <div class="stage">
-    <div class="label"><b>Root — the session list.</b> Assistant first, persistent, wearing the VoiceFlow mark; below it the sessions, latest first. Number dots ≡ ⌃⌥ numbering; the glow dot marks unread. The only timestamps in the whole panel live here.</div>
+    <div class="label"><b>Root — the session list.</b> Assistant first, persistent, wearing the VoiceFlow waveform icon; below it the sessions, latest first. Number dots ≡ ⌃⌥ numbering; the glow dot marks unread. The only timestamps in the whole panel live here.</div>
     <div class="panel">
       <div class="titlebar"><span class="app">Voice Flow</span><span class="spacer"></span><span class="tic">⚙</span></div>
       <div class="tabs">
@@ -334,7 +330,7 @@ way to see and answer agent notifications, untouched by this redesign.</p>
       </div>
       <div class="body">
         <div class="lrow">
-          <span class="vf"><i></i><i></i><i></i></span>
+          <span class="vf"><svg viewBox="0 0 24 16"><circle cx="2.5" cy="8" r="2" fill="currentColor"/><path d="M4.8 8 C7.2 2.2, 9.8 2.2, 12 8 S16.8 13.8, 19.2 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="21.5" cy="8" r="2" fill="currentColor"/></svg></span>
           <span class="col">assistant<span class="prev">Here’s the structure: 1) capture, 2) route…</span></span>
           <span class="tm">22:58</span>
         </div>
@@ -417,7 +413,7 @@ way to see and answer agent notifications, untouched by this redesign.</p>
       </div>
       <div class="body">
         <div class="thd">
-          <span class="back">‹</span><span class="vf"><i></i><i></i><i></i></span><span class="nm">assistant</span><span class="spk">🔊</span>
+          <span class="back">‹</span><span class="vf"><svg viewBox="0 0 24 16"><circle cx="2.5" cy="8" r="2" fill="currentColor"/><path d="M4.8 8 C7.2 2.2, 9.8 2.2, 12 8 S16.8 13.8, 19.2 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="21.5" cy="8" r="2" fill="currentColor"/></svg></span><span class="nm">assistant</span><span class="spk">🔊</span>
         </div>
         <div class="fmsg">
           <div class="ans" style="margin-left:0"><span class="arw">↳</span>structure these thoughts into a spec…</div>
@@ -470,7 +466,7 @@ way to see and answer agent notifications, untouched by this redesign.</p>
     filter, never a fifth tab.</li>
   <li><b>Kept items are unread until revisited:</b> tracked silently — the Kept chip count and the
     Inbox tab count carry it; opening the item clears it. No dots, markers, or action buttons on the rows.</li>
-  <li><b>Agents nav ≡ pill picker:</b> sessions keep the picker’s numbers, unread rings and ghosts (#14) — gold numbered dots. The assistant is NOT a session: persistent first row, the VoiceFlow pill mark, never a number.</li>
+  <li><b>Agents nav ≡ pill picker:</b> sessions keep the picker’s numbers, unread rings and ghosts (#14) — gold numbered dots. The assistant is NOT a session: persistent first row, the VoiceFlow waveform icon, never a number.</li>
   <li><b>A push is ONE flat block, question or not:</b> no cards, no timestamps, no repeated sender names, no edge decorations. The composer attaching to a block IS the ask signal; the answer then attaches beneath it (↳), in order. Otherwise a single composer sits at the bottom of the thread.</li>
   <li><b>The panel is secondary:</b> ⌃⌥1–9 on the pill remains the primary way to see and answer agent notifications; this tab is the browsable archive of the same stacks, and nothing here changes the pill flow.</li>
   <li><b>Speech is a verb, not a place:</b> the drawer + the thread header’s 🔊 replace the tab. Audio still never auto-plays.</li>
