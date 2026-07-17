@@ -279,6 +279,8 @@ final class ChatPanel {
         button.layer?.cornerRadius = 7
         button.translatesAutoresizingMaskIntoConstraints = false
         button.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        // Fill the strip like the mock's full-width tabs, don't hug the text.
+        button.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return button
     }
 
