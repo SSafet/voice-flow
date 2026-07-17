@@ -1232,6 +1232,11 @@ class FloatingIndicator: NSObject {
                 paint(bg: NSColor(r: 110, g: 50, b: 45, a: 115),
                       border: NSColor(r: 220, g: 160, b: 140, a: 45),
                       dots: NSColor(r: 255, g: 240, b: 220, a: 180))
+            case .brainDump:
+                // Same amber as hands-free — words are going into the Inbox.
+                paint(bg: NSColor(r: 100, g: 75, b: 30, a: 120),
+                      border: NSColor(r: 230, g: 190, b: 100, a: 50),
+                      dots: NSColor(r: 255, g: 240, b: 200, a: 190))
             case .talk:
                 paint(bg: NSColor(r: 72, g: 52, b: 100, a: 130),
                       border: NSColor(r: 176, g: 140, b: 240, a: 60),
@@ -1506,9 +1511,26 @@ class IndicatorView: NSView {
 //  Dictation history entry (shown in the ChatPanel Dictations tab)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/// Where a capture went. Stored as data only — the Inbox filter chips are the
+/// one place it surfaces; rows never label it (panel redesign, ticket #15).
+enum CaptureDestination: String, Codable {
+    case pasted      // landed in the frontmost app (classic dictation)
+    case kept        // brain dump — recorded into Voice Flow only (ticket #2)
+    case assistant   // routed to the in-app assistant
+    case session     // routed to a Claude session
+}
+
 struct HistoryEntry: Codable {
     let text: String
     let time: String
+    // Optional so pre-redesign dictations.json entries still decode:
+    // nil destination = pasted, nil seen = already revisited.
+    var destination: CaptureDestination?
+    var seen: Bool?
+
+    var effectiveDestination: CaptureDestination { destination ?? .pasted }
+    /// Only kept items carry unread semantics.
+    var isUnrevisited: Bool { effectiveDestination == .kept && seen == false }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1618,7 +1640,28 @@ class FloatingTranscriptPanel {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 final class DictationsView: NSView {
+    /// The Inbox filters — views over HistoryEntry.destination.
+    private enum InboxFilter: Int, CaseIterable {
+        case all, kept, pasted, assistant
+        var label: String {
+            switch self {
+            case .all: return "All"; case .kept: return "Kept"
+            case .pasted: return "Pasted"; case .assistant: return "Assistant"
+            }
+        }
+        func matches(_ entry: HistoryEntry) -> Bool {
+            switch self {
+            case .all: return true
+            case .kept: return entry.effectiveDestination == .kept
+            case .pasted: return entry.effectiveDestination == .pasted
+            case .assistant: return entry.effectiveDestination == .assistant
+            }
+        }
+    }
+
     private var entries: [HistoryEntry] = []
+    private var filter: InboxFilter = .all
+    private var chipButtons: [NSButton] = []
     private var contentStack: NSView!          // flipped document view
     private var emptyView: NSView!
     private var scrollView: NSScrollView!
@@ -1627,6 +1670,11 @@ final class DictationsView: NSView {
     private let storeCap = 200
     private static let storeURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".config/voice-flow/dictations.json")
+
+    /// Kept items not yet revisited — surfaced on the Kept chip and usable
+    /// for a future tab badge.
+    var unrevisitedCount: Int { entries.filter { $0.isUnrevisited }.count }
+    var onUnreadChanged: ((Int) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1639,10 +1687,24 @@ final class DictationsView: NSView {
     convenience init() { self.init(frame: .zero) }
 
     private func setupUI() {
-        let secLabel = NSTextField(labelWithString: "DICTATIONS")
-        secLabel.font = .systemFont(ofSize: 10, weight: .semibold)
-        secLabel.textColor = Theme.text3
-        secLabel.translatesAutoresizingMaskIntoConstraints = false
+        let chipsRow = NSStackView()
+        chipsRow.orientation = .horizontal
+        chipsRow.spacing = 6
+        chipsRow.translatesAutoresizingMaskIntoConstraints = false
+        for f in InboxFilter.allCases {
+            let chip = NSButton(title: f.label, target: self, action: #selector(chipTapped(_:)))
+            chip.tag = f.rawValue
+            chip.isBordered = false
+            chip.font = .systemFont(ofSize: 10.5, weight: .semibold)
+            chip.wantsLayer = true
+            chip.layer?.cornerRadius = 9
+            chip.layer?.borderWidth = 1
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            chip.heightAnchor.constraint(equalToConstant: 18).isActive = true
+            chipButtons.append(chip)
+            chipsRow.addArrangedSubview(chip)
+        }
+        styleChips()
 
         contentStack = FlippedView()
         contentStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1657,13 +1719,13 @@ final class DictationsView: NSView {
         scrollView.documentView = contentStack
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(secLabel)
+        addSubview(chipsRow)
         addSubview(scrollView)
 
         NSLayoutConstraint.activate([
-            secLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            secLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            scrollView.topAnchor.constraint(equalTo: secLabel.bottomAnchor, constant: 8),
+            chipsRow.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            chipsRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            scrollView.topAnchor.constraint(equalTo: chipsRow.bottomAnchor, constant: 8),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
@@ -1671,17 +1733,47 @@ final class DictationsView: NSView {
         ])
     }
 
-    func addEntry(text: String, time: String) {
-        entries.insert(HistoryEntry(text: text, time: time), at: 0)
+    private func styleChips() {
+        for chip in chipButtons {
+            let isOn = chip.tag == filter.rawValue
+            if chip.tag == InboxFilter.kept.rawValue, unrevisitedCount > 0 {
+                chip.title = "Kept \(unrevisitedCount)"
+            } else if chip.tag == InboxFilter.kept.rawValue {
+                chip.title = "Kept"
+            }
+            chip.contentTintColor = isOn ? Theme.bg : Theme.text2
+            chip.layer?.backgroundColor = isOn ? Theme.accent.cgColor : NSColor.clear.cgColor
+            chip.layer?.borderColor = isOn ? Theme.accent.cgColor : Theme.borderHover.cgColor
+        }
+    }
+
+    @objc private func chipTapped(_ sender: NSButton) {
+        filter = InboxFilter(rawValue: sender.tag) ?? .all
+        styleChips()
+        rebuildContent()
+    }
+
+    func addEntry(text: String, time: String,
+                  destination: CaptureDestination = .pasted, seen: Bool? = nil) {
+        entries.insert(HistoryEntry(text: text, time: time,
+                                    destination: destination, seen: seen), at: 0)
         if entries.count > storeCap { entries = Array(entries.prefix(storeCap)) }
         DictationsView.saveEntries(entries)
+        styleChips()
         rebuildContent()
+        onUnreadChanged?(unrevisitedCount)
     }
 
     private func rebuildContent() {
         contentStack.subviews.forEach { $0.removeFromSuperview() }
 
-        if entries.isEmpty {
+        // Filtered, newest first, capped. Rows are nothing but the words
+        // (panel redesign): destination and time stay data, not chrome.
+        let visible = entries.enumerated()
+            .filter { filter.matches($0.element) }
+            .prefix(renderCap)
+
+        if visible.isEmpty {
             contentStack.addSubview(emptyView)
             NSLayoutConstraint.activate([
                 emptyView.topAnchor.constraint(equalTo: contentStack.topAnchor, constant: 60),
@@ -1691,23 +1783,8 @@ final class DictationsView: NSView {
         }
 
         var topAnchor = contentStack.topAnchor
-
-        // Day label
-        let dayLabel = NSTextField(labelWithString: "Today")
-        dayLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        dayLabel.textColor = Theme.text2
-        dayLabel.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addSubview(dayLabel)
-        NSLayoutConstraint.activate([
-            dayLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            dayLabel.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor, constant: 2),
-        ])
-        topAnchor = dayLabel.bottomAnchor
-
-        // Cards (newest first, capped)
-        let capped = Array(entries.prefix(renderCap))
-        for entry in capped {
-            let card = makeCard(text: entry.text, time: entry.time)
+        for (index, entry) in visible {
+            let card = makeCard(entry: entry, index: index)
             card.translatesAutoresizingMaskIntoConstraints = false
             contentStack.addSubview(card)
             NSLayoutConstraint.activate([
@@ -1724,67 +1801,61 @@ final class DictationsView: NSView {
         bottom.isActive = true
     }
 
-    private func makeCard(text: String, time: String) -> NSView {
-        let card = HoverCardView()
+    private func makeCard(entry: HistoryEntry, index: Int) -> NSView {
+        let card = InboxCard()
+        card.entryIndex = index
         card.wantsLayer = true
         card.layer?.cornerRadius = 8
         card.layer?.backgroundColor = Theme.card.cgColor
         card.layer?.borderWidth = 1
         card.layer?.borderColor = Theme.border.cgColor
+        card.toolTip = "Click to copy"
 
-        let textLabel = NSTextField(wrappingLabelWithString: text)
+        let textLabel = NSTextField(wrappingLabelWithString: entry.text)
         textLabel.font = .systemFont(ofSize: 13)
-        textLabel.textColor = Theme.text
+        // Unrevisited brain dumps read bright; everything else is quiet.
+        textLabel.textColor = entry.isUnrevisited ? Theme.text : Theme.text2
         textLabel.maximumNumberOfLines = 0
         textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let timeLabel = NSTextField(labelWithString: time)
-        timeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        timeLabel.textColor = Theme.text3
-
-        let copyBtn = NSButton(title: "Copy", target: self, action: #selector(copyClicked(_:)))
-        copyBtn.bezelStyle = .inline
-        copyBtn.font = .systemFont(ofSize: 11)
-        copyBtn.toolTip = text
-        copyBtn.setContentHuggingPriority(.required, for: .horizontal)
-        copyBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
+        card.textLabel = textLabel
 
         card.addSubview(textLabel)
-        card.addSubview(timeLabel)
-        card.addSubview(copyBtn)
         textLabel.translatesAutoresizingMaskIntoConstraints = false
-        timeLabel.translatesAutoresizingMaskIntoConstraints = false
-        copyBtn.translatesAutoresizingMaskIntoConstraints = false
-
         NSLayoutConstraint.activate([
             textLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
             textLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-            textLabel.trailingAnchor.constraint(equalTo: copyBtn.leadingAnchor, constant: -10),
-
-            copyBtn.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
-            copyBtn.centerYAnchor.constraint(equalTo: card.centerYAnchor),
-
-            timeLabel.topAnchor.constraint(equalTo: textLabel.bottomAnchor, constant: 3),
-            timeLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-            timeLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
+            textLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            textLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
         ])
 
+        let click = NSClickGestureRecognizer(target: self, action: #selector(cardClicked(_:)))
+        card.addGestureRecognizer(click)
         return card
     }
 
-    @objc private func copyClicked(_ sender: NSButton) {
-        guard let text = sender.toolTip else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+    /// Click = copy (green flash) and, for an unrevisited brain dump,
+    /// mark it revisited.
+    @objc private func cardClicked(_ gesture: NSClickGestureRecognizer) {
+        guard let card = gesture.view as? InboxCard,
+              card.entryIndex >= 0, card.entryIndex < entries.count else { return }
+        let entry = entries[card.entryIndex]
 
-        // Green flash feedback
-        if let card = sender.superview as? HoverCardView {
-            card.layer?.backgroundColor = NSColor(r: 120, g: 180, b: 100, a: 15).cgColor
-            card.layer?.borderColor = NSColor(r: 120, g: 180, b: 100, a: 30).cgColor
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                card.layer?.backgroundColor = Theme.card.cgColor
-                card.layer?.borderColor = Theme.border.cgColor
-            }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(entry.text, forType: .string)
+
+        card.layer?.backgroundColor = NSColor(r: 120, g: 180, b: 100, a: 15).cgColor
+        card.layer?.borderColor = NSColor(r: 120, g: 180, b: 100, a: 30).cgColor
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            card.layer?.backgroundColor = Theme.card.cgColor
+            card.layer?.borderColor = Theme.border.cgColor
+        }
+
+        if entry.isUnrevisited {
+            entries[card.entryIndex].seen = true
+            DictationsView.saveEntries(entries)
+            card.textLabel?.textColor = Theme.text2
+            styleChips()
+            onUnreadChanged?(unrevisitedCount)
         }
     }
 
@@ -2377,6 +2448,13 @@ class HoverCardView: NSView {
         layer?.backgroundColor = Theme.card.cgColor
         layer?.borderColor = Theme.border.cgColor
     }
+}
+
+/// Inbox row: a hover card that knows which HistoryEntry it renders so a
+/// click can copy it and clear its unread state in place.
+final class InboxCard: HoverCardView {
+    var entryIndex: Int = -1
+    weak var textLabel: NSTextField?
 }
 
 class FlippedView: NSView {

@@ -10,6 +10,7 @@ enum AppState: String {
 // What the microphone is currently recording for.
 enum RecordingPurpose {
     case dictation   // paste into the focused app
+    case brainDump   // record into Voice Flow only — kept in the Inbox, never pasted
     case talk        // voice note → agent, no screenshot
     case snapTalk    // voice note → agent + one fresh screenshot
     case session     // continuous session audio, bundled at session end
@@ -478,7 +479,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.recordingPurpose = .dictation
             self.state = .idle
             switch purpose {
-            case .talk, .snapTalk:
+            case .talk, .snapTalk, .brainDump:
                 self.chatPanel.addNote("Couldn't transcribe that — try again.")
                 if !self.chatPanel.isVisible {
                     self.replyBubble.showTransient("couldn't transcribe — try again", seconds: 5, isError: true)
@@ -593,13 +594,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager.onRelease = { [weak self] in self?.stopRecording() }
         hotkeyManager.allowsHandsFreeDoublePress = false
 
+        // Double-tap = brain dump: talk into Voice Flow's Inbox from anywhere,
+        // no paste target involved (ticket #2).
         handsFreeHotkeyManager = HotkeyManager(spec: UserSettings.shared.handsFreeHotkey)
         handsFreeHotkeyManager.allowsHandsFreeDoublePress = true
         handsFreeHotkeyManager.onHandsFree = { [weak self] active in
             guard let self else { return }
             if active {
-                self.startRecording()
-                self.state = .handsFree
+                self.startBrainDumpRecording()
             } else {
                 self.stopRecording()
             }
@@ -1190,7 +1192,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let prompt = Self.messagePrompt(text: text, attachments: attachments)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(prompt, forType: .string)
-            chatPanel.addDictation(text: prompt, time: Self.timestamp())
+            chatPanel.addDictation(text: prompt, time: Self.timestamp(),
+                                   destination: .kept, seen: false)
             // The stack stays (nothing was delivered), but the screen must
             // still visibly react to having been spoken to.
             answeredSession(nil, note: "no session — copied + saved in History", clearStack: false)
@@ -1342,6 +1345,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Continuous recording that lands in the Inbox as a kept brain dump —
+    /// no paste target is captured, so the frontmost app never matters.
+    private func startBrainDumpRecording() {
+        indicator.collapseNow()
+        guard !recorder.isRecording else { return }
+        stopSpeechPlayback()
+        recordingPurpose = .brainDump
+        streamingViaAX = false
+        hadPartialStream = false
+        playSound("Tink")
+        state = .handsFree
+        recorder.start()
+        if !recorder.isRecording {
+            state = .idle
+            recordingPurpose = .dictation
+            replyBubble.showTransient("microphone unavailable — restart Voice Flow", seconds: 8, isError: true)
+        }
+    }
+
     private func stopRecording() {
         guard recorder.isRecording else { return }
         partialTimer?.invalidate()
@@ -1367,7 +1389,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         switch purpose {
                         case .dictation:
                             self.showSettings()
-                        case .talk, .snapTalk:
+                        case .talk, .snapTalk, .brainDump:
                             self.chatPanel.addNote("Add your OpenAI key in Settings to transcribe voice notes.")
                         case .session:
                             self.chatPanel.addNote("No OpenAI key — keeping the session screenshots without a transcript.")
@@ -1496,6 +1518,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             case .session:
                 playSound("Pop")
                 finishSession(transcript: note)
+            case .brainDump:
+                guard !note.isEmpty else {
+                    replyBubble.showTransient("didn't catch any speech")
+                    return
+                }
+                playSound("Pop")
+                let timestamp = Self.timestamp()
+                DispatchQueue.main.async {
+                    self.chatPanel.addDictation(text: note, time: timestamp,
+                                                destination: .kept, seen: false)
+                    self.replyBubble.showTransient("kept in Inbox")
+                }
             case .dictation:
                 break
             }

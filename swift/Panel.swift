@@ -286,8 +286,9 @@ final class ChatPanel {
         messagesView.addEntry(time: time, session: session, text: text, isAsk: isAsk)
     }
 
-    func addDictation(text: String, time: String) {
-        dictationsView.addEntry(text: text, time: time)
+    func addDictation(text: String, time: String,
+                      destination: CaptureDestination = .pasted, seen: Bool? = nil) {
+        dictationsView.addEntry(text: text, time: time, destination: destination, seen: seen)
     }
 
     func currentTTSRequest() -> TTSRequest { ttsView.currentTTSRequest() }
