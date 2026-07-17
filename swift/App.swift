@@ -976,7 +976,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// text NEVER takes the screen on arrival, no matter whose session it
     /// is, and audio never auto-plays. The user reads it by switching onto
     /// the session (⌃⌥1–6 grows its whole stack), re-selects to hear it,
-    /// or opens the Messages tab; the ring + amber picker dot persist
+    /// or opens the panel's Agents tab; the ring + amber picker dot persist
     /// until the stack is actually viewed. Main thread.
     func deliverPush(_ push: SessionPush, from sessionId: String?) {
         let sid = sessionId ?? ""
@@ -989,7 +989,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         queue.append(push)
         if queue.count > maxQueuedPushes { queue.removeFirst(queue.count - maxQueuedPushes) }
         sessionPushes[sid] = queue
-        // The permanent record — the Messages tab keeps every push even
+        // The permanent record — messages.json keeps every push even
         // after its session expires or the stack is trashed.
         chatPanel.addAgentMessage(time: Self.timestamp(), session: push.title,
                                   text: push.text, isAsk: push.isAsk)
@@ -1020,7 +1020,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                bottomPicker: (entries: [FloatingIndicator.PickerEntry], activeName: String?)? = nil,
                                autoHide: TimeInterval? = nil) {
         guard let queue = sessionPushes[sessionId], let newest = queue.last else { return }
-        let ask = queue.last { $0.isAsk }
+        // An answered ask is history, not a question — never re-render ask
+        // styling or the answer hint for it.
+        let ask = queue.last { $0.isAsk && $0.answer == nil }
         indicator.showGrown(
             FloatingIndicator.GrownSpec(
                 title: (ask ?? newest).title,
@@ -1068,6 +1070,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// target doesn't count — the first press must SHOW, never speak.
     /// Main thread.
     private func userSelectSession(_ id: String) {
+        // Panel open → ⌃⌥N deep-links into the session's thread there;
+        // the pill flow stays untouched when the panel is closed.
+        if chatPanel.isVisible {
+            setTargetSession(id, announce: false)
+            chatPanel.openAgentThread(id)
+            return
+        }
         if id == targetSessionId, indicator.isGrownVisible, currentPushSessionId == id,
            UserSettings.shared.doubleSelectSpeak,
            let queue = sessionPushes[id], !queue.isEmpty {
@@ -1081,7 +1090,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The user answered what was on screen by voice — the view collapses
     /// and the receipt lands after it. When the answer actually reached a
-    /// session, its stack is also done with (the Messages tab keeps the
+    /// session, its stack is also done with (messages.json keeps the
     /// history). Main thread.
     private func answeredSession(_ id: String?, note: String, clearStack: Bool) {
         if clearStack, let id {
@@ -1172,6 +1181,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         queue[index].answer = text
         queue[index].seen = true
         sessionPushes[sid] = queue
+        refreshUnreadIndicator()
         chatPanel.refreshAgents()
     }
 
@@ -1193,6 +1203,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let target {
                 let live = inbox.hasWaiter(for: target.id)
                 inbox.add(text: text, attachments: attachments, session: target.id)
+                recordVoiceInInbox(text, destination: .session)
                 answeredSession(target.id,
                                 note: live ? "sent to \(sessionName(for: target.id))"
                                            : "queued for \(sessionName(for: target.id)) — delivered on its next check-in",
@@ -1215,6 +1226,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // The stack stays (nothing was delivered), but the screen must
             // still visibly react to having been spoken to.
             answeredSession(nil, note: "no session — copied + saved in History", clearStack: false)
+        }
+    }
+
+    /// Every voice utterance lands in the Inbox with its destination — the
+    /// panel's "everything you said" timeline (design remark; ticket #15).
+    private func recordVoiceInInbox(_ text: String, destination: CaptureDestination) {
+        let timestamp = Self.timestamp()
+        DispatchQueue.main.async {
+            self.chatPanel.addDictation(text: text, time: timestamp, destination: destination)
         }
     }
 
@@ -1520,6 +1540,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     fulfillInteraction(interaction, text: note, includeScreenshot: false)
                 } else if UserSettings.shared.talkSendToAgent {
                     sendToAgent(text: note, includeFreshScreenshot: false)
+                    recordVoiceInInbox(note, destination: .assistant)
                 } else {
                     deliverTalkMessage(text: note, includeScreenshot: false)
                 }
@@ -1530,6 +1551,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     fulfillInteraction(interaction, text: note, includeScreenshot: true)
                 } else if UserSettings.shared.talkSendToAgent {
                     sendToAgent(text: note, includeFreshScreenshot: true, forceScreenshot: true)
+                    recordVoiceInInbox(note, destination: .assistant)
                 } else {
                     deliverTalkMessage(text: note, includeScreenshot: true)
                 }
@@ -2284,7 +2306,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.playSound("Glass")
             }
-            var reply = "Delivered: the user got a one-line receipt and reads the full report when they switch onto your session (⌃⌥N) or in their Messages tab; audio plays only on their demand."
+            var reply = "Delivered: the user got a one-line receipt and reads the full report when they switch onto your session (⌃⌥N) or in the panel's Agents tab; audio plays only on their demand."
             if let sessionId {
                 reply += """
                  If they might reply, start the reply listener as a background Bash task NOW — whether you keep working or are about to finish:
@@ -2325,11 +2347,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.sync {
             interaction.resolved = true
             self.pendingInteraction = nil
-            // The ask is settled either way — drop IT from the stack (any
-            // queued notifies survive as pending) and give the screen back,
-            // unless another session's content took it in the meantime.
+            // The ask is settled either way. An ANSWERED ask stays in the
+            // stack with its ↳ answer attached (the panel thread's history);
+            // only an unanswered one (timeout / dismissed) is dropped so a
+            // dead question can't linger as pending.
             if let sid = interaction.sessionId {
-                self.sessionPushes[sid]?.removeAll { $0.isAsk }
+                self.sessionPushes[sid]?.removeAll { $0.isAsk && $0.answer == nil }
                 if self.sessionPushes[sid]?.isEmpty == true {
                     self.sessionPushes.removeValue(forKey: sid)
                 }
@@ -2728,7 +2751,10 @@ extension AppDelegate: AgentsDataSource {
     }()
 
     func agentSessionRows() -> [AgentSessionRow] {
-        pickerSessions().enumerated().map { index, session in
+        // Numbers stay ≡ the pill picker (⌃⌥N identity); the LIST order is
+        // latest activity first, per the mock. No-push sessions trail in
+        // picker order.
+        let rows = pickerSessions().enumerated().map { index, session -> (row: AgentSessionRow, at: Date?) in
             let queue = sessionPushes[session.id] ?? []
             let newest = queue.last
             var preview = newest.map { $0.text.replacingOccurrences(of: "\n", with: " ") } ?? ""
@@ -2737,7 +2763,7 @@ extension AppDelegate: AgentsDataSource {
                 preview = "asks: " + ask.text.replacingOccurrences(of: "\n", with: " ")
             }
             if preview.count > 120 { preview = String(preview.prefix(120)) + "…" }
-            return AgentSessionRow(
+            let row = AgentSessionRow(
                 id: session.id,
                 number: index + 1,
                 name: session.label,
@@ -2745,7 +2771,16 @@ extension AppDelegate: AgentsDataSource {
                 time: newest.map { Self.pushTimeFormatter.string(from: $0.at) } ?? "",
                 unread: queue.contains { !$0.seen },
                 ghost: mcpServer.sessions.session(session.id) == nil)
+            return (row, newest?.at)
         }
+        return rows.sorted {
+            switch ($0.at, $1.at) {
+            case let (a?, b?): return a > b
+            case (_?, nil): return true
+            case (nil, _?): return false
+            case (nil, nil): return $0.row.number < $1.row.number
+            }
+        }.map { $0.row }
     }
 
     func agentThread(for sessionId: String) -> [SessionPush] {
@@ -2760,6 +2795,7 @@ extension AppDelegate: AgentsDataSource {
             return seen
         }
         refreshUnreadIndicator()
+        chatPanel.refreshTabBadges()
     }
 
     func hasPendingAsk(for sessionId: String) -> Bool {

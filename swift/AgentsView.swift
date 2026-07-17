@@ -94,15 +94,27 @@ final class AgentsView: NSView {
         rebuild()
     }
 
-    /// Re-render whatever is on screen from fresh data.
+    /// Re-render whatever is on screen from fresh data. An in-progress
+    /// composer draft (and its focus) survives the rebuild — pushes from
+    /// other sessions must never eat what the user is typing.
     func refresh() {
         if case .thread(let sid) = mode {
-            // A trashed/vanished thread falls back to the list.
-            if dataSource?.agentThread(for: sid).isEmpty ?? true {
+            // A session with zero pushes is still a valid, messageable
+            // thread — fall back to the list only when the session is gone.
+            let known = dataSource?.agentSessionRows().contains { $0.id == sid } ?? false
+            if !known, dataSource?.agentThread(for: sid).isEmpty ?? true {
                 mode = .list
             }
         }
+        let draft = composerField?.stringValue ?? ""
+        let hadFocus = composerField.map { field in
+            (field.window?.firstResponder as? NSText)?.delegate === field
+        } ?? false
         rebuild()
+        if let field = composerField {
+            if !draft.isEmpty { field.stringValue = draft }
+            if hadFocus { field.window?.makeFirstResponder(field) }
+        }
     }
 
     // ── Rendering ───────────────────────────────────────

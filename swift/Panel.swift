@@ -269,6 +269,7 @@ final class ChatPanel {
     }
 
     func selectTab(_ tab: ChatTab) {
+        speechOpen = false   // an explicit tab request always closes the ♪ drawer
         applyTab(tab)
     }
 
@@ -366,6 +367,18 @@ final class ChatPanel {
     func refreshAgents() {
         if isVisible, !agentsView.isHidden { agentsView.refresh() }
         styleTabs()
+    }
+
+    /// Recompute the tab unread counts without touching the surfaces.
+    func refreshTabBadges() { styleTabs() }
+
+    /// ⌃⌥N while the panel is open: deep-link straight into that session's
+    /// thread instead of growing the pill behind the panel.
+    func openAgentThread(_ sessionId: String) {
+        assistantOpen = false
+        speechOpen = false
+        applyTab(.agents)
+        agentsView.openThread(sessionId)
     }
 
     private func openAssistant() {
@@ -489,7 +502,7 @@ final class ChatPanel {
         scrollView.documentView = documentView
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        emptyLabel = NSTextField(wrappingLabelWithString: "Talk, type, or snap your screen.\nStart a session and I'll follow along as you work.")
+        emptyLabel = NSTextField(wrappingLabelWithString: "Talk, type, or snap your screen.")
         emptyLabel.font = .systemFont(ofSize: 12)
         emptyLabel.textColor = Theme.text3
         emptyLabel.alignment = .center
@@ -500,6 +513,9 @@ final class ChatPanel {
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = Theme.accent
         statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.maximumNumberOfLines = 1
+        // Long tool detail must truncate, never widen the panel window.
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         statusLabel.isHidden = true
 
         stopButton = NSButton(title: "Stop", target: self, action: #selector(stopTapped))
@@ -520,7 +536,7 @@ final class ChatPanel {
 
         // Input row -----------------------------------------------------------
         inputField = ChatInputField()
-        inputField.placeholderString = "Message the agent…"
+        inputField.placeholderString = "message the assistant… (or hold ⌃⌥ and talk)"
         inputField.font = .systemFont(ofSize: 13)
         inputField.textColor = Theme.text
         inputField.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10)
@@ -727,37 +743,40 @@ final class ChatPanel {
             return label
 
         case .user, .assistant:
+            // Flat thread (design remarks 14/16): no cards, no bubbles —
+            // the ↳ marks the user's words, everything else is the assistant.
             let isUser = kind == .user
-            let bubble = NSView()
-            bubble.wantsLayer = true
-            bubble.layer?.cornerRadius = 12
-            bubble.layer?.backgroundColor = isUser
-                ? NSColor(r: 92, g: 70, b: 40, a: 200).cgColor
-                : NSColor(r: 52, g: 50, b: 48, a: 200).cgColor
-            bubble.translatesAutoresizingMaskIntoConstraints = false
-            bubble.addSubview(label)
-            label.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                label.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 7),
-                label.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -7),
-                label.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 11),
-                label.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -11),
-            ])
-
             let row = NSView()
             row.translatesAutoresizingMaskIntoConstraints = false
-            row.addSubview(bubble)
-            NSLayoutConstraint.activate([
-                bubble.topAnchor.constraint(equalTo: row.topAnchor),
-                bubble.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-                bubble.widthAnchor.constraint(lessThanOrEqualToConstant: width - 90),
-            ])
+            label.translatesAutoresizingMaskIntoConstraints = false
+
             if isUser {
-                bubble.trailingAnchor.constraint(equalTo: row.trailingAnchor).isActive = true
-                bubble.leadingAnchor.constraint(greaterThanOrEqualTo: row.leadingAnchor).isActive = true
+                label.font = .systemFont(ofSize: 11.5)
+                label.textColor = Theme.text2
+                let arrow = NSTextField(labelWithString: "↳")
+                arrow.font = .systemFont(ofSize: 11.5, weight: .bold)
+                arrow.textColor = Theme.accent
+                arrow.translatesAutoresizingMaskIntoConstraints = false
+                row.addSubview(arrow)
+                row.addSubview(label)
+                NSLayoutConstraint.activate([
+                    arrow.topAnchor.constraint(equalTo: row.topAnchor, constant: 3),
+                    arrow.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
+                    label.topAnchor.constraint(equalTo: row.topAnchor, constant: 3),
+                    label.leadingAnchor.constraint(equalTo: arrow.trailingAnchor, constant: 7),
+                    label.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -2),
+                    label.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -3),
+                ])
             } else {
-                bubble.leadingAnchor.constraint(equalTo: row.leadingAnchor).isActive = true
-                bubble.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor).isActive = true
+                label.font = .systemFont(ofSize: 12.5)
+                label.textColor = Theme.text
+                row.addSubview(label)
+                NSLayoutConstraint.activate([
+                    label.topAnchor.constraint(equalTo: row.topAnchor, constant: 4),
+                    label.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 2),
+                    label.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -2),
+                    label.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -4),
+                ])
             }
 
             bubbleStack.addArrangedSubview(row)

@@ -384,7 +384,7 @@ final class MCPServer {
             "description": """
             Tell the user something through Voice Flow — the ONE way to message them. They get \
             a small notification receipt (never the full text; audio only on demand); they read \
-            the full report by switching onto your session (⌃⌥N) or in their Messages tab, \
+            the full report by switching onto your session (⌃⌥N) or in the panel's Agents tab, \
             which keeps it forever. Always send real context, not a headline: `summary` is the \
             one-liner, `details` carries what happened, what changed and where, and what (if \
             anything) they should do. Without `question` this returns immediately — use it for \
