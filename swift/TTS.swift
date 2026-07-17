@@ -1142,6 +1142,9 @@ final class LocalAPIServer {
     var onSpeak: ((TTSAPIUpdatePayload) -> LocalAPIResponse)?
     var onSeek: ((TTSAPIUpdatePayload) -> LocalAPIResponse)?
     var onStop: (() -> LocalAPIResponse)?
+    /// POST /api/panel/show {"tab": "inbox"|"agents"|"speech"} — open the
+    /// ChatPanel for screenshot validation without a human click.
+    var onPanelShow: ((String?) -> LocalAPIResponse)?
     var onServerMessage: ((String) -> Void)?
     /// MCP endpoint: (raw JSON-RPC body, Mcp-Session-Id) in → (status,
     /// body, sessionIdToIssue) out. May block for minutes (ask_user),
@@ -1309,9 +1312,18 @@ final class LocalAPIServer {
             }
         case ("POST", "/api/tts/stop"):
             return onStop?() ?? LocalAPIResponse.error(503, "TTS stop unavailable.")
+        case ("POST", "/api/panel/show"):
+            // Dev/validation hook: open the ChatPanel (optionally on a tab)
+            // so agents can screenshot-verify the UI without a human click.
+            let tab = (try? JSONDecoder().decode(PanelShowPayload.self, from: request.body))?.tab
+            return onPanelShow?(tab) ?? LocalAPIResponse.error(503, "Panel unavailable.")
         default:
             return LocalAPIResponse.error(404, "Not found.")
         }
+    }
+
+    struct PanelShowPayload: Codable {
+        var tab: String?
     }
 
     private func decodePayload(_ data: Data) -> Result<TTSAPIUpdatePayload, Error> {

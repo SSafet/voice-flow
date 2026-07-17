@@ -1983,6 +1983,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return response
         }
+        localAPIServer.onPanelShow = { [weak self] tab in
+            guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
+            DispatchQueue.main.sync {
+                self.chatPanel.show(focusInput: false)
+                switch tab {
+                case "inbox": self.chatPanel.selectTab(.inbox)
+                case "agents": self.chatPanel.selectTab(.agents)
+                case "speech": self.chatPanel.openSpeech()
+                default: break
+                }
+            }
+            return LocalAPIResponse.ok(["shown": tab ?? "current"])
+        }
         localAPIServer.onStop = { [weak self] in
             guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
             var response = LocalAPIResponse.error(503, "TTS stop unavailable.")
