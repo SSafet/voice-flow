@@ -1404,8 +1404,19 @@ class BackendBridge {
     private func send(_ dict: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
               let str = String(data: data, encoding: .utf8) else { return }
-        let line = str + "\n"
-        stdin?.write(line.data(using: .utf8)!)
+        // The legacy write(_:) raises an uncatchable ObjC exception on a
+        // broken pipe — a dead backend must not abort the whole app.
+        guard let stdin, process?.isRunning == true else {
+            vflog("backend not running — dropping \(dict["cmd"] ?? "?") command")
+            onError?("Dictation backend isn't running — restart Voice Flow")
+            return
+        }
+        do {
+            try stdin.write(contentsOf: Data((str + "\n").utf8))
+        } catch {
+            vflog("backend pipe write failed: \(error)")
+            onError?("Dictation backend died — restart Voice Flow")
+        }
     }
 
     private func handleLine(_ line: String) {
