@@ -559,6 +559,7 @@ final class ChatPanel {
 
         let strip = NSStackView(views: [inboxTabButton, agentsTabButton, speechButton])
         strip.orientation = .horizontal
+        strip.distribution = .fill   // stretch the low-hugging tabs to fill
         strip.spacing = 4
         strip.edgeInsets = NSEdgeInsets(top: 3, left: 3, bottom: 3, right: 3)
         strip.wantsLayer = true
