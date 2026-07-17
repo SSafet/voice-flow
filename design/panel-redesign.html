@@ -150,6 +150,23 @@
     vertical-align: -2px;
   }
   .who .sd.ai { background: transparent; border: 1px solid var(--green); color: var(--green); }
+  /* option D: chronological list → pushed thread (master-detail) */
+  .lrow {
+    display: flex; align-items: center; gap: 9px;
+    padding: 6px 9px; border-radius: 8px;
+    font-size: 12.5px; color: var(--text2);
+  }
+  .lrow.hot { background: var(--card-hover); color: var(--text); font-weight: 600; }
+  .lrow .tm { margin-left: auto; font-size: 10px; color: var(--text3); font-weight: 400; }
+  .lrow .prev { display: block; font-size: 10.5px; color: var(--text3); font-weight: 400; margin-top: 1px; }
+  .lrow .col { min-width: 0; }
+  .thd {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 0 9px;
+  }
+  .thd .back { color: var(--text2); font-size: 13px; }
+  .thd .nm { font-size: 12.5px; font-weight: 700; color: var(--text); }
+  .thd .spk { margin-left: auto; color: var(--text3); font-size: 11px; }
   /* option C: accordion */
   .acc { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; margin-bottom: 8px; }
   .acc .hd {
@@ -357,7 +374,7 @@
 <p class="sub">This tab holds <b>ALL of them</b>: every connected Claude/MCP session (gold numbered dots,
 numbering ≡ the pill picker ⌃⌥1–6, unread rings and ghosts included) <b>plus</b> the built-in
 assistant — which is not a session, so it gets its own mark: a green outlined <b>✦</b>, never a number.
-Three layout options for navigating them — no left rail.</p>
+Four layout options for navigating them — no left rail.</p>
 <div class="row">
   <div class="stage">
     <div class="label"><b>Option A — picker strip.</b> Sessions run horizontally under the tabs: the literal pill picker, relocated. Assistant sits apart behind a divider. The thread gets the full panel width.</div>
@@ -451,6 +468,68 @@ Three layout options for navigating them — no left rail.</p>
         </div>
         <div class="acc">
           <div class="hd"><span class="sdot off ring">2</span>codex-turns <span class="ghost">ghost</span><span class="n">1 unread</span><span class="chev">▸</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="row" style="margin-top:24px">
+  <div class="stage">
+    <div class="label"><b>Option D — chronological list → thread (master-detail).</b> The tab’s root is a minimal, latest-first list of titles — Claude Code Recents style. The unread glow dot and the session number are the only marks; the assistant is one row among them, wearing ✦.</div>
+    <div class="panel">
+      <div class="titlebar"><span class="app">Voice Flow</span><span class="session">Start session</span><span class="spacer"></span><span class="tic">⚙</span></div>
+      <div class="tabs">
+        <div class="tab">Inbox <span class="count">3</span></div>
+        <div class="tab active">Agents <span class="count">2</span></div>
+        <div class="tab util">♪</div>
+      </div>
+      <div class="body">
+        <div class="lrow hot">
+          <span class="unread-dot"></span><span class="sdot">1</span>
+          <span class="col">ticket #15 — panel redesign<span class="prev">asks: approve the mock, or adjust…</span></span>
+          <span class="tm">23:52</span>
+        </div>
+        <div class="lrow">
+          <span class="sdot off ring">2</span>
+          <span class="col">codex-turns <span class="ghost">ghost</span><span class="prev">Refactor finished — 4 files, tests green.</span></span>
+          <span class="tm">23:10</span>
+        </div>
+        <div class="lrow">
+          <span class="sdot ai">✦</span>
+          <span class="col">assistant<span class="prev">Here’s the structure: 1) capture, 2) route…</span></span>
+          <span class="tm">22:58</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="stage">
+    <div class="label"><b>Option D, opened.</b> Clicking a row pushes the thread over the list — full width, back chevron returns. ⌃⌥N still jumps straight into a session’s thread; the number lives in the header.</div>
+    <div class="panel">
+      <div class="titlebar"><span class="app">Voice Flow</span><span class="session">Start session</span><span class="spacer"></span><span class="tic">⚙</span></div>
+      <div class="tabs">
+        <div class="tab">Inbox <span class="count">3</span></div>
+        <div class="tab active">Agents <span class="count">2</span></div>
+        <div class="tab util">♪</div>
+      </div>
+      <div class="body">
+        <div class="thd">
+          <span class="back">‹</span><span class="sdot">1</span><span class="nm">ticket #15 — panel redesign</span><span class="spk">🔊</span>
+        </div>
+        <div class="thread">
+          <div class="bub">
+            <div class="who">ticket #15 — panel redesign <span class="t">· 23:52</span></div>
+            <div class="m">Mock is ready — design/panel-redesign.html. Two surfaces + speech drawer.</div>
+          </div>
+          <div class="bub ask">
+            <div class="who">asks</div>
+            <div class="m bright">Approve the mock, or adjust the Agents layout?</div>
+            <div class="reply-line"><span class="fld">type an answer…</span><span class="go">send</span></div>
+            <div class="hint">or hold ⌃⌥ and talk — reply routes to this session</div>
+          </div>
+          <div class="bub me">
+            <div class="who">you <span class="t">· 23:58</span></div>
+            <div class="m">approved, ship step (a)</div>
+          </div>
         </div>
       </div>
     </div>
