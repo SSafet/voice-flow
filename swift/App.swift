@@ -114,6 +114,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Sticky display names: the label each session wore while alive, kept
+    /// so a completed/ghost thread NEVER changes title after its session
+    /// dies — the title is how the user tracks threads (ticket #14 QA).
+    /// Persisted; pruned with the stacks they label.
+    var sessionLabels: [String: String] = [:] {
+        didSet { Self.saveLabels(sessionLabels) }
+    }
+
+    private static let labelsURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/voice-flow/session-names.json")
+
+    private static func saveLabels(_ labels: [String: String]) {
+        if let data = try? JSONEncoder().encode(labels) {
+            try? data.write(to: labelsURL, options: .atomic)
+        }
+    }
+
+    private static func loadLabels() -> [String: String] {
+        guard let data = try? Data(contentsOf: labelsURL),
+              let labels = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+        return labels
+    }
+
+    /// Record the registry label for a session so its threads keep their
+    /// title once the session is gone. Main thread.
+    func rememberSessionLabel(_ sessionId: String?) {
+        guard let sessionId, let label = mcpServer.sessions.session(sessionId)?.label,
+              sessionLabels[sessionId] != label else { return }
+        sessionLabels[sessionId] = label
+    }
+
     private static func loadPushes() -> [String: [SessionPush]] {
         guard let data = try? Data(contentsOf: pushesURL),
               let pushes = try? JSONDecoder().decode([String: [SessionPush]].self, from: data) else { return [:] }
@@ -307,6 +338,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Unread stacks from before the restart come back as ghost picker
         // entries (their sessions reclaim them if they reconnect).
         sessionPushes = Self.loadPushes()
+        sessionLabels = Self.loadLabels()
 
         replyBubble = ReplyBubble(indicator: indicator)
         // ✕ closes and keeps: a pending ask stays pending (answer whenever,
@@ -966,7 +998,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let ghosts = sessionPushes
             .filter { !liveIds.contains($0.key) && $0.value.contains { $0.done != true } }
             .sorted { ($0.value.last?.at ?? .distantPast) < ($1.value.last?.at ?? .distantPast) }
-            .map { (id: $0.key, label: Self.senderLabel($0.value)) }
+            .map { (id: $0.key, label: sessionLabels[$0.key] ?? Self.senderLabel($0.value)) }
         return live + ghosts
     }
 
@@ -1036,6 +1068,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func deliverPush(_ push: SessionPush, from sessionId: String?) {
         let sid = sessionId ?? ""
         var queue = sessionPushes[sid] ?? []
+        // A stack now exists for this session — pin its current label so
+        // the thread's title outlives the session.
+        rememberSessionLabel(sessionId)
         // An agent re-sending the same thing (retry loops, "did you hear
         // me?" spam) collapses into one entry instead of filling the stack —
         // but a consumed (done) push is history and stays.
@@ -2176,6 +2211,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Overlays whose owning session no longer exists are orphans the
             // user has no affordance to clear — sweep them (ticket #14).
             let known = Set(self.mcpServer.sessions.ordered().map { $0.id })
+            // Sticky labels leave with the stacks (and sessions) they name.
+            self.sessionLabels = self.sessionLabels.filter {
+                self.sessionPushes[$0.key] != nil || known.contains($0.key)
+            }
             for owner in self.overlayManager.sessionsWithOverlays() where !known.contains(owner) {
                 self.overlayManager.removeAll(forSession: owner)
             }
@@ -2368,6 +2407,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // a session the user should look at. The label surfaces whenever
         // the session actually engages.
         DispatchQueue.main.async {
+            // A rename must reach existing threads' sticky titles too.
+            if self.sessionLabels[renamed.id] != nil || self.sessionPushes[renamed.id] != nil {
+                self.rememberSessionLabel(renamed.id)
+            }
             self.refreshSessionIndicator()
         }
         return .ok("This session now appears to the user as \"\(renamed.label)\". You stay invisible to them until your first report_to_user / wait_for_message / overlay call.")
@@ -2865,7 +2908,8 @@ extension AppDelegate: AgentsDataSource {
             .filter { !pickerIds.contains($0.key) && !$0.value.isEmpty }
             .sorted { ($0.value.last?.at ?? .distantPast) > ($1.value.last?.at ?? .distantPast) }
             .map { (id: $0.key,
-                    label: mcpServer.sessions.session($0.key)?.label ?? Self.senderLabel($0.value)) }
+                    label: mcpServer.sessions.session($0.key)?.label
+                        ?? sessionLabels[$0.key] ?? Self.senderLabel($0.value)) }
         let entries: [(id: String, label: String, number: Int?)] =
             picker.enumerated().map { ($0.element.id, $0.element.label, $0.offset + 1) }
             + history.map { ($0.id, $0.label, nil) }
@@ -2885,7 +2929,10 @@ extension AppDelegate: AgentsDataSource {
                 preview: preview,
                 time: newest.map { Self.pushTimeFormatter.string(from: $0.at) } ?? "",
                 unread: queue.contains { !$0.seen },
-                ghost: mcpServer.sessions.session(session.id) == nil)
+                // A numberless row IS a consumed thread — "completed", never
+                // "ghost", regardless of whether its session still lives.
+                completed: session.number == nil,
+                ghost: session.number != nil && mcpServer.sessions.session(session.id) == nil)
             return (row, newest?.at)
         }
         return rows.sorted {

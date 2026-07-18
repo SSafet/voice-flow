@@ -22,6 +22,9 @@ struct AgentSessionRow {
     let preview: String      // newest push, one line ("asks: …" when waiting)
     let time: String         // the only timestamps in the whole panel
     let unread: Bool
+    /// Consumed thread kept as history (ticket #17) — tagged "completed".
+    let completed: Bool
+    /// Session died with the stack still active — tagged "ghost".
     let ghost: Bool
 }
 
@@ -137,7 +140,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         // Assistant — persistent first row, never a number.
         let assistantRow = makeRow(
             leading: WaveformIconView(),
-            name: "assistant", unread: false, ghost: false,
+            name: "assistant", unread: false, completed: false, ghost: false,
             preview: "talk · type · snap — the in-app agent", time: "")
         assistantRow.identifier = NSUserInterfaceItemIdentifier("assistant")
         place(assistantRow, below: &top, gap: 2)
@@ -147,7 +150,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             number.font = .systemFont(ofSize: 10.5, weight: .semibold)
             number.textColor = Theme.text3
             let view = makeRow(leading: number, name: row.name, unread: row.unread,
-                               ghost: row.ghost, preview: row.preview, time: row.time)
+                               completed: row.completed, ghost: row.ghost,
+                               preview: row.preview, time: row.time)
             view.identifier = NSUserInterfaceItemIdentifier(row.id)
             place(view, below: &top, gap: 2)
         }
@@ -157,13 +161,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         bottom.isActive = true
     }
 
-    private func makeRow(leading: NSView, name: String, unread: Bool, ghost: Bool,
-                         preview: String, time: String) -> NSView {
+    private func makeRow(leading: NSView, name: String, unread: Bool, completed: Bool,
+                         ghost: Bool, preview: String, time: String) -> NSView {
         let row = HoverRowView()
         row.wantsLayer = true
         row.layer?.cornerRadius = 8
 
-        let nameLabel = NSTextField(labelWithString: ghost ? "\(name)  ghost" : name)
+        let tag = completed ? "  completed" : ghost ? "  ghost" : ""
+        let nameLabel = NSTextField(labelWithString: name + tag)
         nameLabel.font = .systemFont(ofSize: 12.5, weight: unread ? .semibold : .regular)
         nameLabel.textColor = unread ? Theme.text : Theme.text2
         nameLabel.lineBreakMode = .byTruncatingTail
