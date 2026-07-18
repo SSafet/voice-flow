@@ -788,7 +788,7 @@ class HotkeyManager {
             // for the trigger modifier itself, which must never cancel its
             // own double-tap (that killed bare-Fn double-tap entirely).
             let kc = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-            if kc != keyCode {
+            if !isTriggerAliasKeyCode(kc) {
                 if doubleTapSessionActive {
                     doubleTapContaminated = true
                     doubleTapExactDown = false
@@ -840,6 +840,17 @@ class HotkeyManager {
             doubleTapContaminated = false
             doubleTapExactDown = false
         }
+    }
+
+    /// The Fn/Globe key is TWO events per physical press: a flagsChanged
+    /// with keycode 63 (the trigger we track) and a regular keyDown/keyUp
+    /// with keycode 179 (the Globe key). That 179 keyDown is the trigger
+    /// itself, not a chord — counting it as "another key" cancelled the
+    /// double-tap window on every bare-Fn tap (Safet QA, ticket #2).
+    private func isTriggerAliasKeyCode(_ kc: CGKeyCode) -> Bool {
+        if kc == keyCode { return true }
+        if keyCode == 63 && kc == 179 { return true }
+        return false
     }
 
     private func handleKeyDoublePressEvent(_ event: CGEvent) -> Bool {
