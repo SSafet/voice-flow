@@ -901,9 +901,14 @@ class FloatingIndicator: NSObject {
         let rootView = IndicatorView(frame: NSRect(x: 0, y: 0, width: W, height: H))
         rootView.onClick = { [weak self] in
             guard let self else { return }
-            // A click means "open the app" in every mode: receipts and the
-            // picker collapse first; grown padding opens too (the icon
-            // cluster and the selectable text keep their own behavior).
+            // Grown content (a session's stack) stays a pill-flow surface:
+            // clicking its padding puts it away like ✕ (stack kept) and
+            // NEVER yanks the user into the panel (Safet QA, ticket #15).
+            // A collapsed pill / receipt / picker click still opens the app.
+            if self.isGrownVisible {
+                self.collapseNow()
+                return
+            }
             self.collapseNow()
             self.onClick?()
         }

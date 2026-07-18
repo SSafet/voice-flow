@@ -769,6 +769,20 @@ class HotkeyManager {
     }
 
     private func handleModifierDoublePressEvent(_ event: CGEvent) {
+        // A regular key pressed while the trigger modifier is down means the
+        // modifier is being used as a CHORD (Fn+1 talk, FnLeft⌘ TTS, …) —
+        // that press must never count toward a double-tap of the bare
+        // modifier, and typing between taps cancels a pending window.
+        // Without this, two Fn-chords within the window silently started a
+        // hands-free/brain-dump recording (Safet QA, ticket #15).
+        if event.type == .keyDown {
+            if doubleTapSessionActive {
+                doubleTapContaminated = true
+                doubleTapExactDown = false
+            }
+            if doubleTapWaitingForSecond { resetDoubleTapWindow() }
+            return
+        }
         guard event.type == .flagsChanged else { return }
 
         let kc = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))

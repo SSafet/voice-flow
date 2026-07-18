@@ -137,6 +137,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var escapeMonitor: Any?
 
     private var recordingPurpose: RecordingPurpose = .dictation
+    /// Purpose snapshotted when a recording STOPS — transcription results
+    /// route by this, so a newer recording started while the backend is
+    /// still transcribing can never re-route the previous result.
+    private var resultPurpose: RecordingPurpose = .dictation
     private var initialPermissionsRequested = false
     private var screenGrantPollTimer: Timer?
     private var screenGrantPendingRestart = false
@@ -479,8 +483,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         backend.onError = { [weak self] msg in
             vflog("backend error: \(msg)")
             guard let self else { return }
-            let purpose = self.recordingPurpose
-            self.recordingPurpose = .dictation
+            let purpose = self.resultPurpose
+            self.resultPurpose = .dictation
+            if !self.recorder.isRecording { self.recordingPurpose = .dictation }
             self.state = .idle
             switch purpose {
             case .talk, .snapTalk, .brainDump:
@@ -1368,6 +1373,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startRecording() {
         indicator.collapseNow()   // any other hotkey closes the picker
+        // Dictating while a brain dump is running: commit the dump instead
+        // of silently swallowing the press (the words would otherwise land
+        // in the Inbox and the user would see "dictation didn't paste").
+        if recorder.isRecording, recordingPurpose == .brainDump {
+            stopRecording()
+            replyBubble.showTransient("brain dump saved to Inbox — press again to dictate", seconds: 5)
+            return
+        }
         guard !recorder.isRecording else { return }
         stopSpeechPlayback()
         recordingPurpose = .dictation
@@ -1409,6 +1422,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         transcriptPanel.hide()
         recorder.stop { [weak self] pcmData in
             guard let self else { return }
+            // Route the eventual result by the purpose this recording had —
+            // a new recording may change recordingPurpose before it lands.
+            self.resultPurpose = self.recordingPurpose
             if let pcmData {
                 self.state = .processing
                 let settings = UserSettings.shared
@@ -1422,7 +1438,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     if openAIAPIKey == nil {
                         vflog("OpenAI dictation selected, but no API key is saved")
                         self.state = .idle
-                        let purpose = self.recordingPurpose
+                        let purpose = self.resultPurpose
+                        self.resultPurpose = .dictation
                         self.recordingPurpose = .dictation
                         switch purpose {
                         case .dictation:
@@ -1448,7 +1465,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     vocabulary: settings.customVocabulary
                 )
             } else {
-                let purpose = self.recordingPurpose
+                let purpose = self.resultPurpose
+                self.resultPurpose = .dictation
                 self.recordingPurpose = .dictation
                 self.state = .idle
                 if self.recorder.lastCaptureBytes == 0 {
@@ -1524,10 +1542,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         vflog("raw: \(raw)")
         vflog("cleaned: \(cleaned)")
 
-        // Voice destined for the agent — never pasted anywhere.
-        if recordingPurpose != .dictation {
-            let purpose = recordingPurpose
-            recordingPurpose = .dictation
+        // Voice destined for the agent — never pasted anywhere. Branch on
+        // the purpose snapshotted at recording stop, never the live one.
+        if resultPurpose != .dictation {
+            let purpose = resultPurpose
+            resultPurpose = .dictation
+            if !recorder.isRecording { recordingPurpose = .dictation }
             paster.clearStreamTarget()
             hadPartialStream = false
             state = .idle
@@ -2072,14 +2092,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Registry pruning is lazy (no callbacks): sessions idle 2h vanish
         // the next time someone LOOKS, so the number dot and the unread
         // ring could lie for hours (e.g. overnight). A periodic sweep
-        // keeps them honest. It NEVER touches unread stacks — those stay
-        // as readable ghost entries; it only clears read residue of dead
-        // sessions and re-targets off an entry that no longer exists.
+        // keeps them honest. Stacks are NEVER auto-deleted — read or not,
+        // they are the panel's thread history and persist until the user
+        // trashes them (reading a ghost used to vaporize it within 60s,
+        // taking the speaker and the thread with it — Safet QA). The sweep
+        // only drops empty queues and re-targets off dead entries.
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             guard let self else { return }
-            let live = Set(self.mcpServer.sessions.ordered().map { $0.id })
-            self.sessionPushes = self.sessionPushes.filter { sid, queue in
-                !queue.isEmpty && (live.contains(sid) || queue.contains { !$0.seen })
+            self.sessionPushes = self.sessionPushes.filter { _, queue in
+                !queue.isEmpty
             }
             if self.targetSessionId != nil,
                !self.pickerSessions().contains(where: { $0.id == self.targetSessionId }) {
@@ -2820,9 +2841,14 @@ extension AppDelegate: AgentsDataSource {
 
     /// The thread header's 🔊 — same read-aloud as re-selecting the session.
     func speakThread(_ sessionId: String) {
-        guard let queue = sessionPushes[sessionId], !queue.isEmpty else { return }
+        guard let queue = sessionPushes[sessionId], !queue.isEmpty else {
+            replyBubble.showTransient("nothing to read for this session", seconds: 4)
+            return
+        }
         var request = chatPanel.currentTTSRequest()
         request.text = queue.map(\.text).joined(separator: "\n\n")
-        _ = handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
+        if handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: true) != nil {
+            replyBubble.showTransient("couldn't start speech — check the TTS settings", seconds: 5)
+        }
     }
 }
