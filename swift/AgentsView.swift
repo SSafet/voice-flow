@@ -36,7 +36,7 @@ protocol AgentsDataSource: AnyObject {
     func speakThread(_ sessionId: String)
 }
 
-final class AgentsView: NSView {
+final class AgentsView: NSView, NSTextFieldDelegate {
     weak var dataSource: AgentsDataSource?
     /// The assistant row was chosen — ChatPanel swaps in the chat surface.
     var onOpenAssistant: (() -> Void)?
@@ -378,6 +378,9 @@ final class AgentsView: NSView {
         field.action = #selector(composerSent(_:))
         field.lineBreakMode = .byWordWrapping
         field.cell?.usesSingleLineMode = false
+        // Multiline cells swallow Return instead of firing the action —
+        // the delegate turns Return back into SEND (Option+Return = newline).
+        field.delegate = self
 
         let send = NSButton(image: NSImage(systemSymbolName: "arrow.up.circle.fill",
                                            accessibilityDescription: nil) ?? NSImage(),
@@ -423,6 +426,19 @@ final class AgentsView: NSView {
     }
 
     @objc private func composerSent(_ sender: NSTextField) { submit(sender) }
+
+    /// Return sends; Option+Return inserts a newline.
+    func control(_ control: NSControl, textView: NSTextView,
+                 doCommandBy commandSelector: Selector) -> Bool {
+        guard commandSelector == #selector(NSResponder.insertNewline(_:)),
+              let field = control as? NSTextField else { return false }
+        if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+            textView.insertNewlineIgnoringFieldEditor(nil)
+            return true
+        }
+        submit(field)
+        return true
+    }
 
     @objc private func sendTapped(_ sender: NSButton) {
         if let field = composerField { submit(field) }

@@ -2834,6 +2834,18 @@ extension AppDelegate: AgentsDataSource {
         }
         let live = inbox.hasWaiter(for: sessionId)
         inbox.add(text: text, attachments: [], session: sessionId)
+        // The sent message must be VISIBLE in the thread, not swallowed:
+        // it attaches (↳) under the newest push — the message it answers.
+        if var queue = sessionPushes[sessionId], let idx = queue.indices.last {
+            if queue[idx].answer == nil {
+                queue[idx].answer = text
+            } else {
+                queue[idx].answer! += "\n↳ " + text
+            }
+            queue[idx].seen = true
+            sessionPushes[sessionId] = queue
+            chatPanel.refreshAgents()
+        }
         replyBubble.showTransient(live ? "sent to \(sessionName(for: sessionId))"
                                        : "queued for \(sessionName(for: sessionId)) — delivered on its next check-in",
                                   seconds: 5)
