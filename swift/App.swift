@@ -90,6 +90,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         /// Read aloud already — the consumption cursor (ticket #16):
         /// consumed = spoken OR answered; read-aloud starts after it.
         var spoken: Bool? = nil
+        /// Consumed from the pill (trashed / answered / session ended read):
+        /// gone from every quick surface, kept as history in the panel's
+        /// Agents thread until the user ✓-completes it (ticket #17).
+        var done: Bool? = nil
     }
     /// Persisted to pushes.json — unread stacks must survive app restarts,
     /// not just session deaths. A session re-adopting its old id reclaims
@@ -98,6 +102,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         didSet { Self.savePushes(sessionPushes) }
     }
     private let maxQueuedPushes = 8
+    /// Done pushes included — how much thread history a session keeps.
+    private let maxKeptPushes = 40
 
     private static let pushesURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".config/voice-flow/pushes.json")
@@ -117,13 +123,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // restart — it degrades to a plain readable message.
                 push.isAsk && push.answer == nil
                     ? SessionPush(at: push.at, title: push.title, text: push.text,
-                                  hint: nil, isAsk: false, seen: push.seen)
+                                  hint: nil, isAsk: false, seen: push.seen,
+                                  spoken: push.spoken, done: push.done)
                     : push
             }
         }
     }
     /// Which session's push is currently displayed (trash targets it).
     var currentPushSessionId: String?
+
+    /// Consume a stack: every push becomes done history — it leaves the
+    /// pill's quick surfaces (picker dot, ⌃⌥ stack, unread ring) but stays
+    /// readable in the panel's Agents thread until the user ✓-completes
+    /// the thread there (ticket #17). Main thread.
+    private func markStackDone(_ sessionId: String) {
+        guard let queue = sessionPushes[sessionId] else { return }
+        sessionPushes[sessionId] = queue.map { push in
+            var done = push
+            done.done = true
+            done.seen = true
+            return done
+        }
+        chatPanel.refreshAgents()
+    }
 
     // Agent session
     var screenCapture: ScreenCapture!
@@ -247,7 +269,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             let label = self.pickerSessions().first { $0.id == id }?.label ?? "session"
             _ = self.mcpServer.sessions.close(id)   // nil for a ghost — fine
-            self.sessionPushes.removeValue(forKey: id)
+            self.markStackDone(id)
             // Its stack may be the thing on screen right now.
             if self.currentPushSessionId == id {
                 self.currentPushSessionId = nil
@@ -305,7 +327,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         // Trash means "I'm done with this one": it cancels a waiting ask,
-        // clears the whole push stack, AND disconnects the session — its
+        // consumes the push stack (kept as done history in the panel's
+        // Agents thread — ticket #17), AND disconnects the session — its
         // picker dot goes too (a live session quietly re-adopts on its
         // next tool call, so this is always safe).
         replyBubble.onTrashed = { [weak self] in
@@ -318,7 +341,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 interaction.semaphore.signal()
             }
             if let id = self.currentPushSessionId {
-                self.sessionPushes.removeValue(forKey: id)
+                self.markStackDone(id)
                 // The trashed session's on-screen elements go with it —
                 // annotations must not outlive their message (ticket #14).
                 self.overlayManager.removeAll(forSession: id)
@@ -928,9 +951,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // target) — otherwise it lingers as an empty no-message entry the
         // user can't do anything with (ticket #14).
         let overlayOwners = overlayManager.sessionsWithOverlays()
+        // Done pushes are panel history, not pill business — a stack of
+        // nothing but done pushes offers the picker nothing (ticket #17).
         let live = mcpServer.sessions.ordered().filter { session in
             guard session.engaged else { return false }
-            return sessionPushes[session.id]?.isEmpty == false
+            return sessionPushes[session.id]?.contains { $0.done != true } == true
                 || inbox.hasWaiter(for: session.id)
                 || pendingInteraction?.sessionId == session.id
                 || overlayOwners.contains(session.id)
@@ -939,7 +964,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .map { (id: $0.id, label: $0.label) }
         let liveIds = Set(live.map { $0.id })
         let ghosts = sessionPushes
-            .filter { !liveIds.contains($0.key) && !$0.value.isEmpty }
+            .filter { !liveIds.contains($0.key) && $0.value.contains { $0.done != true } }
             .sorted { ($0.value.last?.at ?? .distantPast) < ($1.value.last?.at ?? .distantPast) }
             .map { (id: $0.key, label: Self.senderLabel($0.value)) }
         return live + ghosts
@@ -981,7 +1006,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         refreshUnreadIndicator()
         if announce {
             let (entries, activeName) = pickerEntries()
-            if let id, let queue = sessionPushes[id], !queue.isEmpty {
+            if let id, let queue = sessionPushes[id]?.filter({ $0.done != true }), !queue.isEmpty {
                 // The session has something to show — the picker grows
                 // straight into its whole stack, picker row at the bottom.
                 // Unseen content stays up until ✕ (this IS the reading
@@ -1012,12 +1037,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let sid = sessionId ?? ""
         var queue = sessionPushes[sid] ?? []
         // An agent re-sending the same thing (retry loops, "did you hear
-        // me?" spam) collapses into one entry instead of filling the stack.
-        if let last = queue.last, last.text == push.text, last.isAsk == push.isAsk {
+        // me?" spam) collapses into one entry instead of filling the stack —
+        // but a consumed (done) push is history and stays.
+        if let last = queue.last, last.done != true, last.text == push.text, last.isAsk == push.isAsk {
             queue.removeLast()
         }
         queue.append(push)
-        if queue.count > maxQueuedPushes { queue.removeFirst(queue.count - maxQueuedPushes) }
+        // The quick stack holds ≤8 ACTIVE pushes — overflow ages into done
+        // history instead of vanishing (ticket #17); the thread history
+        // itself is capped separately.
+        var active = queue.indices.filter { queue[$0].done != true }
+        while active.count > maxQueuedPushes {
+            let index = active.removeFirst()
+            queue[index].done = true
+            queue[index].seen = true
+        }
+        if queue.count > maxKeptPushes { queue.removeFirst(queue.count - maxKeptPushes) }
         sessionPushes[sid] = queue
         // The permanent record — messages.json keeps every push even
         // after its session expires or the stack is trashed.
@@ -1049,7 +1084,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func showPushStack(for sessionId: String,
                                bottomPicker: (entries: [FloatingIndicator.PickerEntry], activeName: String?)? = nil,
                                autoHide: TimeInterval? = nil) {
-        guard let queue = sessionPushes[sessionId], let newest = queue.last else { return }
+        // The grown surface shows only the ACTIVE stack — done pushes live
+        // in the panel's Agents thread, not here (ticket #17).
+        guard let queue = sessionPushes[sessionId]?.filter({ $0.done != true }),
+              let newest = queue.last else { return }
         // An answered ask is history, not a question — never re-render ask
         // styling or the answer hint for it.
         let ask = queue.last { $0.isAsk && $0.answer == nil }
@@ -1062,7 +1100,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 isAsk: ask != nil),
             bottomPicker: bottomPicker,
             autoHide: autoHide)
-        sessionPushes[sessionId] = queue.map { push in
+        // Mark the STORED queue seen — `queue` above is the active subset.
+        sessionPushes[sessionId] = sessionPushes[sessionId]?.map { push in
             var seen = push
             seen.seen = true
             return seen
@@ -1118,11 +1157,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The user answered what was on screen by voice — the view collapses
     /// and the receipt lands after it. When the answer actually reached a
-    /// session, its stack is also done with (messages.json keeps the
-    /// history). Main thread.
+    /// session, its stack is consumed: done history in the panel's Agents
+    /// thread, gone from the pill's quick surfaces (ticket #17). Main thread.
     private func answeredSession(_ id: String?, note: String, clearStack: Bool) {
         if clearStack, let id {
-            sessionPushes.removeValue(forKey: id)
+            markStackDone(id)
             refreshUnreadIndicator()
         }
         currentPushSessionId = nil
@@ -2101,9 +2140,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, let closed = self.mcpServer.sessions.close(sessionId) else { return }
             DispatchQueue.main.async {
                 // An unread stack survives its session as a ghost picker
-                // entry; only read residue leaves with it.
+                // entry; a fully-read one leaves the pill with its session
+                // but stays in the panel as done history (ticket #17).
                 if self.sessionPushes[closed.id]?.contains(where: { !$0.seen }) != true {
-                    self.sessionPushes.removeValue(forKey: closed.id)
+                    self.markStackDone(closed.id)
                 }
                 self.refreshUnreadIndicator()
                 if self.targetSessionId == closed.id {
@@ -2414,7 +2454,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     guard push.isAsk, push.answer == nil else { return push }
                     return SessionPush(at: push.at, title: push.title, text: push.text,
                                        hint: nil, isAsk: false, seen: push.seen,
-                                       answer: nil, spoken: push.spoken)
+                                       answer: nil, spoken: push.spoken, done: push.done)
                 }
                 self.refreshUnreadIndicator()
                 self.chatPanel.refreshAgents()
@@ -2815,7 +2855,20 @@ extension AppDelegate: AgentsDataSource {
         // Numbers stay ≡ the pill picker (⌃⌥N identity); the LIST order is
         // latest activity first, per the mock. No-push sessions trail in
         // picker order.
-        let rows = pickerSessions().enumerated().map { index, session -> (row: AgentSessionRow, at: Date?) in
+        let picker = pickerSessions()
+        let pickerIds = Set(picker.map { $0.id })
+        // Consumed threads (every push done) have left the pill but stay
+        // browsable here until ✓-completed — numberless: they hold no
+        // ⌃⌥ slot anymore (ticket #17).
+        let history = sessionPushes
+            .filter { !pickerIds.contains($0.key) && !$0.value.isEmpty }
+            .sorted { ($0.value.last?.at ?? .distantPast) > ($1.value.last?.at ?? .distantPast) }
+            .map { (id: $0.key,
+                    label: mcpServer.sessions.session($0.key)?.label ?? Self.senderLabel($0.value)) }
+        let entries: [(id: String, label: String, number: Int?)] =
+            picker.enumerated().map { ($0.element.id, $0.element.label, $0.offset + 1) }
+            + history.map { ($0.id, $0.label, nil) }
+        let rows = entries.map { session -> (row: AgentSessionRow, at: Date?) in
             let queue = sessionPushes[session.id] ?? []
             let newest = queue.last
             var preview = newest.map { $0.text.replacingOccurrences(of: "\n", with: " ") } ?? ""
@@ -2826,7 +2879,7 @@ extension AppDelegate: AgentsDataSource {
             if preview.count > 120 { preview = String(preview.prefix(120)) + "…" }
             let row = AgentSessionRow(
                 id: session.id,
-                number: index + 1,
+                number: session.number,
                 name: session.label,
                 preview: preview,
                 time: newest.map { Self.pushTimeFormatter.string(from: $0.at) } ?? "",
@@ -2839,7 +2892,7 @@ extension AppDelegate: AgentsDataSource {
             case let (a?, b?): return a > b
             case (_?, nil): return true
             case (nil, _?): return false
-            case (nil, nil): return $0.row.number < $1.row.number
+            case (nil, nil): return ($0.row.number ?? .max) < ($1.row.number ?? .max)
             }
         }.map { $0.row }
     }

@@ -16,7 +16,8 @@ import Cocoa
 
 struct AgentSessionRow {
     let id: String
-    let number: Int          // ≡ pill picker / ⌃⌥ numbering
+    let number: Int?         // ≡ pill picker / ⌃⌥ numbering; nil = consumed
+                             // thread kept as history, no ⌃⌥ slot (ticket #17)
     let name: String
     let preview: String      // newest push, one line ("asks: …" when waiting)
     let time: String         // the only timestamps in the whole panel
@@ -142,7 +143,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         place(assistantRow, below: &top, gap: 2)
 
         for row in dataSource?.agentSessionRows() ?? [] {
-            let number = NSTextField(labelWithString: "\(row.number)")
+            let number = NSTextField(labelWithString: row.number.map(String.init) ?? "")
             number.font = .systemFont(ofSize: 10.5, weight: .semibold)
             number.textColor = Theme.text3
             let view = makeRow(leading: number, name: row.name, unread: row.unread,
