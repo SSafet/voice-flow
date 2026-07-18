@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.VoiceFlow" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#141414</item>
+        <item name="android:colorAccent">#E8A33D</item>
+        <item name="android:statusBarColor">#141414</item>
+        <item name="android:navigationBarColor">#141414</item>
+        <item name="android:textColorPrimary">#ECECEC</item>
+        <item name="android:textColorSecondary">#9A9A9A</item>
+    </style>
+</resources>

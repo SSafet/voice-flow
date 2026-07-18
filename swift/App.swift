@@ -56,6 +56,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var paster: Paster!
     var ttsController: TTSController!
     var localAPIServer: LocalAPIServer!
+    var syncServer: SyncServer!
     var replyBubble: ReplyBubble!
     var replySpeaker: AgentReplySpeaker!
     var captureStore: CaptureStore!
@@ -240,6 +241,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         ttsController?.shutdown()
         localAPIServer?.stop()
+        syncServer?.stop()
         if let escapeMonitor {
             NSEvent.removeMonitor(escapeMonitor)
         }
@@ -584,6 +586,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         chatPanel.setTTSStatus(ttsController.status)
 
         setupLocalAPIServer()
+        setupSyncServer()
+    }
+
+    /// Mobile sync (ticket #7): phone dictations/chat in, Mac history +
+    /// settings parity out. Token-protected; see swift/Sync.swift.
+    private func setupSyncServer() {
+        syncServer = SyncServer()
+        syncServer.onServerMessage = { message in vflog(message) }
+        syncServer.onDictations = { [weak self] entries in
+            for e in entries {
+                self?.chatPanel.addDictation(
+                    text: e.text, time: e.time,
+                    destination: CaptureDestination(rawValue: e.destination) ?? .kept,
+                    seen: e.destination == CaptureDestination.kept.rawValue ? false : nil)
+            }
+        }
+        syncServer.start()
     }
 
     private func setupAgent() {
