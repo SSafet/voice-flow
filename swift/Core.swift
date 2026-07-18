@@ -776,11 +776,17 @@ class HotkeyManager {
         // Without this, two Fn-chords within the window silently started a
         // hands-free/brain-dump recording (Safet QA, ticket #15).
         if event.type == .keyDown {
-            if doubleTapSessionActive {
-                doubleTapContaminated = true
-                doubleTapExactDown = false
+            // Only OTHER keys contaminate — some keyboards emit a keyDown
+            // for the trigger modifier itself, which must never cancel its
+            // own double-tap (that killed bare-Fn double-tap entirely).
+            let kc = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+            if kc != keyCode {
+                if doubleTapSessionActive {
+                    doubleTapContaminated = true
+                    doubleTapExactDown = false
+                }
+                if doubleTapWaitingForSecond { resetDoubleTapWindow() }
             }
-            if doubleTapWaitingForSecond { resetDoubleTapWindow() }
             return
         }
         guard event.type == .flagsChanged else { return }

@@ -366,16 +366,18 @@ final class AgentsView: NSView {
 
         let field = NSTextField()
         field.placeholderString = placeholder
-        field.font = .systemFont(ofSize: 12)
+        field.font = .systemFont(ofSize: 12.5)
         field.textColor = Theme.text
         field.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10)
         field.isBezeled = false
         field.focusRingType = .none
         field.wantsLayer = true
-        field.layer?.cornerRadius = 7
+        field.layer?.cornerRadius = 8
         field.identifier = NSUserInterfaceItemIdentifier(sessionId)
         field.target = self
         field.action = #selector(composerSent(_:))
+        field.lineBreakMode = .byWordWrapping
+        field.cell?.usesSingleLineMode = false
 
         let send = NSButton(image: NSImage(systemSymbolName: "arrow.up.circle.fill",
                                            accessibilityDescription: nil) ?? NSImage(),
@@ -392,7 +394,7 @@ final class AgentsView: NSView {
             field.topAnchor.constraint(equalTo: row.topAnchor),
             field.bottomAnchor.constraint(equalTo: row.bottomAnchor),
             field.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-            field.heightAnchor.constraint(equalToConstant: 26),
+            field.heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
             send.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: 6),
             send.trailingAnchor.constraint(equalTo: row.trailingAnchor),
             send.centerYAnchor.constraint(equalTo: field.centerYAnchor),
