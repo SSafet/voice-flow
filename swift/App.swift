@@ -87,6 +87,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         /// The user's reply, attached to the ask it answered — rendered as
         /// the ↳ line in the panel's Agents thread.
         var answer: String? = nil
+        /// Read aloud already — the consumption cursor (ticket #16):
+        /// consumed = spoken OR answered; read-aloud starts after it.
+        var spoken: Bool? = nil
     }
     /// Persisted to pushes.json — unread stacks must survive app restarts,
     /// not just session deaths. A session re-adopting its old id reclaims
@@ -335,7 +338,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.refreshUnreadIndicator()
         }
         replyBubble.onSpeakRequested = { [weak self] text in
-            guard let self, !text.isEmpty else { return }
+            guard let self else { return }
+            // Session stacks speak from the consumption cursor (ticket #16);
+            // sessionless content falls back to the raw shown text.
+            if let sid = self.currentPushSessionId, self.sessionPushes[sid]?.isEmpty == false {
+                self.speakSessionUnconsumed(sid)
+                return
+            }
+            guard !text.isEmpty else { return }
             var request = self.chatPanel.currentTTSRequest()
             request.text = text
             _ = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
@@ -1099,10 +1109,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if id == targetSessionId, indicator.isGrownVisible, currentPushSessionId == id,
            UserSettings.shared.doubleSelectSpeak,
-           let queue = sessionPushes[id], !queue.isEmpty {
-            var request = chatPanel.currentTTSRequest()
-            request.text = queue.map(\.text).joined(separator: "\n\n")
-            _ = handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
+           sessionPushes[id]?.isEmpty == false {
+            speakSessionUnconsumed(id)
             return
         }
         setTargetSession(id, announce: true)
@@ -1200,6 +1208,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let index = queue.lastIndex(where: { $0.isAsk && $0.answer == nil }) else { return }
         queue[index].answer = text
         queue[index].seen = true
+        queue[index].spoken = true   // answered = consumed (ticket #16)
         sessionPushes[sid] = queue
         refreshUnreadIndicator()
         chatPanel.refreshAgents()
@@ -2864,6 +2873,7 @@ extension AppDelegate: AgentsDataSource {
                 queue[idx].answer! += "\n↳ " + text
             }
             queue[idx].seen = true
+            queue[idx].spoken = true   // replied-to = consumed (ticket #16)
             sessionPushes[sessionId] = queue
             chatPanel.refreshAgents()
         }
@@ -2874,14 +2884,26 @@ extension AppDelegate: AgentsDataSource {
 
     /// The thread header's 🔊 — same read-aloud as re-selecting the session.
     func speakThread(_ sessionId: String) {
-        guard let queue = sessionPushes[sessionId], !queue.isEmpty else {
+        speakSessionUnconsumed(sessionId)
+    }
+
+    /// Read-aloud honors the consumption cursor (ticket #16): only pushes
+    /// neither spoken before nor answered are read, then marked spoken.
+    /// Fully caught up? A press is an explicit request to REPLAY the stack.
+    func speakSessionUnconsumed(_ sessionId: String) {
+        guard var queue = sessionPushes[sessionId], !queue.isEmpty else {
             replyBubble.showTransient("nothing to read for this session", seconds: 4)
             return
         }
+        let fresh = queue.indices.filter { queue[$0].spoken != true && queue[$0].answer == nil }
+        let indices = fresh.isEmpty ? Array(queue.indices) : fresh
         var request = chatPanel.currentTTSRequest()
-        request.text = queue.map(\.text).joined(separator: "\n\n")
+        request.text = indices.map { queue[$0].text }.joined(separator: "\n\n")
         if handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: true) != nil {
             replyBubble.showTransient("couldn't start speech — check the TTS settings", seconds: 5)
+            return
         }
+        for index in indices { queue[index].spoken = true }
+        sessionPushes[sessionId] = queue
     }
 }
