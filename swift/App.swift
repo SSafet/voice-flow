@@ -2404,16 +2404,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.sync {
             interaction.resolved = true
             self.pendingInteraction = nil
-            // The ask is settled either way. An ANSWERED ask stays in the
-            // stack with its ↳ answer attached (the panel thread's history);
-            // only an unanswered one (timeout / dismissed) is dropped so a
-            // dead question can't linger as pending.
+            // The ask is settled either way. An ANSWERED ask stays with its
+            // ↳ answer; an unanswered one (timeout / dismissed) DEGRADES to
+            // a plain readable message instead of being deleted — threads
+            // accumulate as history until the user completes them (Safet:
+            // "nothing wrong with them, I want the history persistent").
             if let sid = interaction.sessionId {
-                self.sessionPushes[sid]?.removeAll { $0.isAsk && $0.answer == nil }
-                if self.sessionPushes[sid]?.isEmpty == true {
-                    self.sessionPushes.removeValue(forKey: sid)
+                self.sessionPushes[sid] = self.sessionPushes[sid]?.map { push in
+                    guard push.isAsk, push.answer == nil else { return push }
+                    return SessionPush(at: push.at, title: push.title, text: push.text,
+                                       hint: nil, isAsk: false, seen: push.seen,
+                                       answer: nil, spoken: push.spoken)
                 }
                 self.refreshUnreadIndicator()
+                self.chatPanel.refreshAgents()
             }
             if interaction.sessionId == nil || self.currentPushSessionId == interaction.sessionId {
                 self.replyBubble.hide()
@@ -2891,6 +2895,26 @@ extension AppDelegate: AgentsDataSource {
     /// The thread header's 🔊 — same read-aloud as re-selecting the session.
     func speakThread(_ sessionId: String) {
         speakSessionUnconsumed(sessionId)
+    }
+
+    /// The thread header's ✓ — the user is done with this thread: stack,
+    /// session, and its overlays all go (a live session re-adopts on its
+    /// next call, so this is always safe).
+    func completeThread(_ sessionId: String) {
+        if let interaction = pendingInteraction, interaction.sessionId == sessionId {
+            interaction.cancelled = true
+            interaction.semaphore.signal()
+        }
+        sessionPushes.removeValue(forKey: sessionId)
+        overlayManager.removeAll(forSession: sessionId)
+        _ = mcpServer.sessions.close(sessionId)
+        if targetSessionId == sessionId {
+            setTargetSession(mcpServer.sessions.list().first { $0.engaged }?.id, announce: false)
+        }
+        refreshSessionIndicator()
+        refreshUnreadIndicator()
+        chatPanel.refreshAgents()
+        replyBubble.showTransient("thread completed", seconds: 4)
     }
 
     /// Read-aloud honors the consumption cursor (ticket #16): only pushes

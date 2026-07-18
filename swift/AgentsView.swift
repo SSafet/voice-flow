@@ -34,6 +34,8 @@ protocol AgentsDataSource: AnyObject {
     /// otherwise queues it in the session's inbox.
     func sendMessage(toSession sessionId: String, text: String)
     func speakThread(_ sessionId: String)
+    /// User marked the thread done — delete its stack, session, overlays.
+    func completeThread(_ sessionId: String)
 }
 
 final class AgentsView: NSView, NSTextFieldDelegate {
@@ -250,11 +252,21 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         speak.contentTintColor = Theme.text3
         speak.identifier = NSUserInterfaceItemIdentifier(sessionId)
 
+        // ✓ — mark the thread complete: history is kept until the user
+        // says it's done, then it goes away entirely (ticket QA).
+        let complete = NSButton(image: NSImage(systemSymbolName: "checkmark.circle",
+                                               accessibilityDescription: nil) ?? NSImage(),
+                                target: self, action: #selector(completeTapped))
+        complete.isBordered = false
+        complete.contentTintColor = Theme.text3
+        complete.toolTip = "Mark complete — remove this thread"
+        complete.identifier = NSUserInterfaceItemIdentifier(sessionId)
+
         let line = NSView()
         line.wantsLayer = true
         line.layer?.backgroundColor = Theme.border.cgColor
 
-        for v in [back, titleLabel, speak, line] {
+        for v in [back, titleLabel, complete, speak, line] {
             v.translatesAutoresizingMaskIntoConstraints = false
             header.addSubview(v)
         }
@@ -264,7 +276,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             titleLabel.centerXAnchor.constraint(equalTo: header.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -4),
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: back.trailingAnchor, constant: 8),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: speak.leadingAnchor, constant: -8),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: complete.leadingAnchor, constant: -8),
+            complete.trailingAnchor.constraint(equalTo: speak.leadingAnchor, constant: -8),
+            complete.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -4),
             speak.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -4),
             speak.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -4),
             line.leadingAnchor.constraint(equalTo: header.leadingAnchor),
@@ -423,6 +437,12 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     @objc private func speakTapped(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue else { return }
         dataSource?.speakThread(id)
+    }
+
+    @objc private func completeTapped(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        dataSource?.completeThread(id)
+        showList()
     }
 
     @objc private func composerSent(_ sender: NSTextField) { submit(sender) }

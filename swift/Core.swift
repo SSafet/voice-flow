@@ -1613,14 +1613,24 @@ class Paster {
         let snapshot = clonePasteboardItems(from: pb)
         pb.clearContents()
         pb.setString(text, forType: .string)
+        let ourChangeCount = pb.changeCount
 
         // Let clipboard settle (matches Python's 50ms delay)
         usleep(50_000)
 
         pressCommandKey(9) // V
-        usleep(120_000)
-        restorePasteboard(snapshot, to: pb)
         pasteTargetApp = nil
+        // Restore the previous clipboard only after the target app has had
+        // real time to consume the paste. Restoring after a fixed 120ms
+        // raced slow apps: they read the RESTORED old clipboard, so the
+        // dictation neither pasted nor stayed available for a manual ⌘V.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            // If the user (or anything else) changed the clipboard since,
+            // theirs wins — never clobber newer content with the snapshot.
+            guard pb.changeCount == ourChangeCount else { return }
+            self.restorePasteboard(snapshot, to: pb)
+        }
     }
 
     func copySelectedText() -> String? {
