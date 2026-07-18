@@ -1423,6 +1423,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Continuous recording that lands in the Inbox as a kept brain dump —
     /// no paste target is captured, so the frontmost app never matters.
     private func startBrainDumpRecording() {
+        vflog("brain dump: start requested (recording=\(recorder.isRecording))")
         indicator.collapseNow()
         guard !recorder.isRecording else { return }
         stopSpeechPlayback()
@@ -1449,6 +1450,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Route the eventual result by the purpose this recording had —
             // a new recording may change recordingPurpose before it lands.
             self.resultPurpose = self.recordingPurpose
+            // However a brain dump ended, the double-tap toggle must be back
+            // in its OFF state or the next double-tap silently no-ops.
+            if self.recordingPurpose == .brainDump {
+                self.handsFreeHotkeyManager.resetHandsFreeState()
+            }
             if let pcmData {
                 self.state = .processing
                 let settings = UserSettings.shared

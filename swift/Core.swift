@@ -417,6 +417,14 @@ class HotkeyManager {
     private var requiredModifiers: CGEventFlags = []
     private var pressed = false
     private var handsFree = false
+
+    /// The recording this toggle started was ended by something else (the
+    /// dictation key committing a brain dump, an error) — resync so the
+    /// NEXT double-tap starts fresh instead of silently toggling "off".
+    func resetHandsFreeState() {
+        handsFree = false
+        resetDoubleTapWindow()
+    }
     private var pressTime: TimeInterval = 0
     private var pendingRelease = false
     private var pendingTimer: Timer?
@@ -784,8 +792,12 @@ class HotkeyManager {
                 if doubleTapSessionActive {
                     doubleTapContaminated = true
                     doubleTapExactDown = false
+                    vflog("double-tap: chord keyDown \(kc) contaminated the tap")
                 }
-                if doubleTapWaitingForSecond { resetDoubleTapWindow() }
+                if doubleTapWaitingForSecond {
+                    vflog("double-tap: keyDown \(kc) cancelled the waiting window")
+                    resetDoubleTapWindow()
+                }
             }
             return
         }
@@ -859,6 +871,7 @@ class HotkeyManager {
 
     private func completeDoubleTap() {
         if handsFree {
+            vflog("double-tap: toggling hands-free OFF")
             handsFree = false
             resetDoubleTapWindow()
             DispatchQueue.main.async { self.onHandsFree?(false) }
@@ -866,6 +879,7 @@ class HotkeyManager {
         }
 
         if doubleTapWaitingForSecond {
+            vflog("double-tap: second tap — hands-free ON")
             doubleTapWaitingForSecond = false
             doubleTapTimer?.invalidate()
             doubleTapTimer = nil
@@ -873,6 +887,7 @@ class HotkeyManager {
             DispatchQueue.main.async { self.onHandsFree?(true) }
             return
         }
+        vflog("double-tap: first tap — window open")
 
         let threshold = Double(UserSettings.shared.doubleTapMs)
         doubleTapWaitingForSecond = true

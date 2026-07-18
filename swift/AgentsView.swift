@@ -73,7 +73,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
         addSubview(scrollView)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            scrollView.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
@@ -190,14 +190,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             leading.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             leading.widthAnchor.constraint(equalToConstant: 18),
 
-            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 6),
+            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 7),
             nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 34),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
 
-            previewLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
+            previewLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
             previewLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             previewLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
-            previewLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -6),
+            previewLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -7),
 
             timeLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -9),
             timeLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
@@ -292,8 +292,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             var lastAnchor = text.bottomAnchor
             NSLayoutConstraint.activate([
                 text.topAnchor.constraint(equalTo: block.topAnchor, constant: 9),
-                text.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 2),
-                text.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -2),
+                text.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 4),
+                text.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -4),
             ])
 
             if let answer = push.answer {
@@ -311,10 +311,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 }
                 NSLayoutConstraint.activate([
                     arrow.topAnchor.constraint(equalTo: lastAnchor, constant: 6),
-                    arrow.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 14),
+                    arrow.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 16),
                     answerLabel.topAnchor.constraint(equalTo: arrow.topAnchor),
                     answerLabel.leadingAnchor.constraint(equalTo: arrow.trailingAnchor, constant: 7),
-                    answerLabel.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -2),
+                    answerLabel.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -4),
                 ])
                 lastAnchor = answerLabel.bottomAnchor
             } else if push.isAsk, pendingAsk, index == pushes.lastIndex(where: { $0.isAsk && $0.answer == nil }) {
@@ -323,9 +323,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 row.translatesAutoresizingMaskIntoConstraints = false
                 block.addSubview(row)
                 NSLayoutConstraint.activate([
-                    row.topAnchor.constraint(equalTo: lastAnchor, constant: 8),
-                    row.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 2),
-                    row.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -2),
+                    row.topAnchor.constraint(equalTo: lastAnchor, constant: 10),
+                    row.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 4),
+                    row.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -4),
                 ])
                 lastAnchor = row.bottomAnchor
                 composerField = field
