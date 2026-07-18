@@ -155,11 +155,18 @@ final class SyncServer {
              "destination": ($0.destination ?? .pasted).rawValue] as [String: Any]
         }
         let settings = UserSettings.shared
+        // Key handoff: the phone uses the same two keys as the Mac, and
+        // typing them on a phone is miserable — a token-bearing sync client
+        // gets them served so the phone can adopt any it's missing.
+        var keys: [String: String] = [:]
+        if let k = KeychainStore.shared.loadOpenAIAPIKey() { keys["openai"] = k }
+        if let k = KeychainStore.shared.loadAgentAPIKey() { keys["agent"] = k }
         let response: [String: Any] = [
             "ok": true,
             "dictations": recent,
             "vocabulary": settings.customVocabulary,
             "agent_model": settings.agentModel,
+            "keys": keys,
         ]
         write(fd: fd, status: 200, json: response)
         vflog("sync: +\(fresh.count) dictations, +\(incomingChat.count) chat msgs from phone")

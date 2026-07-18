@@ -520,9 +520,10 @@ class MainActivity : Activity() {
     /// failure leaves the item queued (store-and-forward); empty transcripts
     /// are dropped. Runs on the background executor.
     private fun processQueue() {
+        if (store.queue().isEmpty()) return
         val openAIKey = keys.load(Keys.OPENAI)
         if (openAIKey.isNullOrBlank()) {
-            main.post { recordStatus.text = "add your OpenAI key in Setup" }
+            main.post { recordStatus.text = "add your OpenAI key in Setup (or sync from the Mac)" }
             return
         }
         for (item in store.queue()) {

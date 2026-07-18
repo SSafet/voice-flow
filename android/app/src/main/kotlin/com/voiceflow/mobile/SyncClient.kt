@@ -81,6 +81,14 @@ class SyncClient(context: Context, private val store: Store, private val keys: K
         store.saveDictations(dictations)
         store.saveChat(chat)
 
+        // Adopt the Mac's API keys for any slot still empty on the phone.
+        payload.optJSONObject("keys")?.let { served ->
+            if (keys.load(Keys.OPENAI).isNullOrBlank() && served.optString("openai").isNotBlank())
+                keys.save(Keys.OPENAI, served.optString("openai"))
+            if (keys.load(Keys.AGENT).isNullOrBlank() && served.optString("agent").isNotBlank())
+                keys.save(Keys.AGENT, served.optString("agent"))
+        }
+
         payload.optJSONArray("vocabulary")?.let {
             prefs.edit().putString("vocabulary", it.toString()).apply()
         }
