@@ -301,6 +301,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let label = self.pickerSessions().first { $0.id == id }?.label ?? "session"
             _ = self.mcpServer.sessions.close(id)   // nil for a ghost — fine
             self.markStackDone(id)
+            self.inbox.cancelWait(for: id)
             // Its stack may be the thing on screen right now.
             if self.currentPushSessionId == id {
                 self.currentPushSessionId = nil
@@ -374,6 +375,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if let id = self.currentPushSessionId {
                 self.markStackDone(id)
+                // A listener parked on this session must learn the user is
+                // done — otherwise its next poll resurrects the session.
+                self.inbox.cancelWait(for: id)
                 // The trashed session's on-screen elements go with it —
                 // annotations must not outlive their message (ticket #14).
                 self.overlayManager.removeAll(forSession: id)
@@ -1071,6 +1075,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // A stack now exists for this session — pin its current label so
         // the thread's title outlives the session.
         rememberSessionLabel(sessionId)
+        // Re-engaging the user supersedes an old "user closed" tombstone:
+        // this push restores the session's presence, so its next listen
+        // must wait for a reply, not be told to stop.
+        if let sessionId { inbox.clearUserClosed(sessionId) }
         // An agent re-sending the same thing (retry loops, "did you hear
         // me?" spam) collapses into one entry instead of filling the stack —
         // but a consumed (done) push is history and stays.
@@ -2631,7 +2639,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func mcpWaitForMessage(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 600
         timeout = min(max(timeout, 5), 3600)
-        let messages = inbox.wait(timeout: timeout, session: session?.id)
+        let (messages, userClosed) = inbox.wait(timeout: timeout, session: session?.id)
+        if userClosed {
+            return .ok("The user closed this session in Voice Flow (removed or completed it). Stop listening: do NOT re-attach or call wait_for_message again for this session, and end your turn. If the user wants to resume, they will reach out.")
+        }
         guard !messages.isEmpty else {
             return .ok("No message arrived within \(Int(timeout))s. That's normal — call wait_for_message again to keep listening, or move on.")
         }
@@ -3010,6 +3021,7 @@ extension AppDelegate: AgentsDataSource {
             interaction.semaphore.signal()
         }
         sessionPushes.removeValue(forKey: sessionId)
+        inbox.cancelWait(for: sessionId)
         overlayManager.removeAll(forSession: sessionId)
         _ = mcpServer.sessions.close(sessionId)
         if targetSessionId == sessionId {

@@ -27,6 +27,11 @@ final class MessageInbox {
     private let queue = DispatchQueue(label: "voiceflow.inbox")
     private var messages: [InboxMessage] = []
     private var waiters: [(session: String?, semaphore: DispatchSemaphore)] = []
+    /// Session ids the user dismissed (pill trash / remove / panel ✓) while
+    /// an agent was listening. Consumed by the next wait() for that exact id
+    /// so the parked — or next — wait_for_message returns a terminal
+    /// "user closed" notice instead of silently resurrecting the session.
+    private var userClosed: Set<String> = []
 
     init() {
         if let data = try? Data(contentsOf: Self.url),
@@ -83,24 +88,52 @@ final class MessageInbox {
         queue.sync { drainLocked(session: session) }
     }
 
+    /// The user closed `session` (trash / remove / ✓): release its parked
+    /// waiters with a terminal notice and remember the closure for a poll
+    /// that isn't currently parked. Exact id match — unscoped (nil) waiters
+    /// and other sessions are untouched.
+    func cancelWait(for session: String) {
+        queue.sync {
+            userClosed.insert(session)
+            for waiter in waiters where waiter.session == session {
+                waiter.semaphore.signal()
+            }
+            waiters.removeAll { $0.session == session }
+        }
+    }
+
+    /// The session re-engaged the user (a fresh push) — a closure recorded
+    /// before that is stale and must not end its next listen.
+    func clearUserClosed(_ session: String) {
+        queue.sync { _ = userClosed.remove(session) }
+    }
+
     /// Block until a message for `session` exists (or the timeout passes),
-    /// then drain. Returns [] on timeout.
-    func wait(timeout: TimeInterval, session: String?) -> [InboxMessage] {
+    /// then drain. Returns ([], false) on timeout; userClosed is true when
+    /// the user dismissed the session — the caller must tell the agent to
+    /// stop listening.
+    func wait(timeout: TimeInterval, session: String?) -> (messages: [InboxMessage], userClosed: Bool) {
+        enum Immediate { case closed, messages([InboxMessage]), parked }
         let semaphore = DispatchSemaphore(value: 0)
-        let immediate: [InboxMessage] = queue.sync {
+        let immediate: Immediate = queue.sync {
+            if let session, userClosed.remove(session) != nil { return .closed }
             let drained = drainLocked(session: session)
             if drained.isEmpty {
                 waiters.append((session, semaphore))
+                return .parked
             }
-            return drained
+            return .messages(drained)
         }
-        if !immediate.isEmpty {
-            return immediate
+        switch immediate {
+        case .closed: return ([], true)
+        case .messages(let drained): return (drained, false)
+        case .parked: break
         }
         _ = semaphore.wait(timeout: .now() + timeout)
         return queue.sync {
             waiters.removeAll { $0.semaphore === semaphore }
-            return drainLocked(session: session)
+            if let session, userClosed.remove(session) != nil { return ([], true) }
+            return (drainLocked(session: session), false)
         }
     }
 
