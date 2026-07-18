@@ -2369,13 +2369,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.pendingInteraction = created
             interaction = created
             let asker = self.sessionName(for: created.sessionId)
+            // The ask lives ONLY in its session's thread (attached composer
+            // is the signal) — never cross-posted into the assistant chat.
             self.deliverPush(
                 SessionPush(title: "\(asker) asks", text: text,
                             hint: self.askHint(), isAsk: true),
                 from: session?.id)
-            if self.chatPanel.isVisible {
-                self.chatPanel.addNote("\(asker) asks: \(text)")
-            }
+            if self.chatPanel.isVisible { self.chatPanel.refreshAgents() }
             self.playSound("Glass")
         }
         guard let interaction else {
