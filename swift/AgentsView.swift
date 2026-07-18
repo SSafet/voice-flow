@@ -140,18 +140,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         // Assistant — persistent first row, never a number.
         let assistantRow = makeRow(
             leading: WaveformIconView(),
-            name: "assistant", unread: false, completed: false, ghost: false,
+            name: "assistant", unread: false,
             preview: "talk · type · snap — the in-app agent", time: "")
         assistantRow.identifier = NSUserInterfaceItemIdentifier("assistant")
         place(assistantRow, below: &top, gap: 2)
 
         for row in dataSource?.agentSessionRows() ?? [] {
-            let number = NSTextField(labelWithString: row.number.map(String.init) ?? "")
-            number.font = .systemFont(ofSize: 10.5, weight: .semibold)
-            number.textColor = Theme.text3
-            let view = makeRow(leading: number, name: row.name, unread: row.unread,
-                               completed: row.completed, ghost: row.ghost,
-                               preview: row.preview, time: row.time)
+            let view = makeRow(leading: leadingIcon(for: row), name: row.name,
+                               unread: row.unread, preview: row.preview, time: row.time)
             view.identifier = NSUserInterfaceItemIdentifier(row.id)
             place(view, below: &top, gap: 2)
         }
@@ -161,14 +157,33 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         bottom.isActive = true
     }
 
-    private func makeRow(leading: NSView, name: String, unread: Bool, completed: Bool,
-                         ghost: Bool, preview: String, time: String) -> NSView {
+    /// The leading slot carries the session's state (design/agent-row-icons
+    /// option A): connected = ⌃⌥ number in an amber ring, ghost = bare
+    /// muted number, completed = quiet outlined check. No text suffixes.
+    private func leadingIcon(for row: AgentSessionRow) -> NSView {
+        guard let number = row.number else {
+            let image = NSImageView(image: NSImage(systemSymbolName: "checkmark.circle",
+                                                   accessibilityDescription: "completed") ?? NSImage())
+            image.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+            image.contentTintColor = Theme.text3
+            return image
+        }
+        if row.ghost {
+            let label = NSTextField(labelWithString: "\(number)")
+            label.font = .systemFont(ofSize: 10.5, weight: .semibold)
+            label.textColor = Theme.text3
+            return label
+        }
+        return RingNumberView(number: number)
+    }
+
+    private func makeRow(leading: NSView, name: String, unread: Bool,
+                         preview: String, time: String) -> NSView {
         let row = HoverRowView()
         row.wantsLayer = true
         row.layer?.cornerRadius = 8
 
-        let tag = completed ? "  completed" : ghost ? "  ghost" : ""
-        let nameLabel = NSTextField(labelWithString: name + tag)
+        let nameLabel = NSTextField(labelWithString: name)
         nameLabel.font = .systemFont(ofSize: 12.5, weight: unread ? .semibold : .regular)
         nameLabel.textColor = unread ? Theme.text : Theme.text2
         nameLabel.lineBreakMode = .byTruncatingTail
@@ -477,6 +492,36 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         dataSource?.sendMessage(toSession: id, text: text)
         // The answer attaches to its ask (or queues) — re-render to show it.
         DispatchQueue.main.async { self.refresh() }
+    }
+}
+
+/// The ⌃⌥ number wrapped in an amber ring — "this session is connected
+/// to an agent" (option A of design/agent-row-icons.html).
+final class RingNumberView: NSView {
+    private let number: Int
+    init(number: Int) {
+        self.number = number
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var intrinsicContentSize: NSSize { NSSize(width: 16, height: 16) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let side: CGFloat = min(bounds.width, bounds.height, 16)
+        let square = NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2,
+                            width: side, height: side).insetBy(dx: 0.75, dy: 0.75)
+        let ring = NSBezierPath(ovalIn: square)
+        ring.lineWidth = 1.3
+        Theme.accent.setStroke()
+        ring.stroke()
+
+        let text = NSAttributedString(
+            string: "\(number)",
+            attributes: [.font: NSFont.systemFont(ofSize: 8.5, weight: .semibold),
+                         .foregroundColor: Theme.accent])
+        let size = text.size()
+        text.draw(at: NSPoint(x: bounds.midX - size.width / 2,
+                              y: bounds.midY - size.height / 2))
     }
 }
 
