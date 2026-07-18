@@ -13,13 +13,27 @@ import Foundation
 //  agent_model) so both devices converge.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-final class SyncServer {
+final class SyncServer: NSObject {
     static let port: UInt16 = 8793
 
     /// Hops to main and inserts entries into the dictation store
     /// (oldest-first order in, so the newest ends on top).
     var onDictations: (([(text: String, time: String, destination: String)]) -> Void)?
     var onServerMessage: ((String) -> Void)?
+    /// A phone completed pairing (device name) — surface a receipt.
+    var onPaired: ((String) -> Void)?
+
+    /// One-click setup: `/pair` hands out the token (and everything else the
+    /// phone needs) WITHOUT auth, but only while this window is open — opened
+    /// by the menu bar's "Pair Phone" or the loopback-only control API, both
+    /// of which are Mac-side consent. Closes on first successful pairing.
+    private var pairWindowUntil: Date?
+    private var bonjour: NetService?
+
+    func openPairWindow(seconds: TimeInterval = 120) {
+        pairWindowUntil = Date().addingTimeInterval(seconds)
+        onServerMessage?("Phone pairing open for \(Int(seconds)) s.")
+    }
 
     private let queue = DispatchQueue(label: "voiceflow.sync-server", qos: .utility)
     private let clientQueue = DispatchQueue(
@@ -79,12 +93,51 @@ final class SyncServer {
         }
         acceptSource = source
         source.resume()
+        // Advertise on the local network so the phone finds the Mac with
+        // zero typing (NSD on Android). Tailscale reachability comes from
+        // the host list handed over during pairing.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let service = NetService(domain: "local.", type: "_voiceflow-sync._tcp.",
+                                     name: "Voice Flow", port: Int32(Self.port))
+            service.publish()
+            self.bonjour = service
+        }
         onServerMessage?("Sync server ready on port \(Self.port).")
     }
 
     func stop() {
         acceptSource?.cancel()
         acceptSource = nil
+        bonjour?.stop()
+        bonjour = nil
+    }
+
+    /// IPv4 addresses the phone should try, best first: Tailscale
+    /// (100.64.0.0/10 on utun*) works from anywhere, LAN as fallback.
+    static func reachableHosts() -> [String] {
+        var tailscale: [String] = []
+        var lan: [String] = []
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return [] }
+        defer { freeifaddrs(ifaddr) }
+        for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let ifa = ptr.pointee
+            guard ifa.ifa_addr?.pointee.sa_family == UInt8(AF_INET) else { continue }
+            var addr = ifa.ifa_addr!.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+            var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            inet_ntop(AF_INET, &addr.sin_addr, &buf, socklen_t(INET_ADDRSTRLEN))
+            let ip = String(cString: buf)
+            if ip == "127.0.0.1" { continue }
+            let firstOctet = UInt8(ip.split(separator: ".").first.map(String.init) ?? "") ?? 0
+            let secondOctet = UInt8(ip.split(separator: ".").dropFirst().first.map(String.init) ?? "") ?? 0
+            if firstOctet == 100 && (64...127).contains(secondOctet) {
+                tailscale.append(ip)
+            } else {
+                lan.append(ip)
+            }
+        }
+        return tailscale + lan
     }
 
     private func acceptNextClient() {
@@ -115,6 +168,9 @@ final class SyncServer {
                 auth = String(line.dropFirst("authorization:".count)).trimmingCharacters(in: .whitespaces)
             }
         }
+        if method == "POST", path == "/pair" {
+            handlePair(body: body, fd: fd); return
+        }
         guard auth == "Bearer \(Self.token())" else {
             write(fd: fd, status: 401, json: ["error": "bad token"]); return
         }
@@ -122,6 +178,28 @@ final class SyncServer {
             write(fd: fd, status: 404, json: ["error": "unknown route"]); return
         }
         handleSync(body: body, fd: fd)
+    }
+
+    private func handlePair(body: Data, fd: Int32) {
+        guard let until = pairWindowUntil, until > Date() else {
+            write(fd: fd, status: 403, json: [
+                "error": "pairing closed",
+                "hint": "Open \"Pair Phone\" in the Voice Flow menu bar, then retry.",
+            ])
+            return
+        }
+        let payload = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+        let device = (payload["device"] as? String ?? "phone").trimmingCharacters(in: .whitespacesAndNewlines)
+        pairWindowUntil = nil
+        write(fd: fd, status: 200, json: [
+            "ok": true,
+            "token": Self.token(),
+            "port": Int(Self.port),
+            "hosts": Self.reachableHosts(),
+            "mac_name": Host.current().localizedName ?? "Mac",
+        ])
+        vflog("sync: paired phone \"\(device)\"")
+        DispatchQueue.main.async { [weak self] in self?.onPaired?(device) }
     }
 
     private func handleSync(body: Data, fd: Int32) {
@@ -166,6 +244,7 @@ final class SyncServer {
             "dictations": recent,
             "vocabulary": settings.customVocabulary,
             "agent_model": settings.agentModel,
+            "cleanup_enabled": settings.llmCleanupEnabled,
             "keys": keys,
         ]
         write(fd: fd, status: 200, json: response)

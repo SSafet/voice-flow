@@ -16,7 +16,14 @@ class SyncClient(context: Context, private val store: Store, private val keys: K
         private set
 
     fun configured(): Boolean =
-        !prefs.getString("sync_host", "").isNullOrBlank() && !keys.load(Keys.SYNC_TOKEN).isNullOrBlank()
+        prefs.getBoolean("paired", false) && !keys.load(Keys.SYNC_TOKEN).isNullOrBlank()
+
+    fun macName(): String = prefs.getString("mac_name", "Mac") ?: "Mac"
+
+    private fun hosts(): List<String> {
+        val arr = try { org.json.JSONArray(prefs.getString("sync_hosts", "[]")) } catch (_: Exception) { org.json.JSONArray() }
+        return List(arr.length()) { arr.getString(it) }.filter { it.isNotBlank() }
+    }
 
     fun vocabulary(): List<String> {
         val arr = try { JSONArray(prefs.getString("vocabulary", "[]")) } catch (_: Exception) { JSONArray() }
@@ -30,7 +37,6 @@ class SyncClient(context: Context, private val store: Store, private val keys: K
     /// and not configured". Blocking — background executor only.
     fun sync(): String? {
         if (!configured()) { lastError = null; return null }
-        val host = prefs.getString("sync_host", "")!!.trim()
         val port = prefs.getString("sync_port", "8793")!!.trim().ifBlank { "8793" }
         val token = keys.load(Keys.SYNC_TOKEN) ?: return null
 
@@ -44,12 +50,24 @@ class SyncClient(context: Context, private val store: Store, private val keys: K
             .put("dictations", JSONArray().also { arr -> outDictations.forEach { arr.put(it.toJson()) } })
             .put("chat", JSONArray().also { arr -> outChat.forEach { arr.put(it.toJson()) } })
 
-        val payload = try {
-            Net.postJson("http://$host:$port/sync", body, mapOf("Authorization" to "Bearer $token"), 30_000)
-        } catch (e: Exception) {
-            lastError = e.message?.take(120) ?: "sync failed"
-            return null    // Mac unreachable — offline is a delay, not a failure
+        // Try every known address, Tailscale first — whichever answers wins.
+        var payload: JSONObject? = null
+        for (host in hosts()) {
+            payload = try {
+                Net.postJson("http://$host:$port/sync", body, mapOf("Authorization" to "Bearer $token"), 20_000)
+            } catch (e: Net.HttpError) {
+                if (e.code == 401) {   // token revoked on the Mac → re-pair
+                    prefs.edit().putBoolean("paired", false).apply()
+                    lastError = "unpaired"
+                    return null
+                }
+                lastError = e.message?.take(120); continue
+            } catch (e: Exception) {
+                lastError = e.message?.take(120); continue
+            }
+            break
         }
+        if (payload == null) return null   // Mac unreachable — offline is a delay, not a failure
         lastError = null
 
         // Everything we sent is now on the Mac.
@@ -94,6 +112,9 @@ class SyncClient(context: Context, private val store: Store, private val keys: K
         }
         payload.optString("agent_model").takeIf { it.isNotBlank() }?.let {
             prefs.edit().putString("agent_model", it).apply()
+        }
+        if (payload.has("cleanup_enabled")) {
+            prefs.edit().putBoolean("cleanup_enabled", payload.optBoolean("cleanup_enabled", true)).apply()
         }
 
         return "synced ↑${outDictations.size + outChat.size} ↓$pulled"

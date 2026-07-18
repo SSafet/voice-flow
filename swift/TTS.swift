@@ -1145,6 +1145,9 @@ final class LocalAPIServer {
     /// POST /api/panel/show {"tab": "inbox"|"agents"|"speech"} — open the
     /// ChatPanel for screenshot validation without a human click.
     var onPanelShow: ((String?) -> LocalAPIResponse)?
+    /// Loopback-only equivalent of the menu bar's "Pair Phone" — opening the
+    /// pair window from the Mac itself IS the consent (used by tests/automation).
+    var onPairMode: (() -> LocalAPIResponse)?
     var onServerMessage: ((String) -> Void)?
     /// MCP endpoint: (raw JSON-RPC body, Mcp-Session-Id) in → (status,
     /// body, sessionIdToIssue) out. May block for minutes (ask_user),
@@ -1312,6 +1315,8 @@ final class LocalAPIServer {
             }
         case ("POST", "/api/tts/stop"):
             return onStop?() ?? LocalAPIResponse.error(503, "TTS stop unavailable.")
+        case ("POST", "/api/pair-mode"):
+            return onPairMode?() ?? LocalAPIResponse.error(503, "Pairing unavailable.")
         case ("POST", "/api/panel/show"):
             // Dev/validation hook: open the ChatPanel (optionally on a tab)
             // so agents can screenshot-verify the UI without a human click.

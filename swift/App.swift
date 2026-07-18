@@ -594,6 +594,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupSyncServer() {
         syncServer = SyncServer()
         syncServer.onServerMessage = { message in vflog(message) }
+        syncServer.onPaired = { [weak self] device in
+            self?.indicator.flashMessage("\(device) paired with Voice Flow", seconds: 4)
+        }
+        menuBar.onPairPhone = { [weak self] in
+            self?.syncServer.openPairWindow()
+            self?.indicator.flashMessage("Pairing open — launch the phone app now", seconds: 6)
+        }
+        localAPIServer.onPairMode = { [weak self] in
+            DispatchQueue.main.async { self?.syncServer.openPairWindow() }
+            return LocalAPIResponse.ok(["ok": true])
+        }
         syncServer.onDictations = { [weak self] entries in
             for e in entries {
                 self?.chatPanel.addDictation(

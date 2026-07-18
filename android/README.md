@@ -23,8 +23,12 @@ and the APK is small.
   assistant).
 
 Keys (OpenAI + OpenRouter) live encrypted via an Android-Keystore AES key.
-On a fresh install you only enter the sync host/port/token — the phone adopts
-both API keys from the Mac on the first sync.
+There is no settings screen at all: on first launch the app finds the Mac
+(Bonjour `_voiceflow-sync._tcp` + candidate probing), you click **Pair
+Phone** in the Voice Flow menu bar, and the phone receives everything —
+sync token, host list (Tailscale first, LAN fallback), port, both API keys,
+vocabulary, model, cleanup setting. A 401 later (revoked token) drops the
+app back to the pairing screen.
 
 ## Build
 
@@ -42,12 +46,12 @@ gradle assembleDebug          # → app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-1. Open the app → **Setup**.
-2. Enter **Mac sync host** (the Mac's Tailscale IP; `10.0.2.2` from an
-   emulator), **port** `8793`, and the **sync token** from
-   `~/.config/voice-flow/sync-token` on the Mac.
-3. **Save** → **Sync now**. The phone pulls your dictation history and adopts
-   the OpenAI + OpenRouter keys. Dictate away.
+1. Open the app on the same Wi-Fi as the Mac (or Tailscale).
+2. Click **Pair Phone** in the Voice Flow menu bar (2-minute window; tests
+   can open it via `POST 127.0.0.1:8792/api/pair-mode`, loopback-only).
+3. Done — history syncs, keys adopt, dictate away. The **Quick Settings
+   tile** starts recording instantly; those captures go to the inbox
+   (tickets intake) *and* the clipboard.
 
 ## Mac side
 

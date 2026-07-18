@@ -68,6 +68,7 @@ class MenuBarManager: NSObject {
     var onCopyCapturePrompt: (() -> Void)?
     var onToggleAnnotate: (() -> Void)?
     var onShowChat: (() -> Void)?
+    var onPairPhone: (() -> Void)?
     var onQuit: (() -> Void)?
     /// Connected Claude Code sessions for the "Voice Goes To" submenu,
     /// rebuilt every time it opens.
@@ -131,6 +132,7 @@ class MenuBarManager: NSObject {
         menu.addItem(withTitle: "Show Chat", action: #selector(chatAction), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Dictation History", action: #selector(historyAction), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Pair Phone", action: #selector(pairPhoneAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Permissions…", action: #selector(permissionsAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(settingsAction), keyEquivalent: "").target = self
         menu.addItem(.separator())
@@ -155,6 +157,7 @@ class MenuBarManager: NSObject {
 
     @objc private func historyAction() { onShowHistory?() }
     @objc private func permissionsAction() { onShowPermissions?() }
+    @objc private func pairPhoneAction() { onPairPhone?() }
     @objc private func settingsAction() { onShowSettings?() }
     @objc private func toggleSessionAction() { onToggleSession?() }
     @objc private func toggleWatcherAction() { onToggleWatcher?() }
