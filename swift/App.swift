@@ -1232,11 +1232,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             interaction.responseText = text
             interaction.semaphore.signal()
             // The answer stays attached to its ask (↳ in the Agents thread);
-            // the stack survives as read history — trash still deletes it.
+            // answering CONSUMES the stack — done history in the panel,
+            // gone from the pill's quick surfaces (tickets #17/#14).
             attachAnswer(text, to: interaction.sessionId)
             answeredSession(interaction.sessionId,
                             note: "answer sent to \(sessionName(for: interaction.sessionId))",
-                            clearStack: false)
+                            clearStack: true)
         }
     }
 
@@ -2938,7 +2939,10 @@ extension AppDelegate: AgentsDataSource {
             queue[idx].seen = true
             queue[idx].spoken = true   // replied-to = consumed (ticket #16)
             sessionPushes[sessionId] = queue
-            chatPanel.refreshAgents()
+            // Replying consumes the stack: done history in the panel, out
+            // of the pill's quick surfaces (ticket #14).
+            markStackDone(sessionId)
+            refreshUnreadIndicator()
         }
         replyBubble.showTransient(live ? "sent to \(sessionName(for: sessionId))"
                                        : "queued for \(sessionName(for: sessionId)) — delivered on its next check-in",
@@ -2973,6 +2977,9 @@ extension AppDelegate: AgentsDataSource {
     /// Read-aloud honors the consumption cursor (ticket #16): only pushes
     /// neither spoken before nor answered are read, then marked spoken.
     /// Fully caught up? A press is an explicit request to REPLAY the stack.
+    /// Listening CONSUMES: spoken pushes become done history in the panel
+    /// and leave the pill's quick surfaces — except a still-unanswered ask,
+    /// which stays active until it gets its answer (ticket #14).
     func speakSessionUnconsumed(_ sessionId: String) {
         guard var queue = sessionPushes[sessionId], !queue.isEmpty else {
             replyBubble.showTransient("nothing to read for this session", seconds: 4)
@@ -2986,7 +2993,15 @@ extension AppDelegate: AgentsDataSource {
             replyBubble.showTransient("couldn't start speech — check the TTS settings", seconds: 5)
             return
         }
-        for index in indices { queue[index].spoken = true }
+        for index in indices {
+            queue[index].spoken = true
+            if !(queue[index].isAsk && queue[index].answer == nil) {
+                queue[index].done = true
+                queue[index].seen = true
+            }
+        }
         sessionPushes[sessionId] = queue
+        refreshUnreadIndicator()
+        chatPanel.refreshAgents()
     }
 }
