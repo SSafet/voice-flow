@@ -748,6 +748,27 @@ final class OverlayManager {
         return true
     }
 
+    /// Remove every overlay owned by one MCP session — called when the user
+    /// trashes that session so its annotations can't outlive the message
+    /// they belonged to (ticket #14). Returns count.
+    @discardableResult
+    func removeAll(forSession session: String) -> Int {
+        var removed = 0
+        for (id, dict) in allDocsRaw() where (dict["session"] as? String) == session {
+            try? FileManager.default.removeItem(at: fileURL(id: id))
+            removed += 1
+        }
+        if removed > 0 {
+            DispatchQueue.main.async { self.rescan(force: true) }
+        }
+        return removed
+    }
+
+    /// Sessions whose overlays are currently on disk (nil-owned excluded).
+    func sessionsWithOverlays() -> Set<String> {
+        Set(allDocsRaw().compactMap { $0.1["session"] as? String })
+    }
+
     /// Remove every overlay file (or only annotation ones). Returns count.
     func removeAll(annotationsOnly: Bool) -> Int {
         var removed = 0

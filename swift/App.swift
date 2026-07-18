@@ -316,6 +316,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if let id = self.currentPushSessionId {
                 self.sessionPushes.removeValue(forKey: id)
+                // The trashed session's on-screen elements go with it —
+                // annotations must not outlive their message (ticket #14).
+                self.overlayManager.removeAll(forSession: id)
                 if let closed = self.mcpServer.sessions.close(id) {
                     if self.targetSessionId == id {
                         self.setTargetSession(self.mcpServer.sessions.list().first { $0.engaged }?.id, announce: false)
@@ -909,8 +912,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func pickerSessions() -> [(id: String, label: String)] {
         // Only ENGAGED sessions are user-visible — a connected-but-silent
         // session (every Claude Code session initializes every MCP server)
-        // has nothing for the user to switch to.
-        let live = mcpServer.sessions.ordered().filter { $0.engaged }
+        // has nothing for the user to switch to. And even engaged, a
+        // session must currently OFFER something (a stack, a parked
+        // listener, a blocked ask, on-screen overlays, or being the voice
+        // target) — otherwise it lingers as an empty no-message entry the
+        // user can't do anything with (ticket #14).
+        let overlayOwners = overlayManager.sessionsWithOverlays()
+        let live = mcpServer.sessions.ordered().filter { session in
+            guard session.engaged else { return false }
+            return sessionPushes[session.id]?.isEmpty == false
+                || inbox.hasWaiter(for: session.id)
+                || pendingInteraction?.sessionId == session.id
+                || overlayOwners.contains(session.id)
+                || session.id == targetSessionId
+        }
             .map { (id: $0.id, label: $0.label) }
         let liveIds = Set(live.map { $0.id })
         let ghosts = sessionPushes
@@ -2101,6 +2116,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.sessionPushes = self.sessionPushes.filter { _, queue in
                 !queue.isEmpty
+            }
+            // Overlays whose owning session no longer exists are orphans the
+            // user has no affordance to clear — sweep them (ticket #14).
+            let known = Set(self.mcpServer.sessions.ordered().map { $0.id })
+            for owner in self.overlayManager.sessionsWithOverlays() where !known.contains(owner) {
+                self.overlayManager.removeAll(forSession: owner)
             }
             if self.targetSessionId != nil,
                !self.pickerSessions().contains(where: { $0.id == self.targetSessionId }) {

@@ -430,11 +430,13 @@ final class ChatPanel {
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true
 
-        let root = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        root.material = .hudWindow
-        root.state = .active
+        // Solid dark, per the approved mock — the HUD blur washed the text
+        // out over bright pages (Safet's Instagram screenshot). A whisper of
+        // translucency keeps it feeling native without costing legibility.
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         root.appearance = NSAppearance(named: .darkAqua)
         root.wantsLayer = true
+        root.layer?.backgroundColor = Theme.bg.withAlphaComponent(0.98).cgColor
         root.layer?.cornerRadius = 18
         root.layer?.masksToBounds = true
         root.layer?.borderWidth = 1
