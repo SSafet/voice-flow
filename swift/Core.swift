@@ -116,6 +116,24 @@ struct HotkeySpec {
     }
 }
 
+/// Longest-match rule for overlapping hotkeys. A modifier-only binding is a
+/// prefix when the candidate contains all of its effective modifiers and adds
+/// either a regular key or another modifier.
+enum HotkeyPrecedence {
+    static func descendant(_ candidate: HotkeySpec, supersedes ancestor: HotkeySpec) -> Bool {
+        guard ancestor.isModifierOnly else { return false }
+        let ancestorModifiers = ancestor.modifiers.union(ancestor.triggerModifierFlag ?? [])
+        let candidateModifiers = candidate.modifiers.union(candidate.triggerModifierFlag ?? [])
+        guard contains(candidateModifiers, ancestorModifiers) else { return false }
+        if !candidate.isModifierOnly { return true }
+        return candidateModifiers != ancestorModifiers
+    }
+
+    private static func contains(_ flags: CGEventFlags, _ required: CGEventFlags) -> Bool {
+        (flags.rawValue & required.rawValue) == required.rawValue
+    }
+}
+
 enum DictationProvider: String, CaseIterable {
     case local
     case openai
@@ -402,6 +420,8 @@ private final class WeakHotkeyManagerRef {
 class HotkeyManager {
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
+    /// Roll back a modifier-only prefix when a longer configured chord wins.
+    var onCancel: (() -> Void)?
     var onHandsFree: ((Bool) -> Void)?
     var allowsHandsFreeDoublePress = false
 
@@ -563,6 +583,9 @@ class HotkeyManager {
             let primaryDown = pressedModifierKeyCodes.contains(keyCode)
             if primaryDown && held == expected {
                 armOrHandleModifierPress()
+            } else if primaryDown && hasExactModifierDescendant(for: held) {
+                // Keep the prefix alive until the descendant manager handles
+                // this same event and cancels it with discard semantics.
             } else {
                 cancelPendingActivation()
                 handleRelease()
@@ -586,6 +609,7 @@ class HotkeyManager {
                 return true
             }
             guard held == required else { return false }
+            supersedeModifierPrefixes()
             cancelPendingActivation()
             handlePress()
             return true
@@ -680,6 +704,7 @@ class HotkeyManager {
     }
 
     private func armOrHandleModifierPress() {
+        supersedeModifierPrefixes()
         guard shouldDelayModifierActivation() else {
             cancelPendingActivation()
             handlePress()
@@ -714,28 +739,62 @@ class HotkeyManager {
     }
 
     private func shouldDelayModifierActivation() -> Bool {
-        guard let triggerModifier = HotkeySpec.modifierFlag(for: keyCode) else { return false }
-        let currentSet = normalizeModifiers(requiredModifiers).union(triggerModifier)
-
-        for other in Self.activeManagers where other !== self {
-            if let otherTriggerModifier = HotkeySpec.modifierFlag(for: other.keyCode) {
-                let otherSet = other.normalizeModifiers(other.requiredModifiers).union(otherTriggerModifier)
-                if otherSet != currentSet && containsAllModifiers(otherSet, currentSet) {
-                    return true
-                }
-                continue
-            }
-
-            let otherRequired = other.normalizeModifiers(other.requiredModifiers)
-            if containsAllModifiers(otherRequired, currentSet) {
-                return true
-            }
+        let ancestor = precedenceSpec
+        return Self.activeManagers.contains { other in
+            other !== self
+                && !other.allowsHandsFreeDoublePress
+                && HotkeyPrecedence.descendant(other.precedenceSpec, supersedes: ancestor)
         }
-        return false
+    }
+
+    private func hasExactModifierDescendant(for held: CGEventFlags) -> Bool {
+        let ancestor = precedenceSpec
+        return Self.activeManagers.contains { other in
+            guard other !== self, !other.allowsHandsFreeDoublePress,
+                  other.precedenceSpec.isModifierOnly,
+                  HotkeyPrecedence.descendant(other.precedenceSpec, supersedes: ancestor)
+            else { return false }
+            let effective = other.normalizeModifiers(other.requiredModifiers)
+                .union(HotkeySpec.modifierFlag(for: other.keyCode) ?? [])
+            return effective == held
+        }
     }
 
     private func containsAllModifiers(_ flags: CGEventFlags, _ required: CGEventFlags) -> Bool {
         (flags.rawValue & required.rawValue) == required.rawValue
+    }
+
+    private var precedenceSpec: HotkeySpec {
+        HotkeySpec(
+            keyCode: keyCode,
+            modifiers: normalizeModifiers(requiredModifiers),
+            label: HotkeySpec.buildLabel(keyCode: keyCode, modifiers: requiredModifiers))
+    }
+
+    /// Runs on the shared hotkey thread before this manager enqueues onPress.
+    /// That guarantees main-queue order: cancel prefix, then start descendant.
+    private func supersedeModifierPrefixes() {
+        let candidate = precedenceSpec
+        for other in Self.activeManagers where other !== self {
+            guard HotkeyPrecedence.descendant(candidate, supersedes: other.precedenceSpec) else { continue }
+            other.cancelForDescendantChord()
+        }
+    }
+
+    private func cancelForDescendantChord() {
+        guard !allowsHandsFreeDoublePress else {
+            resetDoubleTapState()
+            return
+        }
+        let wasActive = pressed
+        cancelPendingActivation()
+        pressed = false
+        pendingRelease = false
+        pendingTimer?.invalidate()
+        pendingTimer = nil
+        guard wasActive else { return }
+        vflog("hotkey: modifier prefix superseded by longer chord")
+        DispatchQueue.main.async { self.onCancel?() }
     }
 
     private static var activeManagers: [HotkeyManager] {
@@ -950,8 +1009,13 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     // thread. Concurrent so one wedged attempt doesn't block the next.
     private static let setupQueue = DispatchQueue(label: "com.voiceflow.audioSetup",
                                                   qos: .userInitiated, attributes: .concurrent)
-    private final class SessionBox { var session: AVCaptureSession? }
+    private final class SessionBox {
+        var setup: (session: AVCaptureSession, output: AVCaptureAudioDataOutput)?
+    }
     private var startGeneration = 0
+    /// Only buffers from this output belong to the current generation. A
+    /// cancelled session may emit a late buffer while its replacement starts.
+    private var activeOutput: AVCaptureAudioDataOutput?
 
     // Drain state — wait for capture to flush after stop()
     private var drainCompletion: ((Data?) -> Void)?
@@ -1081,10 +1145,10 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         let sema = DispatchSemaphore(value: 0)
         let box = SessionBox()
         Self.setupQueue.async { [weak self] in
-            box.session = self?.makeSession(preferredMic: preferredMic)
+            box.setup = self?.makeSession(preferredMic: preferredMic)
             sema.signal()
             DispatchQueue.main.async {
-                guard let self, let session = box.session,
+                guard let self, let session = box.setup?.session,
                       self.startGeneration != gen || self.session !== session else { return }
                 Self.setupQueue.async { session.stopRunning() }
             }
@@ -1094,17 +1158,19 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
             isRecording = false
             return
         }
-        guard let session = box.session else {
+        guard let setup = box.setup else {
             isRecording = false
             return
         }
-        self.session = session
+        self.session = setup.session
+        audioLock.sync { activeOutput = setup.output }
     }
 
     /// Builds and starts a capture session pinned to the chosen mic (system
     /// default when none chosen). Runs on setupQueue — CoreAudio calls in
     /// here can block indefinitely when a device is wedged.
-    private func makeSession(preferredMic: String) -> AVCaptureSession? {
+    private func makeSession(preferredMic: String)
+        -> (session: AVCaptureSession, output: AVCaptureAudioDataOutput)? {
         // Pin the input to the mic chosen in Settings → Dictation. The system
         // default silently switches to Bluetooth earbuds' (low-quality) mic
         // when they connect.
@@ -1149,7 +1215,7 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
             }
             session.addOutput(output)
             session.startRunning()
-            return session
+            return (session, output)
         } catch {
             vflog("audio: capture setup error: \(error)")
             return nil
@@ -1158,6 +1224,7 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
+        guard audioLock.sync(execute: { activeOutput === output }) else { return }
         guard let fd = CMSampleBufferGetFormatDescription(sampleBuffer),
               let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fd),
               let fmt = AVAudioFormat(streamDescription: asbd) else { return }
@@ -1227,6 +1294,28 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         }
     }
 
+    /// Stop immediately and discard the recording. Used when a modifier-only
+    /// hotkey is later resolved as the prefix of a longer chord.
+    func cancel() {
+        isRecording = false
+        startGeneration &+= 1
+        drainCompletion = nil
+        drainTimer?.invalidate()
+        drainTimer = nil
+        if let session {
+            self.session = nil
+            Self.setupQueue.async { session.stopRunning() }
+        }
+        audioLock.sync {
+            activeOutput = nil
+            audioData.removeAll(keepingCapacity: true)
+            speechSinceLastPartial = false
+            voicedFrames = 0
+        }
+        lastCaptureBytes = 0
+        lastCaptureWasSilent = false
+    }
+
     /// Returns a thread-safe copy of all accumulated PCM data and whether new speech occurred since last call.
     /// Returns nil if too short or not recording.
     func currentAudioSnapshot() -> (data: Data, hasNewSpeech: Bool)? {
@@ -1248,6 +1337,7 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         // Teardown can block on a wedged device just like setup — never on main.
         if let session {
             self.session = nil
+            audioLock.sync { activeOutput = nil }
             Self.setupQueue.async { session.stopRunning() }
         }
 

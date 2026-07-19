@@ -61,6 +61,10 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   whenever annotate mode ends); on stop, everything becomes a **capture
   bundle** on disk (`CaptureStore`, see below) and follows the same contextual
   route.
+- Overlapping bindings use longest-match precedence: if a modifier-only
+  capture hotkey is held and a configured chord extends it (for example
+  `Control+Shift` → `Control+Shift+1`), the prefix run is discarded and only
+  the longer capability starts (`HotkeyPrecedence` / `HotkeyManager.onCancel`).
 - Routing is capability-first: `CaptureRun` (`swift/CaptureRouting.swift`)
   freezes a UUID, visible conversation, pending interaction, and explicit
   paste target when capture begins. Screenshot/transcription callbacks join by

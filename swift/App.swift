@@ -691,6 +691,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.beginCapture(capability: .dictate, deliveryPolicy: .contextual, handsFree: false)
         }
         hotkeyManager.onRelease = { [weak self] in self?.stopCapture() }
+        hotkeyManager.onCancel = { [weak self] in
+            self?.cancelCaptureForHotkeySupersession(capability: .dictate)
+        }
         hotkeyManager.allowsHandsFreeDoublePress = false
 
         // Double-tap = brain dump: talk into Voice Flow's Inbox from anywhere,
@@ -723,6 +726,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.beginCapture(capability: .snapshot, deliveryPolicy: .contextual, handsFree: false)
         }
         snapshotHotkeyManager.onRelease = { [weak self] in self?.stopCapture() }
+        snapshotHotkeyManager.onCancel = { [weak self] in
+            self?.cancelCaptureForHotkeySupersession(capability: .snapshot)
+        }
 
         annotateHotkeyManager = HotkeyManager(spec: UserSettings.shared.annotateHotkey)
         annotateHotkeyManager.onPress = { [weak self] in
@@ -1470,6 +1476,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 openAIAPIKey: openAIAPIKey,
                 vocabulary: settings.customVocabulary)
         }
+    }
+
+    /// A longer configured chord took ownership while a modifier-only capture
+    /// prefix was still held. Discard that exact run before the descendant's
+    /// onPress executes; never cancel an unrelated active capability.
+    private func cancelCaptureForHotkeySupersession(capability: CaptureCapability) {
+        guard recorder.isRecording, let id = activeRunId,
+              captureRuns[id]?.capability == capability else { return }
+        partialTimer?.invalidate()
+        partialTimer = nil
+        transcriptPanel.hide()
+        recorder.cancel()
+        captureRuns[id]?.phase = .failed
+        captureRuns.removeValue(forKey: id)
+        activeRunId = nil
+        streamingViaAX = false
+        hadPartialStream = false
+        state = .idle
+        vflog("capture \(id) cancelled: hotkey superseded by longer chord")
     }
 
     // ── streaming partial transcription ───────────────
