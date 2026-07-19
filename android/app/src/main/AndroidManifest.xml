@@ -29,9 +29,11 @@
             </intent-filter>
         </activity>
 
-        <!-- Second launcher entry that goes straight into quick capture; bind it
-             to Samsung's side-key double press (Settings > Advanced features >
-             Side button > Double press > Open app > "VF Dictate"). -->
+        <!-- Second launcher entry that goes straight into quick capture. Also
+             holds the ASSIST role so the side-key LONG press starts dictation
+             directly: set VF Dictate as the digital assistant app (Settings >
+             Apps > Choose default apps > Digital assistant app), with the side
+             key's long press left on "Digital assistant". -->
         <activity-alias
             android:name=".Dictate"
             android:targetActivity=".MainActivity"
@@ -41,6 +43,14 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VOICE_COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity-alias>
 

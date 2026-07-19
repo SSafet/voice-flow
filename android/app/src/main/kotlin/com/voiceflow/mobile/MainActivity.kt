@@ -160,9 +160,10 @@ class MainActivity : Activity() {
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
-        // The ".Dictate" launcher alias (side-key double press) is an implicit
-        // start_recording; the normal launcher icon must never auto-record.
-        val viaDictateAlias = intent.component?.className == "com.voiceflow.mobile.Dictate"
+        // The ".Dictate" alias (launcher entry or side-key assist gesture) is an
+        // implicit start_recording; the normal launcher icon must never auto-record.
+        val viaDictateAlias = intent.component?.className == "com.voiceflow.mobile.Dictate" ||
+            intent.action == Intent.ACTION_ASSIST || intent.action == "android.intent.action.VOICE_COMMAND"
         if (viaDictateAlias || intent.getBooleanExtra("start_recording", false)) {
             intent.removeExtra("start_recording")
             quickCapture = true
