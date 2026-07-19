@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ticket 22 — Capability-first routing</title>
+<style>
+  :root { --bg:#100f0d; --panel:#1b1915; --line:#3d382f; --text:#f2eadf; --muted:#aaa095; --amber:#f3b64d; --red:#ef7b70; --green:#75d39a; --blue:#78bde8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  main { width:1440px; margin:auto; padding:54px 64px 72px; }
+  h1 { margin:0; font-size:40px; letter-spacing:-1.3px; }
+  .dek { color:var(--muted); font-size:18px; max-width:950px; margin:10px 0 42px; }
+  h2 { margin:42px 0 14px; font-size:22px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:22px; }
+  .label { color:var(--amber); text-transform:uppercase; letter-spacing:1.4px; font-size:11px; font-weight:700; margin-bottom:16px; }
+  .flow { display:flex; align-items:stretch; gap:9px; }
+  .node { flex:1; min-height:86px; padding:14px 12px; border:1px solid var(--line); border-radius:11px; background:#141310; display:flex; flex-direction:column; justify-content:center; }
+  .node strong { font-size:14px; }
+  .node small { color:var(--muted); margin-top:5px; }
+  .arrow { align-self:center; color:#776e63; font-size:21px; }
+  .bad { border-color:#68413d; } .bad strong { color:var(--red); }
+  .good { border-color:#356047; } .good strong { color:var(--green); }
+  .blue { border-color:#365a70; } .blue strong { color:var(--blue); }
+  .warning { margin-top:14px; padding:11px 13px; border-left:3px solid var(--red); color:#d9c8bd; background:#191411; }
+  table { width:100%; border-collapse:separate; border-spacing:0; overflow:hidden; border:1px solid var(--line); border-radius:13px; background:var(--panel); }
+  th,td { padding:13px 15px; text-align:left; border-right:1px solid var(--line); border-bottom:1px solid var(--line); vertical-align:top; }
+  th:last-child,td:last-child { border-right:0; } tr:last-child td { border-bottom:0; }
+  th { color:var(--amber); font-size:12px; text-transform:uppercase; letter-spacing:.7px; background:#171510; }
+  td:first-child { font-weight:650; width:20%; }
+  .delta { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  .delta .node { min-height:116px; }
+  .num { width:24px; height:24px; display:grid; place-items:center; border-radius:50%; background:var(--amber); color:#17120a; font-size:12px; font-weight:800; margin-bottom:11px; }
+  .footer { margin-top:28px; color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body><main>
+  <h1>Capability-first capture routing</h1>
+  <p class="dek">Ticket #22 · Separate what the user captures from where it goes, then freeze both context and evidence inside one ID-addressed transaction.</p>
+
+  <div class="grid">
+    <section class="card">
+      <div class="label">Current · late-bound globals</div>
+      <div class="flow">
+        <div class="node bad"><strong>4 destination hotkeys</strong><small>dictate / talk / snap-talk / session</small></div><div class="arrow">›</div>
+        <div class="node bad"><strong>Mutable purpose</strong><small>one scalar for all pending work</small></div><div class="arrow">›</div>
+        <div class="node bad"><strong>ID-less result</strong><small>reads current target and paste app</small></div>
+      </div>
+      <div class="warning">Session, paste target, purpose, and screenshot context can all change before delivery.</div>
+    </section>
+    <section class="card">
+      <div class="label">Target · frozen transaction</div>
+      <div class="flow">
+        <div class="node good"><strong>3 capabilities</strong><small>dictate / snapshot / continuous</small></div><div class="arrow">›</div>
+        <div class="node good"><strong>CaptureRun UUID</strong><small>visible focus + explicit paste target</small></div><div class="arrow">›</div>
+        <div class="node good"><strong>Exact delivery</strong><small>ID-correlated result + history once</small></div>
+      </div>
+      <div class="warning" style="border-color:var(--green)">A later UI switch or recording cannot mutate an earlier run.</div>
+    </section>
+  </div>
+
+  <h2>Routing contract</h2>
+  <table>
+    <thead><tr><th>Capability</th><th>No conversation open</th><th>Assistant open</th><th>Session / ask open</th></tr></thead>
+    <tbody>
+      <tr><td>Dictate</td><td>Paste to target captured on press</td><td>Send text to assistant</td><td>Send to exact visible session</td></tr>
+      <tr><td>+ snapshot</td><td>Paste text + saved shot reference</td><td>Send text + release-time shot</td><td>Send text + shot to exact session</td></tr>
+      <tr><td>Continuous</td><td>Save bundle + paste bundle prompt</td><td>Save bundle + send bounded frames</td><td>Save bundle + notify exact session</td></tr>
+      <tr><td>Hands-free</td><td colspan="3">Archive only; deliberately ignores conversation context</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Minimal structural delta</h2>
+  <div class="delta">
+    <div class="node blue"><div class="num">1</div><strong>Expose visible focus</strong><small>Panel thread / assistant / grown session; never stale target selection.</small></div>
+    <div class="node blue"><div class="num">2</div><strong>Create run before collapse</strong><small>Freeze UUID, capability, route, interaction, and paste target.</small></div>
+    <div class="node blue"><div class="num">3</div><strong>Correlate async work</strong><small>Echo UUID through Python; capture snapshot at release.</small></div>
+    <div class="node blue"><div class="num">4</div><strong>Reduce once</strong><small>Deliver to frozen route; persist text and evidence exactly once.</small></div>
+  </div>
+
+  <p class="footer">Full verified code map, elimination trail, rollout, and executable validation matrix: <b>design/ticket-22-capability-routing-plan.md</b></p>
+</main></body></html>
