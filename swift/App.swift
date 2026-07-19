@@ -411,6 +411,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         overlayManager.start()
 
         chatPanel = ChatPanel()
+        chatPanel.panelAnchorProvider = { [weak self] in self?.indicator.panelAnchor }
         chatPanel.onShown = { [weak self] in self?.replyBubble.hide() }
         chatPanel.agentsDataSource = self
         chatPanel.onOpenSession = { [weak self] id in

@@ -270,6 +270,16 @@ class FloatingIndicator: NSObject {
         CATransaction.commit()
     }
     var isGrownVisible: Bool { mode == .grown }
+    /// Exact geometry consumed by ChatPanel. The screen is resolved from the
+    /// pill window itself, never independently from display ordering.
+    var panelAnchor: PanelAnchor? {
+        guard let panel else { return nil }
+        let screen = panel.screen ?? NSScreen.screens.first {
+            $0.frame.intersects(panel.frame)
+        }
+        guard let screen else { return nil }
+        return PanelAnchor(frame: panel.frame, visibleFrame: screen.visibleFrame)
+    }
 
     // Grown mode — message content above, live dots at the bottom band.
     struct GrownSpec {
@@ -1818,7 +1828,8 @@ final class DictationsView: NSView {
         card.layer?.backgroundColor = Theme.card.cgColor
         card.layer?.borderWidth = 1
         card.layer?.borderColor = Theme.border.cgColor
-        card.toolTip = "Click to copy"
+        let attachments = entry.attachments ?? []
+        card.toolTip = attachments.isEmpty ? "Click to copy" : "Click to copy text + image"
 
         let textLabel = NSTextField(wrappingLabelWithString: entry.text)
         textLabel.font = .systemFont(ofSize: 13)
@@ -1828,13 +1839,22 @@ final class DictationsView: NSView {
         textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         card.textLabel = textLabel
 
-        card.addSubview(textLabel)
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.spacing = 10
+        row.translatesAutoresizingMaskIntoConstraints = false
+        if let thumbnail = HistoryAttachmentThumbnail(paths: attachments) {
+            row.addArrangedSubview(thumbnail)
+        }
+        row.addArrangedSubview(textLabel)
         textLabel.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(row)
         NSLayoutConstraint.activate([
-            textLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
-            textLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-            textLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
-            textLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
+            row.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
+            row.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            row.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            row.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
         ])
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(cardClicked(_:)))
@@ -1849,8 +1869,7 @@ final class DictationsView: NSView {
               card.entryIndex >= 0, card.entryIndex < entries.count else { return }
         let entry = entries[card.entryIndex]
 
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(entry.text, forType: .string)
+        CaptureClipboard.copy(text: entry.text, attachmentPaths: entry.attachments ?? [])
 
         card.layer?.backgroundColor = NSColor(r: 120, g: 180, b: 100, a: 15).cgColor
         card.layer?.borderColor = NSColor(r: 120, g: 180, b: 100, a: 30).cgColor
@@ -2464,6 +2483,54 @@ class HoverCardView: NSView {
 final class InboxCard: HoverCardView {
     var entryIndex: Int = -1
     weak var textLabel: NSTextField?
+}
+
+/// Compact first-image preview; continuous captures keep the narrow card and
+/// surface their remaining evidence as a count instead of a filmstrip.
+final class HistoryAttachmentThumbnail: NSView {
+    init?(paths: [String]) {
+        guard let first = paths.first(where: { NSImage(contentsOfFile: $0) != nil }),
+              let image = NSImage(contentsOfFile: first) else { return nil }
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.masksToBounds = true
+        layer?.backgroundColor = NSColor(r: 18, g: 16, b: 14).cgColor
+
+        let imageView = NSImageView(image: image)
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(imageView)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 72),
+            heightAnchor.constraint(equalToConstant: 50),
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        if paths.count > 1 {
+            let count = NSTextField(labelWithString: "+\(paths.count - 1)")
+            count.font = .systemFont(ofSize: 9, weight: .semibold)
+            count.textColor = Theme.text
+            count.alignment = .center
+            count.wantsLayer = true
+            count.layer?.backgroundColor = NSColor(r: 20, g: 18, b: 16, a: 210).cgColor
+            count.layer?.cornerRadius = 7
+            count.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(count)
+            NSLayoutConstraint.activate([
+                count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
+                count.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+                count.widthAnchor.constraint(greaterThanOrEqualToConstant: 22),
+                count.heightAnchor.constraint(equalToConstant: 14),
+            ])
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
 }
 
 class FlippedView: NSView {

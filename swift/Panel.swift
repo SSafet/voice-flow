@@ -29,6 +29,8 @@ final class ChatPanel {
     var onClear: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenSession: ((String) -> Void)?
+    /// Supplied by AppDelegate from the actual FloatingIndicator window.
+    var panelAnchorProvider: (() -> PanelAnchor?)?
     var onTTSSpeak: ((TTSRequest) -> Void)?
     var onTTSSeek: ((Double) -> Void)?
     var onTTSStop: (() -> Void)?
@@ -144,11 +146,24 @@ final class ChatPanel {
     }
 
     private func position() {
-        guard let screen = NSScreen.screens.first ?? NSScreen.main else { return }
-        let frame = screen.frame
-        let x = frame.midX - width / 2
-        let y = frame.minY + 30  // just above the pill
-        panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+        let anchor: PanelAnchor?
+        if let exact = panelAnchorProvider?() {
+            anchor = exact
+        } else {
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+                ?? NSScreen.main ?? NSScreen.screens.first
+            anchor = screen.map {
+                PanelAnchor(
+                    frame: NSRect(x: $0.frame.midX - 26, y: $0.frame.minY + 5,
+                                  width: 52, height: 18),
+                    visibleFrame: $0.visibleFrame)
+            }
+        }
+        guard let anchor else { return }
+        let target = AnchoredPanelPlacement.frame(
+            size: NSSize(width: width, height: height), anchor: anchor)
+        panel.setFrame(target, display: true)
     }
 
     // ── Content updates ─────────────────────────────────
