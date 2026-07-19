@@ -225,7 +225,9 @@ deployed copies are build outputs.
   text, isAsk), written by `MessagesView` (same caps). The Messages tab's store.
 - `assistant-sessions.json` — versioned in-app Assistant conversations: ordered
   user/assistant/note messages, per-session Codex thread IDs, titles, and turn
-  state. Restored on launch so Assistant sessions remain selectable/resumable.
+  state. Restored on launch so Assistant sessions remain selectable/resumable;
+  the first upgraded launch imports only Codex rollouts carrying Voice Flow's
+  explicit Assistant preamble and removes empty scaffold drafts.
 - `pushes.json` — the live per-session push stacks (`sessionPushes`), saved on
   every mutation so unread messages survive app restarts as ghost entries.
 - `inbox.json` — queued contextual-capture messages for Codex (`MessageInbox`).

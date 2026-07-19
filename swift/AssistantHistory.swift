@@ -63,6 +63,8 @@ private struct AssistantHistoryEnvelope: Codable {
     var version: Int
     var activeSessionId: String
     var sessions: [AssistantConversation]
+    /// One-time bridge for conversations created before this store shipped.
+    var legacyImportCompleted: Bool?
 }
 
 /// The durable source of truth for in-app Assistant conversations. Callers
@@ -80,24 +82,40 @@ final class AssistantHistoryStore {
             .appendingPathComponent(".config/voice-flow/assistant-sessions.json")
     }
 
-    init(url: URL = AssistantHistoryStore.defaultURL) {
+    static var defaultLegacySessionsRoot: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/sessions")
+    }
+
+    init(url: URL = AssistantHistoryStore.defaultURL,
+         legacySessionsRoot: URL? = AssistantHistoryStore.defaultLegacySessionsRoot) {
         self.url = url
+        let fileExisted = FileManager.default.fileExists(atPath: url.path)
+        var canPersist = !fileExisted
         if let data = try? Data(contentsOf: url),
            let loaded = try? JSONDecoder().decode(AssistantHistoryEnvelope.self, from: data),
            loaded.version == 1, !loaded.sessions.isEmpty {
             envelope = loaded
+            canPersist = true
             repairActiveSessionLocked()
             recoverInterruptedTurnsLocked()
         } else {
             let fresh = AssistantConversation()
-            envelope = AssistantHistoryEnvelope(version: 1, activeSessionId: fresh.id, sessions: [fresh])
+            envelope = AssistantHistoryEnvelope(
+                version: 1, activeSessionId: fresh.id, sessions: [fresh],
+                legacyImportCompleted: nil)
             // A corrupt existing file is left untouched until the user makes
             // a deliberate mutation; a missing file gets its initial snapshot.
-            if !FileManager.default.fileExists(atPath: url.path) {
-                persistLocked()
-            } else {
+            if fileExisted {
                 vflog("assistant history: could not decode \(url.path); keeping it untouched")
             }
+        }
+        if canPersist, envelope.legacyImportCompleted != true {
+            importLegacyConversationsLocked(from: legacySessionsRoot)
+            envelope.legacyImportCompleted = true
+            persistLocked()
+        } else if canPersist, !fileExisted {
+            persistLocked()
         }
     }
 
@@ -122,6 +140,13 @@ final class AssistantHistoryStore {
     @discardableResult
     func createConversation() -> AssistantConversation {
         lock.withLock {
+            // Repeated presses on "new assistant" must not manufacture empty
+            // history. Reuse the active blank draft until the user writes.
+            if let current = conversationLocked(envelope.activeSessionId),
+               current.messages.isEmpty, current.codexThreadId == nil,
+               current.turnState == .idle {
+                return current
+            }
             let conversation = AssistantConversation()
             envelope.sessions.append(conversation)
             envelope.activeSessionId = conversation.id
@@ -224,6 +249,28 @@ final class AssistantHistoryStore {
         if changed { persistLocked() }
     }
 
+    private func importLegacyConversationsLocked(from root: URL?) {
+        guard let root else { return }
+        let imported = LegacyAssistantConversationImporter.load(from: root)
+        guard !imported.isEmpty else { return }
+        let existingThreads = Set(envelope.sessions.compactMap(\.codexThreadId))
+        let additions = imported.filter { conversation in
+            guard let thread = conversation.codexThreadId else { return false }
+            return !existingThreads.contains(thread)
+        }
+        guard !additions.isEmpty else { return }
+
+        // Empty drafts are implementation scaffolding, not history. The
+        // imported conversation becomes the active session the user sees.
+        envelope.sessions.removeAll {
+            $0.messages.isEmpty && $0.codexThreadId == nil && $0.turnState == .idle
+        }
+        envelope.sessions.append(contentsOf: additions)
+        envelope.activeSessionId = additions.max { $0.updatedAt < $1.updatedAt }!.id
+        pruneLocked()
+        vflog("assistant history: imported \(additions.count) pre-store Codex session(s)")
+    }
+
     private func pruneLocked() {
         guard envelope.sessions.count > Self.maxSessions else { return }
         let active = envelope.activeSessionId
@@ -253,6 +300,124 @@ final class AssistantHistoryStore {
             .joined(separator: " ")
         let source = compact.isEmpty ? (attachmentNote ?? "Screenshot") : compact
         return source.count > 54 ? String(source.prefix(54)) + "…" : source
+    }
+}
+
+/// Imports only rollout files whose first user message carries Voice Flow's
+/// exact Assistant preamble. Working directory and timestamps are deliberately
+/// not identity signals: unrelated Codex Desktop sessions often share both.
+private enum LegacyAssistantConversationImporter {
+    private static let marker = "You are the assistant inside Voice Flow, a macOS companion app"
+    private static let preambleTerminator = "write the finished content into your reply instead of trying to create files or call external services.\n\n"
+
+    static func load(from root: URL) -> [AssistantConversation] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+        var conversations: [AssistantConversation] = []
+        for case let file as URL in enumerator where file.pathExtension == "jsonl" {
+            if let conversation = parse(file) { conversations.append(conversation) }
+        }
+        return conversations.sorted { $0.updatedAt < $1.updatedAt }
+    }
+
+    private static func parse(_ url: URL) -> AssistantConversation? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        var threadId: String?
+        var recognized = false
+        var messages: [AssistantHistoryMessage] = []
+        var assistantParts: [String] = []
+        var turnInFlight = false
+
+        for rawLine in data.split(separator: 0x0A) {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(rawLine)) as? [String: Any],
+                  let type = object["type"] as? String,
+                  let payload = object["payload"] as? [String: Any] else { continue }
+            let at = date(object["timestamp"] as? String) ?? Date()
+            if type == "session_meta" {
+                threadId = payload["id"] as? String
+                continue
+            }
+            guard type == "event_msg", let eventType = payload["type"] as? String else { continue }
+            switch eventType {
+            case "user_message":
+                guard let raw = payload["message"] as? String else { continue }
+                if !recognized {
+                    guard raw.contains(marker) else { return nil }
+                    recognized = true
+                }
+                flushAssistant(&assistantParts, at: at, into: &messages)
+                let text = stripPreamble(from: raw)
+                if !text.isEmpty {
+                    messages.append(AssistantHistoryMessage(at: at, role: .user, text: text))
+                    turnInFlight = true
+                }
+            case "agent_message":
+                if recognized, let text = payload["message"] as? String, !text.isEmpty {
+                    assistantParts.append(text)
+                }
+            case "task_complete":
+                guard recognized else { continue }
+                if assistantParts.isEmpty,
+                   let final = payload["last_agent_message"] as? String, !final.isEmpty {
+                    assistantParts.append(final)
+                }
+                flushAssistant(&assistantParts, at: at, into: &messages)
+                turnInFlight = false
+            default:
+                continue
+            }
+        }
+
+        guard recognized, let threadId, messages.contains(where: { $0.role == .user }) else { return nil }
+        flushAssistant(&assistantParts, at: messages.last?.at ?? Date(), into: &messages)
+        if turnInFlight {
+            messages.append(AssistantHistoryMessage(
+                role: .note,
+                text: "Interrupted before Assistant history was enabled — send another message to continue this session."))
+        }
+        let createdAt = messages.first?.at ?? Date()
+        let updatedAt = messages.last?.at ?? createdAt
+        let firstUser = messages.first(where: { $0.role == .user })?.text ?? "Recovered assistant"
+        return AssistantConversation(
+            codexThreadId: threadId,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            title: title(from: firstUser),
+            turnState: turnInFlight ? .interrupted : .idle,
+            messages: messages)
+    }
+
+    private static func flushAssistant(_ parts: inout [String], at: Date,
+                                       into messages: inout [AssistantHistoryMessage]) {
+        guard !parts.isEmpty else { return }
+        messages.append(AssistantHistoryMessage(
+            at: at, role: .assistant, text: parts.joined(separator: "\n\n")))
+        parts.removeAll(keepingCapacity: true)
+    }
+
+    private static func stripPreamble(from text: String) -> String {
+        guard text.contains(marker) else {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let range = text.range(of: preambleTerminator) {
+            return String(text[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let separator = text.range(of: "\n\n", options: .backwards) else { return "" }
+        return String(text[separator.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func title(from text: String) -> String {
+        let compact = text.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        return compact.count > 54 ? String(compact.prefix(54)) + "…" : compact
+    }
+
+    private static func date(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value)
     }
 }
 

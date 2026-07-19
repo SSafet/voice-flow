@@ -4,9 +4,10 @@ import Cocoa
 //  Agents tab — every agent talking to you, in one place
 //  (panel redesign, ticket #15; spec: design/panel-redesign.html)
 //
-//  Root: a minimal latest-first list — the assistant pinned first wearing
-//  the VoiceFlow waveform mark, then every connected/ghost session with a
-//  plain muted number (≡ the pill picker ⌃⌥1–6). Unread rows read bright.
+//  Root: a minimal latest-first list — a new-Assistant action, durable local
+//  Assistant sessions wearing the VoiceFlow waveform mark, then every
+//  connected/ghost MCP session with a plain muted number (≡ the pill picker
+//  ⌃⌥1–6). Empty Assistant drafts are hidden. Unread rows read bright.
 //  Clicking a row pushes its flat thread over the list: no cards, no
 //  timestamps, no repeated names. The composer attaches to an unanswered
 //  ask; answers attach beneath (↳); otherwise one composer at the bottom.
@@ -72,6 +73,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var contentStack: NSView!          // flipped document view
     private var scrollView: NSScrollView!
     private var composerField: NSTextField?
+    private var scrollObserver: NSObjectProtocol?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -81,6 +83,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
     convenience init() { self.init(frame: .zero) }
+
+    deinit {
+        if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+    }
 
     private func setupUI() {
         contentStack = FlippedView()
@@ -92,6 +98,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         scrollView.scrollerStyle = .overlay
         scrollView.documentView = contentStack
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        scrollObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshHoverStatesForPointer()
+        }
 
         addSubview(scrollView)
         NSLayoutConstraint.activate([
@@ -147,6 +161,25 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         switch mode {
         case .list: buildList()
         case .thread(let sid): buildThread(sid)
+        }
+        DispatchQueue.main.async { [weak self] in self?.refreshHoverStatesForPointer() }
+    }
+
+    /// AppKit does not reliably emit mouseExited when a trackpad scroll moves
+    /// a tracking area out from under a stationary pointer. Recompute the one
+    /// true hovered row from screen geometry after every clip-view movement.
+    private func refreshHoverStatesForPointer() {
+        guard let window else {
+            contentStack.subviews.compactMap { $0 as? AgentListRowView }
+                .forEach { $0.setHovered(false) }
+            return
+        }
+        let pointInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        let pointInScroll = scrollView.convert(pointInWindow, from: nil)
+        let pointerInsideScroll = scrollView.bounds.contains(pointInScroll)
+        for row in contentStack.subviews.compactMap({ $0 as? AgentListRowView }) {
+            let local = row.convert(pointInWindow, from: nil)
+            row.setHovered(pointerInsideScroll && row.bounds.contains(local))
         }
     }
 
@@ -563,13 +596,19 @@ class HoverRowView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach { removeTrackingArea($0) }
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self))
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self))
     }
     override func mouseEntered(with event: NSEvent) {
-        layer?.backgroundColor = Theme.cardHover.cgColor
+        setHovered(true)
     }
     override func mouseExited(with event: NSEvent) {
-        layer?.backgroundColor = NSColor.clear.cgColor
+        setHovered(false)
+    }
+    func setHovered(_ hovered: Bool) {
+        layer?.backgroundColor = hovered ? Theme.cardHover.cgColor : NSColor.clear.cgColor
     }
 }
 

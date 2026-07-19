@@ -96,6 +96,7 @@ AssistantHistoryEnvelope {
   version: 1
   activeSessionId: UUID-string
   sessions: [AssistantConversation]
+  legacyImportCompleted: Bool?              // one-time pre-store rollout bridge
 }
 
 AssistantConversation {
@@ -206,7 +207,7 @@ Not exercised by the first slice: deleting a non-active session, switching betwe
 | Put Assistant rows in Agents list | list rows are hard-wired to MCP numbering | Not found: `makeRow` accepts any leading view/name/preview/time; only click routing is hard-coded and will be typed. |
 | Durable local write | no established persistence convention | Not found: three stores already use Codable + atomic JSON replacement. |
 
-No external service, secret, tenancy boundary, or network write is added. Storage volume is bounded by compact text; retain the newest 100 sessions and newest 200 display messages per session, pruning only after a successful replacement snapshot. Corrupt source data is never overwritten during the failing load; the app logs and starts an in-memory empty session until the next deliberate mutation.
+No external service, secret, tenancy boundary, or network write is added. A one-time migration scans local Codex rollout files and imports only those whose first user message contains Voice Flow's explicit Assistant preamble; cwd and timestamps are never treated as identity. Storage volume is bounded by compact text; retain the newest 100 sessions and newest 200 display messages per session, pruning only after a successful replacement snapshot. Corrupt source data is never overwritten during the failing load; the app logs and starts an in-memory empty session until the next deliberate mutation.
 
 ## Coverage
 
@@ -222,7 +223,7 @@ Independent caller/import audit:
 
 Highest-risk claim: persisting the ID at `thread.started` is early enough to resume after a restart. Verified because `CodexExecBackend.processChunk` observes that event directly from stdout before later `item.completed` events.
 
-Out of scope: importing historic Voice Flow Assistant rollout files automatically. The incident's thread can be recovered manually, but heuristic discovery could attach unrelated Codex Desktop sessions and violates the identity invariant. Mobile Assistant-session sync is also out of scope; `SyncServer` currently handles its separate `mobile-chat.json` channel.
+Out of scope: importing arbitrary Codex Desktop sessions that lack Voice Flow's explicit Assistant preamble. Heuristic discovery by timestamp or working directory could attach unrelated private threads and violates the identity invariant. Mobile Assistant-session sync is also out of scope; `SyncServer` currently handles its separate `mobile-chat.json` channel.
 
 ## Validation contract
 
@@ -235,6 +236,7 @@ Out of scope: importing historic Voice Flow Assistant rollout files automaticall
 7. **MCP regression.** Existing push rows retain number/ghost/completed state, replies still attach through `sendMessage(toSession:)`, and Assistant rows never get picker numbers.
 8. **Build contract.** `swiftc swift/*.swift ... -o /tmp/vf` succeeds; existing capture-routing, display-context, window-placement, clipboard, and hotkey-precedence harnesses still pass.
 9. **Persistence failure.** Point the store at an unwritable path. Mutation remains available in memory, logs the failure, and does not crash or truncate an existing file.
+10. **Legacy recovery.** Give the store a rollout containing Voice Flow's preamble, one user turn, streamed agent pieces, and a task completion. Expected: one resumable session imports once, preamble text is stripped, streamed pieces form one visible reply, and empty scaffold drafts disappear.
 
 Rollback is reversible: stop reading/writing `assistant-sessions.json` and restore the hard-coded Assistant row. The new file is additive; no existing persistent format is modified.
 

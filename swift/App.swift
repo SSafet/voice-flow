@@ -2923,7 +2923,9 @@ extension AppDelegate: AgentsDataSource {
     }()
 
     func agentSessionRows() -> [AgentSessionRow] {
-        let assistantRows: [AgentSessionRow] = (agent?.conversations ?? []).map { conversation in
+        let assistantRows: [AgentSessionRow] = (agent?.conversations ?? [])
+            .filter { !$0.messages.isEmpty || $0.codexThreadId != nil || $0.turnState != .idle }
+            .map { conversation in
             var preview = conversation.preview
             if preview.count > 120 { preview = String(preview.prefix(120)) + "…" }
             return AgentSessionRow(
