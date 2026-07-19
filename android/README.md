@@ -53,6 +53,20 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
    tile** starts recording instantly; those captures go to the inbox
    (tickets intake) *and* the clipboard.
 
+The **Voice Flow** launcher uses the Mac's cream/amber waveform icon (adaptive
+layers generated from `assets/icon_master_1024.png`). The invisible **VF
+Dictate** (`.Dictate` activity-alias) starts quick capture as the phone's
+digital assistant: choose it under Settings → Apps → Choose default apps →
+Digital assistant app, then leave the Samsung side-key long press assigned to
+Digital assistant. It deliberately does not add a second app-drawer icon.
+While recording, a halo around the record button scales with live mic amplitude
+(`Recorder.level()`, polled every 50 ms) so you can see the phone hearing you.
+
+If Bonjour discovery can't find the Mac (some Wi-Fi networks filter mDNS
+multicast), pairing also probes previously saved hosts — over adb you can
+seed one: write `sync_hosts` (JSON array of IPs) into the debug app's
+`shared_prefs/app.xml` via `run-as com.voiceflow.mobile`, then relaunch.
+
 ## Mac side
 
 The Mac runs a token-protected sync server on port 8793 (`swift/Sync.swift`,
