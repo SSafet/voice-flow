@@ -67,6 +67,22 @@ class MainActivity : Activity() {
     private lateinit var recordButton: FrameLayout
     private lateinit var recordDot: View
     private lateinit var recordRing: View
+    private lateinit var recordHalo: View
+    private var levelSmoothed = 0f
+    // Voice-reactive halo: polls the recorder's peak amplitude so the user can
+    // SEE the mic hearing them, instead of just a static color change.
+    private val levelTicker = object : Runnable {
+        override fun run() {
+            if (!recorder.isRecording) return
+            levelSmoothed = maxOf(recorder.level(), levelSmoothed * 0.86f)
+            val s = 1f + 0.45f * levelSmoothed
+            recordHalo.scaleX = s; recordHalo.scaleY = s
+            recordHalo.alpha = 0.30f + 0.70f * levelSmoothed
+            val d = 1f + 0.07f * levelSmoothed
+            recordDot.scaleX = d; recordDot.scaleY = d
+            main.postDelayed(this, 50)
+        }
+    }
     private lateinit var modeDictate: TextView
     private lateinit var modeIdea: TextView
     private lateinit var recordStatus: TextView
@@ -101,7 +117,7 @@ class MainActivity : Activity() {
         pairing = Pairing(this, keys)
         buildUI()
         applyPairedState()
-        handleIntent(intent)
+        if (savedInstanceState == null) handleIntent(intent)
         watchConnectivity()
     }
 
@@ -127,7 +143,10 @@ class MainActivity : Activity() {
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
-        if (intent.getBooleanExtra("start_recording", false)) {
+        // The ".Dictate" launcher alias (side-key double press) is an implicit
+        // start_recording; the normal launcher icon must never auto-record.
+        val viaDictateAlias = intent.component?.className == "com.voiceflow.mobile.Dictate"
+        if (viaDictateAlias || intent.getBooleanExtra("start_recording", false)) {
             intent.removeExtra("start_recording")
             quickCapture = true
             showTab(0)
@@ -362,8 +381,15 @@ class MainActivity : Activity() {
         })
         styleModeRow()
 
-        // record button: soft ring + solid core
-        recordButton = FrameLayout(this).apply { setOnClickListener { toggleRecording() } }
+        // record button: voice-reactive halo + soft ring + solid core
+        page.clipChildren = false
+        page.clipToPadding = false
+        recordButton = FrameLayout(this).apply {
+            setOnClickListener { toggleRecording() }
+            clipChildren = false
+        }
+        recordHalo = View(this).apply { background = roundBg(Color.parseColor("#2EE25B55"), 82); alpha = 0f }
+        recordButton.addView(recordHalo, FrameLayout.LayoutParams(dp(164), dp(164), Gravity.CENTER))
         recordRing = View(this).apply { background = roundBg(accentDim, 82) }
         recordButton.addView(recordRing, FrameLayout.LayoutParams(dp(164), dp(164), Gravity.CENTER))
         recordDot = View(this).apply { background = roundBg(accent, 66) }
@@ -516,6 +542,8 @@ class MainActivity : Activity() {
             recorder.start(store.audioDir)
             recordDot.background = roundBg(red, 66)
             recordRing.background = roundBg(Color.parseColor("#33E25B55"), 82)
+            levelSmoothed = 0f
+            main.post(levelTicker)
             recordStatus.text = when {
                 chatVoiceCapture -> "recording for the assistant… tap to stop"
                 quickCapture -> "recording… goes to your inbox + clipboard"
@@ -533,6 +561,10 @@ class MainActivity : Activity() {
 
     private fun stopRecording() {
         val file = recorder.stop()
+        main.removeCallbacks(levelTicker)
+        recordHalo.alpha = 0f
+        recordHalo.scaleX = 1f; recordHalo.scaleY = 1f
+        recordDot.scaleX = 1f; recordDot.scaleY = 1f
         recordDot.background = roundBg(accent, 66)
         recordRing.background = roundBg(accentDim, 82)
         val forChat = chatVoiceCapture

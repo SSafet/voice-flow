@@ -12,6 +12,10 @@ class Recorder {
 
     val isRecording: Boolean get() = recorder != null
 
+    /// Peak mic amplitude since the last call, normalized 0..1; 0 when idle.
+    fun level(): Float =
+        try { minOf(1f, (recorder?.maxAmplitude ?: 0) / 32767f) } catch (_: Exception) { 0f }
+
     fun start(outputDir: File): File {
         stopQuietly()
         val file = File(outputDir, "rec-${System.currentTimeMillis()}.m4a")
