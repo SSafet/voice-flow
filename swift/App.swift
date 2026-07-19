@@ -2490,7 +2490,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 reply += """
                  If they might reply, start the reply listener as a background Bash task NOW — whether you keep working or are about to finish:
                 ~/.claude/skills/communicate-with-user/scripts/vf listen --attach \(sessionId) --timeout 7200
-                The moment they talk to your session it completes with their words and you are re-invoked. Without it, a reply sits queued until you happen to call another voice-flow tool — and can never reach you once you stop.
+                The moment they talk to your session it completes with their words and you are re-invoked. Without it, a reply sits queued until you happen to call another voice-flow tool — and can never reach you once you stop. Always start it fresh: it automatically replaces any earlier listener for this session (the old task ends itself with a superseded notice — ignore it).
                 """
             }
             return .ok(reply)
@@ -2669,7 +2669,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func mcpWaitForMessage(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 600
         timeout = min(max(timeout, 5), 3600)
-        let (messages, userClosed) = inbox.wait(timeout: timeout, session: session?.id)
+        let (messages, userClosed, superseded) = inbox.wait(timeout: timeout, session: session?.id)
+        if superseded {
+            return .ok("A newer wait_for_message call took over listening for this session — each session keeps exactly one live listener, the latest. This listener is obsolete: do NOT call wait_for_message again from here and do not restart this task; the newer listener will deliver the user's words. Just end.")
+        }
         if userClosed {
             return .ok("The user closed this session in Voice Flow (removed or completed it). Stop listening: do NOT re-attach or call wait_for_message again for this session, and end your turn. If the user wants to resume, they will reach out.")
         }

@@ -32,6 +32,10 @@ final class MessageInbox {
     /// so the parked — or next — wait_for_message returns a terminal
     /// "user closed" notice instead of silently resurrecting the session.
     private var userClosed: Set<String> = []
+    /// Waiters released because a newer wait() for the same session replaced
+    /// them: a session keeps exactly one live listener — the latest — so
+    /// stale background `vf listen` tasks finish instead of accumulating.
+    private var superseded: Set<ObjectIdentifier> = []
 
     init() {
         if let data = try? Data(contentsOf: Self.url),
@@ -109,31 +113,45 @@ final class MessageInbox {
     }
 
     /// Block until a message for `session` exists (or the timeout passes),
-    /// then drain. Returns ([], false) on timeout; userClosed is true when
-    /// the user dismissed the session — the caller must tell the agent to
-    /// stop listening.
-    func wait(timeout: TimeInterval, session: String?) -> (messages: [InboxMessage], userClosed: Bool) {
+    /// then drain. Returns ([], false, false) on timeout; userClosed is true
+    /// when the user dismissed the session — the caller must tell the agent
+    /// to stop listening. superseded is true when a newer wait() for the
+    /// same session replaced this one — the caller must tell the agent this
+    /// listener is obsolete (the newer one holds the session).
+    func wait(timeout: TimeInterval, session: String?) -> (messages: [InboxMessage], userClosed: Bool, superseded: Bool) {
         enum Immediate { case closed, messages([InboxMessage]), parked }
         let semaphore = DispatchSemaphore(value: 0)
         let immediate: Immediate = queue.sync {
             if let session, userClosed.remove(session) != nil { return .closed }
             let drained = drainLocked(session: session)
             if drained.isEmpty {
+                // One live listener per session: release any older waiter
+                // parked on this exact id before taking its place.
+                if let session {
+                    for waiter in waiters where waiter.session == session {
+                        superseded.insert(ObjectIdentifier(waiter.semaphore))
+                        waiter.semaphore.signal()
+                    }
+                    waiters.removeAll { $0.session == session }
+                }
                 waiters.append((session, semaphore))
                 return .parked
             }
             return .messages(drained)
         }
         switch immediate {
-        case .closed: return ([], true)
-        case .messages(let drained): return (drained, false)
+        case .closed: return ([], true, false)
+        case .messages(let drained): return (drained, false, false)
         case .parked: break
         }
         _ = semaphore.wait(timeout: .now() + timeout)
         return queue.sync {
             waiters.removeAll { $0.semaphore === semaphore }
-            if let session, userClosed.remove(session) != nil { return ([], true) }
-            return (drainLocked(session: session), false)
+            // Checked before draining: a superseded waiter must not steal
+            // messages that now belong to its replacement.
+            if superseded.remove(ObjectIdentifier(semaphore)) != nil { return ([], false, true) }
+            if let session, userClosed.remove(session) != nil { return ([], true, false) }
+            return (drainLocked(session: session), false, false)
         }
     }
 

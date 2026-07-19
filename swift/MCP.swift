@@ -442,7 +442,9 @@ final class MCPServer {
             non-error result — just call wait_for_message again to keep listening. Calling \
             it inline blocks you; to hear the user while you do other work — or after your \
             turn ends — run it as the background listener instead (report_to_user results \
-            show the exact command), which completes with their words and re-invokes you.
+            show the exact command), which completes with their words and re-invokes you. \
+            A session keeps exactly ONE live listener — the latest: a new call replaces any \
+            older one still parked, which returns a superseded notice and should simply end.
             """,
             "inputSchema": [
                 "type": "object",
