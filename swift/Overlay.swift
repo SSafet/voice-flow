@@ -122,6 +122,8 @@ struct OverlayDoc {
     /// Owning MCP session — the element renders only while that session is
     /// the user's active one. nil = always visible (hand-written files).
     let session: String?
+    /// Display whose `take_screenshot` pixel space the document uses.
+    let displayID: CGDirectDisplayID?
     let title: String
     let note: String?
     // guide
@@ -157,6 +159,7 @@ struct OverlayDoc {
             kind: kind,
             visible: dict["visible"] as? Bool ?? true,
             session: dict["session"] as? String,
+            displayID: (dict["display_id"] as? NSNumber).map { CGDirectDisplayID($0.uint32Value) },
             title: dict["title"] as? String ?? "",
             note: dict["note"] as? String,
             steps: steps,
@@ -175,6 +178,9 @@ struct OverlayDoc {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 private final class OverlayShapeView: NSView {
+    var pointScale: CGFloat = 1.0 {
+        didSet { needsDisplay = true }
+    }
     var shapes: [OverlayShape] = [] {
         didSet { needsDisplay = true }
     }
@@ -183,7 +189,7 @@ private final class OverlayShapeView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         // File coordinates are screenshot pixels; scale to screen points.
-        let k = CaptureStore.annotationPointScale()
+        let k = pointScale
 
         for shape in shapes {
             switch shape {
@@ -261,13 +267,13 @@ private final class ShapeOverlayWindow {
     private var panel: NSPanel?
     private var view: OverlayShapeView?
 
-    func setShapes(_ shapes: [OverlayShape]) {
+    func setShapes(_ shapes: [OverlayShape], on display: DisplayContext) {
         guard !shapes.isEmpty else {
             panel?.orderOut(nil)
             view?.shapes = []
             return
         }
-        let frame = (NSScreen.screens.first ?? NSScreen.main)?.frame ?? .zero
+        let frame = display.frame
         if panel == nil {
             let newPanel = NSPanel(
                 contentRect: frame,
@@ -288,6 +294,7 @@ private final class ShapeOverlayWindow {
         }
         panel?.setFrame(frame, display: true)
         view?.frame = NSRect(origin: .zero, size: frame.size)
+        view?.pointScale = display.annotationPointScale
         view?.shapes = shapes
         panel?.orderFront(nil)
     }
@@ -679,7 +686,7 @@ final class OverlayManager {
     }
 
     private var panels: [String: OverlayPanelWindow] = [:]
-    private let shapeWindow = ShapeOverlayWindow()
+    private var shapeWindows: [CGDirectDisplayID: ShapeOverlayWindow] = [:]
     private var pollTimer: Timer?
     private var lastSignature = ""
     /// The user's active MCP session — session-owned overlays render only
@@ -851,11 +858,26 @@ final class OverlayManager {
             panels.removeValue(forKey: id)
         }
 
-        // Annotations: union of all visible annotation docs on one canvas.
-        let shapes = docs.values
-            .filter { $0.kind == .annotations && $0.visible }
-            .flatMap { $0.shapes }
-        shapeWindow.setShapes(shapes)
+        // Annotation coordinates belong to the display that produced their
+        // screenshot. Legacy files without an id remain on the primary.
+        let primaryId = DisplayTopology.primary?.id
+        let annotationDocs = docs.values.filter { $0.kind == .annotations && $0.visible }
+        let grouped = Dictionary(grouping: annotationDocs) { $0.displayID ?? primaryId ?? 0 }
+        for (displayId, displayDocs) in grouped {
+            guard let display = DisplayTopology.display(id: displayId) else { continue }
+            let window = shapeWindows[displayId] ?? {
+                let created = ShapeOverlayWindow()
+                shapeWindows[displayId] = created
+                return created
+            }()
+            window.setShapes(displayDocs.flatMap { $0.shapes }, on: display)
+        }
+        for (displayId, window) in shapeWindows where grouped[displayId] == nil {
+            if let display = DisplayTopology.display(id: displayId) {
+                window.setShapes([], on: display)
+            }
+            shapeWindows.removeValue(forKey: displayId)
+        }
     }
 
     // ── Schema documentation (written to overlays/_schema.md) ──
@@ -879,6 +901,8 @@ final class OverlayManager {
     - `session`: string, optional — owning MCP session id (the tools stamp it
       automatically). The element renders only while that session is the
       user's active one; omit it for elements that should always show.
+    - `display_id`: integer, optional — the display returned by `take_screenshot`;
+      annotation coordinates are interpreted in that display's image space.
     - `position` (guide/panel): anchor string — `top-left`, `top-right`,
       `bottom-left`, `bottom-right`, `center-left`, `center-right`, `center` —
       or `[x, y]` (top-left corner of the panel, y measured from the top).

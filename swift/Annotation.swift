@@ -71,8 +71,9 @@ final class AnnotationOverlay {
     }
 
     private func ensurePanel() {
-        let screen = NSScreen.screens.first ?? NSScreen.main
-        let frame = screen?.frame ?? .zero
+        // One canvas across the virtual desktop keeps a single undo stack and
+        // allows drawing on any attached display without changing context.
+        let frame = DisplayTopology.virtualFrame
 
         if let panel {
             panel.setFrame(frame, display: true)
@@ -371,8 +372,8 @@ private final class AnnotationToolbar {
     }
 
     private func position() {
-        guard let panel, let screen = NSScreen.screens.first ?? NSScreen.main else { return }
-        let frame = screen.frame
+        guard let panel, let display = DisplayTopology.underMouse ?? DisplayTopology.primary else { return }
+        let frame = display.visibleFrame
         let x = frame.midX - panel.frame.width / 2
         let y = frame.maxY - panel.frame.height - 12
         panel.setFrameOrigin(NSPoint(x: x, y: y))

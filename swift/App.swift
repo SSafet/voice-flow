@@ -191,6 +191,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// mutable purpose/context slots.
     private var activeRunId: UUID?
     private var captureRuns: [UUID: CaptureRun] = [:]
+    /// Last screenshot display per MCP session. Annotation coordinates from
+    /// that session stay coupled to the image the agent actually inspected.
+    private var lastMCPDisplay: [String: CGDirectDisplayID] = [:]
     private var initialPermissionsRequested = false
     private var screenGrantPollTimer: Timer?
     private var screenGrantPendingRestart = false
@@ -322,8 +325,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if !editing, self.sessionActive {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     guard self.sessionActive else { return }
+                    let display = self.activeRunId
+                        .flatMap { self.captureRuns[$0]?.display }
                     Task { @MainActor in
-                        if let shot = try? await self.screenCapture.captureScreen() {
+                        if let shot = try? await self.screenCapture.captureScreen(on: display) {
                             self.lastCaptureData = shot
                             self.appendSessionShot(shot)
                         }
@@ -845,7 +850,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         Task { @MainActor in
             // Final frame: how the screen looks the moment the session ends.
-            if let fresh = try? await screenCapture.captureScreen() {
+            let display = activeRunId.flatMap { captureRuns[$0]?.display }
+            if let fresh = try? await screenCapture.captureScreen(on: display) {
                 pendingSessionShots.append(fresh)
                 captureStore.addFrame(fresh)
             }
@@ -1185,9 +1191,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func fulfillInteraction(_ interaction: PendingInteraction, text: String, includeScreenshot: Bool) {
         Task { @MainActor in
             var attachments: [String] = []
+            let display = DisplayTopology.underMouse ?? DisplayTopology.primary
             if includeScreenshot,
-               let raw = try? await screenCapture.captureScreen(),
-               let shot = CaptureStore.saveShot(raw) {
+               let raw = try? await screenCapture.captureScreen(on: display),
+               let shot = CaptureStore.saveShot(raw, on: display) {
                 attachments.append(shot.path)
             }
             guard !interaction.resolved else {
@@ -1345,8 +1352,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             pendingInteraction: pendingInteraction)
         let id = UUID()
         let snapshot: SnapshotState = capability == .snapshot ? .pending : .notNeeded
+        let display = DisplayTopology.underMouse ?? DisplayTopology.primary
         let run = CaptureRun(
-            id: id, capability: capability, route: route, startedAt: Date(), snapshot: snapshot)
+            id: id, capability: capability, route: route, startedAt: Date(),
+            display: display, snapshot: snapshot)
         captureRuns[id] = run
         activeRunId = id
 
@@ -1362,6 +1371,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             lastCaptureData = nil
             captureStore.beginSession(runId: id)
             captureScheduler.interval = TimeInterval(max(1, UserSettings.shared.captureIntervalSeconds))
+            captureScheduler.targetDisplay = display
             captureScheduler.start()
             indicator.setSessionActive(true)
             menuBar.setSessionActive(true)
@@ -1401,9 +1411,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // transcription callback. It joins the run independently by UUID.
         if run.capability == .snapshot {
             Task { @MainActor in
-                let raw = try? await screenCapture.captureScreen()
+                let raw = try? await screenCapture.captureScreen(on: run.display)
                 guard var current = captureRuns[id], current.phase != .delivered else { return }
-                if let raw, let shot = CaptureStore.saveShot(raw) {
+                if let raw, let shot = CaptureStore.saveShot(raw, on: run.display) {
                     current.snapshot = .captured(path: shot.path, data: raw)
                 } else {
                     current.snapshot = .unavailable
@@ -2111,6 +2121,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         localAPIServer.onMCPSessionEnd = { [weak self] sessionId in
             guard let self, let closed = self.mcpServer.sessions.close(sessionId) else { return }
             DispatchQueue.main.async {
+                self.lastMCPDisplay.removeValue(forKey: closed.id)
                 // An unread stack survives its session as a ghost picker
                 // entry; a fully-read one leaves the pill with its session
                 // but stays in the panel as done history (ticket #17).
@@ -2299,7 +2310,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case "wait_for_message": return mcpWaitForMessage(args, session)
         case "get_latest_capture": return mcpLatestCapture()
         case "list_captures": return mcpListCaptures(args)
-        case "take_screenshot": return mcpTakeScreenshot()
+        case "take_screenshot": return mcpTakeScreenshot(session)
         case "show_guide": return mcpShowGuide(args, session)
         case "update_guide": return mcpUpdateGuide(args, session)
         case "show_panel": return mcpShowPanel(args, session)
@@ -2518,22 +2529,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ]))
     }
 
-    private func mcpTakeScreenshot() -> MCPServer.ToolResult {
+    private func mcpTakeScreenshot(_ session: MCPSession?) -> MCPServer.ToolResult {
         let semaphore = DispatchSemaphore(value: 0)
         var outcome = MCPServer.ToolResult.fail("Screenshot failed — screen recording permission may be missing.")
         Task { @MainActor in
             defer { semaphore.signal() }
-            guard let raw = try? await self.screenCapture.captureScreen(),
-                  let shot = CaptureStore.saveShot(raw) else { return }
+            guard let display = DisplayTopology.underMouse ?? DisplayTopology.primary,
+                  let raw = try? await self.screenCapture.captureScreen(on: display),
+                  let shot = CaptureStore.saveShot(raw, on: display) else { return }
+            if let session {
+                self.lastMCPDisplay[session.id] = display.id
+            }
             // Cursor position in the same pixel space as the saved image —
             // "circle the thing I'm pointing at" needs no extra round-trip.
-            let location = CGEvent(source: nil)?.location ?? .zero
-            let scale = CaptureStore.annotationPointScale()
+            let cursor = display.screenshotPoint(forGlobalPoint: NSEvent.mouseLocation)
             outcome = .ok(self.mcpJSON([
                 "path": shot.path,
                 "width": shot.width,
                 "height": shot.height,
-                "cursor": [Int(location.x / scale), Int(location.y / scale)],
+                "display_id": Int(display.id),
+                "cursor": [Int(cursor.x.rounded()), Int(cursor.y.rounded())],
                 "note": "Read this file to see the screen. Overlay/annotation coordinates are pixels in this \(shot.width)x\(shot.height) image; `cursor` is where the user's pointer is right now.",
             ]))
         }
@@ -2737,6 +2752,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             items = previous + valid
         }
         var annotationsDoc: [String: Any] = ["type": "annotations", "items": items]
+        if let existing = overlayManager.read(id: id),
+           let displayId = existing["display_id"] as? NSNumber,
+           !clearFirst {
+            annotationsDoc["display_id"] = displayId
+        } else if let session, let displayId = lastMCPDisplay[session.id] {
+            annotationsDoc["display_id"] = Int(displayId)
+        } else if let display = DisplayTopology.primary {
+            annotationsDoc["display_id"] = Int(display.id)
+        }
         if let session {
             annotationsDoc["session"] = session.id
         }

@@ -115,26 +115,29 @@ enum ImageUtils {
 
 final class ScreenCapture {
 
-    func captureScreen() async throws -> Data {
+    func captureScreen(on target: DisplayContext? = nil) async throws -> Data {
+        let display = target ?? DisplayTopology.primary
         do {
-            return try await captureWithSCKit()
+            return try await captureWithSCKit(on: display)
         } catch let error as NSError where error.code == -3801 {
             NSLog("[VF] SCKit denied, falling back to screencapture CLI")
-            return try await captureWithCLI()
+            return try await captureWithCLI(on: display)
         }
     }
 
-    private func captureWithSCKit() async throws -> Data {
+    private func captureWithSCKit(on target: DisplayContext?) async throws -> Data {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
-        guard let display = content.displays.first else {
+        guard let display = target.flatMap({ wanted in
+            content.displays.first(where: { $0.displayID == wanted.id })
+        }) ?? content.displays.first else {
             throw CaptureError.noDisplay
         }
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let config = SCStreamConfiguration()
 
-        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let scale = target?.backingScaleFactor ?? 2.0
         config.width = Int(display.width) * Int(scale) / 2
         config.height = Int(display.height) * Int(scale) / 2
         config.pixelFormat = kCVPixelFormatType_32BGRA
@@ -151,12 +154,17 @@ final class ScreenCapture {
         return data
     }
 
-    private func captureWithCLI() async throws -> Data {
+    private func captureWithCLI(on target: DisplayContext?) async throws -> Data {
         let tmpPath = NSTemporaryDirectory() + "vf-capture-\(UUID().uuidString).png"
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-x", tmpPath]
+        var arguments = ["-x"]
+        if let target {
+            arguments += ["-D", String(target.captureIndex)]
+        }
+        arguments.append(tmpPath)
+        process.arguments = arguments
 
         try process.run()
         process.waitUntilExit()
@@ -214,6 +222,8 @@ final class CaptureScheduler {
     }
 
     var onCapture: ((Data) -> Void)?
+    /// Frozen by the owning continuous CaptureRun before `start()`.
+    var targetDisplay: DisplayContext?
 
     private let screenCapture: ScreenCapture
     private var timer: Timer?
@@ -253,7 +263,7 @@ final class CaptureScheduler {
 
     private func capture() async {
         do {
-            let data = try await screenCapture.captureScreen()
+            let data = try await screenCapture.captureScreen(on: targetDisplay)
             NSLog("[VF] CaptureScheduler captured %d bytes", data.count)
             onCapture?(data)
         } catch {

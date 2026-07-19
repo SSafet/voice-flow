@@ -262,25 +262,18 @@ final class CaptureStore {
     /// Screenshot geometry shared with annotate_screen: one fixed pixel
     /// space so coordinates in the saved image map deterministically onto
     /// screen points (see `annotationPointScale`).
-    static func shotGeometry() -> (width: Int, height: Int) {
-        let frame = (NSScreen.screens.first ?? NSScreen.main)?.frame
-            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let scale = min(1.0, 1440.0 / frame.width)
-        return (Int((frame.width * scale).rounded()), Int((frame.height * scale).rounded()))
+    static func shotGeometry(for display: DisplayContext? = nil) -> (width: Int, height: Int) {
+        (display ?? DisplayTopology.primary)?.shotGeometry ?? (1440, 900)
     }
 
     /// Multiply image-pixel coordinates by this to get screen points.
-    static func annotationPointScale() -> CGFloat {
-        let frame = (NSScreen.screens.first ?? NSScreen.main)?.frame
-            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let (width, _) = shotGeometry()
-        guard width > 0 else { return 1.0 }
-        return frame.width / CGFloat(width)
+    static func annotationPointScale(for display: DisplayContext? = nil) -> CGFloat {
+        (display ?? DisplayTopology.primary)?.annotationPointScale ?? 1.0
     }
 
     /// Resize + save a raw screenshot; returns its path and pixel size.
-    static func saveShot(_ raw: Data) -> (path: String, width: Int, height: Int)? {
-        let (width, height) = shotGeometry()
+    static func saveShot(_ raw: Data, on display: DisplayContext? = nil) -> (path: String, width: Int, height: Int)? {
+        let (width, height) = shotGeometry(for: display)
         guard let jpeg = ImageUtils.resizeExact(raw, width: width, height: height) else { return nil }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss-SSS"

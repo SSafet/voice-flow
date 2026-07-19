@@ -64,11 +64,24 @@ struct CaptureRun {
     let capability: CaptureCapability
     let route: CaptureRoute
     let startedAt: Date
+    /// Display selected when the hotkey began; never recomputed by an async
+    /// screenshot or transcription callback.
+    let display: DisplayContext?
     var phase: CaptureRunPhase = .recording
     var transcript: String?
     var snapshot: SnapshotState
     var continuousSummary: CaptureSummary?
     var continuousScreenshots: [Data] = []
+
+    init(id: UUID, capability: CaptureCapability, route: CaptureRoute,
+         startedAt: Date, display: DisplayContext? = nil, snapshot: SnapshotState) {
+        self.id = id
+        self.capability = capability
+        self.route = route
+        self.startedAt = startedAt
+        self.display = display
+        self.snapshot = snapshot
+    }
 
     var isReadyToDeliver: Bool {
         guard transcript != nil else { return false }

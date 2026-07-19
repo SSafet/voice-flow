@@ -1116,13 +1116,10 @@ class FloatingIndicator: NSObject {
             dock(into: dockFrame)
             return
         }
-        // Follow the user: the screen holding the mouse pointer, not the
-        // primary display.
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
-            ?? NSScreen.main ?? NSScreen.screens.first
-        guard let screen else { return }
-        let frame = screen.frame
+        // The pill is a stable home surface. State changes (including a
+        // session selection) must not move it to the pointer's display.
+        guard let display = DisplayTopology.primary else { return }
+        let frame = display.frame
         let size = panelSize
         let x = (frame.minX + (frame.width - size.width) / 2).rounded()
         let y = (frame.minY + 5).rounded()
