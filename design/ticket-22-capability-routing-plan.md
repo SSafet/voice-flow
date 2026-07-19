@@ -4,7 +4,7 @@ Status: implementation plan (no production code changed)
 
 ## Verdict
 
-Replace destination-shaped recording modes with three user capabilities—**dictate**, **dictate + snapshot**, and **continuous dictate + snapshots**—plus the intentionally separate **hands-free archive**. Resolve the visible conversation context once, when the hotkey starts, and carry it in an immutable, UUID-addressed `CaptureRun` through audio stop, screenshot capture, transcription, delivery, and history.
+Replace destination-shaped recording modes with three user capabilities—**dictate**, **dictate + snapshot**, and **continuous dictate + snapshots**. The double-press/toggle shortcut is another way to invoke **dictate**, not a fourth capability: it enters the same `CaptureRun` pipeline with external delivery disabled, so the shared Dictations/Inbox write is its output. Resolve the visible conversation context once, when the hotkey starts, and carry it in an immutable, UUID-addressed `CaptureRun` through audio stop, screenshot capture, transcription, delivery, and history.
 
 Do not use `targetSessionId`, panel visibility, `pendingInteraction`, `recordingPurpose`, or the frontmost application as late-bound delivery decisions. Those values can legitimately change while transcription is in flight. `targetSessionId` remains the picker/overlay target; it stops being a proxy for “the user is currently talking to this session.”
 
@@ -133,7 +133,7 @@ sequenceDiagram
 | Dictate (hold) | Paste into the application captured on press; save to Dictations. | Send text to assistant; save to Dictations. | Resolve the exact visible ask or queue to the exact session ID; save to Dictations. |
 | Dictate + snapshot (hold) | Save snapshot at release; paste text + local snapshot reference; save text/evidence in Dictations. | Send text + snapshot; save text/evidence in Dictations. | Resolve/queue text + snapshot to exact session; save text/evidence in Dictations. |
 | Continuous dictate + snapshots (toggle) | Save bundle; paste its `claudePrompt` into the application captured on start; save transcript + bundle reference in Dictations. | Save bundle, send transcript + bounded frames to assistant, save in Dictations. | Save bundle, resolve the exact ask or queue the bundle prompt to the exact session, save in Dictations. |
-| Hands-free archive (double press) | Always archive-only (`.kept`); never paste or route. | Same. | Same. |
+| Dictate (double press/toggle) | Use the same Dictate run; skip external delivery and retain it in Dictations/Inbox. | Same; the toggle explicitly means “keep only.” | Same; the toggle explicitly means “keep only.” |
 
 If a frozen destination becomes unavailable, fail safe: retain the Dictations entry and evidence, show a delivery error/queued receipt, and never fall through to a different current destination.
 
@@ -146,7 +146,11 @@ enum CaptureCapability: String, Codable, Equatable {
     case dictate
     case snapshot
     case continuous
-    case handsFreeArchive
+}
+
+enum DeliveryPolicy: Equatable {
+    case contextual
+    case historyOnly
 }
 
 enum ConversationFocus: Equatable {
@@ -159,7 +163,7 @@ enum CaptureRoute {
     case paste(PasteTarget)
     case assistant
     case session(id: String, interaction: PendingInteraction?)
-    case archiveOnly
+    case historyOnly
 }
 
 struct CaptureRun {
@@ -175,6 +179,7 @@ struct CaptureRun {
 Contract details:
 
 - `CaptureRun.id` is created on hotkey activation and is the idempotency/correlation key at every callback.
+- Hold-to-dictate calls `beginCapture(.dictate, deliveryPolicy: .contextual)`; double-press/toggle calls the same entry point with `.historyOnly`. `DeliveryPolicy` is resolver input only: the created run stores the resolved route, avoiding duplicated policy/route state. The toggle changes only route resolution and recording stop gesture, not transcription, cleanup, error, or persistence behavior.
 - `ConversationFocus` is read before `indicator.collapseNow()` or any other UI mutation.
 - `ChatPanel.conversationFocus` returns `.none` unless the panel is visible and displaying the assistant or a concrete session thread.
 - When the panel is closed, `AppDelegate` may derive `.session(currentPushSessionId)` only while the grown stack is actually visible. It never derives route from `targetSessionId` alone.
@@ -203,7 +208,7 @@ Partial transcription uses `(run_id, sequence)` rather than a sequence reset tha
 
 ```mermaid
 flowchart LR
-    HK["3 capabilities + hands-free"] --> RES["pure ContextResolver\nvisible focus only"]
+    HK["3 capabilities\nDictate: hold or toggle"] --> RES["pure ContextResolver\nvisible focus + delivery policy"]
     RES --> RUN["immutable CaptureRun\nUUID + route + paste target"]
     RUN --> REC["AudioRecorder"]
     RUN --> EVID["evidence at release\nsnapshot or bundle frames"]
@@ -214,7 +219,7 @@ flowchart LR
     DEL --> MCP["exact session / ask"]
     DEL --> AST["in-app assistant"]
     DEL --> PASTE["explicit PasteTarget"]
-    DEL --> KEEP["archive only"]
+    DEL --> KEEP["history only"]
     MCP --> HIST["exactly-once Dictations entry"]
     AST --> HIST
     PASTE --> HIST
@@ -227,7 +232,7 @@ flowchart LR
 |---|---|---|
 | `RecordingPurpose` | Replace | `CaptureCapability`; visuals depend only on capability. |
 | `recordingPurpose`, `resultPurpose` | Replace | `activeRunId` plus `[UUID: CaptureRun]`; no routing data in scalars. |
-| Hotkey handlers | Replace | Dictate, snapshot, continuous, hands-free all call `beginCapture(capability:)`. |
+| Hotkey handlers | Replace | Dictate, snapshot, and continuous call `beginCapture(capability:deliveryPolicy:)`; double-press calls `.dictate, .historyOnly`. |
 | `startTalkRecording`, `startRecording`, `startSession` | Merge | Shared begin/stop pipeline; continuous adds scheduler/bundle lifecycle. |
 | `handleResult` purpose switch | Replace | `handleTranscription(runId:raw:cleaned:)` updates one run and invokes one delivery reducer. |
 | `deliverTalkMessage`, `finishSession` routing branches | Merge | Per-route delivery strategies fed by the same completed run. |
@@ -242,7 +247,7 @@ flowchart LR
 
 ### Settings migration
 
-- Keep existing Dictate, Hands-free, Read aloud, and Annotate values.
+- Keep existing Dictate, Hands-free toggle, Read aloud, and Annotate values. “Hands-free” is an activation gesture/shortcut for `.dictate + .historyOnly`, not a routing subsystem.
 - New Snapshot defaults/falls back to the old `snap_talk_hotkey` (F9 by default).
 - New Continuous defaults/falls back to the old `session_hotkey` (Right Option by default).
 - The old Talk/F7 hotkey is no longer registered because Dictate now performs that capability in an open conversation.
@@ -291,7 +296,7 @@ Per-instance fill-in:
 
 - Dictate has no evidence requirement;
 - Continuous starts/stops `CaptureScheduler` and finalizes `CaptureStore` instead of one shot;
-- Hands-free forces `.archiveOnly` and ignores conversation focus.
+- Double-press/toggle reuses Dictate with `.historyOnly`; only the start/stop gesture and route policy differ.
 
 The first slice does not exercise multi-frame dedupe/final bundle write ordering; Continuous is the next instance and must add tests for final-frame-versus-finalize ordering.
 
@@ -354,7 +359,7 @@ The build is accepted only if every assertion passes. The proposed pure resolver
 | Session closes during processing | Risk of reroute to new target. | No other session receives it; capture remains in Dictations and exact-session queue/error policy is reported. | Close A, select B, complete R1(A); assert B=0 and history=1. |
 | Snapshot capture fails | Current path silently sends text without evidence. | Run delivers text with an explicit “snapshot unavailable” receipt and history remains; never substitutes a later shot. | Screen spy throws; assert no second capture call, history=1. |
 | Continuous with no conversation | Bundle is saved but not Dictations/pasted. | Bundle prompt is pasted to frozen target and transcript/bundle ID is in Dictations. | Fake `CaptureSummary`; assert paste + history metadata. |
-| Hands-free with session visible | Already archive-only. | Still `.archiveOnly`, `.kept`, no session/assistant/paste calls. | Resolver test forces hands-free and all focus variants. |
+| Double-press Dictate with session visible | Current brain-dump branch is separate. | Same `.dictate` pipeline with `.historyOnly`; one `.kept` entry and no session/assistant/paste calls. | Resolver test uses `.dictate + .historyOnly` across all focus variants. |
 | Legacy settings/history | Old keys/data load today. | Old `snap_talk_hotkey`/`session_hotkey` and old History JSON decode; new save uses canonical keys and optional fields. | Fixture decode/migration test. |
 | Compile contract | Current project type-checks before change. | All Swift sources compile and Python tests pass. | Run the AGENTS.md `swiftc swift/*.swift … -o /tmp/vf` command and `uv run pytest -q` (add backend protocol tests if none exist). |
 
@@ -364,7 +369,7 @@ At least the A→B switch, reverse-order two-run completion, and stale-target/pl
 
 Behavior that must remain identical:
 
-- hands-free records to `.kept` and never pastes;
+- double-press/toggle Dictate records to `.kept` and never delivers externally, while sharing the ordinary Dictate pipeline;
 - read-aloud and annotation hotkeys are unchanged;
 - audio provider/cleanup/vocabulary selection is unchanged;
 - continuous frame dedupe, final frame, bundle format, caps, and MCP list/latest behavior remain unchanged;
