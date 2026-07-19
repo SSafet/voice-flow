@@ -85,7 +85,7 @@ class MainActivity : Activity() {
             val raw = recorder.level()
             val shaped = if (raw < 0.008f) 0f
                 else minOf(1f, (kotlin.math.ln(raw / 0.008f) / kotlin.math.ln(31f)).toFloat())
-            levelEnv = maxOf(shaped, levelEnv * 0.80f)   // instant attack, fast release
+            levelEnv = maxOf(shaped, levelEnv * 0.86f)   // instant attack, smooth release
             for (i in levelHist.size - 1 downTo 1) levelHist[i] = levelHist[i - 1]
             levelHist[0] = levelEnv
             dotPhase += 0.05 / 2.4
@@ -93,7 +93,7 @@ class MainActivity : Activity() {
                 val base = 1f + 0.18f *
                     kotlin.math.sin(2.0 * Math.PI * (dotPhase - i / 3.0)).toFloat()
                 val voice = levelHist[if (i == 1) 0 else 3]
-                val s = base + 1.6f * voice
+                val s = base + 0.9f * voice
                 dot.scaleX = s; dot.scaleY = s
                 dot.alpha = 0.65f + 0.35f * voice
             }
