@@ -100,17 +100,17 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
 - Escape commits a pending annotation text note, then exits annotate mode; it
   stays the panic button while the agent is acting.
 
-## MCP server — Voice Flow as Claude Code's interaction layer
+## MCP server — Voice Flow as Codex's interaction layer
 
 `LocalAPIServer` (port 8792) also serves **MCP over Streamable HTTP** at
 `http://127.0.0.1:8792/mcp` (`MCPServer` in `swift/MCP.swift`; registered once
-via `claude mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp` —
+via `codex mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp` —
 Settings → Assistant shows connection status and copies that command;
 `MCPServer.lastActivity` tracks the most recent client request).
 Tool handlers live in `AppDelegate.handleMCPTool` (`App.swift`); they run on
 background HTTP threads and hop to main for UI.
 
-**Sessions**: each Claude Code instance gets an `Mcp-Session-Id` on
+**Sessions**: each Codex instance gets an `Mcp-Session-Id` on
 initialize (`MCPSessionRegistry` in `MCP.swift`), but **connecting is not
 engaging**: a session stays invisible (no picker dot, no ⌃⌥ slot, not
 voice-target-eligible) until its first user-facing tool call —
@@ -119,8 +119,8 @@ voice-target-eligible) until its first user-facing tool call —
 claims the voice target only when no engaged session holds it — an active
 target is never stolen. Sessions name themselves via `set_session_name`
 (silent, no UI; server instructions + a one-time nudge on the first
-*engaging* tool result push Claude to call it; unnamed sessions show as
-"Claude #N"). `DELETE /mcp` closes one; sessions silent for 2 h are pruned
+*engaging* tool result push Codex to call it; unnamed sessions show as
+"Codex #N"). `DELETE /mcp` closes one; sessions silent for 2 h are pruned
 as ghosts (a live one self-heals — its next request is re-adopted by
 `touch()`). **Unread messages outlive everything**: a session that ends or
 expires with unseen pushes stays in the picker as a readable ghost entry
@@ -183,7 +183,7 @@ A continuous capture writes every deduped frame live via `CaptureStore`
 `meta.json` when transcription lands (bundles pruned to 40; ad-hoc shots in
 `captures/shots/`). On continuous-capture end the bundle follows its frozen
 contextual route; the menu bar keeps the manual **Copy Capture Prompt**
-fallback. Claude Code can also pull bundles through the MCP tools.
+fallback. Codex can also pull bundles through the MCP tools.
 
 ## Workflow watcher (`~/.config/voice-flow/watcher/`)
 
@@ -200,7 +200,7 @@ a body camera is picked in Settings → Watcher (`watcher_camera_id`,
 `CameraGrabber`) — a motion-deduped ≤960-px `cam-*.jpg` of the user. Day
 folders are pruned to the newest 30. A LaunchAgent
 (`~/Library/LaunchAgents/com.voiceflow.watcher-analyze.plist`, 21:37 nightly)
-runs headless Claude Code against `watcher/ANALYZE.md`, which aggregates the
+runs headless Codex against `watcher/ANALYZE.md`, which aggregates the
 log by script (never raw into context), maintains the observations ledger
 (`ledger.md`, patterns suggested only after 3+ sightings on 2+ days), writes
 `reviews/<day>.md`, and surfaces suggestions via the MCP overlay tools. The
@@ -221,7 +221,7 @@ deployed copies are build outputs.
   text, isAsk), written by `MessagesView` (same caps). The Messages tab's store.
 - `pushes.json` — the live per-session push stacks (`sessionPushes`), saved on
   every mutation so unread messages survive app restarts as ghost entries.
-- `inbox.json` — queued contextual-capture messages for Claude (`MessageInbox`).
+- `inbox.json` — queued contextual-capture messages for Codex (`MessageInbox`).
 - `overlays/*.json` — live on-screen elements (`OverlayManager`); `_schema.md` documents the format.
 - `watcher/` — ambient workflow log (`WorkflowWatcher`): per-day `activity.jsonl` + deduped frames, plus `ANALYZE.md` / `ledger.md` / `reviews/` for the nightly review.
 - `app.log` — `vflog` output.
@@ -239,10 +239,10 @@ deployed copies are build outputs.
 | `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel and its tabs. |
 | `ReplyBubble.swift` | `ReplyBubble` | Facade over the pill's grown surface (no window of its own) — forwards messages/asks/streaming to `FloatingIndicator`. |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
-| `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of contextual-capture messages for Claude (check/wait semantics). |
+| `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of contextual-capture messages for Codex (check/wait semantics). |
 | `Watcher.swift` | `WorkflowWatcher` | Ambient 5 s screen/app log feeding the nightly workflow review. |
 | `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
-| `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Claude Code. |
+| `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Codex. |
 | `Agent.swift` | `AgentSession`, `ComputerControl` | LLM loop that reasons over screenshots and issues screen-control tool calls. |
 | `Codex.swift` | `CodexExecBackend` | ChatGPT-subscription assistant turns via `codex exec --json` (OAuth, thread resume, image attach); the default backend, API key is the fallback. |
 | `Annotation.swift` | `AnnotationOverlay` | Draw-on-screen overlay (pen + multiline text notes with size presets). |

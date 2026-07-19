@@ -97,10 +97,12 @@ WATCHER_DATA="$HOME/.config/voice-flow/watcher"
 LA_NAME="com.voiceflow.watcher-analyze"
 LA_PLIST="$HOME/Library/LaunchAgents/$LA_NAME.plist"
 
-mkdir -p "$WATCHER_DATA/.claude" "$HOME/Library/LaunchAgents" "$HOME/.claude/skills/screenwatch"
+mkdir -p "$WATCHER_DATA/.claude" "$HOME/Library/LaunchAgents" \
+    "$HOME/.claude/skills/screenwatch" "$HOME/.codex/skills/screenwatch"
 cp "$WATCHER_SRC/ANALYZE.md"                "$WATCHER_DATA/ANALYZE.md"
 cp "$WATCHER_SRC/claude-settings.json"      "$WATCHER_DATA/.claude/settings.json"
 cp "$WATCHER_SRC/screenwatch-skill/SKILL.md" "$HOME/.claude/skills/screenwatch/SKILL.md"
+cp "$WATCHER_SRC/screenwatch-skill/SKILL.md" "$HOME/.codex/skills/screenwatch/SKILL.md"
 sed "s|__HOME__|$HOME|g" "$WATCHER_SRC/$LA_NAME.plist" > "$LA_PLIST"
 launchctl bootout "gui/$(id -u)/$LA_NAME" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$LA_PLIST" \

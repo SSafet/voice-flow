@@ -23,6 +23,7 @@ LA_NAME="com.voiceflow.watcher-analyze"
 launchctl bootout "gui/$(id -u)/$LA_NAME" 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/$LA_NAME.plist"
 rm -rf "$HOME/.claude/skills/screenwatch"
+rm -rf "$HOME/.codex/skills/screenwatch"
 rm -f "$CONFIG_DIR/watcher/ANALYZE.md" "$CONFIG_DIR/watcher/.claude/settings.json"
 rmdir "$CONFIG_DIR/watcher/.claude" 2>/dev/null || true
 

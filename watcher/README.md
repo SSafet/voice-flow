@@ -16,7 +16,7 @@ amber pill ring) is `swift/Watcher.swift` plus wiring — see `CLAUDE.md`.
 | `ANALYZE.md` | `~/.config/voice-flow/watcher/ANALYZE.md` | The nightly-review protocol the headless Claude run follows. |
 | `claude-settings.json` | `~/.config/voice-flow/watcher/.claude/settings.json` | Pre-approves the tools that run needs (read/write there, python3, web search, voice-flow MCP). |
 | `com.voiceflow.watcher-analyze.plist` | `~/Library/LaunchAgents/` (with `__HOME__` expanded) | launchd LaunchAgent: runs `claude -p` in the watcher dir daily at **21:37**. Shows as an "Anthropic PBC" background item in System Settings → Login Items. |
-| `screenwatch-skill/SKILL.md` | `~/.claude/skills/screenwatch/SKILL.md` | The on-demand `/screenwatch` skill (analyze / optimize / status). |
+| `screenwatch-skill/SKILL.md` | `~/.claude/skills/screenwatch/SKILL.md` and `~/.codex/skills/screenwatch/SKILL.md` | The on-demand `/screenwatch` skill (analyze / optimize / status), available to both Claude and Codex. |
 
 ## What stays out of the repo (data, not product)
 
