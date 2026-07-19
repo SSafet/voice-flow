@@ -251,6 +251,10 @@ class MainActivity : Activity() {
         chatPage = buildChatPage()
         pairPage = buildPairPage()
         listOf(recordPage, historyPage, chatPage, pairPage).forEach {
+            // Built hidden: applyPairedState() reveals exactly one (pair page or
+            // showTab(0)) — otherwise a fresh process of an already-paired app
+            // launches with every page stacked on top of each other.
+            it.visibility = View.GONE
             pages.addView(it, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         }
