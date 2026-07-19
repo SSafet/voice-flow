@@ -67,19 +67,36 @@ class MainActivity : Activity() {
     private lateinit var recordButton: FrameLayout
     private lateinit var recordDot: View
     private lateinit var recordRing: View
-    private lateinit var recordHalo: View
-    private var levelSmoothed = 0f
-    // Voice-reactive halo: polls the recorder's peak amplitude so the user can
-    // SEE the mic hearing them, instead of just a static color change.
+    private lateinit var recordDotsRow: LinearLayout
+    private lateinit var recordDots: List<View>
+    private lateinit var micIcon: ImageView
+    private var levelEnv = 0f
+    private val levelHist = FloatArray(6)
+    private var dotPhase = 0.0
+    // While recording, the mic glyph swaps for the Mac pill's three live dots:
+    // the same staggered breathing loop (1→1.35→1, 2.4 s cycle, offset per dot),
+    // with the live mic level layered on top — the center dot follows the voice
+    // instantly and the outer dots ripple a few frames behind.
     private val levelTicker = object : Runnable {
         override fun run() {
             if (!recorder.isRecording) return
-            levelSmoothed = maxOf(recorder.level(), levelSmoothed * 0.86f)
-            val s = 1f + 0.45f * levelSmoothed
-            recordHalo.scaleX = s; recordHalo.scaleY = s
-            recordHalo.alpha = 0.30f + 0.70f * levelSmoothed
-            val d = 1f + 0.07f * levelSmoothed
-            recordDot.scaleX = d; recordDot.scaleY = d
+            // Perceptual level: ambient peaks ~0.005, speech ~0.05–0.25 — a log
+            // curve gated at 0.008 and full by 0.25 uses the whole visual range.
+            val raw = recorder.level()
+            val shaped = if (raw < 0.008f) 0f
+                else minOf(1f, (kotlin.math.ln(raw / 0.008f) / kotlin.math.ln(31f)).toFloat())
+            levelEnv = maxOf(shaped, levelEnv * 0.80f)   // instant attack, fast release
+            for (i in levelHist.size - 1 downTo 1) levelHist[i] = levelHist[i - 1]
+            levelHist[0] = levelEnv
+            dotPhase += 0.05 / 2.4
+            recordDots.forEachIndexed { i, dot ->
+                val base = 1f + 0.18f *
+                    kotlin.math.sin(2.0 * Math.PI * (dotPhase - i / 3.0)).toFloat()
+                val voice = levelHist[if (i == 1) 0 else 3]
+                val s = base + 1.6f * voice
+                dot.scaleX = s; dot.scaleY = s
+                dot.alpha = 0.65f + 0.35f * voice
+            }
             main.postDelayed(this, 50)
         }
     }
@@ -381,24 +398,33 @@ class MainActivity : Activity() {
         })
         styleModeRow()
 
-        // record button: voice-reactive halo + soft ring + solid core
-        page.clipChildren = false
-        page.clipToPadding = false
-        recordButton = FrameLayout(this).apply {
-            setOnClickListener { toggleRecording() }
-            clipChildren = false
-        }
-        recordHalo = View(this).apply { background = roundBg(Color.parseColor("#2EE25B55"), 82); alpha = 0f }
-        recordButton.addView(recordHalo, FrameLayout.LayoutParams(dp(164), dp(164), Gravity.CENTER))
+        // record button: soft ring + solid core
+        recordButton = FrameLayout(this).apply { setOnClickListener { toggleRecording() } }
         recordRing = View(this).apply { background = roundBg(accentDim, 82) }
         recordButton.addView(recordRing, FrameLayout.LayoutParams(dp(164), dp(164), Gravity.CENTER))
         recordDot = View(this).apply { background = roundBg(accent, 66) }
         recordButton.addView(recordDot, FrameLayout.LayoutParams(dp(132), dp(132), Gravity.CENTER))
-        val micIcon = ImageView(this).apply {
+        micIcon = ImageView(this).apply {
             setImageResource(R.drawable.ic_mic)
             imageTintList = ColorStateList.valueOf(Color.parseColor("#101014"))
         }
         recordButton.addView(micIcon, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER))
+        // The Mac pill's three live dots — shown in place of the mic while recording.
+        recordDots = (0..2).map {
+            View(this).apply { background = roundBg(Color.parseColor("#FFF0DC"), 6) }
+        }
+        recordDotsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+        }
+        recordDots.forEachIndexed { i, d ->
+            recordDotsRow.addView(d, LinearLayout.LayoutParams(dp(12), dp(12)).apply {
+                if (i > 0) leftMargin = dp(12)
+            })
+        }
+        recordButton.addView(recordDotsRow, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER))
         page.addView(recordButton, LinearLayout.LayoutParams(dp(164), dp(164)).apply {
             topMargin = dp(28); gravity = Gravity.CENTER_HORIZONTAL
         })
@@ -542,7 +568,9 @@ class MainActivity : Activity() {
             recorder.start(store.audioDir)
             recordDot.background = roundBg(red, 66)
             recordRing.background = roundBg(Color.parseColor("#33E25B55"), 82)
-            levelSmoothed = 0f
+            micIcon.visibility = View.INVISIBLE
+            recordDotsRow.visibility = View.VISIBLE
+            levelEnv = 0f; levelHist.fill(0f); dotPhase = 0.0
             main.post(levelTicker)
             recordStatus.text = when {
                 chatVoiceCapture -> "recording for the assistant… tap to stop"
@@ -562,9 +590,8 @@ class MainActivity : Activity() {
     private fun stopRecording() {
         val file = recorder.stop()
         main.removeCallbacks(levelTicker)
-        recordHalo.alpha = 0f
-        recordHalo.scaleX = 1f; recordHalo.scaleY = 1f
-        recordDot.scaleX = 1f; recordDot.scaleY = 1f
+        recordDotsRow.visibility = View.GONE
+        micIcon.visibility = View.VISIBLE
         recordDot.background = roundBg(accent, 66)
         recordRing.background = roundBg(accentDim, 82)
         val forChat = chatVoiceCapture
