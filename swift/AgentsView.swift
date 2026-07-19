@@ -46,12 +46,20 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     weak var dataSource: AgentsDataSource?
     /// The assistant row was chosen — ChatPanel swaps in the chat surface.
     var onOpenAssistant: (() -> Void)?
+    /// A concrete session row was chosen. ChatPanel/AppDelegate use this to
+    /// align visible conversation focus with overlay/picker targeting.
+    var onOpenSession: ((String) -> Void)?
 
     private enum Mode {
         case list
         case thread(String)
     }
     private var mode: Mode = .list
+
+    var openSessionId: String? {
+        if case .thread(let id) = mode { return id }
+        return nil
+    }
 
     private var contentStack: NSView!          // flipped document view
     private var scrollView: NSScrollView!
@@ -236,6 +244,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         if id == "assistant" {
             onOpenAssistant?()
         } else {
+            onOpenSession?(id)
             openThread(id)
         }
     }

@@ -7,15 +7,6 @@ enum AppState: String {
     case idle, loading, recording, processing, done, handsFree
 }
 
-// What the microphone is currently recording for.
-enum RecordingPurpose {
-    case dictation   // paste into the focused app
-    case brainDump   // record into Voice Flow only — kept in the Inbox, never pasted
-    case talk        // voice note → agent, no screenshot
-    case snapTalk    // voice note → agent + one fresh screenshot
-    case session     // continuous session audio, bundled at session end
-}
-
 // A question Claude (over MCP) asked the user; the tool call blocks on the
 // semaphore until the user answers by voice/typing/demonstration, dismisses
 // the prompt, or the timeout passes.
@@ -47,9 +38,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var hotkeyManager: HotkeyManager!
     var handsFreeHotkeyManager: HotkeyManager!
     var ttsHotkeyManager: HotkeyManager!
-    var sessionHotkeyManager: HotkeyManager!
-    var talkHotkeyManager: HotkeyManager!
-    var snapTalkHotkeyManager: HotkeyManager!
+    var continuousCaptureHotkeyManager: HotkeyManager!
+    var snapshotHotkeyManager: HotkeyManager!
     var annotateHotkeyManager: HotkeyManager!
     var recorder: AudioRecorder!
     var backend: BackendBridge!
@@ -196,11 +186,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingSessionShots: [Data] = []
     private var escapeMonitor: Any?
 
-    private var recordingPurpose: RecordingPurpose = .dictation
-    /// Purpose snapshotted when a recording STOPS — transcription results
-    /// route by this, so a newer recording started while the backend is
-    /// still transcribing can never re-route the previous result.
-    private var resultPurpose: RecordingPurpose = .dictation
+    /// One microphone capture is active, but several stopped runs may wait on
+    /// transcription. Every async callback addresses a UUID instead of shared
+    /// mutable purpose/context slots.
+    private var activeRunId: UUID?
+    private var captureRuns: [UUID: CaptureRun] = [:]
     private var initialPermissionsRequested = false
     private var screenGrantPollTimer: Timer?
     private var screenGrantPendingRestart = false
@@ -217,7 +207,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         didSet {
             DispatchQueue.main.async { [self] in
                 menuBar?.setState(state)
-                indicator?.setState(state, recordingFor: recordingPurpose)
+                let capability = activeRunId.flatMap { captureRuns[$0]?.capability } ?? .dictate
+                indicator?.setState(state, recordingFor: capability)
             }
         }
     }
@@ -422,6 +413,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         chatPanel = ChatPanel()
         chatPanel.onShown = { [weak self] in self?.replyBubble.hide() }
         chatPanel.agentsDataSource = self
+        chatPanel.onOpenSession = { [weak self] id in
+            self?.setTargetSession(id, announce: false)
+        }
         chatPanel.onSendText = { [weak self] text in self?.sendTypedMessage(text) }
         chatPanel.onSnap = { [weak self] in self?.snapAndSend() }
         chatPanel.onToggleSession = { [weak self] in self?.toggleSession() }
@@ -467,14 +461,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.onTTSHotkeyChanged = { [weak self] spec in
             self?.ttsHotkeyManager.updateSpec(spec)
         }
-        settingsWindow.onSessionHotkeyChanged = { [weak self] spec in
-            self?.sessionHotkeyManager.updateSpec(spec)
+        settingsWindow.onContinuousCaptureHotkeyChanged = { [weak self] spec in
+            self?.continuousCaptureHotkeyManager.updateSpec(spec)
         }
-        settingsWindow.onTalkHotkeyChanged = { [weak self] spec in
-            self?.talkHotkeyManager.updateSpec(spec)
-        }
-        settingsWindow.onSnapTalkHotkeyChanged = { [weak self] spec in
-            self?.snapTalkHotkeyManager.updateSpec(spec)
+        settingsWindow.onSnapshotHotkeyChanged = { [weak self] spec in
+            self?.snapshotHotkeyManager.updateSpec(spec)
         }
         settingsWindow.onAnnotateHotkeyChanged = { [weak self] spec in
             self?.annotateHotkeyManager.updateSpec(spec)
@@ -552,31 +543,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.state = .idle
             vflog("backend ready — dictation available")
         }
-        backend.onResult = { [weak self] raw, cleaned in
-            self?.handleResult(raw: raw, cleaned: cleaned)
+        backend.onResult = { [weak self] requestId, raw, cleaned in
+            self?.handleTranscriptionResult(requestId: requestId, raw: raw, cleaned: cleaned)
         }
-        backend.onPartialResult = { [weak self] text, requestId in
-            self?.handlePartialResult(text: text, requestId: requestId)
+        backend.onPartialResult = { [weak self] runId, text, requestId in
+            self?.handlePartialResult(runId: runId, text: text, requestId: requestId)
         }
-        backend.onError = { [weak self] msg in
+        backend.onError = { [weak self] requestId, msg in
             vflog("backend error: \(msg)")
             guard let self else { return }
-            let purpose = self.resultPurpose
-            self.resultPurpose = .dictation
-            if !self.recorder.isRecording { self.recordingPurpose = .dictation }
-            self.state = .idle
-            switch purpose {
-            case .talk, .snapTalk, .brainDump:
-                self.chatPanel.addNote("Couldn't transcribe that — try again.")
-                if !self.chatPanel.isVisible {
-                    self.replyBubble.showTransient("couldn't transcribe — try again", seconds: 5, isError: true)
-                }
-            case .session:
-                self.chatPanel.addNote("Couldn't transcribe the session audio — keeping the screenshots on their own.")
-                self.finishSession(transcript: nil)
-            case .dictation:
-                break
-            }
+            self.handleTranscriptionError(requestId: requestId, message: msg)
         }
         backend.onStatus = { msg in vflog(msg) }
 
@@ -705,8 +681,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupHotkeys() {
         hotkeyManager = HotkeyManager(spec: UserSettings.shared.hotkey)
-        hotkeyManager.onPress = { [weak self] in self?.startRecording() }
-        hotkeyManager.onRelease = { [weak self] in self?.stopRecording() }
+        hotkeyManager.onPress = { [weak self] in
+            self?.beginCapture(capability: .dictate, deliveryPolicy: .contextual, handsFree: false)
+        }
+        hotkeyManager.onRelease = { [weak self] in self?.stopCapture() }
         hotkeyManager.allowsHandsFreeDoublePress = false
 
         // Double-tap = brain dump: talk into Voice Flow's Inbox from anywhere,
@@ -716,9 +694,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         handsFreeHotkeyManager.onHandsFree = { [weak self] active in
             guard let self else { return }
             if active {
-                self.startBrainDumpRecording()
+                self.beginCapture(capability: .dictate, deliveryPolicy: .historyOnly, handsFree: true)
             } else {
-                self.stopRecording()
+                self.stopCapture()
             }
         }
 
@@ -728,19 +706,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.speakSelectedTextOrStop()
         }
 
-        sessionHotkeyManager = HotkeyManager(spec: UserSettings.shared.sessionHotkey)
-        sessionHotkeyManager.onPress = { [weak self] in
+        continuousCaptureHotkeyManager = HotkeyManager(spec: UserSettings.shared.continuousCaptureHotkey)
+        continuousCaptureHotkeyManager.onPress = { [weak self] in
             self?.indicator.collapseNow()   // any other hotkey closes the picker
             self?.toggleSession()
         }
 
-        talkHotkeyManager = HotkeyManager(spec: UserSettings.shared.talkHotkey)
-        talkHotkeyManager.onPress = { [weak self] in self?.startTalkRecording(purpose: .talk) }
-        talkHotkeyManager.onRelease = { [weak self] in self?.stopTalkRecording() }
-
-        snapTalkHotkeyManager = HotkeyManager(spec: UserSettings.shared.snapTalkHotkey)
-        snapTalkHotkeyManager.onPress = { [weak self] in self?.startTalkRecording(purpose: .snapTalk) }
-        snapTalkHotkeyManager.onRelease = { [weak self] in self?.stopTalkRecording() }
+        snapshotHotkeyManager = HotkeyManager(spec: UserSettings.shared.snapshotHotkey)
+        snapshotHotkeyManager.onPress = { [weak self] in
+            self?.beginCapture(capability: .snapshot, deliveryPolicy: .contextual, handsFree: false)
+        }
+        snapshotHotkeyManager.onRelease = { [weak self] in self?.stopCapture() }
 
         annotateHotkeyManager = HotkeyManager(spec: UserSettings.shared.annotateHotkey)
         annotateHotkeyManager.onPress = { [weak self] in
@@ -780,9 +756,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager.start()
         handsFreeHotkeyManager.start()
         ttsHotkeyManager.start()
-        sessionHotkeyManager.start()
-        talkHotkeyManager.start()
-        snapTalkHotkeyManager.start()
+        continuousCaptureHotkeyManager.start()
+        snapshotHotkeyManager.start()
         annotateHotkeyManager.start()
         sessionSwitchHotkeyManagers.forEach { $0.start() }
     }
@@ -791,7 +766,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showSettingsMenuAction() { showSettings() }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  Session — the one mode
+    //  Continuous capture — voice + deduped screenshots
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     func toggleSession() {
@@ -850,43 +825,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startSession() {
-        guard !sessionActive else { return }
-        if UserSettings.shared.sessionSendToAgent, !KeychainStore.shared.hasAgentAPIKey {
-            chatPanel.show(focusInput: false)
-            chatPanel.addNote("Add your OpenRouter key in Settings, or turn off sending sessions to the assistant.")
-            showSettings()
-            return
-        }
-        guard !recorder.isRecording else {
-            chatPanel.addNote("Finish the current recording, then start a session.")
-            return
-        }
-        stopSpeechPlayback()
-        sessionActive = true
-        ambientScreenshots.removeAll()
-        pendingSessionShots.removeAll()
-        lastCaptureData = nil
-        captureStore.beginSession()
-        captureScheduler.interval = TimeInterval(max(1, UserSettings.shared.captureIntervalSeconds))
-        captureScheduler.start()
-
-        // The whole session is one long voice note — transcribed and bundled
-        // with the collected screenshots when the session ends.
-        recordingPurpose = .session
-        recorder.start()
-        if !recorder.isRecording {
-            recordingPurpose = .dictation
-            replyBubble.showTransient("microphone unavailable — screenshots only", seconds: 8, isError: true)
-        }
-
-        indicator.setSessionActive(true)
-        menuBar.setSessionActive(true)
-        chatPanel.setSessionActive(true)
-        chatPanel.addNote(pendingInteraction != nil
-            ? "Recording a demonstration for Claude — stop the session to send it."
-            : "Session started — capturing your voice and screen. Stop to save the capture.")
-        playSound("Tink")
-        vflog("session started")
+        beginCapture(capability: .continuous, deliveryPolicy: .contextual, handsFree: false)
     }
 
     private func endSession() {
@@ -901,7 +840,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.setSessionActive(false)
         chatPanel.setSessionActive(false)
         playSound("Pop")
-        vflog("session ended")
+        vflog("continuous capture ended")
 
         Task { @MainActor in
             // Final frame: how the screen looks the moment the session ends.
@@ -909,12 +848,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 pendingSessionShots.append(fresh)
                 captureStore.addFrame(fresh)
             }
-            if recorder.isRecording, recordingPurpose == .session {
-                stopRecording()   // → transcribe → handleResult(.session) → finishSession
-            } else {
-                recordingPurpose = .dictation
-                finishSession(transcript: nil)
+            if let id = activeRunId, var run = captureRuns[id], run.capability == .continuous {
+                run.continuousScreenshots = pendingSessionShots
+                run.continuousSummary = captureStore.endSession(transcript: nil, keepEmpty: true)
+                captureRuns[id] = run
+                pendingSessionShots.removeAll()
             }
+            stopCapture()
         }
     }
 
@@ -935,64 +875,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ambientScreenshots.append(imageData)
         if ambientScreenshots.count > maxAmbientScreenshots {
             ambientScreenshots.removeFirst(ambientScreenshots.count - maxAmbientScreenshots)
-        }
-    }
-
-    /// A session just produced its transcript (or failed to) — turn
-    /// everything collected into a capture bundle and route it: to the
-    /// waiting MCP interaction if Claude asked, to the in-app agent when
-    /// that legacy path is enabled, otherwise offer it to the user for
-    /// Claude Code.
-    private func finishSession(transcript: String?) {
-        let summary = captureStore.endSession(transcript: transcript)
-
-        // Claude is literally waiting on this demonstration.
-        if let interaction = pendingInteraction, let summary {
-            pendingSessionShots.removeAll()
-            interaction.attachments = summary.framePaths
-            interaction.responseText = summary.transcript.isEmpty
-                ? "(no narration — the screenshots are the demonstration)"
-                : summary.transcript
-            interaction.semaphore.signal()
-            replyBubble.showTransient("Demonstration sent to \(sessionName(for: interaction.sessionId)) — \(summary.frameCount) frames.", seconds: 5)
-            return
-        }
-
-        if UserSettings.shared.sessionSendToAgent {
-            sendSessionBundle(transcript: transcript)
-            if let summary, chatPanel.isVisible {
-                chatPanel.addNote("Capture also saved to \(summary.directory.path)")
-            }
-            return
-        }
-
-        pendingSessionShots.removeAll()
-        guard let summary else {
-            chatPanel.addNote("Session ended — nothing captured.")
-            if !chatPanel.isVisible {
-                replyBubble.showTransient("session ended — nothing captured", seconds: 5)
-            }
-            return
-        }
-
-        let frames = "\(summary.frameCount) frame\(summary.frameCount == 1 ? "" : "s")"
-        let stats = "\(frames) · \(Int(summary.durationSeconds))s"
-        // Hand the capture to the active session automatically: instantly
-        // if it's listening, otherwise queued + surfaced by the piggyback
-        // nudge on its next Voice Flow call. The menu bar keeps the manual
-        // copy-prompt fallback for unconnected sessions.
-        if let target = mcpServer.sessions.session(targetSessionId) {
-            let live = inbox.hasWaiter(for: target.id)
-            inbox.add(
-                text: "I recorded a Voice Flow capture (\(stats)). Fetch it with get_latest_capture, or read \(summary.transcriptPath) and the frames it lists in order.",
-                attachments: [],
-                session: target.id)
-            replyBubble.showTransient("capture saved — \(sessionName(for: target.id)) \(live ? "got it" : "is told next check-in")", seconds: 6)
-        } else {
-            replyBubble.showTransient("capture saved — no session; menu bar has the prompt", seconds: 8)
-        }
-        if chatPanel.isVisible {
-            chatPanel.addNote("Capture saved to \(summary.directory.path)")
         }
     }
 
@@ -1325,6 +1207,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Same interaction contract for evidence already frozen by CaptureRun.
+    /// Never takes a later screenshot or consults the current target session.
+    private func fulfillInteraction(_ interaction: PendingInteraction, text: String,
+                                    attachments: [String]) {
+        guard !interaction.resolved else {
+            inbox.add(text: text, attachments: attachments, session: interaction.sessionId)
+            replyBubble.showTransient("\(sessionName(for: interaction.sessionId)) had stopped waiting — answer queued", seconds: 6)
+            return
+        }
+        interaction.attachments.append(contentsOf: attachments)
+        interaction.responseText = text
+        interaction.semaphore.signal()
+        attachAnswer(text, to: interaction.sessionId)
+        answeredSession(interaction.sessionId,
+                        note: "answer sent to \(sessionName(for: interaction.sessionId))",
+                        clearStack: true)
+    }
+
     /// Record the user's reply on the newest unanswered ask push of the
     /// session, so the panel's thread shows question and answer together.
     private func attachAnswer(_ text: String, to sessionId: String?) {
@@ -1336,59 +1236,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         sessionPushes[sid] = queue
         refreshUnreadIndicator()
         chatPanel.refreshAgents()
-    }
-
-    /// No question pending — a talk message goes to the target Claude
-    /// session: instantly when it's listening (parked in wait_for_message),
-    /// otherwise QUEUED in its inbox — a running session is nudged on its
-    /// next tool call, a finished one is woken by its background listener.
-    /// Only with no target session at all does the message fall back to the
-    /// clipboard + dictation history.
-    private func deliverTalkMessage(text: String, includeScreenshot: Bool) {
-        Task { @MainActor in
-            var attachments: [String] = []
-            if includeScreenshot,
-               let raw = try? await screenCapture.captureScreen(),
-               let shot = CaptureStore.saveShot(raw) {
-                attachments.append(shot.path)
-            }
-            let target = mcpServer.sessions.session(targetSessionId)
-            if let target {
-                let live = inbox.hasWaiter(for: target.id)
-                inbox.add(text: text, attachments: attachments, session: target.id)
-                recordVoiceInInbox(text, destination: .session)
-                answeredSession(target.id,
-                                note: live ? "sent to \(sessionName(for: target.id))"
-                                           : "queued for \(sessionName(for: target.id)) — delivered on its next check-in",
-                                clearStack: live)
-                return
-            }
-            // A session parked in wait_for_message takes it even when no
-            // target is registered — clients from before session ids exist
-            // send no id, yet a live listener is unambiguous.
-            if inbox.hasWaiter(for: nil) {
-                inbox.add(text: text, attachments: attachments, session: nil)
-                answeredSession(nil, note: "sent to Claude", clearStack: false)
-                return
-            }
-            let prompt = Self.messagePrompt(text: text, attachments: attachments)
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(prompt, forType: .string)
-            chatPanel.addDictation(text: prompt, time: Self.timestamp(),
-                                   destination: .kept, seen: false)
-            // The stack stays (nothing was delivered), but the screen must
-            // still visibly react to having been spoken to.
-            answeredSession(nil, note: "no session — copied + saved in History", clearStack: false)
-        }
-    }
-
-    /// Every voice utterance lands in the Inbox with its destination — the
-    /// panel's "everything you said" timeline (design remark; ticket #15).
-    private func recordVoiceInInbox(_ text: String, destination: CaptureDestination) {
-        let timestamp = Self.timestamp()
-        DispatchQueue.main.async {
-            self.chatPanel.addDictation(text: text, time: timestamp, destination: destination)
-        }
     }
 
     private static func messagePrompt(text: String, attachments: [String]) -> String {
@@ -1441,33 +1288,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Everything gathered between session start and stop, sent as one turn.
-    private func sendSessionBundle(transcript: String?) {
-        var shots = pendingSessionShots
-        pendingSessionShots.removeAll()
-        let maxShots = 8   // matches the agent's image-history budget
-        if shots.count > maxShots {
-            shots = Array(shots.suffix(maxShots))
-        }
-
-        let trimmed = transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !trimmed.isEmpty || !shots.isEmpty else {
-            chatPanel.addNote("Session ended — nothing captured.")
-            return
-        }
-
-        let preamble = "I just finished a screen session. The screenshots show what I was doing, in order — annotations I drew are part of the message."
-        let agentText = trimmed.isEmpty
-            ? preamble
-            : "\(preamble) My spoken notes while working: \(trimmed)"
-
-        if !chatPanel.isVisible {
-            replyBubble.showThinking(echo: trimmed.isEmpty ? "Session recap" : trimmed)
-        }
-        chatPanel.addUserMessage(trimmed, attachmentNote: Self.attachmentNote(count: shots.count))
-        deliverToAgent(agentText, screenshots: shots, retriesLeft: 2)
-    }
-
     /// The agent may still be finishing an earlier turn when the session
     /// bundle is ready — interrupt it and retry briefly rather than lose it.
     private func deliverToAgent(_ text: String, screenshots: [Data], retriesLeft: Int) {
@@ -1489,149 +1309,155 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // ── Talk to the agent (hold-to-record) ─────────────
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  Capability-first capture flow
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private func startTalkRecording(purpose: RecordingPurpose) {
-        indicator.collapseNow()   // any other hotkey closes the picker
+    private func visibleConversationFocus() -> ConversationFocus {
+        if chatPanel.isVisible { return chatPanel.conversationFocus }
+        if indicator.isGrownVisible, let id = currentPushSessionId { return .session(id) }
+        return .none
+    }
+
+    private func beginCapture(capability: CaptureCapability,
+                              deliveryPolicy: CaptureDeliveryPolicy,
+                              handsFree: Bool) {
+        // A normal Dictate press while toggle-Dictate is active commits the
+        // existing run; the next press starts the contextual one.
+        if recorder.isRecording,
+           let id = activeRunId, let run = captureRuns[id],
+           case .historyOnly = run.route, deliveryPolicy == .contextual {
+            stopCapture()
+            replyBubble.showTransient("kept in Inbox — press again to dictate", seconds: 5)
+            return
+        }
         guard !recorder.isRecording else { return }
-        stopSpeechPlayback()   // barge-in: don't record the agent's own voice
-        recordingPurpose = purpose
+
+        // Snapshot intent before collapsing the pill/panel-adjacent UI.
+        let focus = visibleConversationFocus()
+        let pasteTarget = deliveryPolicy == .contextual && focus == .none
+            ? paster.captureTarget() : nil
+        let route = CaptureRouter.resolve(
+            policy: deliveryPolicy,
+            focus: focus,
+            pasteTarget: pasteTarget,
+            pendingInteraction: pendingInteraction)
+        let id = UUID()
+        let snapshot: SnapshotState = capability == .snapshot ? .pending : .notNeeded
+        let run = CaptureRun(
+            id: id, capability: capability, route: route, startedAt: Date(), snapshot: snapshot)
+        captureRuns[id] = run
+        activeRunId = id
+
+        indicator.collapseNow()
+        stopSpeechPlayback()
         streamingViaAX = false
         hadPartialStream = false
+
+        if capability == .continuous {
+            sessionActive = true
+            ambientScreenshots.removeAll()
+            pendingSessionShots.removeAll()
+            lastCaptureData = nil
+            captureStore.beginSession(runId: id)
+            captureScheduler.interval = TimeInterval(max(1, UserSettings.shared.captureIntervalSeconds))
+            captureScheduler.start()
+            indicator.setSessionActive(true)
+            menuBar.setSessionActive(true)
+            chatPanel.setSessionActive(true)
+            chatPanel.addNote("Continuous capture started — recording voice and screen.")
+        }
+
         playSound("Tink")
-        state = .recording
+        state = handsFree ? .handsFree : .recording
         recorder.start()
         guard recorder.isRecording else {
+            captureRuns[id]?.phase = .failed
+            activeRunId = nil
+            if capability == .continuous {
+                sessionActive = false
+                captureScheduler.stop()
+                _ = captureStore.endSession(transcript: nil)
+                indicator.setSessionActive(false)
+                menuBar.setSessionActive(false)
+                chatPanel.setSessionActive(false)
+            }
             state = .idle
-            recordingPurpose = .dictation
             replyBubble.showTransient("microphone unavailable — restart Voice Flow", seconds: 8, isError: true)
             return
         }
-        vflog("talk-to-agent recording started (\(purpose))")
+        vflog("capture \(id) started capability=\(capability.rawValue) focus=\(focus)")
     }
 
-    private func stopTalkRecording() {
-        guard recordingPurpose == .talk || recordingPurpose == .snapTalk else { return }
-        stopRecording()
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  Dictation flow
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    private func startRecording() {
-        indicator.collapseNow()   // any other hotkey closes the picker
-        // Dictating while a brain dump is running: commit the dump instead
-        // of silently swallowing the press (the words would otherwise land
-        // in the Inbox and the user would see "dictation didn't paste").
-        if recorder.isRecording, recordingPurpose == .brainDump {
-            stopRecording()
-            replyBubble.showTransient("brain dump saved to Inbox — press again to dictate", seconds: 5)
-            return
-        }
-        guard !recorder.isRecording else { return }
-        stopSpeechPlayback()
-        recordingPurpose = .dictation
-        paster.capturePasteTarget()
-        streamingViaAX = false
-        hadPartialStream = false
-        playSound("Tink")
-        state = .recording
-        recorder.start()
-        if !recorder.isRecording {
-            state = .idle
-            replyBubble.showTransient("microphone unavailable — restart Voice Flow", seconds: 8, isError: true)
-        }
-    }
-
-    /// Continuous recording that lands in the Inbox as a kept brain dump —
-    /// no paste target is captured, so the frontmost app never matters.
-    private func startBrainDumpRecording() {
-        vflog("brain dump: start requested (recording=\(recorder.isRecording))")
-        indicator.collapseNow()
-        guard !recorder.isRecording else { return }
-        stopSpeechPlayback()
-        recordingPurpose = .brainDump
-        streamingViaAX = false
-        hadPartialStream = false
-        playSound("Tink")
-        state = .handsFree
-        recorder.start()
-        if !recorder.isRecording {
-            state = .idle
-            recordingPurpose = .dictation
-            replyBubble.showTransient("microphone unavailable — restart Voice Flow", seconds: 8, isError: true)
-        }
-    }
-
-    private func stopRecording() {
-        guard recorder.isRecording else { return }
+    private func stopCapture() {
+        guard recorder.isRecording, let id = activeRunId,
+              let run = captureRuns[id] else { return }
         partialTimer?.invalidate()
         partialTimer = nil
         transcriptPanel.hide()
+
+        // Snapshot evidence belongs to the release moment, not the later
+        // transcription callback. It joins the run independently by UUID.
+        if run.capability == .snapshot {
+            Task { @MainActor in
+                let raw = try? await screenCapture.captureScreen()
+                guard var current = captureRuns[id], current.phase != .delivered else { return }
+                if let raw, let shot = CaptureStore.saveShot(raw) {
+                    current.snapshot = .captured(path: shot.path, data: raw)
+                } else {
+                    current.snapshot = .unavailable
+                }
+                captureRuns[id] = current
+                maybeDeliverCapture(id)
+            }
+        }
+
         recorder.stop { [weak self] pcmData in
-            guard let self else { return }
-            // Route the eventual result by the purpose this recording had —
-            // a new recording may change recordingPurpose before it lands.
-            self.resultPurpose = self.recordingPurpose
-            // However a brain dump ended, the double-tap toggle must be back
-            // in its OFF state or the next double-tap silently no-ops.
-            if self.recordingPurpose == .brainDump {
+            guard let self, var current = self.captureRuns[id] else { return }
+            current.phase = .awaitingTranscription
+            self.captureRuns[id] = current
+            if self.activeRunId == id { self.activeRunId = nil }
+            if case .historyOnly = current.route {
                 self.handsFreeHotkeyManager.resetHandsFreeState()
             }
-            if let pcmData {
-                self.state = .processing
-                let settings = UserSettings.shared
-                let provider = settings.dictationProvider
-                let skipCleanup = provider != .local || !settings.llmCleanupEnabled
-                vflog("final dictation provider=\(provider.rawValue)")
 
-                let openAIAPIKey: String?
-                if provider == .openai {
-                    openAIAPIKey = KeychainStore.shared.loadOpenAIAPIKey()
-                    if openAIAPIKey == nil {
-                        vflog("OpenAI dictation selected, but no API key is saved")
-                        self.state = .idle
-                        let purpose = self.resultPurpose
-                        self.resultPurpose = .dictation
-                        self.recordingPurpose = .dictation
-                        switch purpose {
-                        case .dictation:
-                            self.showSettings()
-                        case .talk, .snapTalk, .brainDump:
-                            self.chatPanel.addNote("Add your OpenAI key in Settings to transcribe voice notes.")
-                        case .session:
-                            self.chatPanel.addNote("No OpenAI key — keeping the session screenshots without a transcript.")
-                            self.finishSession(transcript: nil)
-                        }
-                        return
-                    }
+            guard let pcmData else {
+                if current.capability == .continuous, current.continuousSummary != nil {
+                    current.transcript = ""
+                    current.phase = .ready
+                    self.captureRuns[id] = current
+                    self.maybeDeliverCapture(id)
                 } else {
-                    openAIAPIKey = nil
+                    current.phase = .failed
+                    self.captureRuns[id] = current
+                    if self.recorder.lastCaptureBytes == 0 {
+                        self.replyBubble.showTransient("no audio from the microphone", seconds: 8, isError: true)
+                    } else if self.recorder.lastCaptureWasSilent {
+                        self.replyBubble.showTransient("didn't catch any speech")
+                    }
                 }
-
-                self.backend.transcribe(
-                    pcmData: pcmData,
-                    sampleRate: 16000,
-                    provider: provider,
-                    skipCleanup: skipCleanup,
-                    openAIAPIKey: openAIAPIKey,
-                    vocabulary: settings.customVocabulary
-                )
-            } else {
-                let purpose = self.resultPurpose
-                self.resultPurpose = .dictation
-                self.recordingPurpose = .dictation
-                self.state = .idle
-                if self.recorder.lastCaptureBytes == 0 {
-                    self.replyBubble.showTransient("no audio from the microphone", seconds: 8, isError: true)
-                } else if self.recorder.lastCaptureWasSilent {
-                    self.replyBubble.showTransient("didn't catch any speech")
-                }
-                if purpose == .session {
-                    self.finishSession(transcript: nil)
-                }
+                if self.activeRunId == nil { self.state = .idle }
+                return
             }
+
+            if self.activeRunId == nil { self.state = .processing }
+            let settings = UserSettings.shared
+            let provider = settings.dictationProvider
+            let openAIAPIKey = provider == .openai ? KeychainStore.shared.loadOpenAIAPIKey() : nil
+            if provider == .openai, openAIAPIKey == nil {
+                self.handleTranscriptionError(requestId: id.uuidString,
+                                              message: "Add your OpenAI key in Settings to transcribe voice.")
+                if case .paste = current.route { self.showSettings() }
+                return
+            }
+            self.backend.transcribe(
+                pcmData: pcmData,
+                sampleRate: 16000,
+                provider: provider,
+                requestId: id.uuidString,
+                skipCleanup: provider != .local || !settings.llmCleanupEnabled,
+                openAIAPIKey: openAIAPIKey,
+                vocabulary: settings.customVocabulary)
         }
     }
 
@@ -1647,7 +1473,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func sendPartialTranscription() {
-        guard recorder.isRecording,
+        guard recorder.isRecording, let id = activeRunId,
               let (snapshot, hasNewSpeech) = recorder.currentAudioSnapshot(),
               hasNewSpeech else { return }
 
@@ -1667,14 +1493,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             pcmData: snapshot,
             sampleRate: 16000,
             provider: provider,
+            runId: id.uuidString,
             requestId: partialRequestId,
             openAIAPIKey: openAIAPIKey,
             vocabulary: settings.customVocabulary
         )
     }
 
-    private func handlePartialResult(text: String, requestId: Int) {
+    private func handlePartialResult(runId: String?, text: String, requestId: Int) {
         vflog("partial result \(requestId): \"\(text)\" (state=\(state.rawValue))")
+        guard runId == activeRunId?.uuidString else { return }
         guard requestId > latestDisplayedPartialId else { return }
         latestDisplayedPartialId = requestId
         guard state == .recording || state == .handsFree else { return }
@@ -1690,97 +1518,155 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // ── final result ────────────────────────────────────
+    // ── final result + exactly-once delivery ────────────
 
-    private func handleResult(raw: String, cleaned: String) {
+    private func correlatedRunId(_ requestId: String?) -> UUID? {
+        CaptureCorrelation.resolve(requestId: requestId, runs: captureRuns)
+    }
+
+    private func handleTranscriptionResult(requestId: String?, raw: String, cleaned: String) {
         vflog("raw: \(raw)")
         vflog("cleaned: \(cleaned)")
+        guard let id = correlatedRunId(requestId), var run = captureRuns[id],
+              run.phase != .delivered, run.phase != .failed else {
+            vflog("uncorrelated or duplicate transcription result id=\(requestId ?? "nil")")
+            return
+        }
+        let note = (cleaned.isEmpty ? raw : cleaned).trimmingCharacters(in: .whitespacesAndNewlines)
+        run.transcript = note
+        run.phase = .ready
+        if run.capability == .continuous, let summary = run.continuousSummary {
+            run.continuousSummary = captureStore.updateTranscript(note, in: summary)
+        }
+        captureRuns[id] = run
+        paster.clearStreamTarget()
+        hadPartialStream = false
+        maybeDeliverCapture(id)
+    }
 
-        // Voice destined for the agent — never pasted anywhere. Branch on
-        // the purpose snapshotted at recording stop, never the live one.
-        if resultPurpose != .dictation {
-            let purpose = resultPurpose
-            resultPurpose = .dictation
-            if !recorder.isRecording { recordingPurpose = .dictation }
-            paster.clearStreamTarget()
-            hadPartialStream = false
-            state = .idle
-            let note = (cleaned.isEmpty ? raw : cleaned).trimmingCharacters(in: .whitespacesAndNewlines)
-            switch purpose {
-            case .talk:
-                guard !note.isEmpty else { return }
-                playSound("Pop")
-                if let interaction = pendingInteraction {
-                    fulfillInteraction(interaction, text: note, includeScreenshot: false)
-                } else if UserSettings.shared.talkSendToAgent {
-                    sendToAgent(text: note, includeFreshScreenshot: false)
-                    recordVoiceInInbox(note, destination: .assistant)
-                } else {
-                    deliverTalkMessage(text: note, includeScreenshot: false)
-                }
-            case .snapTalk:
-                guard !note.isEmpty else { return }
-                playSound("Pop")
-                if let interaction = pendingInteraction {
-                    fulfillInteraction(interaction, text: note, includeScreenshot: true)
-                } else if UserSettings.shared.talkSendToAgent {
-                    sendToAgent(text: note, includeFreshScreenshot: true, forceScreenshot: true)
-                    recordVoiceInInbox(note, destination: .assistant)
-                } else {
-                    deliverTalkMessage(text: note, includeScreenshot: true)
-                }
-            case .session:
-                playSound("Pop")
-                finishSession(transcript: note)
-            case .brainDump:
-                guard !note.isEmpty else {
-                    replyBubble.showTransient("didn't catch any speech")
-                    return
-                }
-                playSound("Pop")
-                let timestamp = Self.timestamp()
-                DispatchQueue.main.async {
-                    self.chatPanel.addDictation(text: note, time: timestamp,
-                                                destination: .kept, seen: false)
-                    self.replyBubble.showTransient("kept in Inbox")
-                }
-            case .dictation:
-                break
+    private func handleTranscriptionError(requestId: String?, message: String) {
+        guard let id = correlatedRunId(requestId), var run = captureRuns[id] else {
+            chatPanel.addNote(message)
+            if !chatPanel.isVisible {
+                replyBubble.showTransient(message, seconds: 6, isError: true)
             }
             return
         }
-
-        if cleaned.isEmpty {
-            if hadPartialStream {
-                paster.streamText("")
-            }
-            paster.clearStreamTarget()
-            hadPartialStream = false
-            state = .idle
-            return
-        }
-
-        if hadPartialStream {
-            // Partial text is in the field via AX — do final update with cleaned text
-            vflog("final AX update with cleaned text")
-            paster.streamText(cleaned)
-            paster.clearStreamTarget()
-            hadPartialStream = false
+        if run.capability == .continuous, let summary = run.continuousSummary {
+            run.transcript = ""
+            run.continuousSummary = captureStore.updateTranscript("", in: summary)
+            run.phase = .ready
+            captureRuns[id] = run
+            maybeDeliverCapture(id)
         } else {
-            // No streaming (short recording or AX unsupported) — paste normally
-            paster.clearStreamTarget()
-            vflog("pasting text...")
-            paster.paste(cleaned)
+            run.phase = .failed
+            captureRuns[id] = run
+            chatPanel.addNote(message)
+            replyBubble.showTransient("couldn't transcribe — capture kept from being misrouted",
+                                      seconds: 6, isError: true)
         }
+        if activeRunId == nil { state = .idle }
+    }
+
+    private func maybeDeliverCapture(_ id: UUID) {
+        guard var run = captureRuns[id], run.phase != .delivered,
+              run.phase != .failed, run.isReadyToDeliver else { return }
+        let note = run.transcript ?? ""
+        let hasFrames = (run.continuousSummary?.frameCount ?? 0) > 0
+        guard !note.isEmpty || hasFrames else {
+            run.phase = .failed
+            captureRuns[id] = run
+            if activeRunId == nil { state = .idle }
+            return
+        }
+
+        var attachmentPaths: [String] = []
+        var screenshotData: [Data] = []
+        if case .captured(let path, let data) = run.snapshot {
+            attachmentPaths = [path]
+            screenshotData = [data]
+        }
+        if let summary = run.continuousSummary {
+            attachmentPaths = summary.framePaths
+            screenshotData = run.continuousScreenshots
+        }
+
+        let externalText: String
+        if let summary = run.continuousSummary {
+            externalText = note.isEmpty ? summary.claudePrompt : "\(note)\n\n\(summary.claudePrompt)"
+        } else {
+            externalText = Self.messagePrompt(text: note, attachments: attachmentPaths)
+        }
+
+        let destination: CaptureDestination
+        let seen: Bool?
+        switch run.route {
+        case .historyOnly:
+            destination = .kept
+            seen = false
+            replyBubble.showTransient("kept in Inbox")
+        case .paste(let target):
+            if paster.paste(externalText, to: target) {
+                destination = .pasted
+                seen = nil
+            } else {
+                destination = .kept
+                seen = false
+                replyBubble.showTransient("original app closed — copied and kept in Inbox",
+                                          seconds: 7, isError: true)
+            }
+        case .assistant:
+            destination = .assistant
+            seen = nil
+            if !chatPanel.isVisible { replyBubble.showThinking(echo: note.isEmpty ? "Screen capture" : note) }
+            chatPanel.addUserMessage(note, attachmentNote: Self.attachmentNote(count: screenshotData.count))
+            let assistantText = run.capability == .continuous
+                ? "I recorded a continuous screen capture. Read the ordered screenshots alongside my narration: \(externalText)"
+                : note
+            deliverToAgent(assistantText, screenshots: screenshotData, retriesLeft: 2)
+        case .session(let sessionId, let interaction):
+            destination = .session
+            seen = nil
+            if let interaction {
+                fulfillInteraction(interaction, text: note.isEmpty ? externalText : note,
+                                   attachments: attachmentPaths)
+            } else {
+                let live = inbox.hasWaiter(for: sessionId)
+                inbox.add(text: externalText, attachments: attachmentPaths, session: sessionId)
+                answeredSession(sessionId,
+                                note: live ? "sent to \(sessionName(for: sessionId))"
+                                           : "queued for \(sessionName(for: sessionId)) — delivered on its next check-in",
+                                clearStack: live)
+            }
+        }
+
+        if run.capability == .snapshot, case .unavailable = run.snapshot {
+            replyBubble.showTransient("snapshot unavailable — sent words only",
+                                      seconds: 6, isError: true)
+        }
+
+        let historyText = note.isEmpty
+            ? "Screen capture (\(run.continuousSummary?.frameCount ?? attachmentPaths.count) frames)"
+            : note
+        chatPanel.addDictation(
+            text: historyText, time: Self.timestamp(), destination: destination, seen: seen,
+            capability: run.capability, attachments: attachmentPaths,
+            captureId: run.continuousSummary?.id)
+        run.phase = .delivered
+        captureRuns[id] = run
         playSound("Pop")
-        let timestamp = Self.timestamp()
-        DispatchQueue.main.async {
-            self.chatPanel.addDictation(text: cleaned, time: timestamp)
-        }
-        state = .done
+        if activeRunId == nil { state = .done }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             if self.state == .done { self.state = .idle }
         }
+        pruneFinishedCaptureRuns()
+    }
+
+    private func pruneFinishedCaptureRuns() {
+        let finished = captureRuns.values
+            .filter { $0.phase == .delivered || $0.phase == .failed }
+            .sorted { $0.startedAt > $1.startedAt }
+        for stale in finished.dropFirst(40) { captureRuns.removeValue(forKey: stale.id) }
     }
 
     private func playSound(_ name: String) {
@@ -2585,12 +2471,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func askHint() -> String {
         let settings = UserSettings.shared
-        return "Hold \(settings.talkHotkey.label) to answer · \(settings.snapTalkHotkey.label) +screen · \(settings.sessionHotkey.label) demo"
+        return "Hold \(settings.hotkey.label) to answer · \(settings.snapshotHotkey.label) +screen · \(settings.continuousCaptureHotkey.label) continuous"
     }
 
     private func mcpLatestCapture() -> MCPServer.ToolResult {
         guard let (directory, meta) = CaptureStore.latestBundle() else {
-            return .fail("No captures yet. The user records one with the session hotkey — or ask for one with report_to_user (question).")
+            return .fail("No captures yet. The user records one with the continuous-capture hotkey — or asks for one with report_to_user (question).")
         }
         var payload: [String: Any] = [
             "id": meta.id,
@@ -2613,7 +2499,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let limit = min(max((args["limit"] as? NSNumber)?.intValue ?? 10, 1), 40)
         let bundles = CaptureStore.listBundles(limit: limit)
         guard !bundles.isEmpty else {
-            return .ok("No captures recorded yet. The user records one with the session hotkey, or you can request a demonstration via report_to_user (question).")
+            return .ok("No captures recorded yet. The user records one with the continuous-capture hotkey, or you can request a demonstration via report_to_user (question).")
         }
         let items: [[String: Any]] = bundles.map { directory, meta in
             [

@@ -108,7 +108,7 @@ class MenuBarManager: NSObject {
         statusMenuItem = menu.addItem(withTitle: "Voice Flow — Loading…", action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
         menu.addItem(.separator())
-        sessionMenuItem = menu.addItem(withTitle: "Start Session", action: #selector(toggleSessionAction), keyEquivalent: "")
+        sessionMenuItem = menu.addItem(withTitle: "Start Continuous Capture", action: #selector(toggleSessionAction), keyEquivalent: "")
         sessionMenuItem.target = self
         let watcherRootItem = menu.addItem(withTitle: "Workflow Watcher", action: nil, keyEquivalent: "")
         watcherMenu = NSMenu(title: "Workflow Watcher")
@@ -147,7 +147,7 @@ class MenuBarManager: NSObject {
     }
 
     func setSessionActive(_ active: Bool) {
-        sessionMenuItem?.title = active ? "End Session" : "Start Session"
+        sessionMenuItem?.title = active ? "End Continuous Capture" : "Start Continuous Capture"
         sessionMenuItem?.state = active ? .on : .off
     }
 
@@ -302,7 +302,7 @@ class FloatingIndicator: NSObject {
     private var watcherActive = false
     private var agentActivity: AgentActivity = .idle
     private var ttsSnapshot: TTSStatusSnapshot?
-    private var recordingPurpose: RecordingPurpose = .dictation
+    private var recordingCapability: CaptureCapability = .dictate
     private var appliedVisual: Visual?
     private var appliedRing: (session: Bool, watcher: Bool)?
 
@@ -1121,9 +1121,9 @@ class FloatingIndicator: NSObject {
 
     // ── State inputs ────────────────────────────────────
 
-    func setState(_ newState: AppState, recordingFor purpose: RecordingPurpose = .dictation) {
+    func setState(_ newState: AppState, recordingFor capability: CaptureCapability = .dictate) {
         state = newState
-        recordingPurpose = purpose
+        recordingCapability = capability
         if newState == .recording || newState == .handsFree || newState == .processing {
             revertGrownBandToDots()
         }
@@ -1174,14 +1174,14 @@ class FloatingIndicator: NSObject {
 
     private enum Visual: Equatable {
         case idle, handsFree, processing, booting, done
-        case recording(RecordingPurpose)
+        case recording(CaptureCapability)
         case agent(AgentActivity)
         case ttsPlaying, ttsGenerating, ttsPaused
     }
 
     private func resolveVisual() -> Visual {
         switch state {
-        case .recording: return .recording(recordingPurpose)
+        case .recording: return .recording(recordingCapability)
         case .handsFree: return .handsFree
         case .processing: return .processing
         case .loading: return .booting
@@ -1232,24 +1232,15 @@ class FloatingIndicator: NSObject {
         CATransaction.commit()
 
         switch visual {
-        case .recording(let purpose):
-            // Hue says where the words are going; the pulse+scale motion is
-            // the shared "mic is live" signature.
-            switch purpose {
-            case .dictation, .session:
+        case .recording(let capability):
+            // Hue says what evidence is being collected; destination is
+            // contextual and must never leak back into capture visuals.
+            switch capability {
+            case .dictate, .continuous:
                 paint(bg: NSColor(r: 110, g: 50, b: 45, a: 115),
                       border: NSColor(r: 220, g: 160, b: 140, a: 45),
                       dots: NSColor(r: 255, g: 240, b: 220, a: 180))
-            case .brainDump:
-                // Same amber as hands-free — words are going into the Inbox.
-                paint(bg: NSColor(r: 100, g: 75, b: 30, a: 120),
-                      border: NSColor(r: 230, g: 190, b: 100, a: 50),
-                      dots: NSColor(r: 255, g: 240, b: 200, a: 190))
-            case .talk:
-                paint(bg: NSColor(r: 72, g: 52, b: 100, a: 130),
-                      border: NSColor(r: 176, g: 140, b: 240, a: 60),
-                      dots: NSColor(r: 232, g: 222, b: 255, a: 200))
-            case .snapTalk:
+            case .snapshot:
                 paint(bg: NSColor(r: 34, g: 74, b: 94, a: 130),
                       border: NSColor(r: 110, g: 205, b: 235, a: 60),
                       dots: NSColor(r: 222, g: 244, b: 255, a: 200))
@@ -1465,7 +1456,7 @@ class FloatingIndicator: NSObject {
     private func showContextMenu(in view: NSView, at point: NSPoint) {
         let menu = NSMenu()
         let sessionItem = menu.addItem(
-            withTitle: sessionActive ? "End Session" : "Start Session",
+            withTitle: sessionActive ? "End Continuous Capture" : "Start Continuous Capture",
             action: #selector(ctxToggleSession), keyEquivalent: "")
         sessionItem.target = self
         let watcherItem = menu.addItem(
@@ -1535,6 +1526,11 @@ struct HistoryEntry: Codable {
     // nil destination = pasted, nil seen = already revisited.
     var destination: CaptureDestination?
     var seen: Bool?
+    /// Optional so existing dictations.json and mobile records keep decoding.
+    /// Local paths are intentionally not synced to Android.
+    var capability: CaptureCapability?
+    var attachments: [String]?
+    var captureId: String?
 
     var effectiveDestination: CaptureDestination { destination ?? .pasted }
     /// Only kept items carry unread semantics.
@@ -1762,9 +1758,14 @@ final class DictationsView: NSView {
     }
 
     func addEntry(text: String, time: String,
-                  destination: CaptureDestination = .pasted, seen: Bool? = nil) {
+                  destination: CaptureDestination = .pasted, seen: Bool? = nil,
+                  capability: CaptureCapability? = nil,
+                  attachments: [String] = [], captureId: String? = nil) {
         entries.insert(HistoryEntry(text: text, time: time,
-                                    destination: destination, seen: seen), at: 0)
+                                    destination: destination, seen: seen,
+                                    capability: capability,
+                                    attachments: attachments.isEmpty ? nil : attachments,
+                                    captureId: captureId), at: 0)
         if entries.count > storeCap { entries = Array(entries.prefix(storeCap)) }
         DictationsView.saveEntries(entries)
         styleChips()

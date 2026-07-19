@@ -28,6 +28,7 @@ final class ChatPanel {
     var onStop: (() -> Void)?
     var onClear: (() -> Void)?
     var onOpenSettings: (() -> Void)?
+    var onOpenSession: ((String) -> Void)?
     var onTTSSpeak: ((TTSRequest) -> Void)?
     var onTTSSeek: ((Double) -> Void)?
     var onTTSStop: (() -> Void)?
@@ -71,6 +72,15 @@ final class ChatPanel {
     private var clickOutsideMonitor: Any?
 
     var isVisible: Bool { panel?.isVisible ?? false }
+
+    /// Delivery context is intentionally derived from what is visibly open,
+    /// never from the last selected/picker target after this panel disappears.
+    var conversationFocus: ConversationFocus {
+        guard isVisible, currentTab == .agents, !speechOpen else { return .none }
+        if assistantOpen { return .assistant }
+        if let id = agentsView.openSessionId { return .session(id) }
+        return .none
+    }
 
     init() {
         build()
@@ -199,7 +209,7 @@ final class ChatPanel {
 
     func setSessionActive(_ active: Bool) {
         sessionActive = active
-        sessionButton.title = active ? "● End session" : "● Start session"
+        sessionButton.title = active ? "● End capture" : "● Start continuous capture"
         sessionButton.contentTintColor = active
             ? NSColor(r: 255, g: 110, b: 100)
             : NSColor(r: 120, g: 200, b: 120)
@@ -404,8 +414,11 @@ final class ChatPanel {
     }
 
     func addDictation(text: String, time: String,
-                      destination: CaptureDestination = .pasted, seen: Bool? = nil) {
-        dictationsView.addEntry(text: text, time: time, destination: destination, seen: seen)
+                      destination: CaptureDestination = .pasted, seen: Bool? = nil,
+                      capability: CaptureCapability? = nil,
+                      attachments: [String] = [], captureId: String? = nil) {
+        dictationsView.addEntry(text: text, time: time, destination: destination, seen: seen,
+                               capability: capability, attachments: attachments, captureId: captureId)
         styleTabs()
     }
 
@@ -447,7 +460,7 @@ final class ChatPanel {
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = Theme.text
 
-        sessionButton = NSButton(title: "● Start session", target: self, action: #selector(sessionTapped))
+        sessionButton = NSButton(title: "● Start continuous capture", target: self, action: #selector(sessionTapped))
         sessionButton.isBordered = false
         sessionButton.font = .systemFont(ofSize: 12, weight: .semibold)
         sessionButton.contentTintColor = NSColor(r: 120, g: 200, b: 120)
@@ -461,7 +474,7 @@ final class ChatPanel {
         let headerSpacer = NSView()
         headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        // "Start session" lives on the pill/menu/hotkey — not in the panel
+        // Continuous capture lives on the pill/menu/hotkey — not in the panel
         // header (design remark, ticket #15). The button object stays alive
         // for setSessionActive() state but is never added to the view.
         let header = NSStackView(views: [
@@ -606,6 +619,7 @@ final class ChatPanel {
         agentsView.isHidden = true
         agentsView.setContentHuggingPriority(.defaultLow, for: .vertical)
         agentsView.onOpenAssistant = { [weak self] in self?.openAssistant() }
+        agentsView.onOpenSession = { [weak self] id in self?.onOpenSession?(id) }
         ttsView = TTSView()
         ttsView.isHidden = true
         ttsView.setContentHuggingPriority(.defaultLow, for: .vertical)

@@ -78,10 +78,11 @@ final class CaptureStore {
 
     // ── Session lifecycle ───────────────────────────────
 
-    func beginSession() {
+    func beginSession(runId: UUID? = nil) {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let id = formatter.string(from: Date())
+        let timestamp = formatter.string(from: Date())
+        let id = runId.map { "\(timestamp)-\($0.uuidString.prefix(8))" } ?? timestamp
         let dir = Self.baseDir.appendingPathComponent(id)
         try? FileManager.default.createDirectory(
             at: dir.appendingPathComponent("frames"), withIntermediateDirectories: true)
@@ -107,7 +108,7 @@ final class CaptureStore {
 
     /// Finalize the active bundle. Returns nil (and removes the directory)
     /// when nothing was captured at all.
-    func endSession(transcript: String?) -> CaptureSummary? {
+    func endSession(transcript: String?, keepEmpty: Bool = false) -> CaptureSummary? {
         guard let activeDir, let startDate else { return nil }
         let collected = frames
         let started = startDate
@@ -116,7 +117,7 @@ final class CaptureStore {
         self.frames = []
 
         let text = transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !collected.isEmpty || !text.isEmpty else {
+        guard keepEmpty || !collected.isEmpty || !text.isEmpty else {
             try? FileManager.default.removeItem(at: activeDir)
             return nil
         }
@@ -158,6 +159,36 @@ final class CaptureStore {
             transcript: text,
             framePaths: collected.map { activeDir.appendingPathComponent($0.file).path }
         )
+    }
+
+    /// A continuous run closes its frame bundle before transcription returns,
+    /// freeing the store for the next run. Update the serialized transcript on
+    /// the same queue after the original frame/meta writes, preserving order.
+    func updateTranscript(_ transcript: String, in summary: CaptureSummary) -> CaptureSummary {
+        let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let directory = summary.directory
+        writeQueue.async {
+            guard let old = Self.readMeta(in: directory) else { return }
+            let updated = CaptureBundleMeta(
+                id: old.id,
+                startedAt: old.startedAt,
+                endedAt: old.endedAt,
+                durationSeconds: old.durationSeconds,
+                transcript: text,
+                frames: old.frames)
+            if let data = try? JSONEncoder().encode(updated) {
+                try? data.write(to: directory.appendingPathComponent("meta.json"), options: .atomic)
+            }
+            try? Data(Self.renderTranscript(meta: updated).utf8).write(
+                to: directory.appendingPathComponent("transcript.md"), options: .atomic)
+        }
+        return CaptureSummary(
+            id: summary.id,
+            directory: summary.directory,
+            frameCount: summary.frameCount,
+            durationSeconds: summary.durationSeconds,
+            transcript: text,
+            framePaths: summary.framePaths)
     }
 
     private static func renderTranscript(meta: CaptureBundleMeta) -> String {

@@ -10,9 +10,8 @@ final class SettingsStore: ObservableObject {
     var onHotkeyChanged: ((HotkeySpec) -> Void)?
     var onHandsFreeHotkeyChanged: ((HotkeySpec) -> Void)?
     var onTTSHotkeyChanged: ((HotkeySpec) -> Void)?
-    var onSessionHotkeyChanged: ((HotkeySpec) -> Void)?
-    var onTalkHotkeyChanged: ((HotkeySpec) -> Void)?
-    var onSnapTalkHotkeyChanged: ((HotkeySpec) -> Void)?
+    var onContinuousCaptureHotkeyChanged: ((HotkeySpec) -> Void)?
+    var onSnapshotHotkeyChanged: ((HotkeySpec) -> Void)?
     var onAnnotateHotkeyChanged: ((HotkeySpec) -> Void)?
     var onSettingsChanged: (() -> Void)?
 
@@ -27,8 +26,6 @@ final class SettingsStore: ObservableObject {
     @Published var agentModel: String { didSet { commit() } }
     @Published var agentBaseURL: String { didSet { commit() } }
     @Published var agentBackend: String { didSet { commit() } }
-    @Published var sessionSendToAgent: Bool { didSet { commit() } }
-    @Published var talkSendToAgent: Bool { didSet { commit() } }
     @Published var doubleSelectSpeak: Bool { didSet { commit() } }
     @Published var workflowWatcherEnabled: Bool { didSet { commit() } }
     @Published var watcherInterval: Double { didSet { commit() } }
@@ -48,9 +45,8 @@ final class SettingsStore: ObservableObject {
     @Published var hotkey: HotkeySpec
     @Published var handsFreeHotkey: HotkeySpec
     @Published var ttsHotkey: HotkeySpec
-    @Published var sessionHotkey: HotkeySpec
-    @Published var talkHotkey: HotkeySpec
-    @Published var snapTalkHotkey: HotkeySpec
+    @Published var continuousCaptureHotkey: HotkeySpec
+    @Published var snapshotHotkey: HotkeySpec
     @Published var annotateHotkey: HotkeySpec
 
     private var loaded = false
@@ -68,8 +64,6 @@ final class SettingsStore: ObservableObject {
         agentModel = s.agentModel
         agentBaseURL = s.agentBaseURL
         agentBackend = s.agentBackend
-        sessionSendToAgent = s.sessionSendToAgent
-        talkSendToAgent = s.talkSendToAgent
         doubleSelectSpeak = s.doubleSelectSpeak
         workflowWatcherEnabled = s.workflowWatcherEnabled
         watcherInterval = Double(s.watcherIntervalSeconds)
@@ -81,9 +75,8 @@ final class SettingsStore: ObservableObject {
         hotkey = s.hotkey
         handsFreeHotkey = s.handsFreeHotkey
         ttsHotkey = s.ttsHotkey
-        sessionHotkey = s.sessionHotkey
-        talkHotkey = s.talkHotkey
-        snapTalkHotkey = s.snapTalkHotkey
+        continuousCaptureHotkey = s.continuousCaptureHotkey
+        snapshotHotkey = s.snapshotHotkey
         annotateHotkey = s.annotateHotkey
         loaded = true
     }
@@ -109,8 +102,6 @@ final class SettingsStore: ObservableObject {
         let url = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         s.agentBaseURL = url.isEmpty ? DefaultAgentBaseURL : url
         s.agentBackend = agentBackend == AgentBackendAPI ? AgentBackendAPI : AgentBackendCodex
-        s.sessionSendToAgent = sessionSendToAgent
-        s.talkSendToAgent = talkSendToAgent
         s.doubleSelectSpeak = doubleSelectSpeak
         s.workflowWatcherEnabled = workflowWatcherEnabled
         s.watcherIntervalSeconds = Int(watcherInterval)
@@ -121,7 +112,7 @@ final class SettingsStore: ObservableObject {
         onSettingsChanged?()
     }
 
-    enum HotkeyKind { case dictate, handsFree, tts, session, talk, snapTalk, annotate }
+    enum HotkeyKind { case dictate, handsFree, tts, continuousCapture, snapshot, annotate }
 
     func setHotkey(_ kind: HotkeyKind, _ spec: HotkeySpec) {
         let s = UserSettings.shared
@@ -135,15 +126,12 @@ final class SettingsStore: ObservableObject {
         case .tts:
             guard spec.keyCode != s.ttsHotkey.keyCode || spec.modifiers != s.ttsHotkey.modifiers else { return }
             s.ttsHotkey = spec; ttsHotkey = spec; onTTSHotkeyChanged?(spec)
-        case .session:
-            guard spec.keyCode != s.sessionHotkey.keyCode || spec.modifiers != s.sessionHotkey.modifiers else { return }
-            s.sessionHotkey = spec; sessionHotkey = spec; onSessionHotkeyChanged?(spec)
-        case .talk:
-            guard spec.keyCode != s.talkHotkey.keyCode || spec.modifiers != s.talkHotkey.modifiers else { return }
-            s.talkHotkey = spec; talkHotkey = spec; onTalkHotkeyChanged?(spec)
-        case .snapTalk:
-            guard spec.keyCode != s.snapTalkHotkey.keyCode || spec.modifiers != s.snapTalkHotkey.modifiers else { return }
-            s.snapTalkHotkey = spec; snapTalkHotkey = spec; onSnapTalkHotkeyChanged?(spec)
+        case .continuousCapture:
+            guard spec.keyCode != s.continuousCaptureHotkey.keyCode || spec.modifiers != s.continuousCaptureHotkey.modifiers else { return }
+            s.continuousCaptureHotkey = spec; continuousCaptureHotkey = spec; onContinuousCaptureHotkeyChanged?(spec)
+        case .snapshot:
+            guard spec.keyCode != s.snapshotHotkey.keyCode || spec.modifiers != s.snapshotHotkey.modifiers else { return }
+            s.snapshotHotkey = spec; snapshotHotkey = spec; onSnapshotHotkeyChanged?(spec)
         case .annotate:
             guard spec.keyCode != s.annotateHotkey.keyCode || spec.modifiers != s.annotateHotkey.modifiers else { return }
             s.annotateHotkey = spec; annotateHotkey = spec; onAnnotateHotkeyChanged?(spec)
@@ -521,18 +509,10 @@ private struct AssistantSettingsView: View {
                     SettingRowLabel(title: "Re-select a session to hear its messages",
                                     subtitle: "Selecting the already-active session again (⌃⌥number or the menu) reads its waiting messages aloud. Messages never auto-play on arrival.")
                 }
-                Toggle(isOn: $store.talkSendToAgent) {
-                    SettingRowLabel(title: "Talk hotkeys go to the in-app assistant",
-                                    subtitle: "Off: talking with the Talk / Talk + snap shortcuts sends your words to Claude Code — instantly when Claude is listening, queued otherwise")
-                }
-                Toggle(isOn: $store.sessionSendToAgent) {
-                    SettingRowLabel(title: "Sessions go to the in-app assistant",
-                                    subtitle: "Off: session recordings are saved as capture bundles (voice + ordered screenshots) for Claude Code")
-                }
             } header: {
                 Text("Claude Code")
             } footer: {
-                Text("Once connected, Claude can ask you questions on screen, receive your voice messages and captures, place guides and panels, draw on your screen, and speak to you. These switches re-route the hotkeys to the built-in assistant instead.")
+                Text("Capture shortcuts route from the conversation visibly open in the panel or pill. With no conversation open, Dictate pastes its text, Snapshot pastes a saved-image reference, and Continuous pastes its bundle prompt.")
             }
 
             Section("Advanced") {
@@ -714,35 +694,32 @@ private struct ShortcutsSettingsView: View {
                 ShortcutRow(title: "Dictate",
                             subtitle: "Hold to talk, release to type what you said",
                             spec: store.hotkey) { store.setHotkey(.dictate, $0) }
-                ShortcutRow(title: "Hands-free dictation",
-                            subtitle: "Press twice quickly to start, once to stop",
+                ShortcutRow(title: "Toggle dictate to Inbox",
+                            subtitle: "Press twice quickly to start, once to stop — uses Dictate but never pastes or sends",
                             spec: store.handsFreeHotkey) { store.setHotkey(.handsFree, $0) }
-                ShortcutRow(title: "Read aloud",
-                            subtitle: "Speaks the selected text — press again to stop speaking",
-                            spec: store.ttsHotkey) { store.setHotkey(.tts, $0) }
+                ShortcutRow(title: "Dictate + snapshot",
+                            subtitle: "Hold to speak and capture the screen at release",
+                            spec: store.snapshotHotkey) { store.setHotkey(.snapshot, $0) }
+                ShortcutRow(title: "Continuous dictate + snapshots",
+                            subtitle: "Toggle voice and deduped screen capture; saves an ordered bundle",
+                            spec: store.continuousCaptureHotkey) { store.setHotkey(.continuousCapture, $0) }
             } header: {
-                Text("Dictation")
+                Text("Capture")
             } footer: {
-                Text("Click a shortcut, then press the key or combination you'd like to use. Press Esc to cancel.")
+                Text("An open assistant or session receives the capture. Otherwise Dictate pastes, while the toggle shortcut keeps the words only in Inbox.")
             }
 
             Section {
-                ShortcutRow(title: "Talk to Claude",
-                            subtitle: "Hold to speak — answers a waiting question; delivered instantly when Claude is listening, otherwise copied to your clipboard and saved in History",
-                            spec: store.talkHotkey) { store.setHotkey(.talk, $0) }
-                ShortcutRow(title: "Talk + snap for Claude",
-                            subtitle: "Hold to speak and attach a screenshot of what you're looking at",
-                            spec: store.snapTalkHotkey) { store.setHotkey(.snapTalk, $0) }
-                ShortcutRow(title: "Record a capture session",
-                            subtitle: "Records your voice and screen while you demonstrate something; saves a capture bundle for Claude when you stop",
-                            spec: store.sessionHotkey) { store.setHotkey(.session, $0) }
+                ShortcutRow(title: "Read aloud",
+                            subtitle: "Speaks the selected text — press again to stop speaking",
+                            spec: store.ttsHotkey) { store.setHotkey(.tts, $0) }
                 ShortcutRow(title: "Draw on the screen",
                             subtitle: "Circle or write on the screen — your marks appear in every screenshot Claude sees",
                             spec: store.annotateHotkey) { store.setHotkey(.annotate, $0) }
             } header: {
-                Text("Claude & assistant")
+                Text("Other")
             } footer: {
-                Text("These shortcuts talk to Claude Code through the Voice Flow MCP server. Flip the switches in the Assistant tab to route them to the built-in assistant instead.")
+                Text("Click a shortcut, then press the key or combination you'd like to use. Press Esc to cancel.")
             }
         }
         .formStyle(.grouped)
@@ -755,9 +732,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var onHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onHotkeyChanged = onHotkeyChanged } }
     var onHandsFreeHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onHandsFreeHotkeyChanged = onHandsFreeHotkeyChanged } }
     var onTTSHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onTTSHotkeyChanged = onTTSHotkeyChanged } }
-    var onSessionHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onSessionHotkeyChanged = onSessionHotkeyChanged } }
-    var onTalkHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onTalkHotkeyChanged = onTalkHotkeyChanged } }
-    var onSnapTalkHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onSnapTalkHotkeyChanged = onSnapTalkHotkeyChanged } }
+    var onContinuousCaptureHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onContinuousCaptureHotkeyChanged = onContinuousCaptureHotkeyChanged } }
+    var onSnapshotHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onSnapshotHotkeyChanged = onSnapshotHotkeyChanged } }
     var onAnnotateHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onAnnotateHotkeyChanged = onAnnotateHotkeyChanged } }
     var onSettingsChanged: (() -> Void)? { didSet { store.onSettingsChanged = onSettingsChanged } }
     var onWindowClosed: (() -> Void)?

@@ -109,6 +109,7 @@ struct HotkeySpec {
         let legacyMap: [String: CGKeyCode] = [
             "alt_r": 61, "alt_l": 58, "ctrl_r": 62, "ctrl_l": 59,
             "fn": 63, "f5": 96, "f6": 97, "f7": 98, "f8": 100,
+            "f9": 101,
         ]
         let kc = legacyMap[name] ?? 61
         return HotkeySpec(keyCode: kc, modifiers: [], label: keyCodeName(kc))
@@ -152,9 +153,8 @@ class UserSettings {
 
     // Assistant (agent sessions)
     var captureIntervalSeconds: Int = 2
-    var sessionHotkey = HotkeySpec(keyCode: 61, modifiers: [], label: "Right ⌥")
-    var talkHotkey = HotkeySpec(keyCode: 98, modifiers: [], label: "F7")
-    var snapTalkHotkey = HotkeySpec(keyCode: 101, modifiers: [], label: "F9")
+    var continuousCaptureHotkey = HotkeySpec(keyCode: 61, modifiers: [], label: "Right ⌥")
+    var snapshotHotkey = HotkeySpec(keyCode: 101, modifiers: [], label: "F9")
     var annotateHotkey = HotkeySpec(keyCode: 96, modifiers: [], label: "F5")
     var agentModel: String = DefaultAgentModel
     var agentBaseURL: String = DefaultAgentBaseURL
@@ -165,12 +165,6 @@ class UserSettings {
     // Re-selecting the already-active session (⌃⌥N again / menu) reads its
     // queued messages aloud — pushes themselves never auto-play audio.
     var doubleSelectSpeak: Bool = true
-    // Sessions save capture bundles for Claude Code; the legacy path that
-    // also feeds them to the in-app agent is opt-in.
-    var sessionSendToAgent: Bool = false
-    // Talk hotkeys queue messages for Claude Code (MCP inbox) unless the
-    // in-app agent is explicitly re-enabled as their destination.
-    var talkSendToAgent: Bool = false
     // Ambient workflow watcher: deduped screenshot + activity line into
     // ~/.config/voice-flow/watcher for the daily Claude review.
     var workflowWatcherEnabled: Bool = false
@@ -210,11 +204,14 @@ class UserSettings {
         handsFreeHotkey = loadHotkey(dict, key: "hands_free_hotkey", fallback: handsFreeHotkey)
         ttsHotkey = loadHotkey(dict, key: "tts_hotkey", fallback: ttsHotkey)
         // "capture_*" are the pre-redesign key names — accept both.
-        sessionHotkey = loadHotkey(dict, key: "session_hotkey",
-                                   fallback: loadHotkey(dict, key: "capture_hotkey", fallback: sessionHotkey))
-        talkHotkey = loadHotkey(dict, key: "talk_hotkey",
-                                fallback: loadHotkey(dict, key: "capture_note_hotkey", fallback: talkHotkey))
-        snapTalkHotkey = loadHotkey(dict, key: "snap_talk_hotkey", fallback: snapTalkHotkey)
+        continuousCaptureHotkey = loadHotkey(
+            dict, key: "continuous_capture_hotkey",
+            fallback: loadHotkey(dict, key: "session_hotkey",
+                                 fallback: loadHotkey(dict, key: "capture_hotkey",
+                                                      fallback: continuousCaptureHotkey)))
+        snapshotHotkey = loadHotkey(
+            dict, key: "snapshot_hotkey",
+            fallback: loadHotkey(dict, key: "snap_talk_hotkey", fallback: snapshotHotkey))
         annotateHotkey = loadHotkey(dict, key: "annotate_hotkey", fallback: annotateHotkey)
         if let v = dict["sounds_enabled"] as? Bool { soundsEnabled = v }
         if let v = dict["double_tap_ms"] as? Int { doubleTapMs = v }
@@ -238,8 +235,6 @@ class UserSettings {
         }
         if let v = dict["voice_replies_enabled"] as? Bool { voiceRepliesEnabled = v }
         if let v = dict["double_select_speak"] as? Bool { doubleSelectSpeak = v }
-        if let v = dict["session_send_to_agent"] as? Bool { sessionSendToAgent = v }
-        if let v = dict["talk_send_to_agent"] as? Bool { talkSendToAgent = v }
         if let v = dict["workflow_watcher_enabled"] as? Bool { workflowWatcherEnabled = v }
         if let v = dict["watcher_interval_seconds"] as? Int { watcherIntervalSeconds = max(2, v) }
         if let v = dict["watcher_idle_pause_seconds"] as? Int { watcherIdlePauseSeconds = max(30, v) }
@@ -265,17 +260,14 @@ class UserSettings {
             "tts_speed": ttsSpeed,
             "tts_instructions": ttsInstructions,
             "capture_interval": captureIntervalSeconds,
-            "session_hotkey": sessionHotkey.toDict(),
-            "talk_hotkey": talkHotkey.toDict(),
-            "snap_talk_hotkey": snapTalkHotkey.toDict(),
+            "continuous_capture_hotkey": continuousCaptureHotkey.toDict(),
+            "snapshot_hotkey": snapshotHotkey.toDict(),
             "annotate_hotkey": annotateHotkey.toDict(),
             "agent_model": agentModel,
             "agent_base_url": agentBaseURL,
             "agent_backend": agentBackend,
             "voice_replies_enabled": voiceRepliesEnabled,
             "double_select_speak": doubleSelectSpeak,
-            "session_send_to_agent": sessionSendToAgent,
-            "talk_send_to_agent": talkSendToAgent,
             "workflow_watcher_enabled": workflowWatcherEnabled,
             "watcher_interval_seconds": watcherIntervalSeconds,
             "watcher_idle_pause_seconds": watcherIdlePauseSeconds,
@@ -1342,9 +1334,9 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
 
 class BackendBridge {
     var onReady: (() -> Void)?
-    var onResult: ((String, String) -> Void)?
-    var onPartialResult: ((String, Int) -> Void)?
-    var onError: ((String) -> Void)?
+    var onResult: ((String?, String, String) -> Void)?
+    var onPartialResult: ((String?, String, Int) -> Void)?
+    var onError: ((String?, String) -> Void)?
     var onStatus: ((String) -> Void)?
 
     private var process: Process?
@@ -1406,6 +1398,7 @@ class BackendBridge {
         pcmData: Data,
         sampleRate: Int,
         provider: DictationProvider,
+        requestId: String,
         skipCleanup: Bool = false,
         openAIAPIKey: String? = nil,
         vocabulary: [String] = []
@@ -1416,6 +1409,7 @@ class BackendBridge {
             "audio_b64": b64,
             "sample_rate": sampleRate,
             "provider": provider.rawValue,
+            "request_id": requestId,
         ]
         if skipCleanup {
             msg["skip_cleanup"] = true
@@ -1433,6 +1427,7 @@ class BackendBridge {
         pcmData: Data,
         sampleRate: Int,
         provider: DictationProvider,
+        runId: String,
         requestId: Int,
         openAIAPIKey: String? = nil,
         vocabulary: [String] = []
@@ -1443,6 +1438,7 @@ class BackendBridge {
             "audio_b64": b64,
             "sample_rate": sampleRate,
             "provider": provider.rawValue,
+            "run_id": runId,
             "request_id": requestId,
         ]
         if let openAIAPIKey, !openAIAPIKey.isEmpty {
@@ -1461,14 +1457,14 @@ class BackendBridge {
         // broken pipe — a dead backend must not abort the whole app.
         guard let stdin, process?.isRunning == true else {
             vflog("backend not running — dropping \(dict["cmd"] ?? "?") command")
-            onError?("Dictation backend isn't running — restart Voice Flow")
+            onError?(dict["request_id"] as? String, "Dictation backend isn't running — restart Voice Flow")
             return
         }
         do {
             try stdin.write(contentsOf: Data((str + "\n").utf8))
         } catch {
             vflog("backend pipe write failed: \(error)")
-            onError?("Dictation backend died — restart Voice Flow")
+            onError?(dict["request_id"] as? String, "Dictation backend died — restart Voice Flow")
         }
     }
 
@@ -1486,16 +1482,19 @@ class BackendBridge {
             case "loaded":
                 onStatus?("Models preloaded")
             case "result":
+                let requestId = dict["request_id"] as? String
                 let raw = dict["raw"] as? String ?? ""
                 let cleaned = dict["cleaned"] as? String ?? ""
-                onResult?(raw, cleaned)
+                onResult?(requestId, raw, cleaned)
             case "partial_result":
+                let runId = dict["run_id"] as? String
                 let text = dict["text"] as? String ?? ""
                 let reqId = dict["request_id"] as? Int ?? 0
-                onPartialResult?(text, reqId)
+                onPartialResult?(runId, text, reqId)
             case "error":
+                let requestId = dict["request_id"] as? String
                 let msg = dict["message"] as? String ?? "unknown"
-                onError?(msg)
+                onError?(requestId, msg)
             case "status":
                 let msg = dict["message"] as? String ?? ""
                 onStatus?(msg)
@@ -1523,19 +1522,21 @@ class BackendBridge {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class Paster {
-    private var pasteTargetApp: NSRunningApplication?
     private let placeholderSuffixCharacterSet = CharacterSet(charactersIn: ".:…")
 
     // AX streaming state
     private var streamElement: AXUIElement?
     private var streamPrefix: String = ""
 
-    func capturePasteTarget() {
-        pasteTargetApp = NSWorkspace.shared.frontmostApplication
-        if let app = pasteTargetApp {
+    func captureTarget() -> PasteTarget? {
+        if let app = NSWorkspace.shared.frontmostApplication {
             vflog("captured paste target: \(app.localizedName ?? app.bundleIdentifier ?? "unknown")")
+            return PasteTarget(
+                processIdentifier: app.processIdentifier,
+                name: app.localizedName ?? app.bundleIdentifier ?? "unknown")
         } else {
             vflog("captured paste target: none")
+            return nil
         }
     }
 
@@ -1614,11 +1615,21 @@ class Paster {
         streamPrefix = ""
     }
 
-    func paste(_ text: String) {
-        if let targetApp = pasteTargetApp, !targetApp.isTerminated {
-            targetApp.activate(options: [])
-            usleep(120_000)
+    @discardableResult
+    func paste(_ text: String, to target: PasteTarget) -> Bool {
+        guard let targetApp = NSRunningApplication(processIdentifier: target.processIdentifier),
+              !targetApp.isTerminated else {
+            // Never redirect a completed dictation into whichever app happens
+            // to be frontmost after the capture began. Keep it on the
+            // clipboard so the user can place it deliberately instead.
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(text, forType: .string)
+            vflog("paste target unavailable; copied instead: \(target.name) [\(target.processIdentifier)]")
+            return false
         }
+        targetApp.activate(options: [])
+        usleep(120_000)
 
         let pb = NSPasteboard.general
         let snapshot = clonePasteboardItems(from: pb)
@@ -1630,7 +1641,6 @@ class Paster {
         usleep(50_000)
 
         pressCommandKey(9) // V
-        pasteTargetApp = nil
         // Restore the previous clipboard only after the target app has had
         // real time to consume the paste. Restoring after a fixed 120ms
         // raced slow apps: they read the RESTORED old clipboard, so the
@@ -1642,6 +1652,7 @@ class Paster {
             guard pb.changeCount == ourChangeCount else { return }
             self.restorePasteboard(snapshot, to: pb)
         }
+        return true
     }
 
     func copySelectedText() -> String? {
