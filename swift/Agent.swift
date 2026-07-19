@@ -38,6 +38,7 @@ final class AgentSession {
     var onAssistantDone: ((String) -> Void)?
     var onToolActivity: ((String) -> Void)?
     var onError: ((String) -> Void)?
+    var onHistoryChanged: (() -> Void)?
 
     /// When false, the computer tool only allows screenshots.
     var allowControl = false
@@ -46,9 +47,12 @@ final class AgentSession {
     private var messages: [[String: Any]] = []
     private var interruptRequested = false
     private var activeTask: Task<Void, Never>?
+    private var runningSessionId: String?
 
     private let screenCapture: ScreenCapture
     private let control = ComputerControl()
+    private let history: AssistantHistoryStore
+    private(set) var currentSessionId: String
 
     // Codex subscription backend: the CLI keeps the conversation server-side,
     // we hold the thread id; `messages` still accumulates so the API path can
@@ -69,23 +73,79 @@ final class AgentSession {
         }
     }
 
-    init(screenCapture: ScreenCapture) {
+    init(screenCapture: ScreenCapture, history: AssistantHistoryStore = AssistantHistoryStore()) {
         self.screenCapture = screenCapture
+        self.history = history
+        currentSessionId = history.activeSessionId
+        loadRuntime(from: history.activeConversation())
         recomputeGeometry()
     }
 
-    func reset() {
+    @discardableResult
+    func reset() -> AssistantConversation {
         interrupt()
-        messages.removeAll()
-        codexThreadId = nil
+        return createConversation()
     }
 
-    var hasConversation: Bool { !messages.isEmpty }
+    var hasConversation: Bool { !history.activeConversation().messages.isEmpty }
+    var currentConversation: AssistantConversation { history.activeConversation() }
+    var conversations: [AssistantConversation] { history.conversations() }
+
+    @discardableResult
+    func createConversation() -> AssistantConversation {
+        let conversation = history.createConversation()
+        currentSessionId = conversation.id
+        loadRuntime(from: conversation)
+        notifyHistoryChanged()
+        return conversation
+    }
+
+    @discardableResult
+    func activateConversation(_ id: String) -> AssistantConversation? {
+        guard !isRunning, let conversation = history.activate(id) else { return nil }
+        currentSessionId = conversation.id
+        loadRuntime(from: conversation)
+        notifyHistoryChanged()
+        return conversation
+    }
+
+    @discardableResult
+    func deleteConversation(_ id: String) -> AssistantConversation? {
+        guard !isRunning else { return nil }
+        let active = history.delete(id)
+        currentSessionId = active.id
+        loadRuntime(from: active)
+        notifyHistoryChanged()
+        return active
+    }
 
     func interrupt() {
         interruptRequested = true
         codex.interrupt()
         activeTask?.cancel()
+    }
+
+    private func loadRuntime(from conversation: AssistantConversation) {
+        messages = conversation.messages.compactMap { message in
+            switch message.role {
+            case .note:
+                return nil
+            case .assistant:
+                return ["role": "assistant", "content": message.text]
+            case .user:
+                var display = message.text
+                if let attachment = message.attachmentNote, !attachment.isEmpty {
+                    display = display.isEmpty ? attachment : "\(display)\n\(attachment)"
+                }
+                return ["role": "user", "content": [["type": "text", "text": display]]]
+            }
+        }
+        codexThreadId = conversation.codexThreadId
+        pendingCodexTurn = nil
+    }
+
+    private func notifyHistoryChanged() {
+        DispatchQueue.main.async { self.onHistoryChanged?() }
     }
 
     private func recomputeGeometry() {
@@ -169,7 +229,10 @@ final class AgentSession {
         let usingCodex = UserSettings.shared.agentBackend == AgentBackendCodex
         // Codex needs no key; problems there surface (or fall back) per turn.
         guard usingCodex || KeychainStore.shared.loadAgentAPIKey() != nil else {
-            onError?(AgentError.missingAPIKey.localizedDescription)
+            let message = AgentError.missingAPIKey.localizedDescription
+            history.appendMessage(sessionId: currentSessionId, role: .note, text: message)
+            notifyHistoryChanged()
+            onError?(message)
             return
         }
 
@@ -193,13 +256,23 @@ final class AgentSession {
             isRunning = false
             return
         }
+        let sessionId = currentSessionId
+        runningSessionId = sessionId
+        let promptText = trimmed.isEmpty ? "(No note — the screenshots are the message.)" : trimmed
+        history.appendMessage(
+            sessionId: sessionId,
+            role: .user,
+            text: trimmed,
+            attachmentNote: Self.attachmentNote(count: screenshots.count))
+        history.setTurnState(.running, for: sessionId)
+        notifyHistoryChanged()
         messages.append(["role": "user", "content": content])
         pruneOldImages()
 
         if usingCodex {
             let jpegs = screenshots.compactMap { ImageUtils.resizeExact($0, width: imageWidth, height: imageHeight) }
             pendingCodexTurn = (
-                text: trimmed.isEmpty ? "(No note — the screenshots are the message.)" : trimmed,
+                text: promptText,
                 images: jpegs
             )
         }
@@ -210,11 +283,28 @@ final class AgentSession {
     }
 
     private func finish(_ finalText: String?) {
+        let sessionId = runningSessionId
+        runningSessionId = nil
         isRunning = false
         activeTask = nil
         activity = .idle
+        if let sessionId {
+            if let finalText, !finalText.isEmpty {
+                history.appendMessage(sessionId: sessionId, role: .assistant, text: finalText)
+            }
+            history.setTurnState(.idle, for: sessionId)
+            notifyHistoryChanged()
+        }
         if let finalText, !finalText.isEmpty {
             DispatchQueue.main.async { self.onAssistantDone?(finalText) }
+        }
+    }
+
+    private static func attachmentNote(count: Int) -> String? {
+        switch count {
+        case 0: return nil
+        case 1: return "📎 1 screenshot"
+        default: return "📎 \(count) screenshots"
         }
     }
 
@@ -245,6 +335,7 @@ final class AgentSession {
                     return
                 }
                 let message = error.localizedDescription
+                recordNote(message)
                 DispatchQueue.main.async { self.onError?(message) }
                 finish(nil)
                 return
@@ -297,6 +388,7 @@ final class AgentSession {
             }
         }
 
+        recordNote("Stopped — too many steps in one request.")
         DispatchQueue.main.async { self.onError?("Stopped — too many steps in one request.") }
         finish(nil)
     }
@@ -337,6 +429,7 @@ final class AgentSession {
         let turn = pendingCodexTurn ?? (text: "", images: [])
         pendingCodexTurn = nil
         let prompt = (codexThreadId == nil ? codexPreamble + "\n\n" : "") + turn.text
+        let sessionId = runningSessionId ?? currentSessionId
 
         do {
             var started = false
@@ -344,6 +437,13 @@ final class AgentSession {
                 prompt: prompt,
                 images: turn.images,
                 resumeThread: codexThreadId,
+                onThreadStarted: { [weak self] id in
+                    guard let self else { return }
+                    // Persist from the parser queue immediately. If Voice Flow
+                    // is restarted mid-turn, the next launch can still resume.
+                    self.history.setCodexThreadId(id, for: sessionId)
+                    self.notifyHistoryChanged()
+                },
                 onToolActivity: { [weak self] label in
                     DispatchQueue.main.async { self?.onToolActivity?(label) }
                 },
@@ -358,6 +458,9 @@ final class AgentSession {
                 }
             )
             codexThreadId = result.threadId ?? codexThreadId
+            if let threadId = codexThreadId {
+                history.setCodexThreadId(threadId, for: sessionId)
+            }
             messages.append(["role": "assistant", "content": result.text])
             finish(result.text)
             return false
@@ -375,6 +478,7 @@ final class AgentSession {
                 return true
             }
             let message = error.localizedDescription
+            recordNote(message)
             DispatchQueue.main.async { self.onError?(message) }
             finish(nil)
             return false
@@ -391,8 +495,15 @@ final class AgentSession {
                 messages.append(toolMessage(id, "The user interrupted — stop and wait for their next message."))
             }
         }
+        recordNote("Stopped by the user.")
         DispatchQueue.main.async { self.onToolActivity?("Stopped") }
         finish(nil)
+    }
+
+    private func recordNote(_ text: String) {
+        history.appendMessage(sessionId: runningSessionId ?? currentSessionId,
+                              role: .note, text: text)
+        notifyHistoryChanged()
     }
 
     private func toolMessage(_ callId: String, _ text: String) -> [String: Any] {

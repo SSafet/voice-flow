@@ -46,7 +46,12 @@ cp -R "$PROJECT_DIR/voice_flow" "$APP_DEST/Contents/Resources/voice_flow"
 
 # ── compile Swift ──────────────────────────────────────
 echo "  Compiling Swift..."
-SDK="$(xcrun --show-sdk-path)"
+XCODE_SDK="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+if [ -d "$XCODE_SDK" ]; then
+    SDK="$XCODE_SDK"
+else
+    SDK="$(xcrun --show-sdk-path)"
+fi
 
 swiftc -o "$APP_DEST/Contents/MacOS/voice-flow" \
     "$PROJECT_DIR"/swift/*.swift \

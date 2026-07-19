@@ -422,6 +422,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         chatPanel.onOpenSession = { [weak self] id in
             self?.setTargetSession(id, announce: false)
         }
+        chatPanel.onNewAssistant = { [weak self] in
+            guard let self, !self.agent.isRunning else {
+                self?.replyBubble.showTransient("wait for the Assistant to finish first", seconds: 4)
+                return
+            }
+            let conversation = self.agent.createConversation()
+            self.chatPanel.restoreAssistantConversation(conversation, open: true)
+            self.chatPanel.refreshAgents()
+        }
+        chatPanel.onOpenAssistantSession = { [weak self] id in
+            guard let self else { return }
+            guard let conversation = self.agent.activateConversation(id) else {
+                self.replyBubble.showTransient("wait for the Assistant to finish first", seconds: 4)
+                return
+            }
+            self.chatPanel.restoreAssistantConversation(conversation, open: true)
+        }
+        chatPanel.onDeleteAssistant = { [weak self] in
+            guard let self else { return }
+            guard let conversation = self.agent.deleteConversation(self.agent.currentSessionId) else {
+                self.replyBubble.showTransient("wait for the Assistant to finish first", seconds: 4)
+                return
+            }
+            self.chatPanel.restoreAssistantConversation(conversation)
+            self.chatPanel.showAgentsList()
+            self.chatPanel.refreshAgents()
+            self.replyBubble.showTransient("Assistant session deleted", seconds: 4)
+        }
         chatPanel.onSendText = { [weak self] text in self?.sendTypedMessage(text) }
         chatPanel.onSnap = { [weak self] in self?.snapAndSend() }
         chatPanel.onToggleSession = { [weak self] in self?.toggleSession() }
@@ -438,9 +466,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.stopSpeechPlayback()
         }
         chatPanel.onClear = { [weak self] in
-            self?.agent.reset()
-            self?.chatPanel.clearConversation()
-            self?.chatPanel.setActivity(.idle)
+            guard let self else { return }
+            let conversation = self.agent.reset()
+            self.chatPanel.restoreAssistantConversation(conversation, open: true)
+            self.chatPanel.setActivity(.idle)
+            self.chatPanel.refreshAgents()
         }
         chatPanel.onOpenSettings = { [weak self] in self?.showSettings() }
         chatPanel.onTTSSpeak = { [weak self] request in
@@ -621,6 +651,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         agent = AgentSession(screenCapture: screenCapture)
+        chatPanel.restoreAssistantConversation(agent.currentConversation)
+        agent.onHistoryChanged = { [weak self] in
+            guard let self else { return }
+            self.chatPanel.setAssistantTitle(self.agent.currentConversation.title)
+            self.chatPanel.refreshAgents()
+        }
         agent.onActivityChanged = { [weak self] activity in
             guard let self else { return }
             self.indicator.setAgentActivity(activity)
@@ -2887,6 +2923,20 @@ extension AppDelegate: AgentsDataSource {
     }()
 
     func agentSessionRows() -> [AgentSessionRow] {
+        let assistantRows: [AgentSessionRow] = (agent?.conversations ?? []).map { conversation in
+            var preview = conversation.preview
+            if preview.count > 120 { preview = String(preview.prefix(120)) + "…" }
+            return AgentSessionRow(
+                id: conversation.id,
+                kind: .assistant,
+                number: nil,
+                name: conversation.title,
+                preview: preview,
+                time: Self.pushTimeFormatter.string(from: conversation.updatedAt),
+                unread: false,
+                completed: false,
+                ghost: false)
+        }
         // Numbers stay ≡ the pill picker (⌃⌥N identity); the LIST order is
         // latest activity first, per the mock. No-push sessions trail in
         // picker order.
@@ -2915,6 +2965,7 @@ extension AppDelegate: AgentsDataSource {
             if preview.count > 120 { preview = String(preview.prefix(120)) + "…" }
             let row = AgentSessionRow(
                 id: session.id,
+                kind: .mcp,
                 number: session.number,
                 name: session.label,
                 preview: preview,
@@ -2926,7 +2977,7 @@ extension AppDelegate: AgentsDataSource {
                 ghost: session.number != nil && mcpServer.sessions.session(session.id) == nil)
             return (row, newest?.at)
         }
-        return rows.sorted {
+        let mcpRows = rows.sorted {
             switch ($0.at, $1.at) {
             case let (a?, b?): return a > b
             case (_?, nil): return true
@@ -2934,6 +2985,7 @@ extension AppDelegate: AgentsDataSource {
             case (nil, nil): return ($0.row.number ?? .max) < ($1.row.number ?? .max)
             }
         }.map { $0.row }
+        return assistantRows + mcpRows
     }
 
     func agentThread(for sessionId: String) -> [SessionPush] {

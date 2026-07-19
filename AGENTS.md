@@ -223,6 +223,9 @@ deployed copies are build outputs.
   `DictationsView` on each new dictation (render cap 60, store cap 200). Survives restarts.
 - `messages.json` — every agent push (`[AgentMessageEntry]`: time, session,
   text, isAsk), written by `MessagesView` (same caps). The Messages tab's store.
+- `assistant-sessions.json` — versioned in-app Assistant conversations: ordered
+  user/assistant/note messages, per-session Codex thread IDs, titles, and turn
+  state. Restored on launch so Assistant sessions remain selectable/resumable.
 - `pushes.json` — the live per-session push stacks (`sessionPushes`), saved on
   every mutation so unread messages survive app restarts as ghost entries.
 - `inbox.json` — queued contextual-capture messages for Codex (`MessageInbox`).
@@ -250,6 +253,7 @@ deployed copies are build outputs.
 | `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
 | `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Codex. |
 | `Agent.swift` | `AgentSession`, `ComputerControl` | LLM loop that reasons over screenshots and issues screen-control tool calls. |
+| `AssistantHistory.swift` | `AssistantHistoryStore`, `AssistantConversation`, `AssistantHistoryMessage` | Atomic local history and resume metadata for selectable in-app Assistant sessions. |
 | `Codex.swift` | `CodexExecBackend` | ChatGPT-subscription assistant turns via `codex exec --json` (OAuth, thread resume, image attach); the default backend, API key is the fallback. |
 | `Annotation.swift` | `AnnotationOverlay` | Draw-on-screen overlay (pen + multiline text notes with size presets). |
 | `Settings.swift` | `SettingsStore`, `SettingsWindowController`, `PermissionsWindowController`, `KeyRecorderView` | SwiftUI settings & permissions windows. |

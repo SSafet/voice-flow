@@ -68,6 +68,7 @@ final class CodexExecBackend {
     func run(prompt: String,
              images: [Data],
              resumeThread: String?,
+             onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
              onAgentText: @escaping (String) -> Void) async throws -> TurnResult {
         guard let binary = Self.findBinary() else { throw CodexBackendError.notInstalled }
@@ -124,7 +125,11 @@ final class CodexExecBackend {
                           let type = event["type"] as? String else { continue }
                     switch type {
                     case "thread.started":
-                        threadId = event["thread_id"] as? String
+                        if let id = event["thread_id"] as? String {
+                            let isNew = threadId != id
+                            threadId = id
+                            if isNew { onThreadStarted(id) }
+                        }
                     case "item.started", "item.updated":
                         if let item = event["item"] as? [String: Any],
                            let label = Self.activityLabel(for: item["type"] as? String ?? "") {

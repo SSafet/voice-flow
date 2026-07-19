@@ -14,8 +14,14 @@ import Cocoa
 //  the browsable archive of the same per-session stacks.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+enum AgentSessionKind: Equatable {
+    case assistant
+    case mcp
+}
+
 struct AgentSessionRow {
     let id: String
+    let kind: AgentSessionKind
     let number: Int?         // ≡ pill picker / ⌃⌥ numbering; nil = consumed
                              // thread kept as history, no ⌃⌥ slot (ticket #17)
     let name: String
@@ -44,8 +50,10 @@ protocol AgentsDataSource: AnyObject {
 
 final class AgentsView: NSView, NSTextFieldDelegate {
     weak var dataSource: AgentsDataSource?
-    /// The assistant row was chosen — ChatPanel swaps in the chat surface.
-    var onOpenAssistant: (() -> Void)?
+    /// Local Assistant sessions share this list but keep their native chat
+    /// lifecycle instead of being forced through MCP push semantics.
+    var onNewAssistant: (() -> Void)?
+    var onOpenAssistantSession: ((String) -> Void)?
     /// A concrete session row was chosen. ChatPanel/AppDelegate use this to
     /// align visible conversation focus with overlay/picker targeting.
     var onOpenSession: ((String) -> Void)?
@@ -145,18 +153,19 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func buildList() {
         var top = contentStack.topAnchor
 
-        // Assistant — persistent first row, never a number.
+        // Starting a fresh Assistant conversation is an explicit action;
+        // durable Assistant sessions then appear as normal selectable rows.
         let assistantRow = makeRow(
             leading: WaveformIconView(),
-            name: "assistant", unread: false,
-            preview: "talk · type · snap — the in-app agent", time: "")
-        assistantRow.identifier = NSUserInterfaceItemIdentifier("assistant")
+            name: "new assistant", unread: false,
+            preview: "start a separate conversation", time: "")
+        assistantRow.rowAction = .newAssistant
         place(assistantRow, below: &top, gap: 2)
 
         for row in dataSource?.agentSessionRows() ?? [] {
             let view = makeRow(leading: leadingIcon(for: row), name: row.name,
                                unread: row.unread, preview: row.preview, time: row.time)
-            view.identifier = NSUserInterfaceItemIdentifier(row.id)
+            view.rowAction = row.kind == .assistant ? .assistant(row.id) : .mcp(row.id)
             place(view, below: &top, gap: 2)
         }
 
@@ -169,6 +178,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// option A): connected = ⌃⌥ number in an amber ring, ghost = bare
     /// muted number, completed = quiet outlined check. No text suffixes.
     private func leadingIcon(for row: AgentSessionRow) -> NSView {
+        if row.kind == .assistant { return WaveformIconView() }
         guard let number = row.number else {
             let image = NSImageView(image: NSImage(systemSymbolName: "checkmark.circle",
                                                    accessibilityDescription: "completed") ?? NSImage())
@@ -186,8 +196,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     private func makeRow(leading: NSView, name: String, unread: Bool,
-                         preview: String, time: String) -> NSView {
-        let row = HoverRowView()
+                         preview: String, time: String) -> AgentListRowView {
+        let row = AgentListRowView()
         row.wantsLayer = true
         row.layer?.cornerRadius = 8
 
@@ -240,10 +250,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func rowClicked(_ gesture: NSClickGestureRecognizer) {
-        guard let id = gesture.view?.identifier?.rawValue else { return }
-        if id == "assistant" {
-            onOpenAssistant?()
-        } else {
+        guard let row = gesture.view as? AgentListRowView,
+              let action = row.rowAction else { return }
+        switch action {
+        case .newAssistant:
+            onNewAssistant?()
+        case .assistant(let id):
+            onOpenAssistantSession?(id)
+        case .mcp(let id):
             onOpenSession?(id)
             openThread(id)
         }
@@ -504,6 +518,16 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 }
 
+private enum AgentListRowAction {
+    case newAssistant
+    case assistant(String)
+    case mcp(String)
+}
+
+private final class AgentListRowView: HoverRowView {
+    var rowAction: AgentListRowAction?
+}
+
 /// The ⌃⌥ number wrapped in an amber ring — "this session is connected
 /// to an agent" (option A of design/agent-row-icons.html).
 final class RingNumberView: NSView {
@@ -535,7 +559,7 @@ final class RingNumberView: NSView {
 }
 
 /// List row hover: quiet by default, card tint under the pointer.
-final class HoverRowView: NSView {
+class HoverRowView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach { removeTrackingArea($0) }

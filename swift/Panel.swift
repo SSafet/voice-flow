@@ -27,6 +27,9 @@ final class ChatPanel {
     var onToggleControl: ((Bool) -> Void)?
     var onStop: (() -> Void)?
     var onClear: (() -> Void)?
+    var onNewAssistant: (() -> Void)?
+    var onOpenAssistantSession: ((String) -> Void)?
+    var onDeleteAssistant: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenSession: ((String) -> Void)?
     /// Supplied by AppDelegate from the actual FloatingIndicator window.
@@ -45,6 +48,7 @@ final class ChatPanel {
     private var dictationsView: DictationsView!
     private var agentsView: AgentsView!
     private var assistantHeader: NSView!
+    private var assistantTitleLabel: NSTextField!
     private var speechButton: NSButton!
     private var ttsView: TTSView!
     private var currentTab: ChatTab = .agents
@@ -214,6 +218,36 @@ final class ChatPanel {
             view.removeFromSuperview()
         }
         updateEmptyLabel()
+    }
+
+    /// Rebuild the existing Assistant surface from the durable conversation
+    /// model. This is used both at launch and when a history row is selected.
+    func restoreAssistantConversation(_ conversation: AssistantConversation, open: Bool = false) {
+        clearConversation()
+        assistantTitleLabel?.stringValue = conversation.title
+        lastAssistantText = ""
+        for message in conversation.messages {
+            switch message.role {
+            case .user:
+                var display = message.text
+                if let attachment = message.attachmentNote, !attachment.isEmpty {
+                    display = display.isEmpty ? attachment : "\(display)\n\(attachment)"
+                }
+                appendBubble(kind: .user, text: display)
+            case .assistant:
+                appendBubble(kind: .assistant, text: message.text)
+                lastAssistantText = message.text
+            case .note:
+                appendBubble(kind: .note, text: message.text)
+            }
+        }
+        if open { openAssistant() }
+        updateEmptyLabel()
+        scrollToBottom()
+    }
+
+    func setAssistantTitle(_ title: String) {
+        assistantTitleLabel?.stringValue = title
     }
 
     private func finishStreaming() {
@@ -404,6 +438,13 @@ final class ChatPanel {
         speechOpen = false
         applyTab(.agents)
         agentsView.openThread(sessionId)
+    }
+
+    func showAgentsList() {
+        assistantOpen = false
+        speechOpen = false
+        agentsView.showList()
+        applyTab(.agents)
     }
 
     private func openAssistant() {
@@ -633,7 +674,8 @@ final class ChatPanel {
         agentsView = AgentsView()
         agentsView.isHidden = true
         agentsView.setContentHuggingPriority(.defaultLow, for: .vertical)
-        agentsView.onOpenAssistant = { [weak self] in self?.openAssistant() }
+        agentsView.onNewAssistant = { [weak self] in self?.onNewAssistant?() }
+        agentsView.onOpenAssistantSession = { [weak self] id in self?.onOpenAssistantSession?(id) }
         agentsView.onOpenSession = { [weak self] id in self?.onOpenSession?(id) }
         ttsView = TTSView()
         ttsView.isHidden = true
@@ -688,13 +730,22 @@ final class ChatPanel {
         back.contentTintColor = Theme.text2
 
         let icon = WaveformIconView()
-        let name = NSTextField(labelWithString: "assistant")
-        name.font = .systemFont(ofSize: 12, weight: .semibold)
-        name.textColor = Theme.text
+        assistantTitleLabel = NSTextField(labelWithString: "New assistant")
+        assistantTitleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        assistantTitleLabel.textColor = Theme.text
+        assistantTitleLabel.lineBreakMode = .byTruncatingTail
+        assistantTitleLabel.maximumNumberOfLines = 1
+        assistantTitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let mid = NSStackView(views: [icon, name])
+        let mid = NSStackView(views: [icon, assistantTitleLabel])
         mid.orientation = .horizontal
         mid.spacing = 7
+
+        let delete = NSButton(image: symbol("trash") ?? NSImage(),
+                              target: self, action: #selector(assistantDeleteTapped))
+        delete.isBordered = false
+        delete.contentTintColor = Theme.text3
+        delete.toolTip = "Delete this Assistant session"
 
         let speak = NSButton(image: symbol("speaker.wave.2") ?? NSImage(),
                              target: self, action: #selector(assistantSpeakTapped))
@@ -705,7 +756,7 @@ final class ChatPanel {
         line.wantsLayer = true
         line.layer?.backgroundColor = Theme.border.cgColor
 
-        for v in [back, mid, speak, line] {
+        for v in [back, mid, delete, speak, line] {
             v.translatesAutoresizingMaskIntoConstraints = false
             headerView.addSubview(v)
         }
@@ -715,6 +766,10 @@ final class ChatPanel {
             back.centerYAnchor.constraint(equalTo: headerView.centerYAnchor, constant: -3),
             mid.centerXAnchor.constraint(equalTo: headerView.centerXAnchor),
             mid.centerYAnchor.constraint(equalTo: headerView.centerYAnchor, constant: -3),
+            mid.leadingAnchor.constraint(greaterThanOrEqualTo: back.trailingAnchor, constant: 8),
+            mid.trailingAnchor.constraint(lessThanOrEqualTo: delete.leadingAnchor, constant: -8),
+            delete.trailingAnchor.constraint(equalTo: speak.leadingAnchor, constant: -8),
+            delete.centerYAnchor.constraint(equalTo: headerView.centerYAnchor, constant: -3),
             speak.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -14),
             speak.centerYAnchor.constraint(equalTo: headerView.centerYAnchor, constant: -3),
             line.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 12),
@@ -843,6 +898,7 @@ final class ChatPanel {
     @objc private func annotateTapped() { onToggleAnnotate?() }
     @objc private func stopTapped() { onStop?() }
     @objc private func clearTapped() { onClear?() }
+    @objc private func assistantDeleteTapped() { onDeleteAssistant?() }
     @objc private func settingsTapped() { onOpenSettings?() }
 
     @objc private func voiceTapped() {
