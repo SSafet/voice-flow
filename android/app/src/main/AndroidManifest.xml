@@ -29,21 +29,18 @@
             </intent-filter>
         </activity>
 
-        <!-- Second launcher entry that goes straight into quick capture. Also
-             holds the ASSIST role so the side-key LONG press starts dictation
-             directly: set VF Dictate as the digital assistant app (Settings >
-             Apps > Choose default apps > Digital assistant app), with the side
-             key's long press left on "Digital assistant". -->
+        <!-- Invisible alias that jumps straight into quick capture. It holds
+             the ASSIST role so the side-key LONG press starts dictation
+             directly (Settings > Apps > Choose default apps > Digital
+             assistant app > VF Dictate, side key long press on "Digital
+             assistant"). Deliberately NOT a launcher entry — Safet doesn't
+             want a second icon in the app drawer. -->
         <activity-alias
             android:name=".Dictate"
             android:targetActivity=".MainActivity"
             android:exported="true"
             android:label="VF Dictate"
             android:icon="@mipmap/ic_dictate">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
                 <category android:name="android.intent.category.DEFAULT" />
