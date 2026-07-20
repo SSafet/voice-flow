@@ -84,14 +84,17 @@ final class CodexExecBackend {
         defer { imagePaths.forEach { try? FileManager.default.removeItem(atPath: $0) } }
 
         // `exec` and `exec resume` diverge slightly in supported flags
-        // (resume has no --sandbox/-C), so sandboxing goes through -c.
+        // (resume has no --sandbox/-C), so permissions go through -c. The
+        // Assistant needs outbound access for user-requested integrations
+        // such as the tickets CLI, while filesystem writes stay sandboxed.
         // mcp_servers={} neutralizes the user's ~/.codex MCP servers: they
         // slow every turn's startup and tempt the model into "contacting"
         // the user through tools instead of just answering the panel.
         var args = ["exec"]
         if let thread = resumeThread { args.append(contentsOf: ["resume", thread]) }
         args.append(contentsOf: ["--json", "--skip-git-repo-check",
-                                 "-c", "sandbox_mode=\"read-only\"",
+                                 "-c", "sandbox_mode=\"workspace-write\"",
+                                 "-c", "sandbox_workspace_write.network_access=true",
                                  "-c", "mcp_servers={}"])
         imagePaths.forEach { args.append(contentsOf: ["-i", $0]) }
         args.append(prompt)

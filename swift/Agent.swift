@@ -409,16 +409,24 @@ final class AgentSession {
         markdown headings or tables. If something on screen is ambiguous, say what you see and ask one \
         focused question.
 
-        Voice Flow keeps its data under ~/.config/voice-flow/, and your sandbox lets you read it:
+        Voice Flow keeps its data under ~/.config/voice-flow/:
         - dictations.json — the user's dictation history, newest first; entries are {text, time, destination} \
         (time is time-of-day only). "My transcripts" or "my dictations" means this file.
         - captures/<id>/transcript.md — recorded demonstration sessions: spoken narration plus ordered \
         screenshot frames (in frames/ beside it); meta.json has timing. Newest <id> sorts last.
         - messages.json — messages assistant sessions have pushed to the user (time, session, text).
         When the user says to read, summarize, or work from their transcripts or recordings, read these \
-        files directly. Your sandbox is read-only with no network — when asked to create tickets, notes, \
-        or other artifacts from them, write the finished content into your reply instead of trying to \
-        create files or call external services.
+        files directly.
+        """
+    }
+
+    /// Repeated on every turn so threads created under an older access policy
+    /// learn the current runtime capabilities when they resume.
+    private var codexAccessNote: String {
+        """
+        Runtime access: shell commands have unrestricted outbound network access and workspace write \
+        access. Use installed skills and CLIs for external services when the user's request requires it; \
+        do not claim network access is unavailable without trying the relevant command.
         """
     }
 
@@ -428,7 +436,8 @@ final class AgentSession {
         activity = .thinking
         let turn = pendingCodexTurn ?? (text: "", images: [])
         pendingCodexTurn = nil
-        let prompt = (codexThreadId == nil ? codexPreamble + "\n\n" : "") + turn.text
+        let persona = codexThreadId == nil ? codexPreamble + "\n\n" : ""
+        let prompt = persona + codexAccessNote + "\n\n" + turn.text
         let sessionId = runningSessionId ?? currentSessionId
 
         do {
