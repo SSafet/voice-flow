@@ -76,20 +76,44 @@ class SyncClient(context: Context, private val store: Store, private val keys: K
             chat.forEach { it.synced = true }
         }
 
-        // Merge the Mac's history into ours (dedupe on time+text; Mac
-        // entries carry no date, so unseen ones append below local history).
+        // Merge the Mac's history into ours. Entries match by stable id
+        // first (ticket #36): a known id with changed text is a Mac-side
+        // update (Continue-append) adopted in place — unless our copy has
+        // unsynced local edits, which win until pushed. Id-less entries keep
+        // the old time+text dedupe; new ones adopt the Mac's id so later
+        // continues sync as updates, not duplicates.
         val seen = dictations.map { it.time + "" + it.text }.toHashSet()
         var pulled = 0
         payload.optJSONArray("dictations")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                val key = o.optString("time") + "" + o.optString("text")
-                if (key in seen || o.optString("text").isBlank()) continue
+                val text = o.optString("text")
+                if (text.isBlank()) continue
+                val macId = o.optString("id")
+                if (macId.isNotBlank()) {
+                    val idx = dictations.indexOfFirst { it.id == macId }
+                    if (idx >= 0) {
+                        val local = dictations[idx]
+                        if (local.synced && local.text != text) {
+                            dictations.removeAt(idx)
+                            dictations.add(0, local.copy(
+                                text = text,
+                                time = o.optString("time"),
+                                date = o.optString("timestamp").take(10),
+                                synced = true,
+                            ))
+                            pulled++
+                        }
+                        continue
+                    }
+                }
+                val key = o.optString("time") + "" + text
+                if (key in seen) continue
                 seen.add(key)
                 dictations.add(DictationEntry(
-                    java.util.UUID.randomUUID().toString(),
+                    macId.ifBlank { java.util.UUID.randomUUID().toString() },
                     o.optString("time"), o.optString("timestamp").take(10),
-                    o.optString("text"),
+                    text,
                     o.optString("destination", "pasted"),
                     true,
                 ))

@@ -16,9 +16,11 @@ import Foundation
 final class SyncServer: NSObject {
     static let port: UInt16 = 8793
 
-    /// Hops to main and inserts entries into the dictation store
-    /// (oldest-first order in, so the newest ends on top).
-    var onDictations: (([(text: String, time: String, timestamp: String?, destination: String)]) -> Void)?
+    /// Hops to main and upserts entries into the dictation store
+    /// (oldest-first order in, so the newest ends on top). `id` is the
+    /// phone's stable entry id: a known id updates the existing entry in
+    /// place (ticket #36 Continue-append), an unknown one adds.
+    var onDictations: (([(id: String?, text: String, time: String, timestamp: String?, destination: String)]) -> Void)?
     var onServerMessage: ((String) -> Void)?
     /// A phone completed pairing (device name) — surface a receipt.
     var onPaired: ((String) -> Void)?
@@ -206,19 +208,30 @@ final class SyncServer: NSObject {
         let payload = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
 
         // ── incoming dictations → the live store, deduped ──
+        // Items carrying an id the Mac already knows are updates (phone-side
+        // Continue-append, ticket #36): forwarded when the text changed,
+        // skipped when identical. Id-less/unknown items keep the old
+        // time+text dedupe and land as adds.
         let existing = DictationsView.recentEntries(limit: 500)
         var seen = Set(existing.map { $0.time + "\u{1}" + $0.text })
-        var fresh: [(text: String, time: String, timestamp: String?, destination: String)] = []
+        let textById = Dictionary(existing.compactMap { e in e.id.map { ($0, e.text) } },
+                                  uniquingKeysWith: { a, _ in a })
+        var fresh: [(id: String?, text: String, time: String, timestamp: String?, destination: String)] = []
         for item in (payload["dictations"] as? [[String: Any]]) ?? [] {
             let text = (item["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let time = item["time"] as? String ?? ""
             guard !text.isEmpty else { continue }
-            let key = time + "\u{1}" + text
-            guard !seen.contains(key) else { continue }
-            seen.insert(key)
+            let id = (item["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             let timestamp = item["timestamp"] as? String
                 ?? Self.joinedTimestamp(date: item["date"] as? String, time: time)
-            fresh.append((text: text, time: time, timestamp: timestamp,
+            if let id, let knownText = textById[id] {
+                guard knownText != text else { continue }
+            } else {
+                let key = time + "\u{1}" + text
+                guard !seen.contains(key) else { continue }
+                seen.insert(key)
+            }
+            fresh.append((id: id, text: text, time: time, timestamp: timestamp,
                           destination: item["kind"] as? String ?? "kept"))
         }
         if !fresh.isEmpty {
@@ -232,7 +245,8 @@ final class SyncServer: NSObject {
 
         // ── response: Mac history + settings parity ──
         let recent = DictationsView.recentEntries(limit: 200).map {
-            ["text": $0.text, "time": $0.time,
+            ["id": $0.id ?? "",
+             "text": $0.text, "time": $0.time,
              "timestamp": $0.timestamp ?? "",
              "destination": ($0.destination ?? .pasted).rawValue] as [String: Any]
         }

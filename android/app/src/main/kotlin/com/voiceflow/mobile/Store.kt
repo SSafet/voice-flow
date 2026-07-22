@@ -127,6 +127,27 @@ class Store(private val context: Context) {
         saveDictations(list)
     }
 
+    /// Continue-append (ticket #36): the new transcript joins the existing
+    /// entry with a paragraph break; time/date refresh to now and the entry
+    /// moves to the top, marked unsynced so the next sync UPDATES the Mac's
+    /// copy (matched by id). Returns false when the entry is gone.
+    @Synchronized
+    fun appendToDictation(id: String, text: String): Boolean {
+        val list = dictations()
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx < 0) return false
+        val d = Date()
+        val entry = list.removeAt(idx)
+        list.add(0, entry.copy(
+            text = entry.text + "\n\n" + text,
+            time = SimpleDateFormat("HH:mm:ss", Locale.US).format(d),
+            date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(d),
+            synced = false,
+        ))
+        saveDictations(list)
+        return true
+    }
+
     // ── assistant chat ──
     @Synchronized
     fun chat(): MutableList<ChatMessage> {

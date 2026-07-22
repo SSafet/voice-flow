@@ -1527,11 +1527,15 @@ enum CaptureDestination: String, Codable {
 }
 
 struct HistoryEntry: Codable {
-    let text: String
-    let time: String
+    var text: String
+    var time: String
     /// Full creation date-time for processing cursors. Optional so existing
     /// history continues to decode without rewriting or dropping any fields.
     var timestamp: String?
+    /// Stable identity for Continue-append and cross-device sync upserts
+    /// (ticket #36). Optional so existing entries keep decoding; assigned
+    /// lazily the first time identity is needed.
+    var id: String?
     // Optional so pre-redesign dictations.json entries still decode:
     // nil destination = pasted, nil seen = already revisited.
     var destination: CaptureDestination?
@@ -1689,6 +1693,9 @@ final class DictationsView: NSView {
     /// for a future tab badge.
     var unrevisitedCount: Int { entries.filter { $0.isUnrevisited }.count }
     var onUnreadChanged: ((Int) -> Void)?
+    /// Hover "Continue" tapped on a row — carries the entry's stable id so
+    /// the capture pipeline can freeze the append target (ticket #36).
+    var onContinueRequested: ((String) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1771,9 +1778,11 @@ final class DictationsView: NSView {
                   timestamp: String? = nil,
                   destination: CaptureDestination = .pasted, seen: Bool? = nil,
                   capability: CaptureCapability? = nil,
-                  attachments: [String] = [], captureId: String? = nil) {
+                  attachments: [String] = [], captureId: String? = nil,
+                  id: String? = nil) {
         entries.insert(HistoryEntry(text: text, time: time,
                                     timestamp: timestamp ?? Self.fullTimestamp(),
+                                    id: id ?? UUID().uuidString,
                                     destination: destination, seen: seen,
                                     capability: capability,
                                     attachments: attachments.isEmpty ? nil : attachments,
@@ -1785,8 +1794,62 @@ final class DictationsView: NSView {
         onUnreadChanged?(unrevisitedCount)
     }
 
+    /// Continue-append (ticket #36): the new transcript joins the existing
+    /// entry with a paragraph break; the entry becomes "new" again — fresh
+    /// timestamp, unseen, top of the list — so the intake watermark picks it
+    /// back up. Falls back to a fresh kept entry if the target is gone.
+    func appendToEntry(id: String, text: String) {
+        guard let idx = entries.firstIndex(where: { $0.id == id }) else {
+            addEntry(text: text, time: Self.clockTime(), destination: .kept,
+                     seen: false, capability: .dictate)
+            return
+        }
+        var entry = entries[idx]
+        entry.text += "\n\n" + text
+        entry.time = Self.clockTime()
+        entry.timestamp = Self.fullTimestamp()
+        entry.seen = false
+        entries.remove(at: idx)
+        entries.insert(entry, at: 0)
+        DictationsView.saveEntries(entries)
+        styleChips()
+        rebuildContent()
+        onUnreadChanged?(unrevisitedCount)
+    }
+
+    /// Sync path (ticket #36): the phone sends whole entries with stable ids.
+    /// A known id whose text changed is an update-in-place (continued on the
+    /// phone) — refresh text/timestamp, reset unseen, re-sort to top; an
+    /// unknown id is a plain add that adopts the phone's id.
+    func upsertEntry(id: String?, text: String, time: String, timestamp: String?,
+                     destination: CaptureDestination, seen: Bool?) {
+        if let id, let idx = entries.firstIndex(where: { $0.id == id }) {
+            guard entries[idx].text != text else { return }
+            var entry = entries[idx]
+            entry.text = text
+            entry.time = time
+            entry.timestamp = timestamp ?? Self.fullTimestamp()
+            entry.seen = false
+            entries.remove(at: idx)
+            entries.insert(entry, at: 0)
+            DictationsView.saveEntries(entries)
+            styleChips()
+            rebuildContent()
+            onUnreadChanged?(unrevisitedCount)
+        } else {
+            addEntry(text: text, time: time, timestamp: timestamp,
+                     destination: destination, seen: seen, id: id)
+        }
+    }
+
     private static func fullTimestamp() -> String {
         ISO8601DateFormatter().string(from: Date())
+    }
+
+    private static func clockTime() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: Date())
     }
 
     private func rebuildContent() {
@@ -1855,6 +1918,20 @@ final class DictationsView: NSView {
         }
         row.addArrangedSubview(textLabel)
         textLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        // Hover-only "Continue" (ticket #36): dictate more into this entry.
+        let continueBtn = NSButton(title: "Continue", target: self,
+                                   action: #selector(continueClicked(_:)))
+        continueBtn.bezelStyle = .inline
+        continueBtn.font = .systemFont(ofSize: 11)
+        continueBtn.tag = index
+        continueBtn.toolTip = "Continue this dictation — record and append"
+        continueBtn.alphaValue = 0
+        continueBtn.setContentHuggingPriority(.required, for: .horizontal)
+        continueBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
+        row.addArrangedSubview(continueBtn)
+        card.hoverAction = continueBtn
+
         card.addSubview(row)
         NSLayoutConstraint.activate([
             row.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
@@ -1873,6 +1950,10 @@ final class DictationsView: NSView {
     @objc private func cardClicked(_ gesture: NSClickGestureRecognizer) {
         guard let card = gesture.view as? InboxCard,
               card.entryIndex >= 0, card.entryIndex < entries.count else { return }
+        // A click on the hover Continue button belongs to the button, not
+        // the card's copy behavior.
+        if let btn = card.hoverAction, let host = btn.superview,
+           btn.frame.contains(gesture.location(in: host)) { return }
         let entry = entries[card.entryIndex]
 
         CaptureClipboard.copy(text: entry.text, attachmentPaths: entry.attachments ?? [])
@@ -1891,6 +1972,19 @@ final class DictationsView: NSView {
             styleChips()
             onUnreadChanged?(unrevisitedCount)
         }
+    }
+
+    /// Hover "Continue": pin down the entry's stable id (assigning one to a
+    /// pre-#36 entry on first use), then hand it to the capture pipeline.
+    @objc private func continueClicked(_ sender: NSButton) {
+        let index = sender.tag
+        guard index >= 0, index < entries.count else { return }
+        if entries[index].id == nil {
+            entries[index].id = UUID().uuidString
+            DictationsView.saveEntries(entries)
+        }
+        guard let id = entries[index].id else { return }
+        onContinueRequested?(id)
     }
 
     private func makeEmptyState() -> NSView {
@@ -2489,6 +2583,17 @@ class HoverCardView: NSView {
 final class InboxCard: HoverCardView {
     var entryIndex: Int = -1
     weak var textLabel: NSTextField?
+    /// Revealed on hover, hidden on exit (the Continue affordance, ticket #36).
+    weak var hoverAction: NSButton?
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        hoverAction?.alphaValue = 1
+    }
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        hoverAction?.alphaValue = 0
+    }
 }
 
 /// Compact first-image preview; continuous captures keep the narrow card and

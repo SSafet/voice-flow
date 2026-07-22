@@ -67,6 +67,10 @@ struct CaptureRun {
     /// Display selected when the hotkey began; never recomputed by an async
     /// screenshot or transcription callback.
     let display: DisplayContext?
+    /// Continue-append (ticket #36): the dictation-history entry this run's
+    /// transcript appends to. Frozen at capture start so later UI changes
+    /// cannot reroute the result to a different entry.
+    let appendEntryId: String?
     var phase: CaptureRunPhase = .recording
     var transcript: String?
     var snapshot: SnapshotState
@@ -74,13 +78,15 @@ struct CaptureRun {
     var continuousScreenshots: [Data] = []
 
     init(id: UUID, capability: CaptureCapability, route: CaptureRoute,
-         startedAt: Date, display: DisplayContext? = nil, snapshot: SnapshotState) {
+         startedAt: Date, display: DisplayContext? = nil, snapshot: SnapshotState,
+         appendEntryId: String? = nil) {
         self.id = id
         self.capability = capability
         self.route = route
         self.startedAt = startedAt
         self.display = display
         self.snapshot = snapshot
+        self.appendEntryId = appendEntryId
     }
 
     var isReadyToDeliver: Bool {

@@ -451,6 +451,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.replyBubble.showTransient("Assistant session deleted", seconds: 4)
         }
         chatPanel.onSendText = { [weak self] text in self?.sendTypedMessage(text) }
+        chatPanel.onContinueDictation = { [weak self] entryId in
+            self?.continueDictation(appendingTo: entryId)
+        }
         chatPanel.onSnap = { [weak self] in self?.snapAndSend() }
         chatPanel.onToggleSession = { [weak self] in self?.toggleSession() }
         chatPanel.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
@@ -623,8 +626,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         syncServer.onDictations = { [weak self] entries in
             for e in entries {
-                self?.chatPanel.addDictation(
-                    text: e.text, time: e.time, timestamp: e.timestamp,
+                self?.chatPanel.upsertDictation(
+                    id: e.id, text: e.text, time: e.time, timestamp: e.timestamp,
                     destination: CaptureDestination(rawValue: e.destination) ?? .kept,
                     seen: e.destination == CaptureDestination.kept.rawValue ? false : nil)
             }
@@ -1369,16 +1372,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return .none
     }
 
+    /// Continue-append (ticket #36): record through the normal kept pipeline
+    /// with the target entry id frozen into the run. A second Continue click
+    /// while the continuation records commits it (like toggle-Dictate).
+    private func continueDictation(appendingTo entryId: String) {
+        if recorder.isRecording {
+            if let id = activeRunId, captureRuns[id]?.appendEntryId != nil {
+                stopCapture()
+            } else {
+                replyBubble.showTransient("already recording", seconds: 4)
+            }
+            return
+        }
+        beginCapture(capability: .dictate, deliveryPolicy: .historyOnly,
+                     handsFree: false, appendToEntryId: entryId)
+        replyBubble.showTransient("continuing dictation — Dictate key or Continue stops", seconds: 5)
+    }
+
     private func beginCapture(capability: CaptureCapability,
                               deliveryPolicy: CaptureDeliveryPolicy,
-                              handsFree: Bool) {
+                              handsFree: Bool,
+                              appendToEntryId: String? = nil) {
         // A normal Dictate press while toggle-Dictate is active commits the
         // existing run; the next press starts the contextual one.
         if recorder.isRecording,
            let id = activeRunId, let run = captureRuns[id],
            case .historyOnly = run.route, deliveryPolicy == .contextual {
             stopCapture()
-            replyBubble.showTransient("kept in Inbox — press again to dictate", seconds: 5)
+            replyBubble.showTransient(run.appendEntryId != nil
+                                        ? "continuation captured — press again to dictate"
+                                        : "kept in Inbox — press again to dictate", seconds: 5)
             return
         }
         guard !recorder.isRecording else { return }
@@ -1397,7 +1420,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let display = DisplayTopology.underMouse ?? DisplayTopology.primary
         let run = CaptureRun(
             id: id, capability: capability, route: route, startedAt: Date(),
-            display: display, snapshot: snapshot)
+            display: display, snapshot: snapshot, appendEntryId: appendToEntryId)
         captureRuns[id] = run
         activeRunId = id
 
@@ -1651,6 +1674,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             run.phase = .failed
             captureRuns[id] = run
             if activeRunId == nil { state = .idle }
+            return
+        }
+
+        // Continue-append (ticket #36): the transcript joins its frozen
+        // target entry instead of becoming a new one — no routing, no wake
+        // word, no paste. The entry resurfaces as new (fresh timestamp,
+        // unseen, top of the list).
+        if let appendEntryId = run.appendEntryId {
+            chatPanel.appendDictation(entryId: appendEntryId, text: note)
+            replyBubble.showTransient("added to your dictation")
+            run.phase = .delivered
+            captureRuns[id] = run
+            playSound("Pop")
+            if activeRunId == nil { state = .done }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if self.state == .done { self.state = .idle }
+            }
+            pruneFinishedCaptureRuns()
             return
         }
 

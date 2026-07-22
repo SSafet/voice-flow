@@ -32,6 +32,8 @@ final class ChatPanel {
     var onDeleteAssistant: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenSession: ((String) -> Void)?
+    /// Continue tapped on a Dictations row (ticket #36) — entry id to append to.
+    var onContinueDictation: ((String) -> Void)?
     /// Supplied by AppDelegate from the actual FloatingIndicator window.
     var panelAnchorProvider: (() -> PanelAnchor?)?
     var onTTSSpeak: ((TTSRequest) -> Void)?
@@ -479,6 +481,20 @@ final class ChatPanel {
         styleTabs()
     }
 
+    /// Continue-append (ticket #36): new transcript joins an existing entry.
+    func appendDictation(entryId: String, text: String) {
+        dictationsView.appendToEntry(id: entryId, text: text)
+        styleTabs()
+    }
+
+    /// Sync upsert (ticket #36): add, or update-in-place when the id is known.
+    func upsertDictation(id: String?, text: String, time: String, timestamp: String? = nil,
+                         destination: CaptureDestination = .kept, seen: Bool? = nil) {
+        dictationsView.upsertEntry(id: id, text: text, time: time, timestamp: timestamp,
+                                   destination: destination, seen: seen)
+        styleTabs()
+    }
+
     func currentTTSRequest() -> TTSRequest { ttsView.currentTTSRequest() }
     func applyTTSRequest(_ request: TTSRequest) { ttsView.applyTTSRequest(request) }
     func setTTSStatus(_ snapshot: TTSStatusSnapshot) { ttsView.setTTSStatus(snapshot) }
@@ -672,6 +688,7 @@ final class ChatPanel {
         dictationsView.isHidden = true
         dictationsView.setContentHuggingPriority(.defaultLow, for: .vertical)
         dictationsView.onUnreadChanged = { [weak self] _ in self?.styleTabs() }
+        dictationsView.onContinueRequested = { [weak self] id in self?.onContinueDictation?(id) }
         agentsView = AgentsView()
         agentsView.isHidden = true
         agentsView.setContentHuggingPriority(.defaultLow, for: .vertical)

@@ -110,6 +110,9 @@ class MainActivity : Activity() {
     private var ideaMode = false
     private var chatVoiceCapture = false
     private var quickCapture = false     // quick-action: transcript → inbox AND clipboard
+    // Continue-append (ticket #36): history entry id the next recording
+    // appends to; null = normal capture.
+    private var continueTargetId: String? = null
 
     // history / chat
     private lateinit var historyList: LinearLayout
@@ -579,11 +582,13 @@ class MainActivity : Activity() {
             main.post(levelTicker)
             recordStatus.text = when {
                 chatVoiceCapture -> "recording for the assistant… tap to stop"
+                continueTargetId != null -> "recording continuation… tap to stop"
                 quickCapture -> "recording… goes to your inbox + clipboard"
                 ideaMode -> "recording idea… tap to stop"
                 else -> "recording… tap to stop"
             }
         } catch (e: Exception) {
+            continueTargetId = null
             recordStatus.text = "mic error: ${e.message}"
         }
     }
@@ -601,11 +606,14 @@ class MainActivity : Activity() {
         recordRing.background = roundBg(accentDim, 82)
         val forChat = chatVoiceCapture
         val quick = quickCapture
+        val continueId = continueTargetId
         chatVoiceCapture = false
         quickCapture = false
+        continueTargetId = null
         if (file == null) { recordStatus.text = "too short — nothing captured"; return }
         val mode = when {
             forChat -> "assistant"
+            continueId != null -> "continue:$continueId"
             quick -> "quick"
             ideaMode -> "kept"
             else -> "pasted"
@@ -658,10 +666,26 @@ class MainActivity : Activity() {
                 main.post { recordStatus.text = "nothing heard" }
                 continue
             }
-            when (item.mode) {
-                "assistant" -> main.post {
+            when {
+                item.mode == "assistant" -> main.post {
                     chatInput.setText(cleaned)
                     showTab(2)
+                }
+                // Continue-append (ticket #36): join the target entry, which
+                // refreshes its time and marks it unsynced so the next sync
+                // updates the Mac's copy in place. Target gone → plain idea.
+                item.mode.startsWith("continue:") -> {
+                    val target = item.mode.removePrefix("continue:")
+                    val appended = store.appendToDictation(target, cleaned)
+                    if (!appended) store.addDictation(DictationEntry.now(cleaned, "kept"))
+                    main.post {
+                        recordStatus.text = if (appended) "continuation added" else
+                            "original entry gone — captured as a new idea"
+                        lastLabel.text = if (appended) "CONTINUED" else "IDEA"
+                        lastTranscript.text = cleaned
+                        lastCard.visibility = View.VISIBLE
+                        refreshHistory()
+                    }
                 }
                 else -> {
                     // quick-action captures land in the inbox (kept) AND on
@@ -723,9 +747,17 @@ class MainActivity : Activity() {
                     Toast.makeText(this@MainActivity, "Copied", Toast.LENGTH_SHORT).show()
                 }
                 setOnLongClickListener {
-                    startActivity(Intent.createChooser(
-                        Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, e.text),
-                        "Share dictation"))
+                    android.app.AlertDialog.Builder(this@MainActivity)
+                        .setItems(arrayOf("Continue dictation", "Share")) { _, which ->
+                            when (which) {
+                                0 -> startContinue(e.id)
+                                1 -> startActivity(Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND).setType("text/plain")
+                                        .putExtra(Intent.EXTRA_TEXT, e.text),
+                                    "Share dictation"))
+                            }
+                        }
+                        .show()
                     true
                 }
             }
@@ -762,6 +794,18 @@ class MainActivity : Activity() {
                 bottomMargin = dp(10)
             })
         }
+    }
+
+    /// Long-press → Continue (ticket #36): record immediately; the transcript
+    /// appends to this entry instead of creating a new one.
+    private fun startContinue(entryId: String) {
+        if (recorder.isRecording) {
+            Toast.makeText(this, "Already recording", Toast.LENGTH_SHORT).show()
+            return
+        }
+        continueTargetId = entryId
+        showTab(0)
+        toggleRecording()
     }
 
     // ══════════════════════ assistant chat ══════════════════════
