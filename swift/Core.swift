@@ -1174,19 +1174,22 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         // Pin the input to the mic chosen in Settings → Dictation. The system
         // default silently switches to Bluetooth earbuds' (low-quality) mic
         // when they connect.
-        var device: AVCaptureDevice?
         if !preferredMic.isEmpty {
-            device = AVCaptureDevice(uniqueID: preferredMic)
-            if device == nil {
-                vflog("audio: preferred mic \(preferredMic) not connected — using system default")
+            if let preferredDevice = AVCaptureDevice(uniqueID: preferredMic),
+               let setup = makeSession(device: preferredDevice) {
+                return setup
             }
+            vflog("audio: preferred mic \(preferredMic) unavailable — using system default")
         }
-        device = device ?? AVCaptureDevice.default(for: .audio)
-        guard let device else {
+        guard let device = AVCaptureDevice.default(for: .audio) else {
             vflog("audio: no input device available")
             return nil
         }
+        return makeSession(device: device)
+    }
 
+    private func makeSession(device: AVCaptureDevice)
+        -> (session: AVCaptureSession, output: AVCaptureAudioDataOutput)? {
         do {
             let input = try AVCaptureDeviceInput(device: device)
             let session = AVCaptureSession()
