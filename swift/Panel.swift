@@ -469,11 +469,12 @@ final class ChatPanel {
         applyTab(currentTab)
     }
 
-    func addDictation(text: String, time: String,
+    func addDictation(text: String, time: String, timestamp: String? = nil,
                       destination: CaptureDestination = .pasted, seen: Bool? = nil,
                       capability: CaptureCapability? = nil,
                       attachments: [String] = [], captureId: String? = nil) {
-        dictationsView.addEntry(text: text, time: time, destination: destination, seen: seen,
+        dictationsView.addEntry(text: text, time: time, timestamp: timestamp,
+                               destination: destination, seen: seen,
                                capability: capability, attachments: attachments, captureId: captureId)
         styleTabs()
     }

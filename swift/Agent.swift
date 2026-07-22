@@ -410,8 +410,10 @@ final class AgentSession {
         focused question.
 
         Voice Flow keeps its data under ~/.config/voice-flow/:
-        - dictations.json — the user's dictation history, newest first; entries are {text, time, destination} \
-        (time is time-of-day only). "My transcripts" or "my dictations" means this file.
+        - dictations.json — the user's dictation history, newest first; entries are {text, time, timestamp, destination}; \
+        timestamp is the full date-time while time is the preserved display field. "My transcripts" or "my dictations" means this file.
+        - ~/.config/tickets/dictation-cursor.json — the shared processing cursor for dictations; processedThrough is the latest handled timestamp. \
+        Only kept/inbox dictations after that boundary are unprocessed.
         - captures/<id>/transcript.md — recorded demonstration sessions: spoken narration plus ordered \
         screenshot frames (in frames/ beside it); meta.json has timing. Newest <id> sorts last.
         - messages.json — messages assistant sessions have pushed to the user (time, session, text).

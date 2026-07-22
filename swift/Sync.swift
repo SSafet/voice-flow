@@ -18,7 +18,7 @@ final class SyncServer: NSObject {
 
     /// Hops to main and inserts entries into the dictation store
     /// (oldest-first order in, so the newest ends on top).
-    var onDictations: (([(text: String, time: String, destination: String)]) -> Void)?
+    var onDictations: (([(text: String, time: String, timestamp: String?, destination: String)]) -> Void)?
     var onServerMessage: ((String) -> Void)?
     /// A phone completed pairing (device name) — surface a receipt.
     var onPaired: ((String) -> Void)?
@@ -208,7 +208,7 @@ final class SyncServer: NSObject {
         // ── incoming dictations → the live store, deduped ──
         let existing = DictationsView.recentEntries(limit: 500)
         var seen = Set(existing.map { $0.time + "\u{1}" + $0.text })
-        var fresh: [(text: String, time: String, destination: String)] = []
+        var fresh: [(text: String, time: String, timestamp: String?, destination: String)] = []
         for item in (payload["dictations"] as? [[String: Any]]) ?? [] {
             let text = (item["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let time = item["time"] as? String ?? ""
@@ -216,7 +216,10 @@ final class SyncServer: NSObject {
             let key = time + "\u{1}" + text
             guard !seen.contains(key) else { continue }
             seen.insert(key)
-            fresh.append((text: text, time: time, destination: item["kind"] as? String ?? "kept"))
+            let timestamp = item["timestamp"] as? String
+                ?? Self.joinedTimestamp(date: item["date"] as? String, time: time)
+            fresh.append((text: text, time: time, timestamp: timestamp,
+                          destination: item["kind"] as? String ?? "kept"))
         }
         if !fresh.isEmpty {
             let toAdd = fresh
@@ -230,6 +233,7 @@ final class SyncServer: NSObject {
         // ── response: Mac history + settings parity ──
         let recent = DictationsView.recentEntries(limit: 200).map {
             ["text": $0.text, "time": $0.time,
+             "timestamp": $0.timestamp ?? "",
              "destination": ($0.destination ?? .pasted).rawValue] as [String: Any]
         }
         let settings = UserSettings.shared
@@ -249,6 +253,11 @@ final class SyncServer: NSObject {
         ]
         write(fd: fd, status: 200, json: response)
         vflog("sync: +\(fresh.count) dictations, +\(incomingChat.count) chat msgs from phone")
+    }
+
+    private static func joinedTimestamp(date: String?, time: String) -> String? {
+        guard let date, !date.isEmpty, !time.isEmpty else { return nil }
+        return "\(date)T\(time)"
     }
 
     private static func mergeMobileChat(_ incoming: [[String: Any]]) {

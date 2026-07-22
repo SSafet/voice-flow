@@ -88,7 +88,7 @@ class SyncClient(context: Context, private val store: Store, private val keys: K
                 seen.add(key)
                 dictations.add(DictationEntry(
                     java.util.UUID.randomUUID().toString(),
-                    o.optString("time"), "",
+                    o.optString("time"), o.optString("timestamp").take(10),
                     o.optString("text"),
                     o.optString("destination", "pasted"),
                     true,

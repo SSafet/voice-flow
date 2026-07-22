@@ -22,6 +22,7 @@ data class DictationEntry(
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("time", time).put("date", date)
+        .put("timestamp", if (date.isBlank() || time.isBlank()) "" else "${date}T${time}")
         .put("text", text).put("kind", kind).put("synced", synced)
 
     companion object {

@@ -1529,6 +1529,9 @@ enum CaptureDestination: String, Codable {
 struct HistoryEntry: Codable {
     let text: String
     let time: String
+    /// Full creation date-time for processing cursors. Optional so existing
+    /// history continues to decode without rewriting or dropping any fields.
+    var timestamp: String?
     // Optional so pre-redesign dictations.json entries still decode:
     // nil destination = pasted, nil seen = already revisited.
     var destination: CaptureDestination?
@@ -1765,10 +1768,12 @@ final class DictationsView: NSView {
     }
 
     func addEntry(text: String, time: String,
+                  timestamp: String? = nil,
                   destination: CaptureDestination = .pasted, seen: Bool? = nil,
                   capability: CaptureCapability? = nil,
                   attachments: [String] = [], captureId: String? = nil) {
         entries.insert(HistoryEntry(text: text, time: time,
+                                    timestamp: timestamp ?? Self.fullTimestamp(),
                                     destination: destination, seen: seen,
                                     capability: capability,
                                     attachments: attachments.isEmpty ? nil : attachments,
@@ -1778,6 +1783,10 @@ final class DictationsView: NSView {
         styleChips()
         rebuildContent()
         onUnreadChanged?(unrevisitedCount)
+    }
+
+    private static func fullTimestamp() -> String {
+        ISO8601DateFormatter().string(from: Date())
     }
 
     private func rebuildContent() {

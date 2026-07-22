@@ -624,7 +624,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         syncServer.onDictations = { [weak self] entries in
             for e in entries {
                 self?.chatPanel.addDictation(
-                    text: e.text, time: e.time,
+                    text: e.text, time: e.time, timestamp: e.timestamp,
                     destination: CaptureDestination(rawValue: e.destination) ?? .kept,
                     seen: e.destination == CaptureDestination.kept.rawValue ? false : nil)
             }
