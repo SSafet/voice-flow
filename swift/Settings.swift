@@ -291,38 +291,56 @@ private struct APIKeyRow: View {
 private struct DictationSettingsView: View {
     @ObservedObject var store: SettingsStore
     @State private var mics: [(id: String, name: String)] = []
+    // Display selection is decoupled from the stored UID: when the saved mic is
+    // gone the picker shows what will actually record (system default) while the
+    // UID stays saved so the mic is reclaimed on reconnect.
+    @State private var micSelection: String = ""
+    @State private var syncingSelection = false
+
+    private var savedMicConnected: Bool {
+        mics.contains(where: { $0.id == store.micDeviceUID })
+    }
+
+    private func syncMicSelection() {
+        syncingSelection = true
+        micSelection = savedMicConnected ? store.micDeviceUID : ""
+        DispatchQueue.main.async { syncingSelection = false }
+    }
 
     var body: some View {
         Form {
             Section {
-                Picker(selection: $store.micDeviceUID) {
+                Picker(selection: $micSelection) {
                     Text("System default").tag("")
                     ForEach(mics, id: \.id) { mic in
                         Text(mic.name).tag(mic.id)
                     }
-                    if !store.micDeviceUID.isEmpty,
-                       !mics.contains(where: { $0.id == store.micDeviceUID }) {
-                        Text(store.micDeviceName.isEmpty
-                             ? "Disconnected microphone"
-                             : "\(store.micDeviceName) (disconnected)").tag(store.micDeviceUID)
+                    if !store.micDeviceUID.isEmpty, !savedMicConnected {
+                        Text("\(store.micDeviceName.isEmpty ? "Saved microphone" : store.micDeviceName) — disconnected")
+                            .tag("saved-disconnected")
                     }
                 } label: {
                     SettingRowLabel(title: "Record with",
                                     subtitle: "The mic used whenever you dictate or talk")
                 }
-                .onChange(of: store.micDeviceUID) { uid in
-                    if let m = mics.first(where: { $0.id == uid }) {
-                        store.micDeviceName = m.name
-                    } else if uid.isEmpty {
-                        store.micDeviceName = ""
+                .onChange(of: micSelection) { picked in
+                    guard !syncingSelection else { return }
+                    if picked == "saved-disconnected" {
+                        // Informational row: keep showing the actual recorder.
+                        syncMicSelection()
+                        return
                     }
+                    store.micDeviceUID = picked
+                    store.micDeviceName = mics.first(where: { $0.id == picked })?.name ?? ""
                 }
                 .onAppear {
                     AudioRecorder.monitorMicList()
                     mics = AudioRecorder.availableMicrophones()
+                    syncMicSelection()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: AudioRecorder.micListChanged)) { _ in
                     mics = AudioRecorder.availableMicrophones()
+                    syncMicSelection()
                 }
             } header: {
                 Text("Microphone")
