@@ -181,6 +181,8 @@ class UserSettings {
     // per-token billing), falling back to the API key; "api" = key only.
     var agentBackend: String = AgentBackendCodex
     var voiceRepliesEnabled: Bool = false
+    var assistantWakeEnabled: Bool = true
+    var assistantWakeWord: String = DefaultAssistantWakeWord
     // Re-selecting the already-active session (⌃⌥N again / menu) reads its
     // queued messages aloud — pushes themselves never auto-play audio.
     var doubleSelectSpeak: Bool = true
@@ -253,6 +255,10 @@ class UserSettings {
             agentBackend = v == AgentBackendAPI ? AgentBackendAPI : AgentBackendCodex
         }
         if let v = dict["voice_replies_enabled"] as? Bool { voiceRepliesEnabled = v }
+        if let v = dict["assistant_wake_enabled"] as? Bool { assistantWakeEnabled = v }
+        if let v = dict["assistant_wake_word"] as? String {
+            assistantWakeWord = Self.trimmed(v, fallback: DefaultAssistantWakeWord)
+        }
         if let v = dict["double_select_speak"] as? Bool { doubleSelectSpeak = v }
         if let v = dict["workflow_watcher_enabled"] as? Bool { workflowWatcherEnabled = v }
         if let v = dict["watcher_interval_seconds"] as? Int { watcherIntervalSeconds = max(2, v) }
@@ -287,6 +293,8 @@ class UserSettings {
             "agent_base_url": agentBaseURL,
             "agent_backend": agentBackend,
             "voice_replies_enabled": voiceRepliesEnabled,
+            "assistant_wake_enabled": assistantWakeEnabled,
+            "assistant_wake_word": Self.trimmed(assistantWakeWord, fallback: DefaultAssistantWakeWord),
             "double_select_speak": doubleSelectSpeak,
             "workflow_watcher_enabled": workflowWatcherEnabled,
             "watcher_interval_seconds": watcherIntervalSeconds,

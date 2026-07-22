@@ -1672,7 +1672,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let destination: CaptureDestination
         let seen: Bool?
-        switch run.route {
+        let settings = UserSettings.shared
+        let wakePrompt = run.capability == .dictate && settings.assistantWakeEnabled
+            ? AssistantWakeMatcher.prompt(in: note, keyword: settings.assistantWakeWord)
+            : nil
+        let effectiveRoute: CaptureRoute = wakePrompt == nil ? run.route : .assistant
+        switch effectiveRoute {
         case .historyOnly:
             destination = .kept
             seen = false
@@ -1690,11 +1695,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .assistant:
             destination = .assistant
             seen = nil
-            if !chatPanel.isVisible { replyBubble.showThinking(echo: note.isEmpty ? "Screen capture" : note) }
-            chatPanel.addUserMessage(note, attachmentNote: Self.attachmentNote(count: screenshotData.count))
+            let wakeWord = settings.assistantWakeWord
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if wakePrompt != nil {
+                indicator.flashMessage("\(wakeWord.isEmpty ? DefaultAssistantWakeWord : wakeWord) → Assistant",
+                                       seconds: 4)
+            }
+            let assistantNote = wakePrompt ?? note
+            if !chatPanel.isVisible { replyBubble.showThinking(echo: assistantNote.isEmpty ? "Screen capture" : assistantNote) }
+            chatPanel.addUserMessage(assistantNote, attachmentNote: Self.attachmentNote(count: screenshotData.count))
             let assistantText = run.capability == .continuous
                 ? "I recorded a continuous screen capture. Read the ordered screenshots alongside my narration: \(externalText)"
-                : note
+                : assistantNote
             deliverToAgent(assistantText, screenshots: screenshotData, retriesLeft: 2)
         case .session(let sessionId, let interaction):
             destination = .session

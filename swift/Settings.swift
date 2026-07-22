@@ -27,6 +27,8 @@ final class SettingsStore: ObservableObject {
     @Published var agentModel: String { didSet { commit() } }
     @Published var agentBaseURL: String { didSet { commit() } }
     @Published var agentBackend: String { didSet { commit() } }
+    @Published var assistantWakeEnabled: Bool { didSet { commit() } }
+    @Published var assistantWakeWord: String { didSet { commit() } }
     @Published var doubleSelectSpeak: Bool { didSet { commit() } }
     @Published var workflowWatcherEnabled: Bool { didSet { commit() } }
     @Published var watcherInterval: Double { didSet { commit() } }
@@ -66,6 +68,8 @@ final class SettingsStore: ObservableObject {
         agentModel = s.agentModel
         agentBaseURL = s.agentBaseURL
         agentBackend = s.agentBackend
+        assistantWakeEnabled = s.assistantWakeEnabled
+        assistantWakeWord = s.assistantWakeWord
         doubleSelectSpeak = s.doubleSelectSpeak
         workflowWatcherEnabled = s.workflowWatcherEnabled
         watcherInterval = Double(s.watcherIntervalSeconds)
@@ -105,6 +109,9 @@ final class SettingsStore: ObservableObject {
         let url = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         s.agentBaseURL = url.isEmpty ? DefaultAgentBaseURL : url
         s.agentBackend = agentBackend == AgentBackendAPI ? AgentBackendAPI : AgentBackendCodex
+        s.assistantWakeEnabled = assistantWakeEnabled
+        let wakeWord = assistantWakeWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        s.assistantWakeWord = wakeWord.isEmpty ? DefaultAssistantWakeWord : wakeWord
         s.doubleSelectSpeak = doubleSelectSpeak
         s.workflowWatcherEnabled = workflowWatcherEnabled
         s.watcherIntervalSeconds = Int(watcherInterval)
@@ -476,6 +483,11 @@ private struct AssistantSettingsView: View {
         return CodexExecBackend.isLoggedIn ? "Signed in with ChatGPT" : "Installed — not signed in"
     }
 
+    private var displayedWakeWord: String {
+        let word = store.assistantWakeWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        return word.isEmpty ? DefaultAssistantWakeWord : word
+    }
+
     var body: some View {
         Form {
             Section {
@@ -531,6 +543,27 @@ private struct AssistantSettingsView: View {
                 }
             } header: {
                 Text("Intelligence")
+            }
+
+            Section {
+                Toggle(isOn: $store.assistantWakeEnabled) {
+                    SettingRowLabel(title: "Wake the Assistant by voice",
+                                    subtitle: "Start a normal dictation with the wake word to send it to the Assistant")
+                }
+                LabeledContent {
+                    TextField("", text: $store.assistantWakeWord,
+                              prompt: Text(DefaultAssistantWakeWord))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 180)
+                        .multilineTextAlignment(.trailing)
+                        .disabled(!store.assistantWakeEnabled)
+                } label: {
+                    SettingRowLabel(title: "Wake word")
+                }
+            } header: {
+                Text("Voice wake")
+            } footer: {
+                Text("Say “\(displayedWakeWord), …” anywhere. Voice Flow strips the wake word and sends the rest to your active Assistant conversation instead of pasting it.")
             }
 
             Section {
