@@ -8,6 +8,7 @@ from unittest import mock
 import numpy as np
 
 from voice_flow import backend
+from voice_flow.openai_transcriber import _is_prompt_echo, _transcription_prompt
 
 
 class _Local:
@@ -22,16 +23,21 @@ class _Local:
 
 class _Cleaner:
     is_loaded = True
+    last_kwargs = None
 
     def load(self):
         pass
 
-    def clean(self, raw, vocabulary=None):
+    def clean(self, raw, **kwargs):
+        type(self).last_kwargs = kwargs
         return raw
 
 
 class _OpenAI:
+    last_kwargs = None
+
     def transcribe(self, audio, **kwargs):
+        type(self).last_kwargs = kwargs
         return "hello"
 
 
@@ -60,6 +66,10 @@ def _audio():
 
 
 class BackendProtocolTests(unittest.TestCase):
+    def setUp(self):
+        _Cleaner.last_kwargs = None
+        _OpenAI.last_kwargs = None
+
     def test_final_result_echoes_capture_run_id(self):
         events = _run({
             "cmd": "transcribe",
@@ -76,6 +86,34 @@ class BackendProtocolTests(unittest.TestCase):
             "raw": "hello",
             "cleaned": "hello",
         })
+
+    def test_wake_word_reaches_cloud_transcription(self):
+        _run({
+            "cmd": "transcribe",
+            "request_id": "run-wake",
+            "audio_b64": _audio(),
+            "provider": "openai",
+            "openai_api_key": "test",
+            "wake_word": "FLORA",
+        })
+        self.assertEqual(_OpenAI.last_kwargs["wake_word"], "FLORA")
+
+    def test_wake_word_reaches_local_cleanup(self):
+        _run({
+            "cmd": "transcribe",
+            "request_id": "run-local-wake",
+            "audio_b64": _audio(),
+            "provider": "local",
+            "wake_word": "FLORA",
+        })
+        self.assertEqual(_Cleaner.last_kwargs["wake_word"], "FLORA")
+
+    def test_cloud_prompt_preserves_exact_wake_script(self):
+        prompt = _transcription_prompt(["Anthropic"], "FLORA")
+        self.assertIn('written exactly as "FLORA"', prompt)
+        self.assertIn("even when the surrounding speech uses another language", prompt)
+        self.assertIn("Correct spellings: Anthropic", prompt)
+        self.assertTrue(_is_prompt_echo(prompt, ["Anthropic"], "FLORA"))
 
     def test_partial_result_echoes_run_and_sequence_ids(self):
         events = _run({

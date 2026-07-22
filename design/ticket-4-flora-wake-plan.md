@@ -53,6 +53,7 @@ flowchart LR
 | `SettingsStore` / Assistant form | Extend | Bind an enable toggle and wake-word field; an empty edited word normalizes back to `FLORA`. |
 | `AssistantWakeMatcher` | Net-new pure seam | Compare a trimmed transcript against a trimmed keyword case-insensitively, require a whitespace/punctuation boundary, then strip delimiter punctuation/space and return a non-empty prompt. |
 | `maybeDeliverCapture` | Extend | For enabled `.dictate` runs only, evaluate the matcher before the frozen-route switch. A match uses the existing Assistant delivery seam with the stripped prompt and a FLORA receipt; no match preserves the switch byte-for-byte in behavior. |
+| Transcription hint | Extend | Send the enabled wake name separately from user vocabulary. Cloud STT receives an exact-spelling/script instruction; local cleanup receives the same invariant. |
 | Snapshot, continuous, MCP, paste target, `CaptureRouter` | Unchanged | Ticket scope is normal Dictate only; route creation and correlation remain immutable. |
 
 ## First slice
@@ -125,6 +126,11 @@ conversation schema changes.
 
 None. Safet selected FLORA; enabled-by-default follows the requested hands-free
 outcome and remains reversible through the toggle.
+
+QA follow-up: multilingual dictation uses a layered policy. The recognizer is
+instructed to retain the configured wake name's exact spelling and script, while
+the default FLORA matcher also accepts prefix-only `ФЛОРА` as a deterministic
+fallback. The Cyrillic noun elsewhere in a dictation is never rewritten.
 
 ## Assumptions
 

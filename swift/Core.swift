@@ -1505,7 +1505,8 @@ class BackendBridge {
         requestId: String,
         skipCleanup: Bool = false,
         openAIAPIKey: String? = nil,
-        vocabulary: [String] = []
+        vocabulary: [String] = [],
+        wakeWord: String? = nil
     ) {
         let b64 = pcmData.base64EncodedString()
         var msg: [String: Any] = [
@@ -1524,6 +1525,9 @@ class BackendBridge {
         if !vocabulary.isEmpty {
             msg["vocabulary"] = vocabulary
         }
+        if let wakeWord, !wakeWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            msg["wake_word"] = wakeWord
+        }
         send(msg)
     }
 
@@ -1534,7 +1538,8 @@ class BackendBridge {
         runId: String,
         requestId: Int,
         openAIAPIKey: String? = nil,
-        vocabulary: [String] = []
+        vocabulary: [String] = [],
+        wakeWord: String? = nil
     ) {
         let b64 = pcmData.base64EncodedString()
         var msg: [String: Any] = [
@@ -1550,6 +1555,9 @@ class BackendBridge {
         }
         if !vocabulary.isEmpty {
             msg["vocabulary"] = vocabulary
+        }
+        if let wakeWord, !wakeWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            msg["wake_word"] = wakeWord
         }
         send(msg)
     }

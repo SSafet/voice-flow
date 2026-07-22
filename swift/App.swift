@@ -1510,7 +1510,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 requestId: id.uuidString,
                 skipCleanup: provider != .local || !settings.llmCleanupEnabled,
                 openAIAPIKey: openAIAPIKey,
-                vocabulary: settings.customVocabulary)
+                vocabulary: settings.customVocabulary,
+                wakeWord: settings.assistantWakeEnabled ? settings.assistantWakeWord : nil)
         }
     }
 
@@ -1568,7 +1569,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             runId: id.uuidString,
             requestId: partialRequestId,
             openAIAPIKey: openAIAPIKey,
-            vocabulary: settings.customVocabulary
+            vocabulary: settings.customVocabulary,
+            wakeWord: settings.assistantWakeEnabled ? settings.assistantWakeWord : nil
         )
     }
 

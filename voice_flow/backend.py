@@ -71,6 +71,7 @@ def main():
             provider = cmd.get("provider", "openai")
             openai_api_key = cmd.get("openai_api_key", "")
             vocabulary = cmd.get("vocabulary") or []
+            wake_word = str(cmd.get("wake_word") or "").strip() or None
             try:
                 # Prefer base64 PCM (no file I/O), fall back to WAV path
                 if audio_b64:
@@ -92,6 +93,7 @@ def main():
                         api_key=openai_api_key,
                         sample_rate=sample_rate,
                         vocabulary=vocabulary or None,
+                        wake_word=wake_word,
                     )
                 else:
                     if not transcriber.is_loaded:
@@ -112,7 +114,8 @@ def main():
                 else:
                     if not cleaner.is_loaded:
                         _send({"event": "status", "message": "Loading cleanup LLM..."})
-                    cleaned = cleaner.clean(raw, vocabulary=vocabulary or None)
+                    cleaned = cleaner.clean(
+                        raw, vocabulary=vocabulary or None, wake_word=wake_word)
 
                 _send({"event": "result", "request_id": request_id, "raw": raw, "cleaned": cleaned})
             except Exception as e:
@@ -133,6 +136,7 @@ def main():
             openai_api_key = cmd.get("openai_api_key", "")
             request_id = cmd.get("request_id", 0)
             vocabulary = cmd.get("vocabulary") or []
+            wake_word = str(cmd.get("wake_word") or "").strip() or None
             try:
                 if not audio_b64:
                     _send({"event": "partial_result", "run_id": run_id, "text": "", "request_id": request_id})
@@ -149,6 +153,7 @@ def main():
                         api_key=openai_api_key,
                         sample_rate=sample_rate,
                         vocabulary=vocabulary or None,
+                        wake_word=wake_word,
                     )
                 else:
                     if not transcriber.is_loaded:

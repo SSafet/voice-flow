@@ -20,6 +20,10 @@ expectEqual(
     "structure this",
     "punctuation delimiters must be stripped before the prompt")
 expectEqual(
+    AssistantWakeMatcher.prompt(in: "Флора, подреди тези мисли", keyword: "FLORA"),
+    "подреди тези мисли",
+    "Bulgarian STT spelling must wake the default FLORA name")
+expectEqual(
     AssistantWakeMatcher.prompt(in: "Hey Flora, help me", keyword: "Hey Flora"),
     "help me",
     "configurable wake phrases must match as one prefix")
@@ -29,6 +33,9 @@ expectEqual(
 expectEqual(
     AssistantWakeMatcher.prompt(in: "I asked FLORA to help", keyword: "FLORA"), nil,
     "the wake word must occur at the start")
+expectEqual(
+    AssistantWakeMatcher.prompt(in: "Обичам местната флора", keyword: "FLORA"), nil,
+    "the Bulgarian noun away from the prefix must remain ordinary dictation")
 expectEqual(
     AssistantWakeMatcher.prompt(in: "FLORA", keyword: "FLORA"), nil,
     "a wake word without a prompt must not override delivery")

@@ -25,6 +25,7 @@ class OpenAITranscriber:
         api_key: str,
         sample_rate: int = SAMPLE_RATE,
         vocabulary: list[str] | None = None,
+        wake_word: str | None = None,
     ) -> str:
         if not api_key.strip():
             raise ValueError("Missing OpenAI API key")
@@ -36,8 +37,9 @@ class OpenAITranscriber:
             "model": self.model_name,
             "response_format": "json",
         }
-        if vocabulary:
-            fields["prompt"] = "Correct spellings: " + ", ".join(vocabulary)
+        prompt = _transcription_prompt(vocabulary, wake_word)
+        if prompt:
+            fields["prompt"] = prompt
 
         body, content_type = _build_multipart_body(
             fields=fields,
@@ -74,7 +76,7 @@ class OpenAITranscriber:
         text = str(payload.get("text", "")).strip()
         if text.lower().strip(".,!?") in FILLER_ONLY:
             return ""
-        if vocabulary and _is_prompt_echo(text, vocabulary):
+        if _is_prompt_echo(text, vocabulary, wake_word):
             return ""
         return text
 
@@ -83,7 +85,28 @@ def _normalize(s: str) -> str:
     return " ".join(re.sub(r"[^\w\s'-]", " ", s.lower()).split())
 
 
-def _is_prompt_echo(text: str, vocabulary: list[str]) -> bool:
+def _transcription_prompt(
+    vocabulary: list[str] | None,
+    wake_word: str | None,
+) -> str:
+    parts: list[str] = []
+    wake_word = (wake_word or "").strip()
+    if wake_word:
+        parts.append(
+            f'The assistant wake name is written exactly as "{wake_word}". '
+            f'Preserve the spelling and script "{wake_word}" even when the '
+            "surrounding speech uses another language."
+        )
+    if vocabulary:
+        parts.append("Correct spellings: " + ", ".join(vocabulary))
+    return " ".join(parts)
+
+
+def _is_prompt_echo(
+    text: str,
+    vocabulary: list[str] | None,
+    wake_word: str | None,
+) -> bool:
     """On short or unintelligible audio the model completes the vocabulary
     prompt instead of transcribing, pasting the keyword list at the user.
     An echo is a verbatim run of the prompt — real dictation that merely
@@ -92,8 +115,10 @@ def _is_prompt_echo(text: str, vocabulary: list[str]) -> bool:
     t = _normalize(text)
     if not t:
         return False
-    if "correct spellings" in t:
+    if "assistant wake name" in t or "correct spellings" in t:
         return True
+    if not vocabulary:
+        return False
     hits = sum(1 for w in vocabulary if _normalize(w) and _normalize(w) in t)
     if hits < 2:
         return False

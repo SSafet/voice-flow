@@ -12,12 +12,23 @@ enum AssistantWakeMatcher {
     static func prompt(in transcript: String, keyword: String) -> String? {
         let candidate = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedKeyword = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !candidate.isEmpty, !normalizedKeyword.isEmpty,
-              let match = candidate.range(
-                of: normalizedKeyword,
-                options: [.anchored, .caseInsensitive, .diacriticInsensitive]) else {
-            return nil
+        guard !candidate.isEmpty, !normalizedKeyword.isEmpty else { return nil }
+
+        var acceptedKeywords = [normalizedKeyword]
+        if normalizedKeyword.compare(
+            DefaultAssistantWakeWord,
+            options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame {
+            // Bulgarian-language STT may render the proper name in Cyrillic
+            // despite the cloud hint. Keep this fallback prefix-only so the
+            // ordinary noun “флора” elsewhere in a dictation is untouched.
+            acceptedKeywords.append("ФЛОРА")
         }
+
+        guard let match = acceptedKeywords.lazy.compactMap({ accepted in
+            candidate.range(
+                of: accepted,
+                options: [.anchored, .caseInsensitive, .diacriticInsensitive])
+        }).first else { return nil }
 
         let remainder = candidate[match.upperBound...]
         guard let first = remainder.first,
