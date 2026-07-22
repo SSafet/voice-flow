@@ -1657,7 +1657,7 @@ class FloatingTranscriptPanel {
 //  ~/.config/voice-flow/dictations.json so history survives restarts.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-final class DictationsView: NSView {
+final class DictationsView: NSView, NSGestureRecognizerDelegate {
     /// The Inbox filters — views over HistoryEntry.destination.
     private enum InboxFilter: Int, CaseIterable {
         case all, kept, pasted, assistant
@@ -1941,8 +1941,19 @@ final class DictationsView: NSView {
         ])
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(cardClicked(_:)))
+        click.delegate = self
         card.addGestureRecognizer(click)
         return card
+    }
+
+    /// Let a click over the VISIBLE Continue button reach the button itself
+    /// (native press + action) instead of being consumed by the card's
+    /// copy recognizer. An invisible button never captures the click.
+    func gestureRecognizerShouldBegin(_ gesture: NSGestureRecognizer) -> Bool {
+        guard let card = gesture.view as? InboxCard,
+              let btn = card.hoverAction, btn.alphaValue > 0.5,
+              let host = btn.superview else { return true }
+        return !btn.frame.contains(gesture.location(in: host))
     }
 
     /// Click = copy (green flash) and, for an unrevisited brain dump,
@@ -1977,6 +1988,7 @@ final class DictationsView: NSView {
     /// Hover "Continue": pin down the entry's stable id (assigning one to a
     /// pre-#36 entry on first use), then hand it to the capture pipeline.
     @objc private func continueClicked(_ sender: NSButton) {
+        guard sender.alphaValue > 0.5 else { return }
         let index = sender.tag
         guard index >= 0, index < entries.count else { return }
         if entries[index].id == nil {
@@ -1984,6 +1996,15 @@ final class DictationsView: NSView {
             DictationsView.saveEntries(entries)
         }
         guard let id = entries[index].id else { return }
+        // Toggle feedback: recording-in-progress shows as Stop; the rebuild
+        // after the transcript lands resets the row to a fresh Continue.
+        if sender.state == .on {
+            sender.state = .off
+            sender.title = "Continue"
+        } else {
+            sender.state = .on
+            sender.title = "Stop"
+        }
         onContinueRequested?(id)
     }
 
@@ -2585,14 +2606,28 @@ final class InboxCard: HoverCardView {
     weak var textLabel: NSTextField?
     /// Revealed on hover, hidden on exit (the Continue affordance, ticket #36).
     weak var hoverAction: NSButton?
+    /// Scroll can move rows under a stationary cursor, firing enters without
+    /// matching exits — a single app-wide slot guarantees at most one revealed
+    /// button. A button mid-recording (state .on) stays visible regardless.
+    private static weak var revealedAction: NSButton?
 
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
+        if let previous = InboxCard.revealedAction, previous !== hoverAction,
+           previous.state != .on {
+            previous.alphaValue = 0
+        }
+        InboxCard.revealedAction = hoverAction
         hoverAction?.alphaValue = 1
     }
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
-        hoverAction?.alphaValue = 0
+        if let btn = hoverAction, btn.state != .on {
+            btn.alphaValue = 0
+        }
+        if InboxCard.revealedAction === hoverAction {
+            InboxCard.revealedAction = nil
+        }
     }
 }
 
