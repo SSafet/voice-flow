@@ -1920,8 +1920,8 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
         textLabel.translatesAutoresizingMaskIntoConstraints = false
 
         // Hover-only "Continue" (ticket #36): dictate more into this entry.
-        let continueBtn = NSButton(title: "Continue", target: self,
-                                   action: #selector(continueClicked(_:)))
+        let continueBtn = PaddedInlineButton(title: "Continue", target: self,
+                                             action: #selector(continueClicked(_:)))
         continueBtn.bezelStyle = .inline
         continueBtn.font = .systemFont(ofSize: 11)
         continueBtn.tag = index
@@ -2596,6 +2596,17 @@ class HoverCardView: NSView {
     override func mouseExited(with event: NSEvent) {
         layer?.backgroundColor = Theme.card.cgColor
         layer?.borderColor = Theme.border.cgColor
+    }
+}
+
+/// Inline-bezel button whose border keeps breathing room around the title
+/// (the stock inline bezel hugs the text).
+final class PaddedInlineButton: NSButton {
+    override var intrinsicContentSize: NSSize {
+        var size = super.intrinsicContentSize
+        size.width += 16
+        size.height += 6
+        return size
     }
 }
 
