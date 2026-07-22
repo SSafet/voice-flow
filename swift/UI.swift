@@ -1713,15 +1713,15 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
         chipsRow.spacing = 6
         chipsRow.translatesAutoresizingMaskIntoConstraints = false
         for f in InboxFilter.allCases {
-            let chip = NSButton(title: f.label, target: self, action: #selector(chipTapped(_:)))
+            let chip = PaddedInlineButton(title: f.label, target: self, action: #selector(chipTapped(_:)))
             chip.tag = f.rawValue
             chip.isBordered = false
             chip.font = .systemFont(ofSize: 10.5, weight: .semibold)
             chip.wantsLayer = true
-            chip.layer?.cornerRadius = 9
+            chip.layer?.cornerRadius = 10
             chip.layer?.borderWidth = 1
             chip.translatesAutoresizingMaskIntoConstraints = false
-            chip.heightAnchor.constraint(equalToConstant: 18).isActive = true
+            chip.heightAnchor.constraint(equalToConstant: 20).isActive = true
             chipButtons.append(chip)
             chipsRow.addArrangedSubview(chip)
         }
