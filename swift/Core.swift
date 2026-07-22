@@ -168,6 +168,7 @@ class UserSettings {
     // CoreAudio device UID of the preferred dictation microphone
     // ("" = follow the system default input).
     var micDeviceUID: String = ""
+    var micDeviceName: String = ""
 
     // Assistant (agent sessions)
     var captureIntervalSeconds: Int = 2
@@ -259,6 +260,7 @@ class UserSettings {
         if let v = dict["watcher_keep_days"] as? Int { watcherKeepDays = max(3, v) }
         if let v = dict["watcher_camera_id"] as? String { watcherCameraId = v }
         if let v = dict["mic_device_uid"] as? String { micDeviceUID = v }
+        if let v = dict["mic_device_name"] as? String { micDeviceName = v }
         if let v = dict["custom_vocabulary"] as? [String] {
             customVocabulary = v.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
@@ -292,6 +294,7 @@ class UserSettings {
             "watcher_keep_days": watcherKeepDays,
             "watcher_camera_id": watcherCameraId,
             "mic_device_uid": micDeviceUID,
+            "mic_device_name": micDeviceName,
             "custom_vocabulary": customVocabulary,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted) {

@@ -17,6 +17,7 @@ final class SettingsStore: ObservableObject {
 
     @Published var provider: DictationProvider { didSet { commit() } }
     @Published var micDeviceUID: String { didSet { commit() } }
+    @Published var micDeviceName: String { didSet { commit() } }
     @Published var soundsEnabled: Bool { didSet { commit() } }
     @Published var llmCleanupEnabled: Bool { didSet { commit() } }
     @Published var vocabularyText: String { didSet { commit() } }
@@ -55,6 +56,7 @@ final class SettingsStore: ObservableObject {
         let s = UserSettings.shared
         provider = s.dictationProvider
         micDeviceUID = s.micDeviceUID
+        micDeviceName = s.micDeviceName
         soundsEnabled = s.soundsEnabled
         llmCleanupEnabled = s.llmCleanupEnabled
         vocabularyText = s.customVocabulary.joined(separator: ", ")
@@ -88,6 +90,7 @@ final class SettingsStore: ObservableObject {
         let s = UserSettings.shared
         s.dictationProvider = provider
         s.micDeviceUID = micDeviceUID
+        s.micDeviceName = micDeviceName
         s.soundsEnabled = soundsEnabled
         s.llmCleanupEnabled = llmCleanupEnabled
         s.customVocabulary = vocabularyText
@@ -299,11 +302,20 @@ private struct DictationSettingsView: View {
                     }
                     if !store.micDeviceUID.isEmpty,
                        !mics.contains(where: { $0.id == store.micDeviceUID }) {
-                        Text("Disconnected microphone").tag(store.micDeviceUID)
+                        Text(store.micDeviceName.isEmpty
+                             ? "Disconnected microphone"
+                             : "\(store.micDeviceName) (disconnected)").tag(store.micDeviceUID)
                     }
                 } label: {
                     SettingRowLabel(title: "Record with",
                                     subtitle: "The mic used whenever you dictate or talk")
+                }
+                .onChange(of: store.micDeviceUID) { uid in
+                    if let m = mics.first(where: { $0.id == uid }) {
+                        store.micDeviceName = m.name
+                    } else if uid.isEmpty {
+                        store.micDeviceName = ""
+                    }
                 }
                 .onAppear {
                     AudioRecorder.monitorMicList()
