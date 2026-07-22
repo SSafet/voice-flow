@@ -230,7 +230,7 @@ class FloatingIndicator: NSObject {
     private let W: CGFloat = 52, H: CGFloat = 18
     private let DOT_R: CGFloat = 3, DOT_SP: CGFloat = 11
 
-    private var panel: NSPanel!
+    private var panel: KeyablePanel!
     /// Holds the whole classic pill (background, rings, dots) so the panel
     /// can grow around it without touching any dot animation.
     private var capsuleLayer: CALayer!
@@ -295,6 +295,10 @@ class FloatingIndicator: NSObject {
     var onGrownSpeak: ((String) -> Void)?
     var onGrownTrash: (() -> Void)?
     var onGrownClose: (() -> Void)?
+    /// Clicking grown Assistant content deep-links into its conversation;
+    /// session pushes keep their close-and-keep behavior in AppDelegate.
+    var onGrownClick: (() -> Void)?
+    var onEscape: (() -> Void)?
     private var grownBackdropLayer: CALayer!
     private var grownStatusLabel: NSTextField!
     private var grownHintLabel: NSTextField!
@@ -634,6 +638,14 @@ class FloatingIndicator: NSObject {
         collapseToPill()
     }
 
+    /// User-originated close (padding click, Escape, or the x icon). Unlike
+    /// hideGrown(), this runs the close-and-keep bookkeeping callback.
+    func dismissGrown() {
+        guard mode == .grown else { return }
+        onGrownClose?()
+        hideGrown()
+    }
+
     private func collapseToPill() {
         transitionGeneration += 1
         let generation = transitionGeneration
@@ -891,8 +903,7 @@ class FloatingIndicator: NSObject {
     }
 
     @objc private func grownCloseTapped() {
-        onGrownClose?()
-        hideGrown()
+        dismissGrown()
     }
 
     func show() {
@@ -910,16 +921,24 @@ class FloatingIndicator: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.ignoresMouseEvents = false
         panel.isReleasedWhenClosed = false
+        panel.onEscape = { [weak self] in
+            guard let self else { return }
+            if let onEscape = self.onEscape {
+                onEscape()
+            } else if self.isGrownVisible {
+                self.dismissGrown()
+            } else {
+                self.collapseNow()
+            }
+        }
 
         let rootView = IndicatorView(frame: NSRect(x: 0, y: 0, width: W, height: H))
         rootView.onClick = { [weak self] in
             guard let self else { return }
-            // Grown content (a session's stack) stays a pill-flow surface:
-            // clicking its padding puts it away like ✕ (stack kept) and
-            // NEVER yanks the user into the panel (Safet QA, ticket #15).
-            // A collapsed pill / receipt / picker click still opens the app.
+            // AppDelegate distinguishes Assistant replies (open the exact
+            // conversation) from session pushes (close-and-keep, ticket #15).
             if self.isGrownVisible {
-                self.collapseNow()
+                self.onGrownClick?()
                 return
             }
             self.collapseNow()
@@ -1039,7 +1058,10 @@ class FloatingIndicator: NSObject {
         grownHintLabel.isHidden = true
         rootView.addSubview(grownHintLabel)
 
-        grownTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: grownWidth - 24, height: 24))
+        let grownContent = GrownTextView(
+            frame: NSRect(x: 0, y: 0, width: grownWidth - 24, height: 24))
+        grownContent.onClick = { [weak self] in self?.onGrownClick?() }
+        grownTextView = grownContent
         grownTextView.isEditable = false
         grownTextView.isSelectable = true
         grownTextView.drawsBackground = false
@@ -1510,6 +1532,17 @@ class IndicatorView: NSView {
     override func mouseDown(with event: NSEvent) { onClick?() }
     override func rightMouseDown(with event: NSEvent) {
         onRightClick?(self, convert(event.locationInWindow, from: nil))
+    }
+}
+
+/// A normal selectable reply body: a simple click opens the Assistant, while
+/// dragging to select text remains available and does not trigger navigation.
+private final class GrownTextView: NSTextView {
+    var onClick: (() -> Void)?
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        if selectedRange().length == 0 { onClick?() }
     }
 }
 

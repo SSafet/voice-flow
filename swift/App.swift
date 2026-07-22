@@ -288,6 +288,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         indicator = FloatingIndicator()
         indicator.onClick = { [weak self] in self?.chatPanel.toggle() }
+        indicator.onGrownClick = { [weak self] in self?.handleGrownPillClick() }
+        indicator.onEscape = { [weak self] in self?.handleVoiceFlowEscape() }
         indicator.onShowHistory = { [weak self] in self?.toggleHistory() }
         indicator.onToggleSession = { [weak self] in self?.toggleSession() }
         indicator.onToggleWatcher = { [weak self] in self?.toggleWorkflowWatcher() }
@@ -451,6 +453,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.replyBubble.showTransient("Assistant session deleted", seconds: 4)
         }
         chatPanel.onSendText = { [weak self] text in self?.sendTypedMessage(text) }
+        chatPanel.onEscape = { [weak self] in self?.handleVoiceFlowEscape() }
         chatPanel.onContinueDictation = { [weak self] entryId in
             self?.continueDictation(appendingTo: entryId)
         }
@@ -715,12 +718,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Escape is the panic button while the agent is acting.
+        // Escape remains the panic button while the agent acts outside Voice
+        // Flow. Focused Voice Flow panels route Escape through KeyablePanel.
         escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.keyCode == 53, self.agent.activity == .acting else { return }
-            self.agent.interrupt()
-            self.stopSpeechPlayback()
-            self.chatPanel.addNote("Stopped by Escape")
+            self.handleVoiceFlowEscape()
         }
     }
 
@@ -1220,6 +1222,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // ── Sending to the agent ────────────────────────────
+
+    /// A grown Assistant response is a compact doorway back into that exact
+    /// conversation. MCP/session pushes retain their close-and-keep contract.
+    private func handleGrownPillClick() {
+        if currentPushSessionId != nil {
+            indicator.dismissGrown()
+            return
+        }
+        guard agent != nil else { return }
+        chatPanel.restoreAssistantConversation(agent.currentConversation, open: true)
+        chatPanel.show()
+    }
+
+    /// Escape closes whichever Voice Flow surface owns focus and preserves its
+    /// existing safety role when the Assistant is controlling the screen.
+    private func handleVoiceFlowEscape() {
+        if annotationOverlay?.isEditing == true {
+            annotationOverlay.endEditing()
+            return
+        }
+        if agent?.activity == .acting {
+            agent.interrupt()
+            stopSpeechPlayback()
+            chatPanel.addNote("Stopped by Escape")
+        }
+        if chatPanel?.isVisible == true { chatPanel.hide() }
+        if indicator?.isGrownVisible == true {
+            indicator.dismissGrown()
+        } else {
+            indicator?.collapseNow()
+        }
+    }
 
     private func sendTypedMessage(_ text: String) {
         if let interaction = pendingInteraction {

@@ -30,6 +30,7 @@ final class ChatPanel {
     var onNewAssistant: (() -> Void)?
     var onOpenAssistantSession: ((String) -> Void)?
     var onDeleteAssistant: (() -> Void)?
+    var onEscape: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenSession: ((String) -> Void)?
     /// Continue tapped on a Dictations row (ticket #36) — entry id to append to.
@@ -515,6 +516,7 @@ final class ChatPanel {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true
+        panel.onEscape = { [weak self] in self?.onEscape?() }
 
         // Solid dark, per the approved mock — the HUD blur washed the text
         // out over bright pages (Safet's Instagram screenshot). A whisper of
@@ -933,7 +935,20 @@ final class ChatPanel {
 }
 
 final class KeyablePanel: NSPanel {
+    var onEscape: (() -> Void)?
     override var canBecomeKey: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 {
+            onEscape?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        onEscape?()
+    }
 }
 
 private final class ChatInputField: NSTextField {
