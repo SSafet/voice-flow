@@ -59,6 +59,16 @@ enum SnapshotState {
     }
 }
 
+enum GrownConversationFocus {
+    /// A grown Assistant reply is a visible conversation even though it has
+    /// no MCP session id. Session push stacks retain their existing id route.
+    static func resolve(routesToAssistant: Bool, sessionId: String?) -> ConversationFocus {
+        if routesToAssistant { return .assistant }
+        if let sessionId { return .session(sessionId) }
+        return .none
+    }
+}
+
 struct CaptureRun {
     let id: UUID
     let capability: CaptureCapability

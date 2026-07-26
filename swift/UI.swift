@@ -291,6 +291,10 @@ class FloatingIndicator: NSObject {
         var earlier: [String] = []
         var hint: String?
         var isAsk = false
+        /// True only for the in-app Assistant's compact reply surface. This
+        /// lets capture routing continue that conversation without treating
+        /// unrelated grown notices as Assistant context.
+        var routesToAssistant = false
     }
     var onGrownSpeak: ((String) -> Void)?
     var onGrownTrash: (() -> Void)?
@@ -308,6 +312,10 @@ class FloatingIndicator: NSObject {
     private var iconTrash: NSButton!
     private var iconClose: NSButton!
     private var grownStreaming = false
+    var isGrownAssistantConversationVisible: Bool {
+        mode == .grown && grownRoutesToAssistant
+    }
+    private var grownRoutesToAssistant = false
     private let grownWidth: CGFloat = 400
     private let grownMaxTextHeight: CGFloat = 320
 
@@ -651,6 +659,7 @@ class FloatingIndicator: NSObject {
         let generation = transitionGeneration
         let wasExpanded = expandedSize
         mode = .pill
+        grownRoutesToAssistant = false
         expandTimer?.invalidate()
         expandTimer = nil
         resumeAutoHideOnIdle = false
@@ -733,6 +742,7 @@ class FloatingIndicator: NSObject {
         let previousWindowW = panelSize.width
         let previousCapsule = capsuleLayer.frame
         mode = .grown
+        grownRoutesToAssistant = spec.routesToAssistant
         transitionGeneration += 1
 
         grownStatusLabel.stringValue = spec.title ?? ""
@@ -767,8 +777,11 @@ class FloatingIndicator: NSObject {
     }
 
     /// Streamed replies: open empty, append deltas, finish with full text.
-    func beginGrownStream(title: String?) {
-        showGrown(GrownSpec(title: title ?? "Replying…", text: ""))
+    func beginGrownStream(title: String?, routesToAssistant: Bool = false) {
+        showGrown(GrownSpec(
+            title: title ?? "Replying…",
+            text: "",
+            routesToAssistant: routesToAssistant))
         grownStreaming = true
     }
 

@@ -75,4 +75,11 @@ expect(CaptureCorrelation.resolve(requestId: nil, runs: runs) == nil,
 expect(CaptureCorrelation.resolve(requestId: nil, runs: [r1: run1]) == r1,
        "legacy ID-less result may resolve only when exactly one run is pending")
 
+expect(GrownConversationFocus.resolve(routesToAssistant: true, sessionId: nil) == .assistant,
+       "a grown Assistant reply must keep contextual dictation in the Assistant conversation")
+expect(GrownConversationFocus.resolve(routesToAssistant: false, sessionId: "session-1") == .session("session-1"),
+       "a grown MCP push stack must keep its session route")
+expect(GrownConversationFocus.resolve(routesToAssistant: false, sessionId: nil) == .none,
+       "an unrelated grown notice must not become Assistant context")
+
 print("capture routing tests passed")

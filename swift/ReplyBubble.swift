@@ -34,11 +34,12 @@ final class ReplyBubble {
     func showThinking(echo: String?) {
         indicator.showGrown(FloatingIndicator.GrownSpec(
             title: "Thinking…",
-            text: echo.map { "You: \($0)" } ?? ""))
+            text: echo.map { "You: \($0)" } ?? "",
+            routesToAssistant: true))
     }
 
     func beginStreaming() {
-        indicator.beginGrownStream(title: "Replying…")
+        indicator.beginGrownStream(title: "Replying…", routesToAssistant: true)
     }
 
     func appendDelta(_ delta: String) {
@@ -57,13 +58,14 @@ final class ReplyBubble {
     }
 
     func showNote(_ text: String) {
-        showMessage(from: nil, text: text)
+        indicator.showGrown(FloatingIndicator.GrownSpec(
+            title: nil, text: text, routesToAssistant: true))
     }
 
     /// Legacy action-button variant — buttons are gone (the corner icons
     /// took their place); the text still shows.
     func showNote(_ text: String, actionTitle: String?, action: (() -> Void)?) {
-        showMessage(from: nil, text: text)
+        showNote(text)
     }
 
     /// Short receipts flash as a one-line stretch of the pill. Skipped

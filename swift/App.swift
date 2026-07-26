@@ -1402,8 +1402,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func visibleConversationFocus() -> ConversationFocus {
         if chatPanel.isVisible { return chatPanel.conversationFocus }
-        if indicator.isGrownVisible, let id = currentPushSessionId { return .session(id) }
-        return .none
+        guard indicator.isGrownVisible else { return .none }
+        return GrownConversationFocus.resolve(
+            routesToAssistant: indicator.isGrownAssistantConversationVisible,
+            sessionId: currentPushSessionId)
     }
 
     /// Continue-append (ticket #36): record through the normal kept pipeline
