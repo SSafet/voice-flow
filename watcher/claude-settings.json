@@ -4,11 +4,23 @@
       "Read",
       "Glob",
       "Grep",
-      "Write",
-      "Edit",
       "WebSearch",
+      "Write(./ledger.md)",
+      "Edit(./ledger.md)",
+      "Write(./reviews/**)",
+      "Edit(./reviews/**)",
+      "Write(./proposals/**)",
+      "Edit(./proposals/**)",
       "Bash(python3:*)",
       "mcp__voice-flow"
+    ],
+    "deny": [
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.claude/**)",
+      "Read(**/.env*)",
+      "Read(**/id_rsa*)"
     ]
   }
 }

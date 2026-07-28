@@ -9,8 +9,10 @@
         <string>__HOME__/.local/bin/claude</string>
         <string>-p</string>
         <string>Read ANALYZE.md in this directory and follow it exactly.</string>
+        <string>--permission-mode</string>
+        <string>manual</string>
         <string>--allowedTools</string>
-        <string>Read,Glob,Grep,Write,Edit,WebSearch,Bash(python3:*),mcp__voice-flow</string>
+        <string>Read,Glob,Grep,WebSearch,Write(./ledger.md),Edit(./ledger.md),Write(./reviews/**),Edit(./reviews/**),Write(./proposals/**),Edit(./proposals/**),Bash(python3:*),mcp__voice-flow</string>
     </array>
     <key>WorkingDirectory</key>
     <string>__HOME__/.config/voice-flow/watcher</string>

@@ -43,6 +43,7 @@ echo -n "${VF_PROJECT_DIR:-$PROJECT_DIR}" > "$APP_DEST/Contents/Resources/projec
 # Bundle Python source so the app is self-contained
 rm -rf "$APP_DEST/Contents/Resources/voice_flow"
 cp -R "$PROJECT_DIR/voice_flow" "$APP_DEST/Contents/Resources/voice_flow"
+find "$APP_DEST/Contents/Resources/voice_flow" -type d -name __pycache__ -prune -exec rm -rf {} +
 
 # ── compile Swift ──────────────────────────────────────
 echo "  Compiling Swift..."
@@ -89,9 +90,17 @@ else
     echo "  Signing with: $SIGN_ID"
 fi
 
-codesign --force --sign "$SIGN_ID" --identifier "com.voiceflow.app" \
+SIGN_TIMESTAMP_ARGS=()
+if [ "$SIGN_ID" != "-" ]; then
+    # Developer ID defaults to requesting Apple's timestamp service. This is
+    # a local installation, so keep the stable identity without making install
+    # availability depend on that external service.
+    SIGN_TIMESTAMP_ARGS=(--timestamp=none)
+fi
+
+codesign --force "${SIGN_TIMESTAMP_ARGS[@]}" --sign "$SIGN_ID" --identifier "com.voiceflow.app" \
     "$APP_DEST/Contents/MacOS/voice-flow"
-codesign --force --deep --sign "$SIGN_ID" "$APP_DEST"
+codesign --force --deep "${SIGN_TIMESTAMP_ARGS[@]}" --sign "$SIGN_ID" "$APP_DEST"
 
 # ── deploy watcher assets ──────────────────────────────
 # Canonical sources for the workflow-watcher pieces that live outside the
@@ -105,7 +114,25 @@ LA_PLIST="$HOME/Library/LaunchAgents/$LA_NAME.plist"
 mkdir -p "$WATCHER_DATA/.claude" "$HOME/Library/LaunchAgents" \
     "$HOME/.claude/skills/screenwatch" "$HOME/.codex/skills/screenwatch"
 cp "$WATCHER_SRC/ANALYZE.md"                "$WATCHER_DATA/ANALYZE.md"
+cp "$WATCHER_SRC/CONSUMING.md"              "$WATCHER_DATA/CONSUMING.md"
 cp "$WATCHER_SRC/claude-settings.json"      "$WATCHER_DATA/.claude/settings.json"
+# Sources live OUTSIDE the watcher data dir on purpose. That directory is an
+# archive the nightly agent writes into; sources are configuration, and will
+# eventually hold executables the app runs with its own TCC grants. Keeping
+# them apart means a compromised review cannot author a source.
+SOURCES_DATA="$HOME/.config/voice-flow/sources"
+mkdir -p "$SOURCES_DATA"
+rsync -a --delete "$WATCHER_SRC/sources/"   "$SOURCES_DATA/"
+rm -rf "$WATCHER_DATA/sources"
+# Design docs travel with the deployment so the nightly review can consult the
+# roadmap's kill-list before proposing a "watcher upgrade" that was already
+# measured and rejected.
+mkdir -p "$WATCHER_DATA/docs"
+rsync -a --delete "$WATCHER_SRC/docs/"      "$WATCHER_DATA/docs/"
+# The ledger is the review's accumulated memory and the one thing here that
+# cannot be rebuilt — seed it only when starting from nothing, NEVER overwrite.
+[ -f "$WATCHER_DATA/ledger.md" ] || cp "$WATCHER_SRC/ledger-seed.md" "$WATCHER_DATA/ledger.md"
+mkdir -p "$WATCHER_DATA/reviews"
 cp "$WATCHER_SRC/screenwatch-skill/SKILL.md" "$HOME/.claude/skills/screenwatch/SKILL.md"
 cp "$WATCHER_SRC/screenwatch-skill/SKILL.md" "$HOME/.codex/skills/screenwatch/SKILL.md"
 sed "s|__HOME__|$HOME|g" "$WATCHER_SRC/$LA_NAME.plist" > "$LA_PLIST"

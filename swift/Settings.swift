@@ -34,6 +34,7 @@ final class SettingsStore: ObservableObject {
     @Published var watcherInterval: Double { didSet { commit() } }
     @Published var watcherIdlePause: Double { didSet { commit() } }
     @Published var watcherKeepDays: Double { didSet { commit() } }
+    @Published var watcherActionsEnabled: Bool { didSet { commit() } }
     @Published var watcherCameraId: String { didSet { commit() } }
 
     // Keychain state
@@ -75,6 +76,7 @@ final class SettingsStore: ObservableObject {
         watcherInterval = Double(s.watcherIntervalSeconds)
         watcherIdlePause = Double(s.watcherIdlePauseSeconds)
         watcherKeepDays = Double(s.watcherKeepDays)
+        watcherActionsEnabled = s.watcherActionsEnabled
         watcherCameraId = s.watcherCameraId
         hasOpenAIKey = KeychainStore.shared.hasOpenAIAPIKey
         hasAgentKey = KeychainStore.shared.hasAgentAPIKey
@@ -117,6 +119,7 @@ final class SettingsStore: ObservableObject {
         s.watcherIntervalSeconds = Int(watcherInterval)
         s.watcherIdlePauseSeconds = Int(watcherIdlePause)
         s.watcherKeepDays = Int(watcherKeepDays)
+        s.watcherActionsEnabled = watcherActionsEnabled
         s.watcherCameraId = watcherCameraId
         s.save()
         onSettingsChanged?()
@@ -609,6 +612,15 @@ private struct WatcherSettingsView: View {
                 Text("Screen Watcher")
             } footer: {
                 Text("Logs the frontmost app, window title, and browser page every few seconds, plus a screenshot when the screen changed. Pauses while you're idle or the screen is locked. Everything stays on this Mac in ~/.config/voice-flow/watcher.")
+            }
+
+            Section {
+                Toggle(isOn: $store.watcherActionsEnabled) {
+                    SettingRowLabel(title: "Record what I do, not just what's on screen",
+                                    subtitle: "Typing, clicks, scrolls and shortcuts, as readable actions")
+                }
+            } footer: {
+                Text("Turns raw input into one line per action \u{2014} \u{201C}typed \u{2026}\u{201D}, \u{201C}clicked\u{201D}, \u{201C}scrolled\u{201D} \u{2014} which is what tells reading a reply apart from writing one. Typed text is saved as written, except in terminals, password fields, password managers and short number entries, which are recorded as a length only. Takes effect immediately; turning it off stops the capture at once.")
             }
 
             Section("Capture") {

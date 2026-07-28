@@ -7,27 +7,45 @@ import Foundation
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 enum ImageUtils {
+    /// Downscale so the long edge is at most `maxDimension` PIXELS, then JPEG.
+    ///
+    /// This used to size the target from `NSImage.size`, which is in points,
+    /// and render through `lockFocus`, whose backing store is allocated at the
+    /// deepest attached screen's scale factor. On a Retina Mac both halves of
+    /// that compounded: asking for 1568 wrote a 3136 px file, ~3.6x the bytes
+    /// for pixels the vision path immediately throws away. Everything now goes
+    /// through one explicit CGContext at an exact pixel size.
     static func compress(_ data: Data, maxDimension: CGFloat = 1568, quality: CGFloat = 0.7) -> Data? {
-        guard let image = NSImage(data: data) else { return nil }
-        let size = image.size
-        let scale: CGFloat
-        if max(size.width, size.height) > maxDimension {
-            scale = maxDimension / max(size.width, size.height)
-        } else {
-            scale = 1.0
-        }
-        let newSize = NSSize(width: size.width * scale, height: size.height * scale)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        return jpeg(from: image, maxDimension: maxDimension, quality: quality)
+    }
 
-        let resized = NSImage(size: newSize)
-        resized.lockFocus()
-        NSGraphicsContext.current?.imageInterpolation = .high
-        image.draw(in: NSRect(origin: .zero, size: newSize))
-        resized.unlockFocus()
+    /// The same downscale-and-encode straight off a CGImage — no intermediate
+    /// TIFF, which is the expensive part of the old path.
+    static func jpeg(from image: CGImage, maxDimension: CGFloat = 1568, quality: CGFloat = 0.7) -> Data? {
+        let w = CGFloat(image.width), h = CGFloat(image.height)
+        guard w > 0, h > 0 else { return nil }
+        let scale = min(1.0, maxDimension / max(w, h))
+        let outW = max(1, Int((w * scale).rounded()))
+        let outH = max(1, Int((h * scale).rounded()))
 
-        guard let tiff = resized.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff) else { return nil }
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: outW, height: outH,
+                                  bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: colorSpace,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: outW, height: outH))
+        guard let scaled = ctx.makeImage() else { return nil }
 
-        return rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil)
+        else { return nil }
+        CGImageDestinationAddImage(dest, scaled, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return out as Data
     }
 
     /// Resize to an exact pixel size (JPEG). Used for agent screenshots so
@@ -116,16 +134,37 @@ enum ImageUtils {
 final class ScreenCapture {
 
     func captureScreen(on target: DisplayContext? = nil) async throws -> Data {
+        let image = try await captureImage(on: target)
+        guard let data = cgImageToData(image) else { throw CaptureError.conversionFailed }
+        return data
+    }
+
+    /// Prefer this over `captureScreen` when the caller is going to resize,
+    /// diff, or encode anyway — it skips a full uncompressed TIFF round trip.
+    ///
+    /// `excludeOwnWindows` is opt-in and belongs to the ambient watcher alone.
+    /// Every other caller NEEDS Voice Flow's own windows in frame: the agent
+    /// screenshot path photographs the annotation canvas, the guide overlays
+    /// and the shapes drawn by `annotate_screen`, all of which are in-process
+    /// panels. Excluding them globally would silently return blank annotations.
+    func captureImage(on target: DisplayContext? = nil,
+                      excludeOwnWindows: Bool = false) async throws -> CGImage {
         let display = target ?? DisplayTopology.primary
         do {
-            return try await captureWithSCKit(on: display)
+            return try await captureWithSCKit(on: display, excludeOwnWindows: excludeOwnWindows)
         } catch let error as NSError where error.code == -3801 {
             NSLog("[VF] SCKit denied, falling back to screencapture CLI")
-            return try await captureWithCLI(on: display)
+            let data = try await captureWithCLI(on: display)
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                throw CaptureError.conversionFailed
+            }
+            return image
         }
     }
 
-    private func captureWithSCKit(on target: DisplayContext?) async throws -> Data {
+    private func captureWithSCKit(on target: DisplayContext?,
+                                  excludeOwnWindows: Bool = false) async throws -> CGImage {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
         guard let display = target.flatMap({ wanted in
@@ -134,24 +173,30 @@ final class ScreenCapture {
             throw CaptureError.noDisplay
         }
 
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        // Keep Voice Flow out of its own frames — for the ambient watcher only.
+        // Without it the watcher photographs the panel and reply bubbles, and
+        // the nightly review reads its own earlier output back as observed
+        // activity. Never do this for the agent paths, whose whole subject is
+        // often an in-process overlay.
+        var excluded: [SCWindow] = []
+        if excludeOwnWindows {
+            let ownPID = ProcessInfo.processInfo.processIdentifier
+            excluded = content.windows.filter { $0.owningApplication?.processID == ownPID }
+        }
+        let filter = SCContentFilter(display: display, excludingWindows: excluded)
         let config = SCStreamConfiguration()
 
-        let scale = target?.backingScaleFactor ?? 2.0
-        config.width = Int(display.width) * Int(scale) / 2
-        config.height = Int(display.height) * Int(scale) / 2
+        // Capture at the display's own geometry. This was `* scale / 2`, which
+        // on a 1x external display halved the resolution outright.
+        config.width = Int(display.width)
+        config.height = Int(display.height)
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = false
 
-        let image = try await SCScreenshotManager.captureImage(
+        return try await SCScreenshotManager.captureImage(
             contentFilter: filter,
             configuration: config
         )
-
-        guard let data = cgImageToData(image) else {
-            throw CaptureError.conversionFailed
-        }
-        return data
     }
 
     private func captureWithCLI(on target: DisplayContext?) async throws -> Data {

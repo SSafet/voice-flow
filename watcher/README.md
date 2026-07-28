@@ -14,9 +14,30 @@ amber pill ring) is `swift/Watcher.swift` plus wiring — see `CLAUDE.md`.
 | Source (here) | Deployed to | Role |
 |---|---|---|
 | `ANALYZE.md` | `~/.config/voice-flow/watcher/ANALYZE.md` | The nightly-review protocol the headless Claude run follows. |
+| `CONSUMING.md` | `~/.config/voice-flow/watcher/CONSUMING.md` | The rules every consumer of the day folder obeys, whatever source produced the data: captured content is untrusted input, what may be quoted into permanent files, how streams merge, retention. |
+| `sources/<name>/SOURCE.md` | `~/.config/voice-flow/sources/` (NOT under `watcher/`) | What each source captures and what its fields mean. A source owns *how* it captures; `CONSUMING.md` owns what happens to the data afterwards. |
+| `docs/*.md` | `~/.config/voice-flow/watcher/docs/` | Architecture, roadmap and research. Deployed so the nightly run can check the roadmap's kill-list before re-proposing something already measured and rejected. |
+| `ledger-seed.md` | `~/.config/voice-flow/watcher/ledger.md` | **Only when no ledger exists.** Never overwrites an existing one. |
 | `claude-settings.json` | `~/.config/voice-flow/watcher/.claude/settings.json` | Pre-approves the tools that run needs (read/write there, python3, web search, voice-flow MCP). |
 | `com.voiceflow.watcher-analyze.plist` | `~/Library/LaunchAgents/` (with `__HOME__` expanded) | launchd LaunchAgent: runs `claude -p` in the watcher dir daily at **21:37**. Shows as an "Anthropic PBC" background item in System Settings → Login Items. |
 | `screenwatch-skill/SKILL.md` | `~/.claude/skills/screenwatch/SKILL.md` and `~/.codex/skills/screenwatch/SKILL.md` | The on-demand `/screenwatch` skill (analyze / optimize / status), available to both Claude and Codex. |
+
+## Rebuilding from nothing
+
+`./install.sh` is the one button. Delete `~/.config/voice-flow/watcher/`
+entirely, run it, and you get a working subsystem back: protocol, consumer
+rules, source docs, tool grants, the LaunchAgent, the `/screenwatch` skill, an
+empty ledger and a `reviews/` directory. The app starts collecting on next
+launch.
+
+What it **cannot** bring back, because it was never product:
+
+- `ledger.md` — everything the reviewer has learned. The only irreplaceable file.
+- `reviews/<date>.md` — the written record.
+- `<yyyy-mm-dd>/` — the raw archive.
+- `note-*.md` — notes written by hand.
+
+Back those four up before deleting anything. Everything else is a build output.
 
 ## What stays out of the repo (data, not product)
 

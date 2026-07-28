@@ -194,6 +194,22 @@ class UserSettings {
     var watcherKeepDays: Int = 30
     // AVCaptureDevice uniqueID of the optional body camera ("" = off).
     var watcherCameraId: String = ""
+    // Coalesced input actions (actions.jsonl) — what was DONE, alongside the
+    // tick stream's what was ON SCREEN. Rides on the Accessibility grant the
+    // hotkeys already use; passive, never consumes an event.
+    var watcherActionsEnabled: Bool = true
+    // Changed 64px blocks (of ~150) that make a frame worth keeping. Lower
+    // keeps more frames — the point of the archive is having the picture, so
+    // this is deliberately more sensitive than the old whole-screen mean.
+    var watcherDiffBlocks: Int = 2
+    // Longest gap without a frame while one of watcherDenseApps is frontmost,
+    // however still the pixels look. 0 disables the floor.
+    var watcherDenseSeconds: Int = 15
+    // Apps whose window title says nothing ("Claude", "ChatGPT") and whose
+    // pixels change too subtly to trip a diff — where the log goes blind.
+    var watcherDenseApps: [String] = [
+        "com.anthropic.claudefordesktop", "com.openai.chat", "notion.id",
+    ]
 
     private let url: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
@@ -265,6 +281,13 @@ class UserSettings {
         if let v = dict["watcher_idle_pause_seconds"] as? Int { watcherIdlePauseSeconds = max(30, v) }
         if let v = dict["watcher_keep_days"] as? Int { watcherKeepDays = max(3, v) }
         if let v = dict["watcher_camera_id"] as? String { watcherCameraId = v }
+        if let v = dict["watcher_actions_enabled"] as? Bool { watcherActionsEnabled = v }
+        if let v = dict["watcher_diff_blocks"] as? Int { watcherDiffBlocks = max(1, v) }
+        if let v = dict["watcher_dense_seconds"] as? Int { watcherDenseSeconds = max(0, v) }
+        if let v = dict["watcher_dense_apps"] as? [String] {
+            watcherDenseApps = v.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
         if let v = dict["mic_device_uid"] as? String { micDeviceUID = v }
         if let v = dict["mic_device_name"] as? String { micDeviceName = v }
         if let v = dict["custom_vocabulary"] as? [String] {
@@ -301,6 +324,10 @@ class UserSettings {
             "watcher_idle_pause_seconds": watcherIdlePauseSeconds,
             "watcher_keep_days": watcherKeepDays,
             "watcher_camera_id": watcherCameraId,
+            "watcher_actions_enabled": watcherActionsEnabled,
+            "watcher_diff_blocks": watcherDiffBlocks,
+            "watcher_dense_seconds": watcherDenseSeconds,
+            "watcher_dense_apps": watcherDenseApps,
             "mic_device_uid": micDeviceUID,
             "mic_device_name": micDeviceName,
             "custom_vocabulary": customVocabulary,
@@ -1462,6 +1489,9 @@ class BackendBridge {
         proc.executableURL = URL(fileURLWithPath: python)
         proc.arguments = ["-m", "voice_flow.backend"]
         proc.currentDirectoryURL = URL(fileURLWithPath: moduleDir)
+        var environment = ProcessInfo.processInfo.environment
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        proc.environment = environment
 
         let inPipe = Pipe()
         let outPipe = Pipe()
