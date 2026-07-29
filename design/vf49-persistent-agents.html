@@ -96,12 +96,30 @@
 </head>
 <body>
 
-<h1>VF-49 — persistent assistants: named specialists that survive</h1>
+<h1>VF-49 — the persistent assistant: FLORA that survives</h1>
 <p class="sub">Everything here is derived from what shipped and retained users — sources in
 <span style="color:var(--accent); font-style:italic">amber italics</span>; the evidence base is
 <b>research/vf49-persistent-agents-landscape.md</b> (43 products, 6 clusters). The one-line model:
 <b>an assistant is a folder of markdown</b> — addressed by name, scoped by allowlist, remembered in files you can
-open, run as fresh sessions, reporting into the same pill you already read with VF-48's player and consumption.</p>
+open, run as fresh sessions, reporting into the same pill you already read with VF-48's player and consumption.
+Roster decision: <b>FLORA only</b> — the model supports more, but exactly one exists.</p>
+
+<div class="decision" style="max-width:920px; margin-top:18px;"><b>The definition — what makes an agent
+"persistent".</b> An agent is persistent when it <b>survives the conversation</b>: quit the app, come back in a
+week, and it still knows four things —<br>
+<b>1 · WHO it is</b> — a stable name and address whose identity outlives every session (you talk to "the same
+FLORA", however many sessions ran in between).<br>
+<b>2 · WHAT it knows</b> — memory that accumulates across interactions and is curated (consolidated, deduped,
+superseded) — not transcript scrollback. What you tell it today shapes its answer next month.<br>
+<b>3 · WHAT it's for</b> — standing instructions, tools, and data sources that never need restating: its job
+description is authored once and evolves, instead of being re-explained per chat.<br>
+<b>4 · WHAT it was doing</b> — standing intentions: triggers whose runs continue incrementally (run N+1 reads run
+N's notes) instead of starting from zero.<br>
+Persistence lives in <b>data — the folder — never in a running process</b>; sessions stay cheap and disposable.
+And it is NOT: a persona (those died), a daemon, or open-ended autonomy (that failed everywhere).
+Today's FLORA has 1 and conversation-resume; VF-49 gives her 2, 3 as files you can open, and 4.
+<span class="rec">This is Altman's "constantly running proactive AI over your context" made concrete by what
+actually shipped: identity + curated memory + standing scope + incremental triggers.</span></div>
 
 <h2>0 · What is borrowed from where</h2>
 <table>
@@ -119,27 +137,28 @@ open, run as fresh sessions, reporting into the same pill you already read with 
 <h2>1 · An assistant is a folder — the whole definition, readable in one screen</h2>
 <div class="row">
   <div class="file">
-    <div class="path">~/.config/voice-flow/assistants/nutra/assistant.md</div>
+    <div class="path">~/.config/voice-flow/assistants/flora/assistant.md</div>
     <pre>---
-<span class="k">name:</span> <span class="v">Nutra</span>
-<span class="k">description:</span> <span class="v">family meals &amp; nutrition. Route me
-  anything about food, menus, or the kids' diet.</span>
-<span class="k">tools:</span> <span class="v">notion (Food DB, Meals page), web-search</span>
+<span class="k">name:</span> <span class="v">FLORA</span>
+<span class="k">description:</span> <span class="v">Safet's assistant — organizing thoughts,
+  filing work, recalling decisions.</span>
+<span class="k">tools:</span> <span class="v">notion (boards, todos), web-search,
+  voice-flow (dictations, captures)</span>
 <span class="k">sources:</span>
-  <span class="v">- notion:nutrition-kb</span>   <span class="cm"># when: any food/menu question</span>
-  <span class="v">- dictations</span>           <span class="cm"># when: told "as I said"</span>
+  <span class="v">- dictations</span>        <span class="cm"># when: filing intake, "as I said"</span>
+  <span class="v">- watcher-archive</span>   <span class="cm"># when: asked about my day / time</span>
 <span class="k">triggers:</span>
-  <span class="v">- "Sunday 18:00 — draft next week's family menu"</span>
+  <span class="v">- "09:00 — file overnight dictations to the boards"</span>
 <span class="k">autonomy:</span> <span class="v">ask-first</span>      <span class="cm"># acts only after confirmation</span>
 <span class="k">voice:</span> <span class="v">shimmer</span>          <span class="cm"># her sound in the player</span>
 <span class="k">model:</span> <span class="v">default</span>
 ---
-You are the family nutritionist. Approaches and foods
-come ONLY from the approved-by-nutriciologist pages in
-the knowledge base — never invent regimes. Age bands:
-6–12m, 12–24m, toddlers, adults. Prefer BG-seasonal
-ingredients. Flag any conflict with the approved list
-instead of resolving it yourself.</pre>
+You are FLORA. Answer from your memory and Safet's
+data before reasoning from scratch — and say WHEN you
+learned a fact when recalling decisions. File things
+where they belong (VF board, Pantrella board, todos,
+logs); ask on genuine ambiguity instead of guessing.
+Never invent facts your files don't back.</pre>
   </div>
   <div class="ann">
     <div><b>name + description</b> — the description doubles as the routing trigger, exactly like
@@ -160,64 +179,60 @@ instead of resolving it yourself.</pre>
 
 <h2>2 · Addressing — the name rides the dictation you already have</h2>
 <div class="row">
-  <div class="stage wide"><div class="label"><b>Speak the name first</b> — "Nutra, what should the kids eat this
-      week?" The leading name routes the capture to that assistant, FLORA-style; the receipt confirms.
-      <span class="src">Generalizes the shipped AssistantWakeMatcher from 1 name to N.</span></div>
-    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--accent)">Nutra ← what should the kids eat this week…</span></div></div></div>
+  <div class="stage wide"><div class="label"><b>Speak the name first</b> — "FLORA, what did we decide about the
+      waitlist gate?" Routing is EXACTLY today's shipped wake word — nothing changes here with a one-assistant
+      roster; no-name captures keep their current behavior.</div>
+    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--accent)">FLORA ← what did we decide about the waitlist…</span></div></div></div>
 
-  <div class="stage wide"><div class="label"><b>Her reply, in her session</b> — the grown pill carries the assistant
-      identity; the VF-48 player reads it in HER voice. Same surface, nothing new to learn.
-      <span class="src">ChatGPT @-mention: specialist answers inside the flow you're in.</span></div>
+  <div class="stage wide"><div class="label"><b>Her reply — this is what persistent MEANS</b> — she answers from her
+      memory files, and says when she learned it. You told her once, weeks ago, in a conversation that's long gone.
+      The VF-48 player reads it in her voice.</div>
     <div class="screen tall">
       <div class="shape grown tts" style="width: 400px;">
         <div class="content">
-          <div class="status">Nutra — week menu</div>
-          <div class="msg bright">Monday: lentil stew for everyone; purée the toddler's portion. Tuesday is a fish day…</div>
+          <div class="status">FLORA</div>
+          <div class="msg bright">On July 22nd you decided the waitlist gate stays on until the next cohort ships. That cohort moved to early August, so it's still on.</div>
         </div>
         <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
       </div>
     </div></div>
 
-  <div class="stage wide"><div class="label"><b>Panel · Agents</b> — assistants are persistent named rows above the
-      Claude sessions (the existing Assistant row pattern, multiplied). Sessions come and go; assistants stay.
+  <div class="stage wide"><div class="label"><b>Panel · Agents</b> — FLORA keeps her persistent first row (exactly
+      today's pattern); sessions come and go beneath her. Her row preview carries what her last run did.
       Timestamps only here, per the panel remarks.</div>
     <div class="screen tall">
       <div style="width:300px; margin-bottom:8px; background:var(--shape); border:1px solid #2e2a26; border-radius:10px; padding:8px 10px; font-size:11.5px;">
-        <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text);"><span>≋&nbsp;&nbsp;Nutra</span><span style="color:var(--text3)">09:12</span></div>
-        <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text);"><span>≋&nbsp;&nbsp;Scribe — 3 tickets filed</span><span style="color:var(--text3)">09:00</span></div>
-        <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text2);"><span>≋&nbsp;&nbsp;Watcher</span><span style="color:var(--text3)">yest 21:37</span></div>
+        <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text);"><span>≋&nbsp;&nbsp;FLORA — 3 tickets filed, 1 needs you</span><span style="color:var(--text3)">09:00</span></div>
         <div style="border-top:1px solid #2a2724; margin:4px 0;"></div>
         <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text2);"><span>1&nbsp;&nbsp;voice-flow — routing</span><span style="color:var(--text3)">14:07</span></div>
         <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text2);"><span>2&nbsp;&nbsp;pantrella — deploy</span><span style="color:var(--text3)">13:44</span></div>
       </div>
     </div></div>
 
-  <div class="stage wide"><div class="label"><b>The picker stays honest</b> — an assistant claims a dot only when it
-      has something for you (a push, an ask, a running job) — same "connecting is not engaging" rule sessions follow.
-      Assistant dots wear the waveform ≋ instead of a number; ⌃⌥ numbers stay with sessions.</div>
+  <div class="stage wide"><div class="label"><b>The picker is unchanged</b> — with a one-assistant roster there is
+      nothing new to learn here: FLORA surfaces through her panel row and her pushes, exactly as the Assistant does
+      today. (The ≋-dot grammar for multiple assistants is shelved until a second one ever exists.)</div>
     <div class="screen"><div class="shape stretch"><div class="picker">
       <span class="lbl">sessions</span>
-      <i class="dot numoff">1</i><i class="dot num">2</i>
-      <span style="color:#3a352f">·</span>
-      <i class="dot numoff unread" style="font-size:9px">≋</i>
+      <i class="dot numoff">1</i><i class="dot num">2</i><i class="dot numoff unread">3</i>
       <span class="title-line" style="margin-left:6px">pantrella</span>
     </div></div></div></div>
 </div>
 
 <h2>3 · Triggered runs — persistent means it works while you don't</h2>
 <div class="row">
-  <div class="stage wide"><div class="label"><b>A scheduled run reports</b> — Scribe ran at 09:00, filed the overnight
-      dictations, pushed ONE receipt. No screen takeover, no audio. You read or play it when you want.
-      <span class="src">Pulse's overnight cards; Zapier's activity feed; the pill's own law.</span></div>
-    <div class="screen"><div class="shape stretch"><span class="title-line">Scribe · 3 tickets filed, 1 needs you — ⌃⌥ picker</span></div></div></div>
+  <div class="stage wide"><div class="label"><b>A scheduled run reports</b> — FLORA's 09:00 trigger (one line in her
+      definition) filed the overnight dictations and pushed ONE receipt. No screen takeover, no audio. You read or
+      play it when you want. <span class="src">Pulse's overnight cards; Zapier's activity feed; the pill's own law.</span></div>
+    <div class="screen"><div class="shape stretch"><span class="title-line">FLORA · 3 tickets filed, 1 needs you</span></div></div></div>
 
-  <div class="stage wide"><div class="label"><b>A background ask</b> — one intake item was ambiguous; Scribe pauses
+  <div class="stage wide"><div class="label"><b>A background ask</b> — one intake item was ambiguous; FLORA pauses
       THAT item and asks. The ask pulses (VF-48 alarm tier) until answered; the rest of the run finished fine.
       <span class="src">Dust's ask-clarifying-by-default; Lindy's confirmation pause. Structural, not polite.</span></div>
     <div class="screen tall">
       <div class="shape grown idle ask" style="width: 400px;">
         <div class="content">
-          <div class="status">Scribe asks</div>
+          <div class="status">FLORA asks</div>
           <div class="msg bright">"Fix the pill" — is that Voice Flow (VF board) or a Pantrella UI note?</div>
           <div class="hint">hold Fn to answer · or it waits in the panel</div>
         </div>
@@ -225,16 +240,15 @@ instead of resolving it yourself.</pre>
       </div>
     </div></div>
 
-  <div class="stage wide"><div class="label"><b>Every background system stays visible</b> — Settings → Assistants:
-      per-assistant toggle (kill switch), last run, next run, run cap, and "open folder". Nothing invisible ever runs.
+  <div class="stage wide"><div class="label"><b>Every background system stays visible</b> — Settings → Assistant
+      gains FLORA's triggers: toggle (kill switch), last run, next run, run cap, "open folder". Nothing invisible
+      ever runs. The nightly watcher review stays what it is — a plain scheduled job, not an assistant.
       <span class="src">Your own surface-invisible-systems rule; OpenClaw's crisis is why.</span></div>
     <div class="screen tall">
       <div style="width:330px; margin-bottom:8px; background:var(--shape); border:1px solid #2e2a26; border-radius:10px; padding:10px 12px; font-size:11.5px;">
-        <div style="display:flex; justify-content:space-between; color:var(--text); padding:3px 0;"><span>Scribe</span><span style="color:var(--green)">on · ran 09:00 · next 09:00</span></div>
-        <div style="display:flex; justify-content:space-between; color:var(--text); padding:3px 0;"><span>Watcher</span><span style="color:var(--green)">on · ran 21:37 · next 21:37</span></div>
-        <div style="display:flex; justify-content:space-between; color:var(--text); padding:3px 0;"><span>Nutra</span><span style="color:var(--text3)">on · Sunday 18:00</span></div>
-        <div style="display:flex; justify-content:space-between; color:var(--text2); padding:3px 0;"><span>Librarian</span><span style="color:var(--text3)">off</span></div>
-        <div style="color:var(--text3); font-size:10.5px; padding-top:6px;">runs cap 4/day each · missed runs queue to wake · open assistants folder</div>
+        <div style="color:var(--text2); font-size:10.5px; padding-bottom:4px;">FLORA · triggers</div>
+        <div style="display:flex; justify-content:space-between; color:var(--text); padding:3px 0;"><span>09:00 — file overnight dictations</span><span style="color:var(--green)">on · ran 09:00 · next tomorrow</span></div>
+        <div style="color:var(--text3); font-size:10.5px; padding-top:6px;">run cap 4/day · missed runs queue to wake · open FLORA's folder</div>
       </div>
     </div></div>
 </div>
@@ -242,17 +256,17 @@ instead of resolving it yourself.</pre>
 <h2>4 · Memory you can open</h2>
 <div class="row">
   <div class="file" style="width:440px">
-    <div class="path">assistants/nutra/memory/core.md&nbsp;&nbsp;·&nbsp;&nbsp;capped ~200 lines, always loaded</div>
-    <pre><span class="k">## The family</span>
-<span class="v">- toddler (14m): no honey, dairy OK — confirmed 2026-06-12</span>
-<span class="v">- Safet: cutting, ~2300 kcal weekdays</span>  <span class="cm">(stated 2026-07-02)</span>
+    <div class="path">assistants/flora/memory/core.md&nbsp;&nbsp;·&nbsp;&nbsp;capped ~200 lines, always loaded</div>
+    <pre><span class="k">## Decisions</span>
+<span class="v">- waitlist gate stays ON until next cohort ships</span> <span class="cm">(2026-07-22)</span>
+<span class="v">- watcher: morning Slack block is deliberate, client week</span> <span class="cm">(2026-07-29)</span>
 
 <span class="k">## Standing rules</span>
-<span class="v">- fish twice a week; BG-seasonal veg preferred</span>
-<span class="v">- NEVER suggest regimes outside the approved KB pages</span>
+<span class="v">- ambiguous intake: ask, never guess the board</span>
+<span class="v">- recalling a decision: always say when I learned it</span>
 
 <span class="k">## Superseded</span>
-<span class="v">- ~~2000 kcal target~~ → 2300, changed 2026-07-02</span></pre>
+<span class="v">- ~~next cohort mid-July~~ → early August</span> <span class="cm">(changed 2026-07-25)</span></pre>
   </div>
   <div class="ann">
     <div><b>Written by the assistant, readable by you.</b> Every fact is date-stamped; a change supersedes,
@@ -260,42 +274,33 @@ instead of resolving it yourself.</pre>
     <div><b>Nightly consolidation.</b> The 21:37 pass extends per-assistant: dedupe, resolve contradictions,
       expire stale facts, promote repeated observations into the core.
       <span class="src">Letta sleep-time · OpenAI Dreaming V3 · your watcher ledger — three independent convergences.</span></div>
-    <div><b>Isolation.</b> Nutra never reads Scribe's memory. Sharing is an explicit line in the definition.
+    <div><b>Scoped.</b> FLORA's memory is hers — separate from the global about-you layer (SAFET.md-style), which
+      sits above her. The model keeps hard per-assistant isolation for whenever a second assistant ever exists.
       <span class="src">ChatGPT Projects' fenced memory — shipped because users demanded it.</span></div>
     <div><b>The global layer.</b> Facts about YOU (SAFET.md-style) sit above all assistants; per-assistant memory
       overrides it locally. Its update path is an open decision below.</div>
   </div>
 </div>
 
-<h2>5 · The starter roster — few, bounded, checkable (all from your own tickets)</h2>
+<h2>5 · The roster — resolved: FLORA only</h2>
 <div class="roster">
-  <div class="rcard"><h4><span class="k2">Watcher</span> — the workflow analyst</h4>
-    Already exists: the 21:37 nightly review becomes the first NAMED assistant. Gains: a memory folder (its ledger),
-    pushes its review as a normal session push, answerable by voice ("Watcher, ignore mornings this week").
-    <div class="m">bounded output: the nightly review · exists today, gets a name (VF-34/35 fold in)</div></div>
-  <div class="rcard"><h4><span class="k2">Scribe</span> — tickets &amp; dictation triage</h4>
-    Runs each morning + on demand: drains dictation intake, files tickets/todos/logs to the right boards,
-    asks only on genuine ambiguity. The /tickets intake flow, persistent and scheduled.
-    <div class="m">bounded output: filed items + one receipt · checkable against the boards (VF-37/38/39 lineage)</div></div>
-  <div class="rcard"><h4><span class="k2">Librarian</span> — the knowledge base</h4>
-    Directed capture from videos/articles into the two-layer Notion KB (video notes → merged domain pages),
-    and answers "what does my KB say about…". <div class="m">bounded output: KB pages · VF-31's pipeline, named (knowledge skill lineage)</div></div>
-  <div class="rcard"><h4><span class="k2">Nutra</span> — family nutrition</h4>
-    The first user-addressed specialist with its own data source (approved-nutritionist KB) and a weekly trigger.
-    VF-47 made real. <div class="m">bounded output: weekly menu + food answers · ask-first autonomy</div></div>
+  <div class="rcard" style="width: 460px;"><h4><span class="k2">FLORA</span> — the one assistant, made persistent</h4>
+    No starter roster of specialists (your call). VF-49 = giving the assistant you already have the four
+    persistence properties: her folder (definition you can edit), her memory (visible, dated, consolidated
+    nightly), her standing scope (tools + data sources authored once), and her standing intentions (the 09:00
+    intake trigger as the first one). Same wake word, same panel row, same pill — she just stops forgetting.
+    <div class="m">The folder model stays N-capable; a second assistant is a decision for later, taken only if
+    persistent-FLORA proves the shape. The nightly watcher review remains a plain scheduled job.</div></div>
 </div>
-<p class="note">Names are placeholders — yours to choose; the evidence only says: few, phonetically distinct, stable.
-Every roster candidate maps to a ticket you already filed, which is exactly the "bounded recurring workflow with a
-checkable output" the retention evidence demands. The general assistant (FLORA) stays — specialists sit BESIDE it.</p>
 
 <h2>6 · How it is built — the architecture in five bands</h2>
 <p class="legend">Boxes: <b class="g">green = exists today</b> (reused as-is or extended) · <b class="a">amber = new</b>.
 The load-bearing fact: <b>persistent ≠ a running process</b>. An assistant is data; sessions are cheap and fresh;
 persistence lives in the folder. (The one product that built stateful server agents — OpenAI's Assistants API — is
-being deleted this August.)</p>
+being deleted this August.) V1 instantiates exactly one folder: <b>flora/</b>.</p>
 <div class="arch">
   <div class="band"><h3>Address &amp; trigger — how an assistant wakes</h3><div class="boxes">
-    <div class="box exist">Spoken name in dictation<small><b>extends AssistantWakeMatcher</b> (FLORA → N names)</small></div>
+    <div class="box exist">Spoken name in dictation<small><b>reuses AssistantWakeMatcher</b> (FLORA as shipped; N-capable later)</small></div>
     <div class="box exist">Panel row / picker<small><b>extends</b> Agents list &amp; pill picker</small></div>
     <div class="box new">Scheduler in the VF app<small><b>new</b> — NL schedules; queue-on-wake; run caps (WorkflowWatcher pattern)</small></div>
     <div class="box new">Event triggers<small><b>new, later</b> — watcher events, file drops; same runner</small></div>
@@ -325,51 +330,59 @@ being deleted this August.)</p>
   <div class="flow">↓ raw notes accumulate ↓</div>
   <div class="band"><h3>Consolidate — nightly, per assistant</h3><div class="boxes">
     <div class="box exist">21:37 pass, extended<small><b>extends</b> ANALYZE.md run: per-assistant memory lint — dedupe, expire, promote, supersede</small></div>
-    <div class="box new">Memory change receipts<small><b>new</b> — "Nutra updated 2 facts" push; every write visible</small></div>
+    <div class="box new">Memory change receipts<small><b>new</b> — "FLORA updated 2 facts" push; every write visible</small></div>
   </div></div>
 </div>
 
-<h2>7 · The journey — one day with the roster</h2>
+<h2>7 · The journey — one day with persistent FLORA</h2>
 <div class="journey">
-  <div class="stage"><div class="label"><b>09:00, unattended.</b> Scribe drains the overnight dictations into the
-      boards. One receipt on the pill; one ambiguous item became a pulsing ask. You're still making coffee.</div>
-    <div class="screen"><div class="shape stretch"><span class="title-line">Scribe · 3 tickets filed, 1 needs you — ⌃⌥ picker</span></div></div></div>
-  <div class="stage"><div class="label"><b>You answer by voice.</b> The ask grows, you hold Fn: "Voice Flow board."
-      Scribe files it and the ring goes quiet. Total attention spent: eight seconds.</div>
+  <div class="stage"><div class="label"><b>09:00, unattended.</b> FLORA's morning trigger drains the overnight
+      dictations into the boards. One receipt on the pill; one ambiguous item became a pulsing ask. You're still
+      making coffee.</div>
+    <div class="screen"><div class="shape stretch"><span class="title-line">FLORA · 3 tickets filed, 1 needs you</span></div></div></div>
+  <div class="stage"><div class="label"><b>You answer.</b> The ask grows — hold Fn and say "Voice Flow board", or
+      hit ⌨ and type it. FLORA files the item and the ring goes quiet. Eight seconds of attention.</div>
     <div class="screen tall" style="height:180px"><div class="shape grown idle ask" style="width:270px">
-      <div class="content"><div class="status">Scribe asks</div>
+      <div class="content"><div class="status">FLORA asks</div>
       <div class="msg bright">"Fix the pill" — VF board or Pantrella?</div>
       <div class="hint">hold Fn to answer</div></div>
       <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
-  <div class="stage"><div class="label"><b>Mid-day, addressed.</b> "Nutra, the toddler refused lunch — alternatives
-      for tonight?" Routed by name; her answer plays in her voice through the VF-48 player while you keep working.</div>
-    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--accent)">Nutra ← toddler refused lunch, alternatives…</span></div></div></div>
-  <div class="stage"><div class="label"><b>Evening.</b> Watcher's review lands as a normal push. You play it at 1.5×,
-      skip two sentences, and answer back: "Watcher, the morning Slack block was deliberate — client week."</div>
-    <div class="screen"><div class="shape stretch"><span class="title-line">Watcher · daily review ready — ⌃⌥ picker</span></div></div></div>
-  <div class="stage"><div class="label"><b>It remembers, visibly.</b> Next morning's consolidation pushes a receipt:
-      Watcher recorded the exception, dated, in a file you can open — and next week's review won't nag about it.</div>
-    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">Watcher updated 1 fact ✓ · memory/core.md</span></div></div></div>
-  <div class="stage"><div class="label"><b>Any time: audit.</b> Something answers oddly? Open its folder, read the
-      memory, fix the wrong line in place. The files are the agent — no hidden profile anywhere.</div>
+  <div class="stage"><div class="label"><b>Mid-day, addressed.</b> "FLORA, what did we decide about the waitlist
+      gate?" She answers from her memory — with the date you decided it — in a conversation that has nothing to do
+      with the one where you told her.</div>
+    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--accent)">FLORA ← what did we decide about the waitlist…</span></div></div></div>
+  <div class="stage"><div class="label"><b>Her answer plays</b> through the VF-48 player at your speed; the PR link
+      is spoken as "the pull request", visible as quiet italic in the text. One surface, both tickets working
+      together.</div>
+    <div class="screen"><div class="shape stretch" style="width:300px; gap:10px;">
+      <span class="title-line" style="font-size:10.5px;">FLORA · 1/1</span>
+      <span class="wave" style="flex:1; justify-content:center;"><i class="on" style="height:6px"></i><i class="on" style="height:10px"></i><i class="on" style="height:13px"></i><i class="on" style="height:8px"></i><i class="hot" style="height:12px"></i><i class="hot" style="height:7px"></i><i style="height:11px"></i><i style="height:9px"></i><i style="height:12px"></i><i style="height:6px"></i><i style="height:10px"></i><i style="height:8px"></i></span>
+      <span class="tico main"><svg viewBox="0 0 12 12"><path d="M3.2 2.5h2v7h-2zM6.8 2.5h2v7h-2z"/></svg></span>
+      <span class="chip">1.5×</span>
+    </div></div></div>
+  <div class="stage"><div class="label"><b>It remembers, visibly.</b> The nightly consolidation pushes a receipt:
+      two facts updated, dated, superseded lines kept — in a file you can open. No hidden profile anywhere.</div>
+    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">FLORA updated 2 facts ✓ · memory/core.md</span></div></div></div>
+  <div class="stage"><div class="label"><b>Any time: audit.</b> Something answers oddly? Open her folder, read the
+      memory, fix the wrong line in place. The files ARE the assistant.</div>
     <div class="screen tall" style="height:180px"><div style="width:270px; margin-bottom:8px; background:#171412; border:1px solid #2e2a26; border-radius:10px; padding:8px 10px; font: 10.5px ui-monospace, Menlo, monospace; color:var(--text2);">
-      assistants/<br>&nbsp;&nbsp;nutra/&nbsp;&nbsp;&nbsp;assistant.md · memory/ · procedures/<br>
-      &nbsp;&nbsp;scribe/&nbsp;&nbsp;assistant.md · memory/ · runs/<br>
-      &nbsp;&nbsp;watcher/&nbsp;assistant.md · memory/ · reviews/<br>
-      &nbsp;&nbsp;librarian/</div></div></div>
+      assistants/<br>&nbsp;&nbsp;flora/<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;assistant.md<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;memory/&nbsp;&nbsp;core.md · pantrella.md · ledger.md<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;procedures/&nbsp;&nbsp;file-intake.md<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;runs/&nbsp;&nbsp;2026-07-29-0900.md</div></div></div>
 </div>
 
 <h2>8 · Open decisions — needs your call</h2>
-<div class="decision"><b>1 · Name routing rules.</b> Leading name only (like FLORA today)? What do NO-NAME captures do —
-  current behavior unchanged (visible conversation / frozen route), FLORA stays the general assistant?
-  <span class="rec">Recommend:</span> exactly that; plus a misroute fix-up: re-dictate with the right name, and the
-  wrong assistant's turn is cancelled. No product has voice-name routing in a dictation stream — this is ours to define.</div>
-<div class="decision"><b>2 · Picker slots.</b> Assistants claim ⌃⌥ numbers like sessions, or stay on ≋ dots + panel +
-  voice addressing? <span class="rec">Recommend:</span> ≋ dots only when active (mock §2); numbers stay with ephemeral
-  sessions. Alternative: pin ⌃⌥7–9 to three assistants.</div>
-<div class="decision"><b>3 · The roster.</b> Watcher / Scribe / Librarian / Nutra proposed — which first, which names?
-  <span class="rec">Recommend:</span> start with Watcher (exists, just gets named) + Scribe (highest daily value),
-  add the rest after a week of retention on those two.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>1 · Name routing — RESOLVED by the roster:</b>
+  unchanged from today. FLORA-prefix routes to her (as shipped); no-name captures keep the existing frozen-route
+  behavior. Multi-name routing is shelved with the roster.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>2 · Picker slots — RESOLVED by the roster:</b>
+  moot. FLORA keeps her persistent panel first row and surfaces via pushes, exactly as today; all nine ⌃⌥ numbers
+  stay with sessions. The ≋-dot grammar is shelved until a second assistant ever exists.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>3 · The roster — RESOLVED:</b> FLORA only. No
+  starter roster of specialists; the folder model stays N-capable but exactly one folder exists. The nightly
+  watcher review remains a plain scheduled job, not an assistant.</div>
 <div class="decision"><b>4 · Global layer precedence.</b> Does per-assistant memory override the SAFET.md-style layer?
   Can an assistant PROPOSE a global-layer change? <span class="rec">Recommend:</span> local overrides global;
   global-layer edits are suggest-then-approve only (Devin's Knowledge model).</div>
@@ -397,10 +410,11 @@ systemPrompt builders (inject composed definition); LaunchAgent + ANALYZE.md (th
 MessageInbox + deliverPush (reporting); MCP tool registry (source scoping).</p>
 <p class="note">· <b>New pieces:</b> the assistants/ folder format + loader; the in-app scheduler (timer + queue-on-wake
 + caps + receipts); allowlist enforcement on the composed session; Settings → Assistants tab; per-assistant memory
-lint appended to the nightly pass; ≋ rows/dots in panel and picker.</p>
-<p class="note">· <b>Order of build (one vertical slice first):</b> folder format + loader → name routing (N wake
-words) → panel rows → THEN the scheduler → THEN memory consolidation. Watcher-as-first-assistant exercises the whole
-pipeline with zero new risk surface (it already runs nightly).</p>
+lint appended to the nightly pass. (The ≋ multi-assistant picker grammar is shelved with the roster decision.)</p>
+<p class="note">· <b>Order of build (one vertical slice first):</b> flora/ folder format + loader (definition +
+memory composed into her existing preamble seam) → visible memory writes with receipts → THEN the 09:00 intake
+trigger via the in-app scheduler → THEN the nightly consolidation pass. Wake word, panel row, and pushes all
+already exist — the slice touches no routing code at all.</p>
 <p class="note">· <b>Security floor from day one:</b> default-deny tools, no third-party assistant definitions,
 run caps, kill switches, every background artifact inventoried in Settings (surface-invisible-systems).</p>
 
