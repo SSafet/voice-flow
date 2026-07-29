@@ -253,7 +253,12 @@ Never invent facts your files don't back.</pre>
     </div></div>
 </div>
 
-<h2>4 · Memory you can open</h2>
+<h2>4 · Memory you can open — agreed: nothing sophisticated</h2>
+<p class="note"><b>Scope agreed 2026-07-29:</b> no memory SYSTEM — no vector DB, no embeddings, no graph, no
+retrieval service. Memory is markdown FLORA reads and writes: start with just <span class="key">core.md</span>
+(capped, always in her context) + <span class="key">ledger.md</span> (raw observations awaiting consolidation);
+topic files appear only if the core ever overflows. Search is grep. That IS the shipped state of the art at
+personal scale — Letta spent two years on a database and rebuilt on plain files.</p>
 <div class="row">
   <div class="file" style="width:440px">
     <div class="path">assistants/flora/memory/core.md&nbsp;&nbsp;·&nbsp;&nbsp;capped ~200 lines, always loaded</div>
