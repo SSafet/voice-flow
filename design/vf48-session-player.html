@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VF-48 — session player &amp; consumable notifications</title>
+<style>
+  :root {
+    --bg: #131110;
+    --stage: #1b1917;
+    --shape: #211e1b;
+    --border: #45403a;
+    --pill-ring: rgba(255, 170, 60, .55);
+    --dot: #d8cfc0;
+    --dot-dim: #6f675c;
+    --accent: #ffc24b;
+    --red: #ff6060;
+    --green: #6ed782;
+    --text: #d6cec0;
+    --text2: #a89e8d;
+    --text3: #7a7264;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, "SF Pro Text", sans-serif;
+    padding: 40px 48px 120px;
+  }
+  h1 { font-size: 20px; margin-bottom: 6px; }
+  .sub { color: var(--text2); margin-bottom: 10px; max-width: 780px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .12em; color: var(--accent); margin: 44px 0 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 20px; }
+
+  .stage { width: 300px; background: var(--stage); border: 1px solid #2a2724; border-radius: 10px; padding-top: 10px; overflow: hidden; }
+  .stage.wide { width: 460px; }
+  .stage .label { font-size: 11px; color: var(--text2); padding: 0 12px 6px; }
+  .stage .label b { color: var(--text); font-weight: 600; }
+  .stage .label .src { color: var(--accent); font-style: italic; }
+  .screen { position: relative; height: 150px; background: linear-gradient(#161413, #171514 80%, #1d1a18); border-top: 1px solid #262320; display: flex; align-items: flex-end; justify-content: center; }
+  .screen.tall { height: 230px; }
+
+  /* ───────── the ONE shape ───────── */
+  .shape { position: relative; margin-bottom: 5px; background: var(--shape); border: 1px solid var(--pill-ring); display: flex; flex-direction: column; justify-content: flex-end; box-shadow: 0 4px 18px rgba(0,0,0,.45); }
+  .shape.pill { width: 52px; height: 18px; border-radius: 9px; }
+  .shape.stretch { height: 24px; border-radius: 12px; padding: 0 12px; flex-direction: row; align-items: center; justify-content: center; gap: 8px; }
+  .shape.grown { border-radius: 14px; padding: 10px 14px 0; }
+
+  .dots { display: flex; gap: 5px; align-items: center; justify-content: center; height: 18px; flex: none; }
+  .dot { width: 6px; height: 6px; border-radius: 3px; background: var(--dot); }
+  .shape.grown .dots { height: 24px; }
+  .title-line { font-size: 11.5px; font-weight: 600; color: var(--text); white-space: nowrap; }
+  .content { padding-bottom: 4px; }
+  .content .status { font-size: 11.5px; font-weight: 600; color: var(--accent); margin-bottom: 4px; padding-right: 20px; }
+  .content .msg { font-size: 12.5px; color: var(--text2); }
+  .content .msg.bright { color: var(--text); }
+  .hint { font-size: 10.5px; color: var(--text2); margin-top: 6px; }
+  .icons { position: absolute; top: 8px; right: 10px; display: flex; gap: 6px; }
+  .icons .ic { width: 16px; height: 16px; border-radius: 8px; background: #383430; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .icons .ic svg { width: 9px; height: 9px; stroke: #c9c0b2; stroke-width: 1.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .shape.grown.ask { border-color: rgba(255,194,75,.85); }
+
+  .dot.num { width: 12px; height: 12px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; font-style: normal; color: #17150f; background: var(--dot); }
+  .pill .dot.num { width: 9px; height: 9px; border-radius: 4.5px; font-size: 6.5px; }
+  .picker { display: flex; align-items: center; gap: 6px; }
+  .picker .lbl { font-size: 10.5px; color: var(--text2); margin-right: 4px; }
+  .dot.numoff { width: 12px; height: 12px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; font-style: normal; background: transparent; border: 1px solid var(--dot-dim); color: var(--text2); }
+
+  /* ── NEW: two-tier attention grammar (Slack bold-vs-red, Stories ring) ── */
+  .dot.numoff.unread { border-color: rgba(255,194,75,.85); color: var(--accent); }             /* static amber = unread pushes */
+  .dot.numoff.asking { border-color: rgba(255,194,75,.95); color: var(--accent); box-shadow: 0 0 6px rgba(255,194,75,.4); animation: breathe 1.4s ease-in-out infinite; } /* pulse = blocking ask ONLY */
+  .dot.numoff.consumed { border-color: #4a453e; color: var(--text3); }                          /* grey ghost = fully consumed, still selectable */
+
+  /* ── NEW: playback bits ── */
+  .prog { position: absolute; left: 6px; right: 6px; bottom: 2px; height: 2px; border-radius: 1px; background: #3a352f; overflow: hidden; }
+  .prog i { display: block; height: 100%; border-radius: 1px; background: var(--accent); }
+  .stretch .prog { left: 12px; right: 12px; bottom: 3px; }
+  .chip { font-size: 9.5px; font-weight: 700; color: var(--accent); background: rgba(255,194,75,.12); border-radius: 8px; padding: 1px 7px; cursor: pointer; flex: none; }
+  .tico { width: 16px; height: 16px; border-radius: 8px; background: #383430; display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
+  .tico svg { width: 9px; height: 9px; fill: #c9c0b2; stroke: none; }
+  .tico.main { width: 18px; height: 18px; border-radius: 9px; background: rgba(255,194,75,.16); }
+  .tico.main svg { fill: var(--accent); }
+  .eq { display: flex; gap: 3px; align-items: center; flex: none; }
+  .eq i { width: 4px; height: 4px; border-radius: 2px; background: var(--accent); animation: eq .7s ease-in-out infinite; }
+  .eq i:nth-child(2) { animation-delay: .12s; } .eq i:nth-child(3) { animation-delay: .24s; }
+  .eq.paused i { animation: none; background: var(--dot-dim); }
+
+  /* karaoke: temporal depth-of-field (Apple Music / teleprompter) */
+  .kara { font-size: 12.5px; }
+  .kara .spoken { color: var(--text3); }
+  .kara .now { color: var(--text); }
+  .kara .next { color: var(--text2); opacity: .55; }
+  .kara .swap { font-style: italic; color: var(--accent); border-bottom: 1px dotted rgba(255,194,75,.6); }
+  .kara .swap .g { font-style: normal; font-size: 9px; vertical-align: super; }
+  .kara .raw { font: 11px ui-monospace, Menlo, monospace; color: var(--text2); background: #191614; border: 1px solid #2e2a26; border-radius: 4px; padding: 0 4px; }
+  .transport { display: flex; align-items: center; gap: 8px; justify-content: center; padding: 7px 0 2px; }
+  .transport .pos { font-size: 10px; color: var(--text2); }
+  .transport .key { font-size: 8.5px; color: var(--text3); }
+
+  /* dot animations from pill-states */
+  @keyframes pulse   { 0%,100% { transform: scale(1); } 50% { transform: scale(1.35); } }
+  @keyframes eq      { 0%,100% { transform: scaleY(1); } 50% { transform: scaleY(2.1); } }
+  @keyframes breathe { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
+  .tts  .dot { background: var(--accent); animation: eq .7s ease-in-out infinite; }
+  .tts  .dot:nth-child(2) { animation-delay: .12s; } .tts .dot:nth-child(3) { animation-delay: .24s; }
+  .idle .dot { background: var(--dot-dim); animation: breathe 3.2s ease-in-out infinite; }
+  .idle .dot.num { background: var(--dot); animation: none; }
+  .ttspaused .dot { background: var(--dot-dim); }
+
+  table { border-collapse: collapse; font-size: 12px; margin: 8px 0 4px; max-width: 900px; }
+  th, td { text-align: left; padding: 6px 14px 6px 0; border-bottom: 1px solid #2a2724; vertical-align: top; }
+  th { color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  td b { color: var(--text); } td { color: var(--text2); }
+  td .key { color: var(--text); font: 11px ui-monospace, Menlo, monospace; background: #24211d; border: 1px solid #35302a; border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+  .decision { max-width: 880px; background: var(--stage); border: 1px solid #2a2724; border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; font-size: 12.5px; color: var(--text2); }
+  .decision b { color: var(--text); }
+  .decision .rec { color: var(--accent); }
+  .note { max-width: 880px; font-size: 12px; color: var(--text2); margin: 6px 0; }
+  .journey { display: flex; flex-wrap: wrap; gap: 14px; counter-reset: step; }
+  .journey .stage { width: 300px; }
+  .journey .stage .label::before { counter-increment: step; content: counter(step) " · "; color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<h1>VF-48 — the session player &amp; consumable notifications</h1>
+<p class="sub">Every element below is borrowed from a product you already use — the source is named in
+<span style="color:var(--accent); font-style:italic">amber italics</span> on each card. Design rules unchanged:
+one shape, dots never leave the bottom band, pushes never take the screen, audio never auto-plays.
+Research: <b>research/vf48-session-listening-ux.md</b>.</p>
+
+<h2>0 · What is borrowed from where</h2>
+<table>
+  <tr><th>Component</th><th>Borrowed from</th><th>The rule</th></tr>
+  <tr><td><b>Player strip</b></td><td>Telegram pinned playback bar</td><td>One always-on-top line: play/pause + label + speed chip + ✕ (= stop&nbsp;and&nbsp;dismiss; the message stays). Clicking the label grows the pill — never toggles playback.</td></tr>
+  <tr><td><b>Transport hotkey</b></td><td>AirPods stem grammar</td><td>ONE hotkey: 1 press = play/pause · 2 = skip forward · 3 = skip back · hold = stop. Your earbuds already taught you this.</td></tr>
+  <tr><td><b>Skip units</b></td><td>Speechify + Audible chapters</td><td>Skips are by <i>sentence</i> within a message, by <i>message</i> within the stack — exact, because Voice Flow owns the text. No timed skips, no scrubber at pill size.</td></tr>
+  <tr><td><b>Consumption</b></td><td>Pocket Casts / Apple Podcasts</td><td>unheard → in-progress (resume position kept) → heard only at finish (~95%). Early mark-played is a bug. Read = rendered in the grown view (Telegram viewport rule).</td></tr>
+  <tr><td><b>Ring grammar</b></td><td>Slack bold-vs-red + Stories</td><td>Static amber ring = unread. <b>Pulse is reserved for blocking asks.</b> Consumed dot greys but stays selectable. New push re-lights it (Gmail reply-resurfaces rule).</td></tr>
+  <tr><td><b>Browse</b></td><td>iPhone Visual Voicemail</td><td>Consumption flips the marker, never moves the row. Consumed and new interleave chronologically in the Agents panel; nothing is ever destroyed.</td></tr>
+  <tr><td><b>Karaoke text</b></td><td>Spotify lyrics + teleprompter + Netflix caption specs</td><td>Sentence-level highlight (never fake word timing), fixed focal row, spoken=dim / current=bright / next=muted, ~40 chars × 2 bright lines.</td></tr>
+  <tr><td><b>Cleaned speech</b></td><td>Screen readers + Apple Intelligence + Overcast</td><td>Voice speaks role+description ("link: the PR"), never raw characters. Swapped spans show italic+✦; original is one gesture away. The audio never mentions the cleaning.</td></tr>
+</table>
+
+<h2>1 · Playback surfaces — the pill becomes the player</h2>
+<div class="row">
+  <div class="stage"><div class="label"><b>Collapsed, speaking</b> — equalizer dots + a hairline progress
+      along the bottom edge. <span class="src">Spotify's mini bar: play state + non-interactive hairline, nothing else.</span></div>
+    <div class="screen"><div class="shape pill tts"><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
+      <div class="prog"><i style="width:38%"></i></div></div></div></div>
+
+  <div class="stage wide"><div class="label"><b>The player strip</b> — collapse while listening and the audio keeps
+      going in this one-liner: pause · session + position · progress · speed chip · ✕.
+      <span class="src">Telegram's pinned playback bar, verbatim.</span> ✕ = stop and dismiss (stack stays, unheard parts stay unheard).</div>
+    <div class="screen"><div class="shape stretch" style="width: 320px;">
+      <span class="eq"><i></i><i></i><i></i></span>
+      <span class="tico main"><svg viewBox="0 0 12 12"><path d="M3.2 2.5h2v7h-2zM6.8 2.5h2v7h-2z"/></svg></span>
+      <span class="title-line" style="font-size:10.5px;">builder · 2/3</span>
+      <span class="chip">1.5×</span>
+      <span class="tico"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="#c9c0b2" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg></span>
+      <div class="prog"><i style="width:58%"></i></div>
+    </div></div></div>
+
+  <div class="stage wide"><div class="label"><b>Paused strip</b> — pause retains position; there is no stop button
+      anywhere. <span class="src">Every modern audio UI: play/pause is one toggle, stop = dismissing the player.</span></div>
+    <div class="screen"><div class="shape stretch" style="width: 320px;">
+      <span class="eq paused"><i></i><i></i><i></i></span>
+      <span class="tico main"><svg viewBox="0 0 12 12"><path d="M4 2.6v6.8l5.4-3.4z"/></svg></span>
+      <span class="title-line" style="font-size:10.5px; color:var(--text2);">builder · paused</span>
+      <span class="chip" style="opacity:.6">1.5×</span>
+      <span class="tico"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="#c9c0b2" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg></span>
+      <div class="prog"><i style="width:58%"></i></div>
+    </div></div></div>
+</div>
+
+<div class="row" style="margin-top:20px">
+  <div class="stage wide"><div class="label"><b>The grown player</b> — the stack in transcript order, karaoke follow:
+      spoken sentences dim, the current one bright, the next muted.
+      <span class="src">Apple Music depth-of-field + teleprompter fixed focal row + Netflix caption sizing (2 bright lines).</span>
+      The transport row shows its own hotkeys — <span class="src">Superhuman teaches keys inline</span>.</div>
+    <div class="screen tall">
+      <div class="shape grown tts" style="width: 400px;">
+        <div class="icons">
+          <span class="ic" title="remove"><svg viewBox="0 0 12 12"><path d="M2.5 3.5h7M5 3.3v-1h2v1M3.5 3.5l.5 6h4l.5-6"/></svg></span>
+          <span class="ic" title="close"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></span>
+        </div>
+        <div class="content">
+          <div class="status">builder — pantrella deploy</div>
+          <div class="kara">
+            <div class="spoken">Deployed to staging — all green.</div>
+            <div class="now">Migration finished in 40 seconds; <span class="swap">the pull request<span class="g">✦</span></span> is ready for your review.</div>
+            <div class="next">Two follow-ups are queued for tomorrow.</div>
+          </div>
+        </div>
+        <div class="transport">
+          <span class="tico" title="previous sentence"><svg viewBox="0 0 12 12"><path d="M8.6 2.6v6.8L4.4 6zM3.4 2.6h1.2v6.8H3.4z"/></svg></span>
+          <span class="tico main"><svg viewBox="0 0 12 12"><path d="M3.2 2.5h2v7h-2zM6.8 2.5h2v7h-2z"/></svg></span>
+          <span class="tico" title="next sentence"><svg viewBox="0 0 12 12"><path d="M3.4 2.6v6.8L7.6 6zM7.4 2.6h1.2v6.8h-1.2z"/></svg></span>
+          <span class="pos">msg 2/3 · sent 2/4</span>
+          <span class="chip">1.5×</span>
+          <span class="key">F8 · ××fwd · ×××back · hold=stop</span>
+        </div>
+        <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage wide"><div class="label"><b>Revealing a swapped span</b> — the voice said "link: the pull request";
+      clicking the ✦ span (or one hotkey) shows what was actually there. The stored message is never rewritten —
+      cleaning is a view. <span class="src">Apple Intelligence italics+glyph, Google Translate "show original", screen-reader role+description.</span></div>
+    <div class="screen tall">
+      <div class="shape grown ttspaused" style="width: 400px;">
+        <div class="icons">
+          <span class="ic" title="remove"><svg viewBox="0 0 12 12"><path d="M2.5 3.5h7M5 3.3v-1h2v1M3.5 3.5l.5 6h4l.5-6"/></svg></span>
+          <span class="ic" title="close"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></span>
+        </div>
+        <div class="content">
+          <div class="status">builder — pantrella deploy</div>
+          <div class="kara">
+            <div class="spoken">Deployed to staging — all green.</div>
+            <div class="now">Migration finished in 40 seconds; <span class="raw">github.com/safet/pantria/pull/214</span> is ready for your review.</div>
+            <div class="next">Two follow-ups are queued for tomorrow.</div>
+          </div>
+        </div>
+        <div class="transport">
+          <span class="tico"><svg viewBox="0 0 12 12"><path d="M8.6 2.6v6.8L4.4 6zM3.4 2.6h1.2v6.8H3.4z"/></svg></span>
+          <span class="tico main"><svg viewBox="0 0 12 12"><path d="M4 2.6v6.8l5.4-3.4z"/></svg></span>
+          <span class="tico"><svg viewBox="0 0 12 12"><path d="M3.4 2.6v6.8L7.6 6zM7.4 2.6h1.2v6.8h-1.2z"/></svg></span>
+          <span class="pos">paused</span>
+          <span class="chip">1.5×</span>
+          <span class="key">⌃⌥V verbatim view</span>
+        </div>
+        <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>2 · Consumption — the two-tier ring, and what "consumed" means</h2>
+<div class="row">
+  <div class="stage wide"><div class="label"><b>The new dot grammar</b> — 1 consumed (grey, still selectable),
+      2 active, 3 unread (static amber — no pulse), 4 asking (pulse reserved for questions).
+      <span class="src">Slack: bold for unread, red only for direct address. Stories: seen ring greys, stays tappable.</span></div>
+    <div class="screen"><div class="shape stretch"><div class="picker">
+      <span class="lbl">sessions</span>
+      <i class="dot numoff consumed">1</i><i class="dot num">2</i><i class="dot numoff unread">3</i><i class="dot numoff asking">4</i>
+      <span class="title-line" style="margin-left:6px">builder</span>
+    </div></div></div></div>
+
+  <div class="stage"><div class="label"><b>Collapsed with an ask waiting</b> — only a blocking question pulses
+      the ring. Ordinary unread is the static ring. <span class="src">Slack's alarm tier.</span></div>
+    <div class="screen"><div class="shape pill idle"><div class="dots"><i class="dot"></i><i class="dot num" style="position:relative">2<span style="position:absolute; inset:0; border:1px solid rgba(255,194,75,.85); border-radius:50%; animation: breathe 1.4s ease-in-out infinite;"></span></i><i class="dot"></i></div></div></div></div>
+
+  <div class="stage"><div class="label"><b>Collapsed with unread</b> — static ring, no pulse. It will sit there
+      calmly until you look. <span class="src">Stories' unseen ring, demoted from today's always-pulse.</span></div>
+    <div class="screen"><div class="shape pill idle"><div class="dots"><i class="dot"></i><i class="dot num" style="position:relative">2<span style="position:absolute; inset:0; border:1px solid rgba(255,194,75,.7); border-radius:50%;"></span></i><i class="dot"></i></div></div></div></div>
+
+  <div class="stage wide"><div class="label"><b>Stack finished playing</b> — end tone, stack consumed, ring clears,
+      and the receipt points at the next unread session instead of leaving you hanging.
+      <span class="src">WhatsApp's end-of-voice-notes tone; Superhuman's advance-to-next; the transition-gap rule.</span></div>
+    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">builder heard ✓ · next: pantrella — ⌃⌥3</span></div></div></div>
+
+  <div class="stage wide"><div class="label"><b>Interrupted mid-stack</b> — stopping is not consuming: the stack keeps
+      an in-progress position and resumes there next time. <span class="src">Pocket Casts in-progress episodes; YouTube's resume bar.</span></div>
+    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">builder paused · 2/3 kept — F8 resumes</span></div></div></div>
+</div>
+
+<p class="note"><b>The consumption rule</b> (podcast three-state, extended to text): a push is <b>consumed</b> when
+its text was actually rendered in the grown view (Telegram viewport rule — a receipt flash never consumes) OR when
+TTS finished speaking it (~95%). Partial listening leaves an in-progress resume position. A consumed session's dot
+greys but keeps its number and stays selectable; its stack stays browsable in the Agents panel forever (Visual
+Voicemail: the row never moves). A new push fully re-lights the session. Asks are NEVER consumed by reading or
+listening — they pulse until answered. Consumption is strictly user-local: agents never see "seen", only "delivered".</p>
+
+<h2>3 · Hotkeys — the full map (existing keys keep their meaning)</h2>
+<table>
+  <tr><th>Key</th><th>Does</th><th>Borrowed from</th></tr>
+  <tr><td><span class="key">⌃⌥1–6</span></td><td><b>Jump to session N</b> — numbers stay fixed, never reorder.</td><td>tmux 0–9, browser ⌘1–9</td></tr>
+  <tr><td><span class="key">⌃⌥0</span></td><td><b>Last-session toggle</b> — bounce between the two sessions you're juggling. NEW.</td><td>tmux prefix-l, vim Ctrl-^, ⌘Tab quick-flick</td></tr>
+  <tr><td><span class="key">⌃⌥.</span> / <span class="key">⌃⌥,</span></td><td><b>Next / previous unread session</b> — the triage walk; lands on the oldest unconsumed push. NEW.</td><td>Slack ⌥⇧↓/↑ unread walk; &lt; &gt; media glyphs</td></tr>
+  <tr><td><span class="key">F8 ×1</span></td><td><b>Play / pause</b> — reading the shown session's unconsumed stack, or pausing/resuming what's playing. (Evolves today's read-aloud key.)</td><td>AirPods 1 press; media-key toggle</td></tr>
+  <tr><td><span class="key">F8 ×2</span></td><td><b>Skip forward</b> one sentence (at the last sentence: next message).</td><td>AirPods 2 presses; Speechify sentence skip</td></tr>
+  <tr><td><span class="key">F8 ×3</span></td><td><b>Skip back</b> one sentence.</td><td>AirPods 3 presses</td></tr>
+  <tr><td><span class="key">F8 hold</span></td><td><b>Stop</b> — dismisses the player strip; in-progress position is kept.</td><td>AirPods hold = alternate; Telegram ✕</td></tr>
+  <tr><td><span class="key">Esc</span></td><td>On the grown player: <b>collapse to the strip, audio keeps playing</b>. Never destroys, never consumes by itself. (Esc keeps its panic role during agent actions.)</td><td>Raycast/launcher Esc de-escalates</td></tr>
+  <tr><td><span class="key">⌃⌥V</span></td><td><b>Verbatim toggle</b> — whole view flips between listening text and the original (raw URLs, code). NEW.</td><td>Google Translate "show original"</td></tr>
+  <tr><td>speed chip</td><td>Click cycles <b>1× → 1.5× → 2×</b> (full 0.25–4× range stays in the panel's Speech drawer). Applies from the next sentence.</td><td>WhatsApp/Telegram chip; Speechify range</td></tr>
+</table>
+<p class="note">Transport is global: F8 acts on whatever is playing no matter which app has focus — playback outranks
+surface focus. <span class="src" style="color:var(--accent); font-style:italic">macOS media-key routing.</span>
+Optional (off by default): register as the system Now Playing app while speaking, so real media keys, AirPods stems
+and Control Center drive the session player — at the cost of stealing those keys from your music while VF speaks.</p>
+
+<h2>4 · The journey — a hotkeys-only triage, start to finish</h2>
+<div class="journey">
+  <div class="stage"><div class="label"><b>Working in the editor.</b> builder pushes a report — one-line receipt +
+      Glass sound, static ring appears. Nothing takes the screen.</div>
+    <div class="screen"><div class="shape stretch"><span class="title-line">builder · new message — ⌃⌥2</span></div></div></div>
+
+  <div class="stage"><div class="label"><b>⌃⌥2.</b> The stack grows in transcript order, oldest unconsumed first.
+      Rendering it = consumed (ring will clear). F8 starts the voice.</div>
+    <div class="screen tall" style="height:190px"><div class="shape grown idle" style="width:270px">
+      <div class="content"><div class="status">builder — pantrella deploy</div>
+      <div class="kara"><div class="now">Deployed to staging — all green.</div><div class="next">Migration finished in 40 seconds…</div></div></div>
+      <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
+
+  <div class="stage"><div class="label"><b>Listening at 1.5×.</b> The karaoke row follows each sentence; a URL is
+      spoken as "link: the pull request" — the ✦ span shows where. Double-F8 skips a boring sentence.</div>
+    <div class="screen tall" style="height:190px"><div class="shape grown tts" style="width:270px">
+      <div class="content"><div class="status">builder — pantrella deploy</div>
+      <div class="kara"><div class="spoken">Deployed to staging — all green.</div><div class="now">…<span class="swap">the pull request<span class="g">✦</span></span> is ready.</div></div></div>
+      <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
+
+  <div class="stage"><div class="label"><b>Esc.</b> Back to the editor; the strip keeps playing at the bottom.
+      Audio finishes → end tone → "builder heard ✓ · next: pantrella — ⌃⌥3".</div>
+    <div class="screen"><div class="shape stretch" style="width:300px">
+      <span class="eq"><i></i><i></i><i></i></span>
+      <span class="tico main"><svg viewBox="0 0 12 12"><path d="M3.2 2.5h2v7h-2zM6.8 2.5h2v7h-2z"/></svg></span>
+      <span class="title-line" style="font-size:10.5px;">builder · 3/3</span>
+      <span class="chip">1.5×</span>
+      <span class="tico"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="#c9c0b2" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg></span>
+      <div class="prog"><i style="width:82%"></i></div>
+    </div></div></div>
+
+  <div class="stage"><div class="label"><b>⌃⌥. walks to the next unread</b> (pantrella). Its ask pulses — answer by
+      voice, hold Fn. The answered ask is consumed; the walk continues until no ring is lit.</div>
+    <div class="screen tall" style="height:190px"><div class="shape grown idle ask" style="width:270px">
+      <div class="content"><div class="status">pantrella asks</div>
+      <div class="msg bright">Keep the waitlist gate on for new signups?</div>
+      <div class="hint">hold Fn to answer · Fn2 +screen</div></div>
+      <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
+
+  <div class="stage"><div class="label"><b>Later, in the panel.</b> Agents list, chronological: consumed sessions
+      quiet, the in-progress one shows its thin resume sliver, unread reads bright. Nothing was lost.</div>
+    <div class="screen tall" style="height:190px"><div style="width:270px; margin-bottom:8px; background:var(--shape); border:1px solid #2e2a26; border-radius:10px; padding:8px 10px; font-size:11.5px;">
+      <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text);"><span>3&nbsp;&nbsp;pantrella</span><span style="color:var(--text3)">14:22</span></div>
+      <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text2);"><span>2&nbsp;&nbsp;builder <span style="display:inline-block; width:34px; height:2px; background:#3a352f; border-radius:1px; vertical-align:middle;"><span style="display:block; width:58%; height:100%; background:var(--accent); border-radius:1px;"></span></span></span><span style="color:var(--text3)">14:07</span></div>
+      <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text3);"><span>1&nbsp;&nbsp;voice-flow ✓</span><span>11:40</span></div>
+    </div></div></div>
+</div>
+
+<h2>5 · Open decisions — needs your call (no product precedent)</h2>
+<div class="decision"><b>1 · What consumes on display?</b> Growing a stack shows all active pushes at once.
+  <span class="rec">Recommend:</span> whatever was actually rendered is consumed (Telegram viewport rule) — for stacks
+  that fit, that's the whole stack; a receipt flash or the 5s re-preview of an already-seen stack consumes nothing new.
+  Alternative: only the newest push, or an explicit consume chord.</div>
+<div class="decision"><b>2 · Does listening to the CLEANED text count as seeing the verbatim one?</b>
+  <span class="rec">Recommend:</span> yes for the unread ring (the meaning was delivered); the ✦ marks stay visible in
+  the panel so you can always audit what was swapped.</div>
+<div class="decision"><b>3 · Cross-session auto-advance.</b> When a stack finishes playing, continue into the next
+  unread session's audio? Zero precedent anywhere. <span class="rec">Recommend:</span> no — end tone + "next: … — ⌃⌥N"
+  receipt; you advance with ⌃⌥. when you want it. (A "play everything" gesture could be F8 on the picker.)</div>
+<div class="decision"><b>4 · Chord budget.</b> The map adds ⌃⌥0, ⌃⌥, / ⌃⌥. and ⌃⌥V. Is that acceptable, or should
+  any be dropped/merged? Global focus-free triage has no product precedent — this vocabulary is ours to define.</div>
+<div class="decision"><b>5 · Now Playing registration.</b> Free media keys + AirPods + Control Center while VF speaks,
+  but it steals those keys from your music. <span class="rec">Recommend:</span> ship as a Settings toggle, off by default.</div>
+<div class="decision"><b>6 · Six-slot aging.</b> When a 7th session arrives, which dot yields? <span class="rec">Recommend:</span>
+  the oldest fully-consumed, fully-silent session drops off the picker (still in the panel); numbers of surviving
+  sessions never shift mid-day.</div>
+<div class="decision"><b>7 · Progress bar meaning.</b> The strip's hairline shows the CURRENT message's progress and
+  the label carries "2/3" for the stack (Pocket Casts: per-item progress + queue count). Alternative: whole-stack progress bar.</div>
+<div class="decision"><b>8 · Panel progress sliver.</b> The in-progress resume sliver on an Agents row (journey step 6)
+  technically violates panel remark #4 ("no decorations — unread = the row simply reads bright"). It is data, not
+  decoration — but it's your rule to bend or keep.</div>
+
+<h2>6 · Engineering notes (for the implementation ticket)</h2>
+<p class="note">· <b>Seekability:</b> read-aloud of a stack starts from full known text → generate as cached audio
+(TTSController already caches finished streams and seeks cached WAVs; `seek(to:)` is cache-only today). Sentence
+boundaries → frame offsets gives exact sentence skips. Live streamed replies stay skip-limited (no cache) — the
+player shows pause/stop only there.</p>
+<p class="note">· <b>Speed:</b> baked into generation per request. The cycling chip re-generates from the current
+sentence at the new speed — cheap because speech is already sentence-chunked (AgentReplySpeaker).</p>
+<p class="note">· <b>State:</b> SessionPush already carries seen/spoken/done — the three-state model extends `spoken`
+to a per-push resume position (sentence index). The two-tier ring is a change in `setUnreadIndicator` callers: pulse
+only when an unanswered ask exists.</p>
+<p class="note">· <b>Cleaning:</b> VF-43's sanitize step produces the listening text + span map {range, spokenAs};
+stored message stays verbatim (messages.json untouched); the grown view renders spans italic+✦; ⌃⌥V flips views.</p>
+
+</body>
+</html>
