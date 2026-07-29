@@ -783,11 +783,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // The read-aloud key is the transport (ticket VF-48, AirPods stem
+        // grammar): 1 press = play/pause · 2 = next sentence · 3 = back ·
+        // hold = stop. With no player alive a press keeps its old meaning.
         ttsHotkeyManager = HotkeyManager(spec: UserSettings.shared.ttsHotkey)
-        ttsHotkeyManager.onPress = { [weak self] in
-            self?.indicator.collapseNow()
-            self?.speakSelectedTextOrStop()
-        }
+        ttsHotkeyManager.onPress = { [weak self] in self?.transportPressBegan() }
+        ttsHotkeyManager.onRelease = { [weak self] in self?.transportPressEnded() }
 
         continuousCaptureHotkeyManager = HotkeyManager(spec: UserSettings.shared.continuousCaptureHotkey)
         continuousCaptureHotkeyManager.onPress = { [weak self] in
@@ -1361,6 +1362,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if chatPanel?.isVisible == true { chatPanel.hide() }
         if indicator?.isGrownVisible == true {
             indicator.dismissGrown()
+            // Esc de-escalates, it never stops audio (ticket VF-48): if
+            // that stack was playing, the strip takes over once the
+            // collapse lands.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) { [weak self] in
+                self?.refreshPlayerSurface()
+            }
         } else {
             indicator?.collapseNow()
         }
@@ -3405,6 +3412,81 @@ extension AppDelegate: AgentsDataSource {
     private func playerAdjustSpeed(_ delta: Double) {
         let current = ttsController.queuedSpeed ?? UserSettings.shared.ttsSpeed
         ttsController.setQueuedSpeed(current + delta)
+        refreshPlayerSurface()
+    }
+
+    // ── The transport key (ticket VF-48) ────────────────
+    // Press-count grammar users already know from their earbuds: 1 press =
+    // play/pause, 2 = skip forward a sentence, 3 = skip back, hold = stop.
+    private var transportPressCount = 0
+    private var transportResolveTimer: Timer?
+    private var transportHoldTimer: Timer?
+    private var transportHoldFired = false
+
+    private func transportPressBegan() {
+        indicator.collapseNow()
+        transportHoldFired = false
+        transportHoldTimer?.invalidate()
+        transportHoldTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            guard let self, self.ttsController.queuedSpeechActive else { return }
+            self.transportHoldFired = true
+            self.transportPressCount = 0
+            self.transportResolveTimer?.invalidate()
+            self.playerStop()
+        }
+    }
+
+    private func transportPressEnded() {
+        transportHoldTimer?.invalidate()
+        transportHoldTimer = nil
+        guard !transportHoldFired else { return }
+        transportPressCount += 1
+        transportResolveTimer?.invalidate()
+        transportResolveTimer = Timer.scheduledTimer(withTimeInterval: 0.32, repeats: false) { [weak self] _ in
+            self?.resolveTransportPresses()
+        }
+    }
+
+    private func resolveTransportPresses() {
+        let count = transportPressCount
+        transportPressCount = 0
+        guard count > 0 else { return }
+        guard ttsController.queuedSpeechActive else {
+            // No player alive: a press reads the shown stack, else it keeps
+            // the legacy read-selection/stop meaning.
+            if indicator.isGrownVisible, let sid = currentPushSessionId {
+                speakSessionUnconsumed(sid)
+            } else {
+                speakSelectedTextOrStop()
+            }
+            return
+        }
+        switch count {
+        case 1:
+            ttsController.togglePause()
+            refreshPlayerSurface()
+        case 2:
+            playerSkipSentence(1)
+        default:
+            playerSkipSentence(-1)
+        }
+    }
+
+    private func playerSkipSentence(_ delta: Int) {
+        guard let pending = pendingSpeechConsumption,
+              let chunk = ttsController.queuedChunkIndex else { return }
+        let target = max(0, min(pending.map.totalChunks - 1, chunk + delta))
+        guard target != chunk else { return }
+        ttsController.skipQueuedSpeech(to: target)
+    }
+
+    /// Hold = stop, the only stop there is: what was heard settles, the
+    /// interrupted push keeps its resume point, the strip goes away — and
+    /// nothing else happens.
+    private func playerStop() {
+        ttsController.stop()
+        indicator.hidePlayerStrip()
+        indicator.setGrownPlayer(nil)
         refreshPlayerSurface()
     }
 
