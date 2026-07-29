@@ -362,6 +362,8 @@ class FloatingIndicator: NSObject {
         let number: Int
         let active: Bool
         let pending: Bool
+        /// An unanswered ask — the only thing that pulses (ticket VF-48).
+        var asking: Bool = false
     }
 
     /// The middle dot grows a touch and carries the active session's
@@ -384,21 +386,31 @@ class FloatingIndicator: NSObject {
         layoutUnreadRing()
     }
 
-    /// Small pulsing halo around the middle dot — "something unread in a
-    /// session you're not on". Deliberately tiny; the picker's amber dots
-    /// carry the detail.
-    func setUnreadIndicator(_ on: Bool) {
+    /// Small halo around the middle dot, two tiers (ticket VF-48): a calm
+    /// static ring means unread pushes exist; the pulse is reserved for a
+    /// blocking ask that still wants an answer. Deliberately tiny; the
+    /// picker's amber dots carry the detail.
+    private var unreadRingAsking = false
+    func setUnreadIndicator(unread: Bool, asking: Bool = false) {
         guard unreadRingLayer != nil else { return }
+        unreadRingAsking = asking
         withoutAnimation {
             layoutUnreadRing()
-            unreadRingLayer.isHidden = !on
+            unreadRingLayer.isHidden = !(unread || asking)
         }
-        if on { ensureUnreadPulse() }
+        if asking {
+            ensureUnreadPulse()
+        } else {
+            unreadRingLayer.removeAnimation(forKey: "unreadPulse")
+            unreadRingLayer.opacity = 0.7
+        }
     }
 
     /// Sleep/wake and display changes silently kill CA animations; re-add
-    /// the ring's pulse whenever it might have been dropped.
+    /// the ring's pulse whenever it might have been dropped. Pulsing is the
+    /// ask tier only — the plain unread ring stays static.
     private func ensureUnreadPulse() {
+        guard unreadRingAsking else { return }
         guard let ring = unreadRingLayer, ring.animation(forKey: "unreadPulse") == nil else { return }
         let pulse = CABasicAnimation(keyPath: "opacity")
         pulse.fromValue = 0.2
@@ -520,6 +532,16 @@ class FloatingIndicator: NSObject {
             dot.borderWidth = 1
             dot.borderColor = NSColor(r: 111, g: 103, b: 92).cgColor
             digit.foregroundColor = NSColor(r: 168, g: 158, b: 141).cgColor
+        }
+        if entry.asking {
+            // The ask tier pulses — same grammar as the pill's ring.
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 0.35
+            pulse.toValue = 1.0
+            pulse.duration = 1.1
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            dot.add(pulse, forKey: "askPulse")
         }
         dot.addSublayer(digit)
         return dot

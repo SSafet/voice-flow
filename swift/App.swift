@@ -354,6 +354,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             let closed = self.currentPushSessionId
             self.currentPushSessionId = nil
+            // Closing a fully-read dead session's stack is the moment it
+            // retires and frees its number (ticket VF-48).
+            self.retireConsumedGhosts()
             let waiting = self.unseenSessions(excluding: closed)
             guard waiting > 0 else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
@@ -1053,7 +1056,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // A fully-read stack stays previewable but not amber.
                 pending: inbox.pendingCount(for: session.id) > 0
                     || pendingInteraction?.sessionId == session.id
-                    || sessionPushes[session.id]?.contains { !$0.seen } == true)
+                    || sessionPushes[session.id]?.contains { !$0.seen } == true,
+                // The ask tier pulses until answered (ticket VF-48).
+                asking: pendingInteraction?.sessionId == session.id
+                    || sessionPushes[session.id]?.contains {
+                        $0.isAsk && $0.answer == nil && $0.done != true } == true)
         }
         return (entries, sessions.first { $0.id == targetSessionId }?.label)
     }
@@ -1071,12 +1078,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let id, let queue = sessionPushes[id]?.filter({ $0.done != true }), !queue.isEmpty {
                 // The session has something to show — the picker grows
                 // straight into its whole stack, picker row at the bottom.
-                // Unseen content stays up until ✕ (this IS the reading
-                // path); an already-seen stack is just a 5s re-preview.
+                // NOTHING auto-hides (ticket VF-48): the stack stays up
+                // until Esc/✕/click/switch, seen or not — timers kept
+                // vanishing content mid-read.
                 currentPushSessionId = id
-                let hasUnseen = queue.contains { !$0.seen }
-                showPushStack(for: id, bottomPicker: (entries, activeName),
-                              autoHide: hasUnseen ? nil : 5.0)
+                showPushStack(for: id, bottomPicker: (entries, activeName))
             } else {
                 indicator.showPicker(entries: entries, activeName: activeName)
             }
@@ -1195,11 +1201,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }.count
     }
 
-    /// The pill's small pulsing ring around the number dot: on while ANY
-    /// session holds pushes the user hasn't viewed yet (viewing = growing
-    /// its stack by switching onto it). Main thread.
+    /// An ask stays hot until answered — the only thing that pulses
+    /// (ticket VF-48). Main thread.
+    private var hasUnansweredAsk: Bool {
+        pendingInteraction != nil || sessionPushes.contains { _, queue in
+            queue.contains { $0.isAsk && $0.answer == nil && $0.done != true }
+        }
+    }
+
+    /// The pill's small ring around the number dot, two tiers (VF-48):
+    /// static while any session holds unseen pushes, pulsing only while a
+    /// blocking ask waits for an answer. Main thread.
     func refreshUnreadIndicator() {
-        indicator.setUnreadIndicator(unseenSessions() > 0)
+        indicator.setUnreadIndicator(unread: unseenSessions() > 0, asking: hasUnansweredAsk)
+    }
+
+    /// VF-48 consumption: a consumed, FINISHED session leaves the picker —
+    /// its stack retires to panel history and its slot number frees for the
+    /// next queued session. Live sessions never retire this way (they are
+    /// active workers), and neither does anything unseen, asking, on screen,
+    /// or still being read aloud. Main thread.
+    private func retireConsumedGhosts() {
+        for (sid, queue) in sessionPushes {
+            guard mcpServer.sessions.session(sid) == nil,
+                  sid != currentPushSessionId,
+                  sid != pendingSpeechConsumption?.session,
+                  queue.contains(where: { $0.done != true }),
+                  !queue.contains(where: { !$0.seen }),
+                  !queue.contains(where: { $0.isAsk && $0.answer == nil && $0.done != true })
+            else { continue }
+            markStackDone(sid)
+        }
+        refreshSessionIndicator()
+        refreshUnreadIndicator()
     }
 
     /// User-initiated selection (⌃⌥N / menu bar). Double-select = a second
@@ -2377,6 +2411,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.sessionPushes = self.sessionPushes.filter { _, queue in
                 !queue.isEmpty
             }
+            // Consumed, finished sessions leave the picker so their slot
+            // numbers free for the queue (ticket VF-48).
+            self.retireConsumedGhosts()
             // Overlays whose owning session no longer exists are orphans the
             // user has no affordance to clear — sweep them (ticket #14).
             let known = Set(self.mcpServer.sessions.ordered().map { $0.id })
