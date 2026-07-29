@@ -97,8 +97,7 @@
   .kara .spoken { color: var(--text3); }
   .kara .now { color: var(--text); }
   .kara .next { color: var(--text2); opacity: .55; }
-  .kara .swap { font-style: italic; color: var(--accent); border-bottom: 1px dotted rgba(255,194,75,.6); }
-  .kara .swap .g { font-style: normal; font-size: 9px; vertical-align: super; }
+  .kara .swap { font-style: italic; color: var(--accent); }
   .kara .raw { font: 11px ui-monospace, Menlo, monospace; color: var(--text2); background: #191614; border: 1px solid #2e2a26; border-radius: 4px; padding: 0 4px; }
   .transport { display: flex; align-items: center; gap: 8px; justify-content: center; padding: 7px 0 2px; }
   .transport .pos { font-size: 10px; color: var(--text2); }
@@ -146,7 +145,7 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
   <tr><td><b>Ring grammar</b></td><td>Slack bold-vs-red + Stories</td><td>Static amber ring = unread. <b>Pulse is reserved for blocking asks.</b> Consumed dot greys but stays selectable. New push re-lights it (Gmail reply-resurfaces rule).</td></tr>
   <tr><td><b>Browse</b></td><td>iPhone Visual Voicemail</td><td>Consumption flips the marker, never moves the row. Consumed and new interleave chronologically in the Agents panel; nothing is ever destroyed.</td></tr>
   <tr><td><b>Karaoke text</b></td><td>Spotify lyrics + teleprompter + Netflix caption specs</td><td>Sentence-level highlight (never fake word timing), fixed focal row, spoken=dim / current=bright / next=muted, ~40 chars × 2 bright lines.</td></tr>
-  <tr><td><b>Cleaned speech</b></td><td>Screen readers + Apple Intelligence + Overcast</td><td>Voice speaks role+description ("link: the PR"), never raw characters. Swapped spans show italic+✦; original is one gesture away. The audio never mentions the cleaning.</td></tr>
+  <tr><td><b>Cleaned speech</b></td><td>Screen readers + Apple Intelligence + Overcast</td><td>Voice speaks role+description ("link: the PR"), never raw characters. A swapped span is just quiet amber italic — one subtle cue, no glyphs — and clicking it reveals the original. The audio never mentions the cleaning.</td></tr>
 </table>
 
 <h2>1 · Playback surfaces — the pill becomes the player</h2>
@@ -199,7 +198,7 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
           <div class="status">builder — pantrella deploy</div>
           <div class="kara">
             <div class="spoken">Deployed to staging — all green.</div>
-            <div class="now">Migration finished in 40 seconds; <span class="swap">the pull request<span class="g">✦</span></span> is ready for your review.</div>
+            <div class="now">Migration finished in 40 seconds; <span class="swap">the pull request</span> is ready for your review.</div>
             <div class="next">Two follow-ups are queued for tomorrow.</div>
           </div>
         </div>
@@ -216,7 +215,7 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
   </div>
 
   <div class="stage wide"><div class="label"><b>Revealing a swapped span</b> — the voice said "link: the pull request";
-      clicking the ✦ span shows what was actually there (whole-message verbatim view lives in the panel thread —
+      clicking the italic span shows what was actually there (whole-message verbatim view lives in the panel thread —
       the chord was cut, 80/20). The stored message is never rewritten — cleaning is a view.
       <span class="src">Apple Intelligence italics+glyph, screen-reader role+description.</span></div>
     <div class="screen tall">
@@ -323,7 +322,7 @@ never see "seen", only "delivered".</p>
   <tr><td>speed chip</td><td>Click <b>+0.1×</b>, ⇧click −0.1× (your call — 0.5× jumps were too big; full range stays in the panel's Speech drawer). Applies from the next sentence.</td><td>Audible's 0.1 increments</td></tr>
 </table>
 <p class="note"><b>Cut per your 80/20 rule:</b> the ⌃⌥,/. unread-walk chords (the picker's amber dots + ⌃⌥N cover
-it) and the ⌃⌥V verbatim chord (click the ✦ span; whole-message verbatim lives in the panel thread). Net new
+it) and the ⌃⌥V verbatim chord (click the italic span; whole-message verbatim lives in the panel thread). Net new
 global chords: one (⌃⌥0), plus ⌃⌥7–9 extending the existing family.</p>
 <p class="note">Transport is global: F8 acts on whatever is playing no matter which app has focus — playback outranks
 surface focus. <span class="src" style="color:var(--accent); font-style:italic">macOS media-key routing.</span>
@@ -344,10 +343,10 @@ and Control Center drive the session player — at the cost of stealing those ke
       <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
 
   <div class="stage"><div class="label"><b>Listening at 1.5×.</b> The karaoke row follows each sentence; a URL is
-      spoken as "link: the pull request" — the ✦ span shows where. Double-F8 skips a boring sentence.</div>
+      spoken as "link: the pull request" — the quiet italic shows where. Double-F8 skips a boring sentence.</div>
     <div class="screen tall" style="height:190px"><div class="shape grown tts" style="width:270px">
       <div class="content"><div class="status">builder — pantrella deploy</div>
-      <div class="kara"><div class="spoken">Deployed to staging — all green.</div><div class="now">…<span class="swap">the pull request<span class="g">✦</span></span> is ready.</div></div></div>
+      <div class="kara"><div class="spoken">Deployed to staging — all green.</div><div class="now">…<span class="swap">the pull request</span> is ready.</div></div></div>
       <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
 
   <div class="stage"><div class="label"><b>Esc.</b> Back to the editor; the strip keeps playing at the bottom.
@@ -383,9 +382,10 @@ and Control Center drive the session player — at the cost of stealing those ke
 <div class="decision" style="border-left-color: var(--green)"><b>1 · What consumes on display? — RESOLVED:</b>
   rendered = consumed (Telegram viewport rule), and all auto-hide timers are REMOVED — a grown stack stays until
   you Esc/✕/switch, because the panel kept hiding mid-read.</div>
-<div class="decision"><b>2 · Does listening to the CLEANED text count as seeing the verbatim one?</b>
-  <span class="rec">Recommend:</span> yes for the unread ring (the meaning was delivered); the ✦ marks stay visible in
-  the panel so you can always audit what was swapped.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>2 · Listening to the CLEANED text counts as seeing
+  the verbatim one — RESOLVED:</b> yes. And swapped spans carry exactly ONE quiet cue (amber italic, no glyphs, no
+  underlines — nothing sprinkled through the text); click reveals the original, the panel thread holds the full
+  verbatim view.</div>
 <div class="decision" style="border-left-color: var(--green)"><b>3 · Cross-session auto-advance — RESOLVED:</b>
   nothing happens at the end of a stack. End tone, done. No auto-advance, no "next" receipt — the end of a stack is
   where the user decides.</div>
@@ -401,11 +401,9 @@ and Control Center drive the session player — at the cost of stealing those ke
 <div class="decision" style="border-left-color: var(--green)"><b>7 · Progress representation — RESOLVED</b> (your 12:56
   capture): the hairline is gone everywhere; on the strip the waveform is the progress bar and the scrubber (lit =
   played, drag to seek), the label carries "2/3" for the stack; the collapsed pill shows no progress at all.</div>
-<div class="decision"><b>8 · Panel in-progress marker — better approach.</b> <span class="rec">Recommend:</span> no
-  graphics at all — express resume state as plain TEXT in the row's existing preview: the row reads
-  <span class="key">builder — paused · 2/3</span> in the muted color. It respects remark #4 exactly (words, not
-  decoration), reuses the strip's "2/3" vocabulary, and needs zero new UI. The graphical sliver from journey step 6
-  is withdrawn.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>8 · Panel in-progress marker — RESOLVED:</b> no
+  graphics — resume state is plain TEXT in the row's existing preview (<span class="key">builder — paused · 2/3</span>,
+  muted color). Words, not decoration, per the panel remarks; the graphical sliver is withdrawn.</div>
 
 <h2>6 · Engineering notes (for the implementation ticket)</h2>
 <p class="note">· <b>Seekability:</b> read-aloud of a stack starts from full known text → generate as cached audio
@@ -424,7 +422,8 @@ only when an unanswered ask exists. Auto-hide removal: the `autoHide` parameter 
 goes away — collapse only on Esc/✕/click/switch. Session slots: register ⌃⌥7/8/9 (keycodes 26/28/25) alongside
 today's six; `pickerSessions()` gains the ≤9 queue with number retention.</p>
 <p class="note">· <b>Cleaning:</b> VF-43's sanitize step produces the listening text + span map {range, spokenAs};
-stored message stays verbatim (messages.json untouched); the grown view renders spans italic+✦; ⌃⌥V flips views.</p>
+stored message stays verbatim (messages.json untouched); the grown view renders swapped spans as quiet amber
+italics — click one to reveal it in place; the panel thread shows the full verbatim message.</p>
 
 </body>
 </html>
