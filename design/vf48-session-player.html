@@ -84,6 +84,14 @@
   .eq i:nth-child(2) { animation-delay: .12s; } .eq i:nth-child(3) { animation-delay: .24s; }
   .eq.paused i { animation: none; background: var(--dot-dim); }
 
+  /* v2 strip: the waveform IS the progress bar and the scrubber (WhatsApp voice notes) */
+  .wave { display: flex; gap: 2px; align-items: center; height: 14px; flex: none; cursor: ew-resize; }
+  .wave i { width: 2.5px; border-radius: 1.5px; background: #453f38; }
+  .wave i.on { background: var(--accent); }
+  .wave i.hot { background: var(--accent); animation: eq .6s ease-in-out infinite; }
+  .wave i.hot:nth-of-type(2n) { animation-delay: .15s; }
+  .wave.still i.hot, .wave.still i.on { animation: none; }
+
   /* karaoke: temporal depth-of-field (Apple Music / teleprompter) */
   .kara { font-size: 12.5px; }
   .kara .spoken { color: var(--text3); }
@@ -131,7 +139,7 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
 <h2>0 · What is borrowed from where</h2>
 <table>
   <tr><th>Component</th><th>Borrowed from</th><th>The rule</th></tr>
-  <tr><td><b>Player strip</b></td><td>Telegram pinned playback bar</td><td>One always-on-top line: play/pause + label + speed chip + ✕ (= stop&nbsp;and&nbsp;dismiss; the message stays). Clicking the label grows the pill — never toggles playback.</td></tr>
+  <tr><td><b>Player strip</b></td><td>Telegram pinned bar + WhatsApp voice-note waveform</td><td>One always-on-top line built from the sides: animated waveform (= the progress bar AND the scrubber — drag to seek) · the text · the buttons. No ✕, no hairline. Clicking the label grows the pill — never toggles playback.</td></tr>
   <tr><td><b>Transport hotkey</b></td><td>AirPods stem grammar</td><td>ONE hotkey: 1 press = play/pause · 2 = skip forward · 3 = skip back · hold = stop. Your earbuds already taught you this.</td></tr>
   <tr><td><b>Skip units</b></td><td>Speechify + Audible chapters</td><td>Skips are by <i>sentence</i> within a message, by <i>message</i> within the stack — exact, because Voice Flow owns the text. No timed skips, no scrubber at pill size.</td></tr>
   <tr><td><b>Consumption</b></td><td>Pocket Casts / Apple Podcasts</td><td>unheard → in-progress (resume position kept) → heard only at finish (~95%). Early mark-played is a bug. Read = rendered in the grown view (Telegram viewport rule).</td></tr>
@@ -143,32 +151,35 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
 
 <h2>1 · Playback surfaces — the pill becomes the player</h2>
 <div class="row">
-  <div class="stage"><div class="label"><b>Collapsed, speaking</b> — equalizer dots + a hairline progress
-      along the bottom edge. <span class="src">Spotify's mini bar: play state + non-interactive hairline, nothing else.</span></div>
-    <div class="screen"><div class="shape pill tts"><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
-      <div class="prog"><i style="width:38%"></i></div></div></div></div>
+  <div class="stage"><div class="label"><b>Collapsed, speaking</b> — equalizer dots only; no progress line at this
+      size (your call, 12:56 capture: the hairline read as a strikethrough).
+      <span class="src">Watch/CarPlay: the smallest surface drops progress entirely.</span></div>
+    <div class="screen"><div class="shape pill tts"><div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
 
-  <div class="stage wide"><div class="label"><b>The player strip</b> — collapse while listening and the audio keeps
-      going in this one-liner: pause · session + position · progress · speed chip · ✕.
-      <span class="src">Telegram's pinned playback bar, verbatim.</span> ✕ = stop and dismiss (stack stays, unheard parts stay unheard).</div>
-    <div class="screen"><div class="shape stretch" style="width: 320px;">
-      <span class="eq"><i></i><i></i><i></i></span>
+  <div class="stage wide"><div class="label"><b>The player strip, v2</b> (your 12:56 capture) — built from the sides:
+      LEFT the animated waveform, which IS the progress bar and the scrubber — the lit part is what's played, drag
+      anywhere to seek; MIDDLE the text; RIGHT the buttons. No ✕, no hairline.
+      <span class="src">WhatsApp's voice-note waveform scrubber + Telegram's bar layout.</span> Bars are the real
+      amplitude envelope of the generated audio.</div>
+    <div class="screen"><div class="shape stretch" style="width: 330px; gap: 10px;">
+      <span class="wave">
+        <i class="on" style="height:5px"></i><i class="on" style="height:9px"></i><i class="on" style="height:13px"></i><i class="on" style="height:7px"></i><i class="on" style="height:11px"></i><i class="on" style="height:6px"></i><i class="on" style="height:12px"></i><i class="on" style="height:8px"></i><i class="hot" style="height:10px"></i><i class="hot" style="height:13px"></i><i style="height:7px"></i><i style="height:11px"></i><i style="height:5px"></i><i style="height:9px"></i><i style="height:12px"></i><i style="height:6px"></i><i style="height:8px"></i><i style="height:5px"></i>
+      </span>
+      <span class="title-line" style="font-size:10.5px; flex:1; text-align:center;">builder · 2/3</span>
       <span class="tico main"><svg viewBox="0 0 12 12"><path d="M3.2 2.5h2v7h-2zM6.8 2.5h2v7h-2z"/></svg></span>
-      <span class="title-line" style="font-size:10.5px;">builder · 2/3</span>
       <span class="chip">1.5×</span>
-      <span class="tico"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="#c9c0b2" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg></span>
-      <div class="prog"><i style="width:58%"></i></div>
     </div></div></div>
 
-  <div class="stage wide"><div class="label"><b>Paused strip</b> — pause retains position; there is no stop button
-      anywhere. <span class="src">Every modern audio UI: play/pause is one toggle, stop = dismissing the player.</span></div>
-    <div class="screen"><div class="shape stretch" style="width: 320px;">
-      <span class="eq paused"><i></i><i></i><i></i></span>
+  <div class="stage wide"><div class="label"><b>Paused strip</b> — waveform freezes, position kept; play resumes.
+      There is still no stop button: hold-F8 stops instantly, and a paused strip collapses itself after a few
+      seconds (position kept, F8 resumes later). <span class="src">Pause-retains-position; dismiss-to-stop.</span></div>
+    <div class="screen"><div class="shape stretch" style="width: 330px; gap: 10px;">
+      <span class="wave still">
+        <i class="on" style="height:5px"></i><i class="on" style="height:9px"></i><i class="on" style="height:13px"></i><i class="on" style="height:7px"></i><i class="on" style="height:11px"></i><i class="on" style="height:6px"></i><i class="on" style="height:12px"></i><i class="on" style="height:8px"></i><i class="on" style="height:10px"></i><i style="height:13px"></i><i style="height:7px"></i><i style="height:11px"></i><i style="height:5px"></i><i style="height:9px"></i><i style="height:12px"></i><i style="height:6px"></i><i style="height:8px"></i><i style="height:5px"></i>
+      </span>
+      <span class="title-line" style="font-size:10.5px; flex:1; text-align:center; color:var(--text2);">builder · paused</span>
       <span class="tico main"><svg viewBox="0 0 12 12"><path d="M4 2.6v6.8l5.4-3.4z"/></svg></span>
-      <span class="title-line" style="font-size:10.5px; color:var(--text2);">builder · paused</span>
       <span class="chip" style="opacity:.6">1.5×</span>
-      <span class="tico"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="#c9c0b2" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg></span>
-      <div class="prog"><i style="width:58%"></i></div>
     </div></div></div>
 </div>
 
@@ -312,13 +323,13 @@ and Control Center drive the session player — at the cost of stealing those ke
 
   <div class="stage"><div class="label"><b>Esc.</b> Back to the editor; the strip keeps playing at the bottom.
       Audio finishes → end tone → "builder heard ✓ · next: pantrella — ⌃⌥3".</div>
-    <div class="screen"><div class="shape stretch" style="width:300px">
-      <span class="eq"><i></i><i></i><i></i></span>
+    <div class="screen"><div class="shape stretch" style="width:300px; gap:10px;">
+      <span class="wave">
+        <i class="on" style="height:6px"></i><i class="on" style="height:10px"></i><i class="on" style="height:13px"></i><i class="on" style="height:8px"></i><i class="on" style="height:12px"></i><i class="on" style="height:7px"></i><i class="on" style="height:11px"></i><i class="on" style="height:9px"></i><i class="on" style="height:12px"></i><i class="on" style="height:6px"></i><i class="on" style="height:10px"></i><i class="hot" style="height:12px"></i><i class="hot" style="height:8px"></i><i style="height:10px"></i><i style="height:6px"></i><i style="height:8px"></i>
+      </span>
+      <span class="title-line" style="font-size:10.5px; flex:1; text-align:center;">builder · 3/3</span>
       <span class="tico main"><svg viewBox="0 0 12 12"><path d="M3.2 2.5h2v7h-2zM6.8 2.5h2v7h-2z"/></svg></span>
-      <span class="title-line" style="font-size:10.5px;">builder · 3/3</span>
       <span class="chip">1.5×</span>
-      <span class="tico"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="#c9c0b2" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg></span>
-      <div class="prog"><i style="width:82%"></i></div>
     </div></div></div>
 
   <div class="stage"><div class="label"><b>⌃⌥. walks to the next unread</b> (pantrella). Its ask pulses — answer by
@@ -356,8 +367,9 @@ and Control Center drive the session player — at the cost of stealing those ke
 <div class="decision"><b>6 · Six-slot aging.</b> When a 7th session arrives, which dot yields? <span class="rec">Recommend:</span>
   the oldest fully-consumed, fully-silent session drops off the picker (still in the panel); numbers of surviving
   sessions never shift mid-day.</div>
-<div class="decision"><b>7 · Progress bar meaning.</b> The strip's hairline shows the CURRENT message's progress and
-  the label carries "2/3" for the stack (Pocket Casts: per-item progress + queue count). Alternative: whole-stack progress bar.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>7 · Progress representation — RESOLVED</b> (your 12:56
+  capture): the hairline is gone everywhere; on the strip the waveform is the progress bar and the scrubber (lit =
+  played, drag to seek), the label carries "2/3" for the stack; the collapsed pill shows no progress at all.</div>
 <div class="decision"><b>8 · Panel progress sliver.</b> The in-progress resume sliver on an Agents row (journey step 6)
   technically violates panel remark #4 ("no decorations — unread = the row simply reads bright"). It is data, not
   decoration — but it's your rule to bend or keep.</div>
@@ -367,6 +379,10 @@ and Control Center drive the session player — at the cost of stealing those ke
 (TTSController already caches finished streams and seeks cached WAVs; `seek(to:)` is cache-only today). Sentence
 boundaries → frame offsets gives exact sentence skips. Live streamed replies stay skip-limited (no cache) — the
 player shows pause/stop only there.</p>
+<p class="note">· <b>Waveform:</b> bars are the RMS amplitude envelope of the cached WAV (downsampled to ~16–24
+buckets — exactly how WhatsApp draws voice notes), so the strip shows the real shape of the speech. Lit bars =
+played fraction; drag = `seek(to:)`; the 2 bars at the playhead animate while playing. Live streams draw the
+envelope of what has already been fed and mark the strip non-draggable.</p>
 <p class="note">· <b>Speed:</b> baked into generation per request. The cycling chip re-generates from the current
 sentence at the new speed — cheap because speech is already sentence-chunked (AgentReplySpeaker).</p>
 <p class="note">· <b>State:</b> SessionPush already carries seen/spoken/done — the three-state model extends `spoken`
