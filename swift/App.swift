@@ -611,6 +611,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.onPlayerSpeed = { [weak self] delta in
             self?.playerAdjustSpeed(delta)
         }
+        // Typed reply from the grown pill (ticket VF-48) — same routing as
+        // a voice answer: fulfills the blocked ask or queues in the inbox.
+        indicator.onGrownTypedReply = { [weak self] text in
+            guard let self, let sid = self.currentPushSessionId else { return }
+            self.sendMessage(toSession: sid, text: text)
+            self.currentPushSessionId = nil
+            self.indicator.hideGrown()
+            self.replyBubble.showTransient("sent ✓", seconds: 3)
+        }
         AssistantsStore.shared.load()
         replySpeaker = AgentReplySpeaker(tts: ttsController)
         replySpeaker.voiceOverride = AssistantsStore.shared.base?.voice
@@ -3188,8 +3197,14 @@ extension AppDelegate: AgentsDataSource {
             .map { (id: $0.key,
                     label: mcpServer.sessions.session($0.key)?.label
                         ?? sessionLabels[$0.key] ?? Self.senderLabel($0.value)) }
+        let slotted = slottedSessions()
+        let slottedIds = Set(slotted.map { $0.id })
+        // Eligible but unnumbered = the queue waiting for a freed slot
+        // (ticket VF-48: nine sticky numbers, overflow waits).
+        let queued = picker.filter { !slottedIds.contains($0.id) }
         let entries: [(id: String, label: String, number: Int?)] =
-            picker.enumerated().map { ($0.element.id, $0.element.label, $0.offset + 1) }
+            slotted.map { ($0.id, $0.label, $0.slot) }
+            + queued.map { ($0.id, $0.label, nil) }
             + history.map { ($0.id, $0.label, nil) }
         let rows = entries.map { session -> (row: AgentSessionRow, at: Date?) in
             let queue = sessionPushes[session.id] ?? []
@@ -3198,6 +3213,12 @@ extension AppDelegate: AgentsDataSource {
             if hasPendingAsk(for: session.id),
                let ask = queue.last(where: { $0.isAsk && $0.answer == nil }) {
                 preview = "asks: " + ask.text.replacingOccurrences(of: "\n", with: " ")
+            }
+            // In-progress listening state rides the preview as words, not
+            // decorations (ticket VF-48, panel remark #4).
+            let activePushes = queue.filter { $0.done != true }
+            if let progressIdx = activePushes.lastIndex(where: { $0.resumeSentence != nil }) {
+                preview = "paused · \(progressIdx + 1)/\(activePushes.count) — " + preview
             }
             if preview.count > 120 { preview = String(preview.prefix(120)) + "…" }
             let row = AgentSessionRow(
@@ -3208,9 +3229,10 @@ extension AppDelegate: AgentsDataSource {
                 preview: preview,
                 time: newest.map { Self.pushTimeFormatter.string(from: $0.at) } ?? "",
                 unread: queue.contains { !$0.seen },
-                // A numberless row IS a consumed thread — "completed", never
-                // "ghost", regardless of whether its session still lives.
-                completed: session.number == nil,
+                // A numberless, no-longer-eligible row IS a consumed thread —
+                // "completed"; a numberless ELIGIBLE row is just queued for
+                // a slot (ticket VF-48).
+                completed: session.number == nil && !pickerIds.contains(session.id),
                 ghost: session.number != nil && mcpServer.sessions.session(session.id) == nil)
             return (row, newest?.at)
         }

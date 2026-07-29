@@ -311,6 +311,13 @@ class FloatingIndicator: NSObject {
     private var iconSpeaker: NSButton!
     private var iconTrash: NSButton!
     private var iconClose: NSButton!
+    // Typed reply (ticket VF-48): the ⌨ icon opens an inline composer —
+    // for when talking isn't an option. ⏎ sends to the shown session.
+    private var iconType: NSButton!
+    private var grownComposer: NSTextField!
+    private var composerActive = false
+    private var currentBottomPicker: (entries: [PickerEntry], activeName: String?)?
+    var onGrownTypedReply: ((String) -> Void)?
     private var grownStreaming = false
     var isGrownAssistantConversationVisible: Bool {
         mode == .grown && grownRoutesToAssistant
@@ -740,6 +747,9 @@ class FloatingIndicator: NSObject {
         iconSpeaker?.isHidden = true
         iconTrash?.isHidden = true
         iconClose?.isHidden = true
+        iconType?.isHidden = true
+        grownComposer?.isHidden = true
+        composerActive = false
         playerBand?.isHidden = true
     }
 
@@ -876,6 +886,7 @@ class FloatingIndicator: NSObject {
 
         grownStatusLabel.stringValue = spec.title ?? ""
         grownHintLabel.stringValue = spec.hint ?? ""
+        currentBottomPicker = bottomPicker
         let body = NSMutableAttributedString()
         for older in spec.earlier {
             body.append(NSAttributedString(
@@ -947,6 +958,7 @@ class FloatingIndicator: NSObject {
         let hasTitle = !grownStatusLabel.stringValue.isEmpty
         let hasHint = !grownHintLabel.stringValue.isEmpty
         let bottomBand: CGFloat = 26
+        let composerSpace: CGFloat = composerActive ? 30 : 0
 
         withoutAnimation {
             grownScroll.frame.size.width = width - 24
@@ -958,7 +970,7 @@ class FloatingIndicator: NSObject {
 
         let titleSpace: CGFloat = hasTitle ? 24 : 6
         let hintSpace: CGFloat = hasHint ? 20 : 0
-        let totalH = 8 + titleSpace + textHeight + hintSpace + bottomBand
+        let totalH = 8 + titleSpace + textHeight + hintSpace + composerSpace + bottomBand
         expandedSize = NSSize(width: width, height: totalH)
         recenter()
 
@@ -1007,14 +1019,18 @@ class FloatingIndicator: NSObject {
 
         // Content views (panel coords, bottom-up); fade in on entry.
         grownScroll.isHidden = false
-        grownScroll.frame = NSRect(x: 12, y: bottomBand + hintSpace, width: width - 24, height: textHeight)
+        grownScroll.frame = NSRect(x: 12, y: bottomBand + composerSpace + hintSpace, width: width - 24, height: textHeight)
+        grownComposer.isHidden = !composerActive
+        if composerActive {
+            grownComposer.frame = NSRect(x: 12, y: bottomBand + 3, width: width - 24, height: 24)
+        }
         grownHintLabel.isHidden = !hasHint
         if hasHint {
-            grownHintLabel.frame = NSRect(x: 12, y: bottomBand + 2, width: width - 24, height: 15)
+            grownHintLabel.frame = NSRect(x: 12, y: bottomBand + composerSpace + 2, width: width - 24, height: 15)
         }
         grownStatusLabel.isHidden = !hasTitle
         if hasTitle {
-            grownStatusLabel.frame = NSRect(x: 12, y: totalH - 24, width: width - 100, height: 16)
+            grownStatusLabel.frame = NSRect(x: 12, y: totalH - 24, width: width - 122, height: 16)
         }
         iconClose.isHidden = false
         iconClose.frame = NSRect(x: width - 26, y: totalH - 24, width: 16, height: 16)
@@ -1022,16 +1038,27 @@ class FloatingIndicator: NSObject {
         iconTrash.frame = NSRect(x: width - 48, y: totalH - 24, width: 16, height: 16)
         iconSpeaker.isHidden = false
         iconSpeaker.frame = NSRect(x: width - 70, y: totalH - 24, width: 16, height: 16)
+        iconType.isHidden = false
+        iconType.frame = NSRect(x: width - 92, y: totalH - 24, width: 16, height: 16)
         if seed != nil {
-            for view in [grownScroll, grownHintLabel, grownStatusLabel, iconClose, iconTrash, iconSpeaker] as [NSView] {
+            for view in [grownScroll, grownHintLabel, grownStatusLabel, iconClose, iconTrash, iconSpeaker, iconType] as [NSView] {
                 view.alphaValue = 0
             }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.22
-                for view in [grownScroll, grownHintLabel, grownStatusLabel, iconClose, iconTrash, iconSpeaker] as [NSView] {
+                for view in [grownScroll, grownHintLabel, grownStatusLabel, iconClose, iconTrash, iconSpeaker, iconType] as [NSView] {
                     view.animator().alphaValue = 1
                 }
             }
+        }
+    }
+
+    @objc private func grownTypeTapped() {
+        composerActive.toggle()
+        relayoutGrown(bottomPicker: currentBottomPicker)
+        if composerActive {
+            panel.makeKey()
+            panel.makeFirstResponder(grownComposer)
         }
     }
 
@@ -1240,6 +1267,26 @@ class FloatingIndicator: NSObject {
         iconSpeaker = makeIcon("speaker.wave.2.fill", action: #selector(grownSpeakTapped))
         iconTrash = makeIcon("trash.fill", action: #selector(grownTrashTapped))
         iconClose = makeIcon("xmark", action: #selector(grownCloseTapped))
+        iconType = makeIcon("keyboard", action: #selector(grownTypeTapped))
+
+        grownComposer = NSTextField()
+        grownComposer.isBordered = false
+        grownComposer.focusRingType = .none
+        grownComposer.wantsLayer = true
+        grownComposer.layer?.backgroundColor = NSColor(r: 25, g: 22, b: 20).cgColor
+        grownComposer.layer?.borderColor = NSColor(r: 53, g: 48, b: 42).cgColor
+        grownComposer.layer?.borderWidth = 1
+        grownComposer.layer?.cornerRadius = 8
+        grownComposer.font = NSFont.systemFont(ofSize: 12)
+        grownComposer.textColor = Theme.text
+        grownComposer.backgroundColor = .clear
+        grownComposer.placeholderAttributedString = NSAttributedString(
+            string: "type a reply — ⏎ sends",
+            attributes: [.font: NSFont.systemFont(ofSize: 12),
+                         .foregroundColor: Theme.text2])
+        grownComposer.delegate = self
+        grownComposer.isHidden = true
+        rootView.addSubview(grownComposer)
 
         recenter()
         panel.orderFront(nil)
@@ -1664,6 +1711,31 @@ class FloatingIndicator: NSObject {
         if let id = sender.representedObject as? String { onRemoveSession?(id) }
     }
     @objc private func ctxQuit() { onQuit?() }
+}
+
+extension FloatingIndicator: NSTextFieldDelegate {
+    /// The typed-reply composer (ticket VF-48): ⏎ sends to the shown
+    /// session exactly like a voice answer would; Esc just closes the
+    /// field (never the stack).
+    func control(_ control: NSControl, textView: NSTextView,
+                 doCommandBy commandSelector: Selector) -> Bool {
+        guard control === grownComposer else { return false }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            let text = grownComposer.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return true }
+            grownComposer.stringValue = ""
+            composerActive = false
+            relayoutGrown(bottomPicker: currentBottomPicker)
+            onGrownTypedReply?(text)
+            return true
+        }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            composerActive = false
+            relayoutGrown(bottomPicker: currentBottomPicker)
+            return true
+        }
+        return false
+    }
 }
 
 class IndicatorView: NSView {
