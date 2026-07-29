@@ -354,6 +354,9 @@ final class TTSController: NSObject {
         try ensureAudioEngineStarted()
         refreshPlaybackStatus()
         session.start()
+        if queuedSpeechActive {
+            onQueuedChunkChanged?(index, speechChunks.count)
+        }
     }
 
     func pause() {
@@ -465,6 +468,110 @@ final class TTSController: NSObject {
         } catch {
             setStatus(.error, error.localizedDescription)
         }
+    }
+
+    // ── Queued sentence playback — the session player (ticket VF-48) ──
+    // The player speaks a session stack as a queue of SENTENCES riding the
+    // existing chunk chain, so skips are exact: skip = jump to another
+    // chunk index. No whole-queue cache is written (a skipped-through run
+    // isn't coherent audio).
+
+    /// True while a sentence queue is the thing playing.
+    private(set) var queuedSpeechActive = false
+    /// Fired on every sentence start: (index, count).
+    var onQueuedChunkChanged: ((Int, Int) -> Void)?
+    /// Fired once when the queue's last sentence finished playing naturally.
+    var onQueuedSpeechFinished: (() -> Void)?
+
+    func beginQueuedSpeech(sentences: [String], voice: String, speed: Double,
+                           instructions: String, startAt index: Int = 0) throws {
+        guard let apiKey = KeychainStore.shared.loadOpenAIAPIKey(), !apiKey.isEmpty else {
+            throw TTSError.missingAPIKey
+        }
+        guard !sentences.isEmpty else { throw TTSError.emptyText }
+        activeRequestID = UUID()
+        discardCurrentAudio()
+        currentRequest = TTSRequest(text: sentences.joined(separator: " "),
+                                    voice: voice, speed: speed,
+                                    instructions: instructions).normalized()
+        playbackBaseFrameOffset = 0
+        speechChunks = sentences
+        speechCacheURL = nil
+        speechAPIKey = apiKey
+        queuedSpeechActive = true
+        try startSpeechChunk(at: max(0, min(index, sentences.count - 1)))
+    }
+
+    /// Jump to another sentence — the transport's skip and the waveform's
+    /// drag both land here. Position is kept by the caller per sentence.
+    func skipQueuedSpeech(to index: Int) {
+        guard queuedSpeechActive, index >= 0, index < speechChunks.count else { return }
+        activeRequestID = UUID()          // orphan the in-flight stream
+        currentStreamSession?.cancel()
+        currentStreamSession = nil
+        stopPlaybackTimer()
+        playerNode.stop()
+        playerNode.reset()
+        scheduledBufferCount = 0
+        pendingPCMData.removeAll()
+        currentPCMData.removeAll()
+        livePlaybackStarted = false
+        isPlaybackPaused = false
+        streamCompleted = false
+        playbackBaseFrameOffset = 0
+        do {
+            try startSpeechChunk(at: index)
+        } catch {
+            setStatus(.error, error.localizedDescription)
+        }
+    }
+
+    /// Speed is baked into generation, so a change applies from the NEXT
+    /// sentence (±0.1 steps from the strip's chip).
+    func setQueuedSpeed(_ speed: Double) {
+        guard queuedSpeechActive, var request = currentRequest else { return }
+        request.speed = max(0.25, min(4.0, speed))
+        currentRequest = request.normalized()
+    }
+
+    var queuedSpeed: Double? { queuedSpeechActive ? currentRequest?.speed : nil }
+    var queuedChunkIndex: Int? { queuedSpeechActive ? activeSpeechChunkIndex : nil }
+
+    /// One toggle, never two controls (VF-48): pause retains position.
+    func togglePause() {
+        guard currentRequest != nil else { return }
+        if isPlaybackPaused {
+            try? resumeCurrentAudio()
+        } else {
+            pause()
+        }
+    }
+
+    /// RMS envelope (0…1 per bucket) of the audio generated since the last
+    /// skip — the strip waveform's bars.
+    func audioEnvelope(buckets: Int) -> [Float] {
+        guard buckets > 0, !currentPCMData.isEmpty else { return [] }
+        var result = [Float](repeating: 0, count: buckets)
+        currentPCMData.withUnsafeBytes { raw in
+            let samples = raw.bindMemory(to: Int16.self)
+            guard !samples.isEmpty else { return }
+            let per = max(1, samples.count / buckets)
+            for bucket in 0..<buckets {
+                let start = bucket * per
+                guard start < samples.count else { break }
+                let end = min(samples.count, start + per)
+                var accumulated: Float = 0
+                var count = 0
+                var i = start
+                while i < end {          // subsample — the bars are visual
+                    accumulated += abs(Float(samples[i]))
+                    count += 1
+                    i += 64
+                }
+                result[bucket] = min(1, (accumulated / Float(max(1, count))) / 16_384.0)
+            }
+        }
+        return result
     }
 
     private func appendLivePCM(requestID: UUID, data: Data) {
@@ -683,7 +790,10 @@ final class TTSController: NSObject {
         scheduledBufferCount = max(0, scheduledBufferCount - 1)
         if scheduledBufferCount == 0, streamCompleted || currentAudioSource == .cache {
             stopPlaybackTimer()
+            let queueFinished = queuedSpeechActive && streamCompleted
+            queuedSpeechActive = queuedSpeechActive && !queueFinished
             setStatus(.ready, "Ready")
+            if queueFinished { onQueuedSpeechFinished?() }
         } else {
             refreshPlaybackStatus()
         }
@@ -913,6 +1023,7 @@ final class TTSController: NSObject {
     }
 
     private func clearSpeechPlan() {
+        queuedSpeechActive = false
         speechChunks.removeAll()
         activeSpeechChunkIndex = 0
         speechCacheURL = nil

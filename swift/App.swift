@@ -81,6 +81,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         /// Read aloud already — the consumption cursor (ticket #16):
         /// consumed = spoken OR answered; read-aloud starts after it.
         var spoken: Bool? = nil
+        /// Interrupted mid-listen: the sentence to resume from next time
+        /// (podcast three-state, ticket VF-48). nil once fully heard.
+        var resumeSentence: Int? = nil
         /// Consumed from the pill (trashed / answered / session ended read):
         /// gone from every quick surface, kept as history in the panel's
         /// Agents thread until the user ✓-completes it (ticket #17).
@@ -94,7 +97,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     /// Pushes being read aloud by speakSessionUnconsumed, waiting for
     /// playback to end before they turn into done history (ticket #21).
-    private var pendingSpeechConsumption: (session: String, indices: [Int], playbackSeen: Bool)?
+    /// `map` translates the player's flat sentence queue back onto the
+    /// stack's pushes — the consumption cursor moves with the voice
+    /// (ticket VF-48).
+    private var pendingSpeechConsumption: (session: String, indices: [Int],
+                                           map: PlaybackQueueMap, playbackSeen: Bool)?
     private let maxQueuedPushes = 8
     /// Done pushes included — how much thread history a session keeps.
     private let maxKeptPushes = 40
@@ -580,6 +587,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.chatPanel.setTTSStatus(snapshot)
                 self?.settleSpeechConsumption(snapshot.phase)
             }
+        }
+        ttsController.onQueuedChunkChanged = { [weak self] index, _ in
+            DispatchQueue.main.async { self?.handlePlayerChunkChange(index) }
+        }
+        ttsController.onQueuedSpeechFinished = { [weak self] in
+            DispatchQueue.main.async { self?.handlePlayerQueueFinished() }
         }
         AssistantsStore.shared.load()
         replySpeaker = AgentReplySpeaker(tts: ttsController)
@@ -3263,42 +3276,97 @@ extension AppDelegate: AgentsDataSource {
     }
 
     /// Read-aloud honors the consumption cursor (ticket #16): only pushes
-    /// neither spoken before nor answered are read, then marked spoken.
-    /// Fully caught up? A press is an explicit request to REPLAY the stack.
-    /// Listening CONSUMES: spoken pushes become done history in the panel
-    /// and leave the pill's quick surfaces — except a still-unanswered ask,
-    /// which stays active until it gets its answer (ticket #14). Consumption
-    /// lands only when playback ENDS (ticket #21): marking done at speech
-    /// START dropped a ghost thread from the pill mid-listen.
+    /// neither spoken before nor answered are read. Fully caught up? A
+    /// press is an explicit request to REPLAY the stack. Playback is a
+    /// SENTENCE QUEUE (ticket VF-48): skips are exact, an interrupted push
+    /// keeps a resume point, and the cursor advances with the voice —
+    /// a push is spoken only once the voice moved past it. Consumption to
+    /// done history still lands only when playback ends (ticket #21).
     func speakSessionUnconsumed(_ sessionId: String) {
-        guard var queue = sessionPushes[sessionId], !queue.isEmpty else {
+        guard let queue = sessionPushes[sessionId], !queue.isEmpty else {
             replyBubble.showTransient("nothing to read for this session", seconds: 4)
             return
         }
         let fresh = queue.indices.filter { queue[$0].spoken != true && queue[$0].answer == nil }
-        let indices = fresh.isEmpty ? Array(queue.indices) : fresh
-        var request = chatPanel.currentTTSRequest()
-        request.text = indices.map { queue[$0].text }.joined(separator: "\n\n")
-        if handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: true) != nil {
+        let replay = fresh.isEmpty
+        let indices = replay ? Array(queue.indices) : fresh
+        let sentences = indices.map { SpeechSentencer.sentences(of: queue[$0].text) }
+        let map = PlaybackQueueMap(counts: sentences.map { $0.count })
+        guard map.totalChunks > 0 else {
+            replyBubble.showTransient("nothing to read for this session", seconds: 4)
+            return
+        }
+        // An interrupted first push resumes where it stopped; a replay
+        // starts from the top.
+        var startChunk = 0
+        if !replay, let resume = queue[indices[0]].resumeSentence,
+           resume > 0, resume < map.counts[0] {
+            startChunk = resume
+        }
+        let request = chatPanel.currentTTSRequest().normalized()
+        // Whatever batch was still settling settles now — only what was
+        // actually heard retires (finalize filters on spoken).
+        if pendingSpeechConsumption != nil { finalizeSpeechConsumption() }
+        do {
+            try ttsController.beginQueuedSpeech(
+                sentences: sentences.flatMap { $0 },
+                voice: request.voice, speed: request.speed,
+                instructions: request.instructions, startAt: startChunk)
+        } catch TTSError.missingAPIKey {
+            replyBubble.showTransient("add an OpenAI API key for speech — opening Settings", seconds: 5)
+            showSettings()
+            return
+        } catch {
             replyBubble.showTransient("couldn't start speech — check the TTS settings", seconds: 5)
             return
         }
-        for index in indices {
-            queue[index].spoken = true
-        }
-        sessionPushes[sessionId] = queue
-        // Another thread's batch still awaiting its playback end settles
-        // now; a replay/extension of the SAME thread folds into this batch
-        // so nothing is consumed while its audio is still playing.
-        if let pending = pendingSpeechConsumption, pending.session != sessionId {
-            finalizeSpeechConsumption()
-        }
-        let carried = pendingSpeechConsumption?.indices ?? []
-        pendingSpeechConsumption = (session: sessionId,
-                                    indices: Array(Set(carried).union(indices)).sorted(),
-                                    playbackSeen: false)
+        pendingSpeechConsumption = (session: sessionId, indices: indices,
+                                    map: map, playbackSeen: false)
         refreshUnreadIndicator()
         chatPanel.refreshAgents()
+    }
+
+    /// The consumption cursor moves with the voice (ticket VF-48): pushes
+    /// fully behind the playhead are spoken (a soft tick marks each
+    /// boundary); the one under it keeps a resume point so stopping never
+    /// loses the place. Main thread.
+    private func handlePlayerChunkChange(_ chunk: Int) {
+        guard let pending = pendingSpeechConsumption,
+              var queue = sessionPushes[pending.session] else { return }
+        let position = pending.map.position(ofChunk: chunk)
+        for (ordinal, index) in pending.indices.enumerated() where queue.indices.contains(index) {
+            if ordinal < position.item {
+                if queue[index].spoken != true {
+                    queue[index].spoken = true
+                    if let tick = NSSound(named: "Tink") {
+                        tick.volume = 0.2
+                        tick.play()
+                    }
+                }
+                queue[index].resumeSentence = nil
+            } else if ordinal == position.item {
+                queue[index].resumeSentence = position.sentence > 0 ? position.sentence : nil
+            }
+        }
+        sessionPushes[pending.session] = queue
+        chatPanel.refreshAgents()
+    }
+
+    /// Natural end of the whole stack: everything is heard, the end tone
+    /// sounds — and deliberately NOTHING else happens (Safet's call: the
+    /// end of a stack is where the user decides what's next). Main thread.
+    private func handlePlayerQueueFinished() {
+        if let pending = pendingSpeechConsumption,
+           var queue = sessionPushes[pending.session] {
+            for index in pending.indices where queue.indices.contains(index) {
+                queue[index].spoken = true
+                queue[index].resumeSentence = nil
+            }
+            sessionPushes[pending.session] = queue
+        }
+        NSSound(named: "Purr")?.play()
+        // Consumption to done history follows via settleSpeechConsumption
+        // on the .ready status this finish produces.
     }
 
     /// Fed every TTS status change: once the speech begun by
@@ -3325,10 +3393,13 @@ extension AppDelegate: AgentsDataSource {
         pendingSpeechConsumption = nil
         guard var queue = sessionPushes[pending.session] else { return }
         for index in pending.indices where queue.indices.contains(index) {
-            if !(queue[index].isAsk && queue[index].answer == nil) {
-                queue[index].done = true
-                queue[index].seen = true
-            }
+            // Only what was actually HEARD retires (ticket VF-48): an
+            // interrupted push keeps its resume point and stays active,
+            // and a still-unanswered ask stays hot regardless.
+            guard queue[index].spoken == true,
+                  !(queue[index].isAsk && queue[index].answer == nil) else { continue }
+            queue[index].done = true
+            queue[index].seen = true
         }
         sessionPushes[pending.session] = queue
         refreshSessionIndicator()
