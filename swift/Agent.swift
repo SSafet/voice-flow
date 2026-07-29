@@ -91,6 +91,50 @@ final class AgentSession {
     var currentConversation: AssistantConversation { history.activeConversation() }
     var conversations: [AssistantConversation] { history.conversations() }
 
+    // ── Persistent assistant (ticket VF-49) ─────────────
+    /// The folder-defined assistant this session embodies: her identity and
+    /// instructions compose into the prompt, her memory rides every turn,
+    /// and her folder is the working directory of shell turns.
+    private(set) var activeAssistant: AssistantDefinition?
+
+    func setActiveAssistant(_ assistant: AssistantDefinition?) {
+        activeAssistant = assistant
+    }
+
+    /// Route to a different folder assistant: a fresh conversation, so the
+    /// new persona composes onto a clean thread instead of inheriting one
+    /// primed for somebody else.
+    func activateAssistant(_ assistant: AssistantDefinition) {
+        guard assistant.slug != activeAssistant?.slug else { return }
+        activeAssistant = assistant
+        createConversation()
+    }
+
+    /// First-turn identity: assistant.md's body plus the folder contract.
+    private var assistantPersonaBlock: String {
+        guard let assistant = activeAssistant else { return "" }
+        return """
+
+
+        You are \(assistant.name). \(assistant.instructions)
+
+        Your folder is \(assistant.directory.path) — it is yours, and shell commands start inside it:
+        - memory/core.md — your memory. When you learn a durable fact, decision, or preference — or the user \
+        corrects one — update the file yourself in the same turn. Date each fact (YYYY-MM-DD); supersede changed \
+        facts (~~old~~ → new) instead of deleting; keep it under ~200 lines; never store secrets or credentials.
+        - memory/ledger.md — your scratch notes between conversations.
+        - workspace/ — put files you produce for the user here unless they name another place.
+        The current core.md rides along with every message, so an update you write is in force from your next turn on.
+        """
+    }
+
+    /// Every-turn block: her memory as it is on disk right now.
+    private var assistantMemoryBlock: String {
+        guard let assistant = activeAssistant else { return "" }
+        let memory = assistant.coreMemory()
+        return "\n\n## Your memory — core.md right now\n" + (memory.isEmpty ? "(empty)" : memory)
+    }
+
     @discardableResult
     func createConversation() -> AssistantConversation {
         let conversation = history.createConversation()
@@ -172,7 +216,7 @@ final class AgentSession {
         - When the user asks you to do something on their computer and control is enabled, act in small steps: take a screenshot to orient yourself, act, then take another screenshot to verify. Stop as soon as the request is fulfilled and summarize what you did in one or two sentences.
         - If the computer tool reports that control is disabled, don't retry — briefly tell the user what you would do and that they can enable control from the panel.
         - Never take destructive or irreversible actions (deleting data, sending messages or emails, completing purchases) unless the user explicitly asked for that exact action.
-        """
+        """ + assistantPersonaBlock + assistantMemoryBlock
     }
 
     private var computerToolDefinition: [String: Any] {
@@ -438,9 +482,11 @@ final class AgentSession {
         activity = .thinking
         let turn = pendingCodexTurn ?? (text: "", images: [])
         pendingCodexTurn = nil
-        let persona = codexThreadId == nil ? codexPreamble + "\n\n" : ""
-        let prompt = persona + codexAccessNote + "\n\n" + turn.text
+        let persona = codexThreadId == nil ? codexPreamble + assistantPersonaBlock + "\n\n" : ""
+        let prompt = persona + codexAccessNote + assistantMemoryBlock + "\n\n" + turn.text
         let sessionId = runningSessionId ?? currentSessionId
+        let ticketsDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/tickets").path
 
         do {
             var started = false
@@ -448,6 +494,8 @@ final class AgentSession {
                 prompt: prompt,
                 images: turn.images,
                 resumeThread: codexThreadId,
+                workingDirectory: activeAssistant?.directory,
+                extraWritableRoots: activeAssistant == nil ? [] : [ticketsDir],
                 onThreadStarted: { [weak self] id in
                     guard let self else { return }
                     // Persist from the parser queue immediately. If Voice Flow

@@ -51,3 +51,25 @@ enum AssistantWakeMatcher {
         return prompt.isEmpty ? nil : prompt
     }
 }
+
+/// One wake name an assistant answers to (ticket VF-49). The base assistant's
+/// keyword stays the Settings wake word; folder variants use their own name.
+struct AssistantWakeCandidate {
+    let slug: String
+    let keyword: String
+}
+
+extension AssistantWakeMatcher {
+    /// Match a transcript against every loaded assistant, longest wake name
+    /// first, so "FLORA watcher, …" routes to the variant while "FLORA, …"
+    /// stays with the base.
+    static func resolve(in transcript: String,
+                        candidates: [AssistantWakeCandidate]) -> (slug: String, prompt: String)? {
+        for candidate in candidates.sorted(by: { $0.keyword.count > $1.keyword.count }) {
+            if let prompt = prompt(in: transcript, keyword: candidate.keyword) {
+                return (candidate.slug, prompt)
+            }
+        }
+        return nil
+    }
+}

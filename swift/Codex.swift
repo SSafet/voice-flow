@@ -65,9 +65,14 @@ final class CodexExecBackend {
 
     /// Run one turn. `onAgentText` fires per completed assistant message so
     /// the pill can grow while longer turns are still finishing.
+    /// `workingDirectory` is the assistant's own folder (ticket VF-49): the
+    /// workspace-write sandbox makes it her writable workplace, with
+    /// `extraWritableRoots` for the few shared stores her duties touch.
     func run(prompt: String,
              images: [Data],
              resumeThread: String?,
+             workingDirectory: URL? = nil,
+             extraWritableRoots: [String] = [],
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
              onAgentText: @escaping (String) -> Void) async throws -> TurnResult {
@@ -96,13 +101,21 @@ final class CodexExecBackend {
                                  "-c", "sandbox_mode=\"workspace-write\"",
                                  "-c", "sandbox_workspace_write.network_access=true",
                                  "-c", "mcp_servers={}"])
+        if !extraWritableRoots.isEmpty {
+            // -c goes through TOML, and `resume` has no --add-dir flag, so the
+            // extra roots ride the config key both paths accept.
+            let toml = extraWritableRoots
+                .map { "\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+                .joined(separator: ", ")
+            args.append(contentsOf: ["-c", "sandbox_workspace_write.writable_roots=[\(toml)]"])
+        }
         imagePaths.forEach { args.append(contentsOf: ["-i", $0]) }
         args.append(prompt)
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
         proc.arguments = args
-        proc.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+        proc.currentDirectoryURL = workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser
         let stdout = Pipe()
         let stderr = Pipe()
         proc.standardOutput = stdout

@@ -1022,6 +1022,9 @@ final class AgentReplySpeaker {
     private let tts: TTSController
     private var buffer = ""
     private(set) var isActive = false
+    /// The active assistant's own voice (ticket VF-49); nil keeps the
+    /// user's global TTS voice.
+    var voiceOverride: String?
 
     // A chunk must be at least this long before we cut at a sentence end —
     // sub-clause fragments make the voice sound choppy.
@@ -1039,7 +1042,7 @@ final class AgentReplySpeaker {
         let settings = UserSettings.shared
         do {
             try tts.beginLiveSpeech(
-                voice: settings.ttsVoice,
+                voice: voiceOverride ?? settings.ttsVoice,
                 speed: settings.ttsSpeed,
                 instructions: settings.ttsInstructions
             )

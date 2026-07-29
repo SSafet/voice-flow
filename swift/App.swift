@@ -578,7 +578,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.settleSpeechConsumption(snapshot.phase)
             }
         }
+        AssistantsStore.shared.load()
         replySpeaker = AgentReplySpeaker(tts: ttsController)
+        replySpeaker.voiceOverride = AssistantsStore.shared.base?.voice
 
         backend = BackendBridge()
         backend.onReady = { [weak self] in
@@ -657,6 +659,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         agent = AgentSession(screenCapture: screenCapture)
+        agent.setActiveAssistant(AssistantsStore.shared.base)
         chatPanel.restoreAssistantConversation(agent.currentConversation)
         agent.onHistoryChanged = { [weak self] in
             guard let self else { return }
@@ -1707,6 +1710,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if activeRunId == nil { state = .idle }
     }
 
+    /// One wake name per loaded assistant (ticket VF-49). The base assistant
+    /// keeps answering to the Settings wake word exactly as before; folder
+    /// variants answer to their own names, longest match first.
+    private func assistantWakeCandidates() -> [AssistantWakeCandidate] {
+        let store = AssistantsStore.shared
+        let settingsWord = UserSettings.shared.assistantWakeWord
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return store.assistants.map { assistant in
+            let keyword = assistant.slug == store.base?.slug && !settingsWord.isEmpty
+                ? settingsWord : assistant.name
+            return AssistantWakeCandidate(slug: assistant.slug, keyword: keyword)
+        }
+    }
+
     private func maybeDeliverCapture(_ id: UUID) {
         guard var run = captureRuns[id], run.phase != .delivered,
               run.phase != .failed, run.isReadyToDeliver else { return }
@@ -1758,10 +1775,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let destination: CaptureDestination
         let seen: Bool?
         let settings = UserSettings.shared
-        let wakePrompt = run.capability == .dictate && settings.assistantWakeEnabled
-            ? AssistantWakeMatcher.prompt(in: note, keyword: settings.assistantWakeWord)
+        let wakeMatch = run.capability == .dictate && settings.assistantWakeEnabled
+            ? AssistantWakeMatcher.resolve(in: note, candidates: assistantWakeCandidates())
             : nil
-        let effectiveRoute: CaptureRoute = wakePrompt == nil ? run.route : .assistant
+        let effectiveRoute: CaptureRoute = wakeMatch == nil ? run.route : .assistant
         switch effectiveRoute {
         case .historyOnly:
             destination = .kept
@@ -1780,13 +1797,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .assistant:
             destination = .assistant
             seen = nil
-            let wakeWord = settings.assistantWakeWord
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if wakePrompt != nil {
-                indicator.flashMessage("\(wakeWord.isEmpty ? DefaultAssistantWakeWord : wakeWord) → Assistant",
-                                       seconds: 4)
+            if let wakeMatch {
+                // The spoken name picks the assistant: the folder variant's
+                // definition, memory, workspace and voice take the turn.
+                if let matched = AssistantsStore.shared.assistant(slug: wakeMatch.slug) {
+                    agent.activateAssistant(matched)
+                    replySpeaker.voiceOverride = matched.voice
+                    indicator.flashMessage("\(matched.name) → Assistant", seconds: 4)
+                } else {
+                    indicator.flashMessage("\(DefaultAssistantWakeWord) → Assistant", seconds: 4)
+                }
             }
-            let assistantNote = wakePrompt ?? note
+            let assistantNote = wakeMatch?.prompt ?? note
             if !chatPanel.isVisible { replyBubble.showThinking(echo: assistantNote.isEmpty ? "Screen capture" : assistantNote) }
             chatPanel.addUserMessage(assistantNote, attachmentNote: Self.attachmentNote(count: screenshotData.count))
             let assistantText = run.capability == .continuous
