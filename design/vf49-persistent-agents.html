@@ -102,7 +102,12 @@
 <b>research/vf49-persistent-agents-landscape.md</b> (43 products, 6 clusters). The one-line model:
 <b>an assistant is a folder of markdown</b> — addressed by name, scoped by allowlist, remembered in files you can
 open, run as fresh sessions, reporting into the same pill you already read with VF-48's player and consumption.
-Roster decision: <b>FLORA only</b> — the model supports more, but exactly one exists.</p>
+Roster decision: <b>FLORA only</b> — the model supports more, but exactly one exists.<br>
+<b>FINAL SCOPE (Safet, 2026-07-29):</b> the deliverable is the STRUCTURE — FLORA's folder (definition + memory +
+her own named workspace she works in), replicable by copying the folder: a future specialist is a variation
+extending FLORA with a compound wake word ("FLORA watcher"), its own name and its own workspace. OUT of scope, by
+decision: triggers, background runs, autonomy changes (she keeps her current near-full access), and any global
+memory layer. The structure leaves room for triggers later, set by Safet whenever he decides.</p>
 
 <div class="decision" style="max-width:920px; margin-top:18px;"><b>The definition — what makes an agent
 "persistent".</b> An agent is persistent when it <b>survives the conversation</b>: quit the app, come back in a
@@ -128,7 +133,7 @@ actually shipped: identity + curated memory + standing scope + incremental trigg
   <tr><td><b>Memory</b></td><td>Letta MemFS · CLAUDE.md/MEMORY.md · Lindy · Dust</td><td>Small plain-text files per assistant: a capped always-loaded core + topic files + a ledger. Visible, editable, pruned. Never a vector DB at personal scale. Isolation between assistants is hard; sharing is explicit.</td></tr>
   <tr><td><b>Addressing</b></td><td>ChatGPT @-mentions · Home Assistant wake words · @Devin</td><td>The name is the routing key — spoken as the leading word of a dictation, exactly like FLORA today. Few, phonetically distinct, stable names (Google swapped Assistant's brain, kept "Hey Google").</td></tr>
   <tr><td><b>Strategy</b></td><td>Devin Knowledge/Playbooks · Manus Knowledge · Skills</td><td>Two layers: a thin always-loaded core + named procedures whose "when to use" is authored separately from content. Procedures in markdown; live data via MCP.</td></tr>
-  <tr><td><b>Triggers</b></td><td>ChatGPT Tasks · Scheduled Devins · OpenClaw HEARTBEAT.md</td><td>Plain-language schedules + event triggers, run INCREMENTALLY (run N+1 reads run N's notes). Local runner = the VF app itself (it already runs the watcher); missed runs queue to next wake.</td></tr>
+  <tr><td><b>Triggers</b> <i style="color:var(--text3)">(later, by your call)</i></td><td>ChatGPT Tasks · Scheduled Devins · OpenClaw HEARTBEAT.md</td><td>Plain-language schedules + event triggers, run INCREMENTALLY (run N+1 reads run N's notes). Researched and kept for the day you decide — nothing built now.</td></tr>
   <tr><td><b>Reporting</b></td><td>ChatGPT Pulse · Zapier All Activity · Dust</td><td>Results land as pushes in the pill/panel — a pull surface with VF-48 consumption. Asks pause the run and pulse the ring. A triggered assistant NEVER opens audio or takes the screen.</td></tr>
   <tr><td><b>Scope</b></td><td>Zapier's single-purpose split · Dust's 300k small agents · Devin</td><td>One assistant = one bounded recurring workflow with a checkable output. Few assistants, legible ones. Persona stays thin — named capability, not named personality (Alexa celebrity personas, Dot, Friend all died).</td></tr>
   <tr><td><b>Security</b></td><td>OpenClaw's Feb 2026 crisis (the cautionary tale)</td><td>Default-deny allowlists per assistant, no third-party definitions without provenance, kill switch + run caps + receipts for every background run (the surface-invisible-systems rule).</td></tr>
@@ -144,14 +149,7 @@ actually shipped: identity + curated memory + standing scope + incremental trigg
   filing work, recalling decisions.</span>
 <span class="k">tools:</span> <span class="v">notion (boards, todos), web-search,
   voice-flow (dictations, captures)</span>
-<span class="k">sources:</span>
-  <span class="v">- dictations</span>        <span class="cm"># when: filing intake, "as I said"</span>
-  <span class="v">- watcher-archive</span>   <span class="cm"># when: asked about my day / time</span>
-<span class="k">triggers:</span>
-  <span class="v">- "09:00 — file overnight dictations to the boards"</span>
-<span class="k">autonomy:</span> <span class="v">ask-first</span>      <span class="cm"># acts only after confirmation</span>
 <span class="k">voice:</span> <span class="v">shimmer</span>          <span class="cm"># her sound in the player</span>
-<span class="k">model:</span> <span class="v">default</span>
 ---
 You are FLORA. Answer from your memory and Safet's
 data before reasoning from scratch — and say WHEN you
@@ -165,12 +163,11 @@ Never invent facts your files don't back.</pre>
       Claude Code subagents' frontmatter. <span class="src">Copilot's .github/agents/*.md is the same shape.</span></div>
     <div><b>tools / sources</b> — default-deny allowlist; each source carries a "when to use" clause.
       <span class="src">Manus Knowledge: Name + When-to-Use + Content + toggle. Home Assistant: per-assistant entity exposure.</span></div>
-    <div><b>triggers</b> — plain language, no cron UI; the run is incremental (reads its own last notes).
-      <span class="src">Scheduled Devins, OpenClaw HEARTBEAT.md.</span></div>
-    <div><b>autonomy</b> — per-assistant dial: ask-first vs act-with-receipts.
-      <span class="src">Lindy's Ask-for-Confirmation flag; Manus's front-loaded questions.</span></div>
-    <div><b>the body</b> — thin strategy core, always loaded. Procedures live next door in
-      <span class="key">procedures/*.md</span>, fetched on demand. <span class="src">Skills' progressive disclosure.</span></div>
+    <div><b>workspace/</b> — HER working directory, named by her folder: every session she runs works in it
+      (files she makes, notes she keeps). Separating an assistant's workplace is what makes a copy of the folder a
+      genuinely separate assistant. <span class="src">OpenClaw's isolated agent workspaces.</span></div>
+    <div><b>the body</b> — thin strategy core, always loaded. (Room for a procedures/ folder later if her
+      know-how outgrows it — not built now.)</div>
     <div><b>memory/</b> — <span class="key">core.md</span> (capped, always in context),
       topic files, <span class="key">ledger.md</span>. You can open and edit any of them — trust requires it.
       <span class="src">Letta's MemFS pivot; the #1 complaint against ChatGPT/Cursor invisible memory.</span></div>
@@ -202,7 +199,7 @@ Never invent facts your files don't back.</pre>
       Timestamps only here, per the panel remarks.</div>
     <div class="screen tall">
       <div style="width:300px; margin-bottom:8px; background:var(--shape); border:1px solid #2e2a26; border-radius:10px; padding:8px 10px; font-size:11.5px;">
-        <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text);"><span>≋&nbsp;&nbsp;FLORA — 3 tickets filed, 1 needs you</span><span style="color:var(--text3)">09:00</span></div>
+        <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text);"><span>≋&nbsp;&nbsp;FLORA</span><span style="color:var(--text3)">14:22</span></div>
         <div style="border-top:1px solid #2a2724; margin:4px 0;"></div>
         <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text2);"><span>1&nbsp;&nbsp;voice-flow — routing</span><span style="color:var(--text3)">14:07</span></div>
         <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text2);"><span>2&nbsp;&nbsp;pantrella — deploy</span><span style="color:var(--text3)">13:44</span></div>
@@ -219,46 +216,17 @@ Never invent facts your files don't back.</pre>
     </div></div></div></div>
 </div>
 
-<h2>3 · Triggered runs — persistent means it works while you don't</h2>
-<div class="row">
-  <div class="stage wide"><div class="label"><b>A scheduled run reports</b> — FLORA's 09:00 trigger (one line in her
-      definition) filed the overnight dictations and pushed ONE receipt. No screen takeover, no audio. You read or
-      play it when you want. <span class="src">Pulse's overnight cards; Zapier's activity feed; the pill's own law.</span></div>
-    <div class="screen"><div class="shape stretch"><span class="title-line">FLORA · 3 tickets filed, 1 needs you</span></div></div></div>
-
-  <div class="stage wide"><div class="label"><b>A background ask</b> — one intake item was ambiguous; FLORA pauses
-      THAT item and asks. The ask pulses (VF-48 alarm tier) until answered; the rest of the run finished fine.
-      <span class="src">Dust's ask-clarifying-by-default; Lindy's confirmation pause. Structural, not polite.</span></div>
-    <div class="screen tall">
-      <div class="shape grown idle ask" style="width: 400px;">
-        <div class="content">
-          <div class="status">FLORA asks</div>
-          <div class="msg bright">"Fix the pill" — is that Voice Flow (VF board) or a Pantrella UI note?</div>
-          <div class="hint">hold Fn to answer · or it waits in the panel</div>
-        </div>
-        <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
-      </div>
-    </div></div>
-
-  <div class="stage wide"><div class="label"><b>Every background system stays visible</b> — Settings → Assistant
-      gains FLORA's triggers: toggle (kill switch), last run, next run, run cap, "open folder". Nothing invisible
-      ever runs. The nightly watcher review stays what it is — a plain scheduled job, not an assistant.
-      <span class="src">Your own surface-invisible-systems rule; OpenClaw's crisis is why.</span></div>
-    <div class="screen tall">
-      <div style="width:330px; margin-bottom:8px; background:var(--shape); border:1px solid #2e2a26; border-radius:10px; padding:10px 12px; font-size:11.5px;">
-        <div style="color:var(--text2); font-size:10.5px; padding-bottom:4px;">FLORA · triggers</div>
-        <div style="display:flex; justify-content:space-between; color:var(--text); padding:3px 0;"><span>09:00 — file overnight dictations</span><span style="color:var(--green)">on · ran 09:00 · next tomorrow</span></div>
-        <div style="color:var(--text3); font-size:10.5px; padding-top:6px;">run cap 4/day · missed runs queue to wake · open FLORA's folder</div>
-      </div>
-    </div></div>
-</div>
+<h2>3 · Triggered runs — out of scope (your call)</h2>
+<p class="note">Deliberately not built: no scheduler, no background runs, nothing to set up, and FLORA's autonomy
+stays exactly what it is now (near-full access). The structure leaves the room — a triggers section can appear in
+assistant.md whenever you decide to add one — but nothing reads it today.</p>
 
 <h2>4 · Memory you can open — agreed: nothing sophisticated</h2>
 <p class="note"><b>Scope agreed 2026-07-29:</b> no memory SYSTEM — no vector DB, no embeddings, no graph, no
 retrieval service. Memory is markdown FLORA reads and writes: start with just <span class="key">core.md</span>
-(capped, always in her context) + <span class="key">ledger.md</span> (raw observations awaiting consolidation);
-topic files appear only if the core ever overflows. Search is grep. That IS the shipped state of the art at
-personal scale — Letta spent two years on a database and rebuilt on plain files.</p>
+(capped, always in her context) + <span class="key">ledger.md</span> (her scratch notes); topic files appear only
+if the core ever overflows. Search is grep. That IS the shipped state of the art at personal scale — Letta spent
+two years on a database and rebuilt on plain files.</p>
 <div class="row">
   <div class="file" style="width:440px">
     <div class="path">assistants/flora/memory/core.md&nbsp;&nbsp;·&nbsp;&nbsp;capped ~200 lines, always loaded</div>
@@ -276,9 +244,9 @@ personal scale — Letta spent two years on a database and rebuilt on plain file
   <div class="ann">
     <div><b>Written by the assistant, readable by you.</b> Every fact is date-stamped; a change supersedes,
       never silently overwrites. <span class="src">Zep's became-true/stopped-being-true, as a cheap file convention.</span></div>
-    <div><b>Nightly consolidation.</b> The 21:37 pass extends per-assistant: dedupe, resolve contradictions,
-      expire stale facts, promote repeated observations into the core.
-      <span class="src">Letta sleep-time · OpenAI Dreaming V3 · your watcher ledger — three independent convergences.</span></div>
+    <div><b>She tends her own files as she goes.</b> A correction updates the fact; a change supersedes the old
+      line. No background consolidation pass (cut with background runs) — if core.md ever bloats, cleaning it is a
+      conversation: "FLORA, tidy your memory."</div>
     <div><b>Scoped.</b> FLORA's memory is hers — separate from the global about-you layer (SAFET.md-style), which
       sits above her. The model keeps hard per-assistant isolation for whenever a second assistant ever exists.
       <span class="src">ChatGPT Projects' fenced memory — shipped because users demanded it.</span></div>
@@ -290,68 +258,53 @@ personal scale — Letta spent two years on a database and rebuilt on plain file
 <h2>5 · The roster — resolved: FLORA only</h2>
 <div class="roster">
   <div class="rcard" style="width: 460px;"><h4><span class="k2">FLORA</span> — the one assistant, made persistent</h4>
-    No starter roster of specialists (your call). VF-49 = giving the assistant you already have the four
-    persistence properties: her folder (definition you can edit), her memory (visible, dated, consolidated
-    nightly), her standing scope (tools + data sources authored once), and her standing intentions (the 09:00
-    intake trigger as the first one). Same wake word, same panel row, same pill — she just stops forgetting.
-    <div class="m">The folder model stays N-capable; a second assistant is a decision for later, taken only if
-    persistent-FLORA proves the shape. The nightly watcher review remains a plain scheduled job.</div></div>
+    No starter roster of specialists (your call). VF-49 = giving the assistant you already have a place to
+    persist: her folder (a definition you can edit), her memory (visible, dated, superseded — tended by her as she
+    goes), and her own named workspace she works in. Same wake word, same panel row, same pill, same access —
+    she just stops forgetting. Standing intentions (triggers) come whenever you decide.
+    <div class="m">The extension model (your words): a future specialist is a VARIATION of FLORA — copy her folder
+    to a sibling (assistants/flora-watcher/), rename it, give it its compound wake word ("FLORA watcher"), its own
+    memory and its own workspace. The loader discovers every folder; longest wake-word match wins, so "FLORA
+    watcher, …" routes to the variant and bare "FLORA, …" to her. Replicate = copy folder, nothing else.</div></div>
 </div>
 
-<h2>6 · How it is built — the architecture in five bands</h2>
+<h2>6 · How it is built — the architecture in four bands</h2>
 <p class="legend">Boxes: <b class="g">green = exists today</b> (reused as-is or extended) · <b class="a">amber = new</b>.
 The load-bearing fact: <b>persistent ≠ a running process</b>. An assistant is data; sessions are cheap and fresh;
 persistence lives in the folder. (The one product that built stateful server agents — OpenAI's Assistants API — is
 being deleted this August.) V1 instantiates exactly one folder: <b>flora/</b>.</p>
 <div class="arch">
-  <div class="band"><h3>Address &amp; trigger — how an assistant wakes</h3><div class="boxes">
-    <div class="box exist">Spoken name in dictation<small><b>reuses AssistantWakeMatcher</b> (FLORA as shipped; N-capable later)</small></div>
-    <div class="box exist">Panel row / picker<small><b>extends</b> Agents list &amp; pill picker</small></div>
-    <div class="box new">Scheduler in the VF app<small><b>new</b> — NL schedules; queue-on-wake; run caps (WorkflowWatcher pattern)</small></div>
-    <div class="box new">Event triggers<small><b>new, later</b> — watcher events, file drops; same runner</small></div>
+  <div class="band"><h3>Address — how an assistant wakes</h3><div class="boxes">
+    <div class="box exist">Spoken name in dictation<small><b>generalizes AssistantWakeMatcher</b> — loader-discovered names, longest match first ("FLORA watcher" before "FLORA")</small></div>
+    <div class="box exist">Panel row / picker<small><b>unchanged</b> — FLORA's persistent first row</small></div>
   </div></div>
-  <div class="flow">↓ name / schedule picks the assistant ↓</div>
+  <div class="flow">↓ the name picks the assistant ↓</div>
   <div class="band"><h3>Compose — build the session from files</h3><div class="boxes">
-    <div class="box new">assistants/&lt;name&gt;/assistant.md<small><b>new</b> — frontmatter + strategy core</small></div>
-    <div class="box new">memory/core.md<small><b>new</b> — capped, always injected</small></div>
-    <div class="box exist">Global layer<small><b>reuses</b> FOCUS-NOW.md plan (VF-34) + SAFET.md precedence</small></div>
-    <div class="box new">procedures/*.md<small><b>new</b> — loaded on match, skills-style</small></div>
-    <div class="box exist">Run notes of last run<small><b>reuses</b> incremental-run pattern (watcher ledger)</small></div>
+    <div class="box new">assistants/&lt;name&gt;/assistant.md<small><b>new</b> — frontmatter + instructions</small></div>
+    <div class="box new">memory/core.md<small><b>new</b> — capped, always injected, agent-tended</small></div>
+    <div class="box exist">Existing preamble seam<small><b>reuses</b> codexPreamble / systemPrompt builders</small></div>
   </div></div>
-  <div class="flow">↓ one composed prompt + allowlist ↓</div>
-  <div class="band"><h3>Execute — fresh session, scoped tools</h3><div class="boxes">
-    <div class="box exist">Interactive: Assistant turn<small><b>reuses</b> AgentSession / Codex backend + per-assistant conversations (VF-27/28)</small></div>
-    <div class="box exist">Background: headless Claude Code<small><b>reuses</b> the 21:37 LaunchAgent pattern, spawned per run</small></div>
-    <div class="box new">Tool allowlist enforcement<small><b>new</b> — default-deny; report_to_user never scoped out</small></div>
-    <div class="box exist">Data sources over MCP<small><b>reuses</b> watcher archive, dictations, captures, Notion, calendar</small></div>
+  <div class="flow">↓ one composed prompt ↓</div>
+  <div class="band"><h3>Execute — fresh session in HER workspace</h3><div class="boxes">
+    <div class="box exist">Assistant turn<small><b>reuses</b> AgentSession / Codex backend + conversations (VF-27/28)</small></div>
+    <div class="box new">Named workspace as cwd<small><b>new</b> — every session works in assistants/&lt;name&gt;/workspace/</small></div>
+    <div class="box exist">Tools &amp; access<small><b>unchanged</b> — exactly today's near-full access</small></div>
   </div></div>
-  <div class="flow">↓ results, asks, memory edits ↓</div>
+  <div class="flow">↓ replies, memory edits ↓</div>
   <div class="band"><h3>Report — into the surfaces you already read</h3><div class="boxes">
-    <div class="box exist">Pushes → pill receipts<small><b>reuses</b> deliverPush + VF-48 consumption &amp; player</small></div>
-    <div class="box exist">Asks → pulse tier<small><b>reuses</b> report_to_user question + inbox</small></div>
-    <div class="box exist">Panel Agents rows<small><b>extends</b> — assistants as persistent rows</small></div>
-    <div class="box new">Run receipts &amp; kill switches<small><b>new</b> — Settings → Assistants inventory</small></div>
-  </div></div>
-  <div class="flow">↓ raw notes accumulate ↓</div>
-  <div class="band"><h3>Consolidate — nightly, per assistant</h3><div class="boxes">
-    <div class="box exist">21:37 pass, extended<small><b>extends</b> ANALYZE.md run: per-assistant memory lint — dedupe, expire, promote, supersede</small></div>
-    <div class="box new">Memory change receipts<small><b>new</b> — "FLORA updated 2 facts" push; every write visible</small></div>
+    <div class="box exist">Replies → pill / panel<small><b>unchanged</b> + VF-48 player &amp; consumption</small></div>
+    <div class="box exist">Her voice<small><b>new but tiny</b> — per-assistant TTS voice from the definition</small></div>
   </div></div>
 </div>
 
 <h2>7 · The journey — one day with persistent FLORA</h2>
 <div class="journey">
-  <div class="stage"><div class="label"><b>09:00, unattended.</b> FLORA's morning trigger drains the overnight
-      dictations into the boards. One receipt on the pill; one ambiguous item became a pulsing ask. You're still
-      making coffee.</div>
-    <div class="screen"><div class="shape stretch"><span class="title-line">FLORA · 3 tickets filed, 1 needs you</span></div></div></div>
-  <div class="stage"><div class="label"><b>You answer.</b> The ask grows — hold Fn and say "Voice Flow board", or
-      hit ⌨ and type it. FLORA files the item and the ring goes quiet. Eight seconds of attention.</div>
-    <div class="screen tall" style="height:180px"><div class="shape grown idle ask" style="width:270px">
-      <div class="content"><div class="status">FLORA asks</div>
-      <div class="msg bright">"Fix the pill" — VF board or Pantrella?</div>
-      <div class="hint">hold Fn to answer</div></div>
-      <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
+  <div class="stage"><div class="label"><b>Monday.</b> "FLORA, the next cohort moved to early August." She answers —
+      and notes it in her core.md, dated, superseding the old line. The receipt shows the write happened.</div>
+    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">FLORA noted ✓ · memory/core.md</span></div></div></div>
+  <div class="stage"><div class="label"><b>Once, ever.</b> "FLORA, when intake is ambiguous — ask me, never guess
+      the board." A standing rule now; you will never say it again, and it binds every future conversation.</div>
+    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">FLORA noted ✓ · standing rule</span></div></div></div>
   <div class="stage"><div class="label"><b>Mid-day, addressed.</b> "FLORA, what did we decide about the waitlist
       gate?" She answers from her memory — with the date you decided it — in a conversation that has nothing to do
       with the one where you told her.</div>
@@ -365,17 +318,21 @@ being deleted this August.) V1 instantiates exactly one folder: <b>flora/</b>.</
       <span class="tico main"><svg viewBox="0 0 12 12"><path d="M3.2 2.5h2v7h-2zM6.8 2.5h2v7h-2z"/></svg></span>
       <span class="chip">1.5×</span>
     </div></div></div>
-  <div class="stage"><div class="label"><b>It remembers, visibly.</b> The nightly consolidation pushes a receipt:
-      two facts updated, dated, superseded lines kept — in a file you can open. No hidden profile anywhere.</div>
-    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">FLORA updated 2 facts ✓ · memory/core.md</span></div></div></div>
   <div class="stage"><div class="label"><b>Any time: audit.</b> Something answers oddly? Open her folder, read the
-      memory, fix the wrong line in place. The files ARE the assistant.</div>
+      memory, fix the wrong line in place. The files ARE the assistant — no hidden profile anywhere.</div>
     <div class="screen tall" style="height:180px"><div style="width:270px; margin-bottom:8px; background:#171412; border:1px solid #2e2a26; border-radius:10px; padding:8px 10px; font: 10.5px ui-monospace, Menlo, monospace; color:var(--text2);">
       assistants/<br>&nbsp;&nbsp;flora/<br>
       &nbsp;&nbsp;&nbsp;&nbsp;assistant.md<br>
-      &nbsp;&nbsp;&nbsp;&nbsp;memory/&nbsp;&nbsp;core.md · pantrella.md · ledger.md<br>
-      &nbsp;&nbsp;&nbsp;&nbsp;procedures/&nbsp;&nbsp;file-intake.md<br>
-      &nbsp;&nbsp;&nbsp;&nbsp;runs/&nbsp;&nbsp;2026-07-29-0900.md</div></div></div>
+      &nbsp;&nbsp;&nbsp;&nbsp;memory/&nbsp;&nbsp;core.md · ledger.md<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;workspace/</div></div></div>
+  <div class="stage"><div class="label"><b>Someday: replicate.</b> A specialist = copy her folder, rename, give it
+      the compound wake word. "FLORA watcher, …" routes to the variant; bare "FLORA, …" stays hers. Its own memory,
+      its own workspace — nothing else to build.</div>
+    <div class="screen tall" style="height:180px"><div style="width:270px; margin-bottom:8px; background:#171412; border:1px solid #2e2a26; border-radius:10px; padding:8px 10px; font: 10.5px ui-monospace, Menlo, monospace; color:var(--text2);">
+      assistants/<br>&nbsp;&nbsp;flora/<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;assistant.md · memory/ · workspace/<br>
+      &nbsp;&nbsp;flora-watcher/<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;assistant.md · memory/ · workspace/</div></div></div>
 </div>
 
 <h2>8 · Open decisions — needs your call</h2>
@@ -388,38 +345,29 @@ being deleted this August.) V1 instantiates exactly one folder: <b>flora/</b>.</
 <div class="decision" style="border-left-color: var(--green)"><b>3 · The roster — RESOLVED:</b> FLORA only. No
   starter roster of specialists; the folder model stays N-capable but exactly one folder exists. The nightly
   watcher review remains a plain scheduled job, not an assistant.</div>
-<div class="decision"><b>4 · Global layer precedence.</b> Does per-assistant memory override the SAFET.md-style layer?
-  Can an assistant PROPOSE a global-layer change? <span class="rec">Recommend:</span> local overrides global;
-  global-layer edits are suggest-then-approve only (Devin's Knowledge model).</div>
-<div class="decision"><b>5 · Autonomy default.</b> Per-assistant dial exists — but what's the default for a NEW
-  assistant? <span class="rec">Recommend:</span> ask-first; you promote to act-with-receipts per assistant after trust
-  builds (the evidence: gates are what make autonomy usable).</div>
-<div class="decision"><b>6 · May a triggered assistant ever speak first?</b> Home Assistant's Ask-Question is liked;
-  Friend's interjections are hated; your law is audio-never-auto-plays. <span class="rec">Recommend:</span> never —
-  pull surface only, forever. (Saying yes later is easy; un-saying it isn't.)</div>
-<div class="decision"><b>7 · Memory write path.</b> Agent-edited visible files with consolidation receipts (recommended),
-  or suggest-then-approve for every write? <span class="rec">Recommend:</span> direct writes for the assistant's own
-  files + receipts; approval only for the global layer (decision 4). Silent pipeline extraction is the documented
-  trust-killer — never that.</div>
-<div class="decision"><b>8 · Local-only triggers.</b> Accept queue-on-wake semantics (missed schedule runs when the Mac
-  wakes, with a receipt), keeping the pure local-first story? <span class="rec">Recommend:</span> yes — cloud runners
-  trade away the differentiator; the LaunchAgent nightly already proves local works for your rhythm.</div>
-<div class="decision"><b>9 · Backend for background runs.</b> Headless Claude Code (like the nightly review — proven,
-  skills/MCP-native) vs codex exec (your interactive default)? <span class="rec">Recommend:</span> Claude Code for
-  triggered runs, whatever the panel conversation already uses for addressed turns.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>4 · Global layer — RESOLVED by scope:</b> no
+  global-layer machinery. FLORA's files are hers; SAFET.md stays exactly what it is today.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>5 · Autonomy — RESOLVED:</b> unchanged — she keeps
+  the near-full access she has right now. No dial, no gates added.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>6 · Speak-first — RESOLVED by scope:</b> moot
+  without background runs; the standing law (audio never auto-plays) simply continues.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>7 · Memory write path — RESOLVED:</b> she edits
+  her own files directly and visibly; you can open and correct anything. No approval machinery, no silent
+  pipelines.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>8 · Triggers — RESOLVED: cut.</b> None built; you
+  set them whenever you decide, and the file format leaves room for that day.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>9 · Background backend — RESOLVED: moot.</b> No
+  background runs exist to pick a backend for.</div>
 
 <h2>9 · Engineering notes (for the implementation tickets)</h2>
 <p class="note">· <b>Seams that already exist:</b> AssistantWakeMatcher (N names is a loop over the same matcher);
 AssistantHistoryStore (per-assistant conversations = one store per assistant or a scoped id); codexPreamble /
 systemPrompt builders (inject composed definition); LaunchAgent + ANALYZE.md (the background-run template);
 MessageInbox + deliverPush (reporting); MCP tool registry (source scoping).</p>
-<p class="note">· <b>New pieces:</b> the assistants/ folder format + loader; the in-app scheduler (timer + queue-on-wake
-+ caps + receipts); allowlist enforcement on the composed session; Settings → Assistants tab; per-assistant memory
-lint appended to the nightly pass. (The ≋ multi-assistant picker grammar is shelved with the roster decision.)</p>
-<p class="note">· <b>Order of build (one vertical slice first):</b> flora/ folder format + loader (definition +
-memory composed into her existing preamble seam) → visible memory writes with receipts → THEN the 09:00 intake
-trigger via the in-app scheduler → THEN the nightly consolidation pass. Wake word, panel row, and pushes all
-already exist — the slice touches no routing code at all.</p>
+<p class="note">· <b>New pieces (the whole build):</b> the assistants/ folder format + loader (scaffolds flora/ on
+first run); composition of definition + core.md into the existing preamble seams (codexPreamble + systemPrompt);
+workspace/ as the session's working directory; wake matching generalized to loader-discovered names, longest
+match first; per-assistant TTS voice. Nothing else — no scheduler, no Settings tab, no consolidation pass.</p>
 <p class="note">· <b>Security floor from day one:</b> default-deny tools, no third-party assistant definitions,
 run caps, kill switches, every background artifact inventoried in Settings (surface-invisible-systems).</p>
 
