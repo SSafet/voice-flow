@@ -37,15 +37,27 @@
             </intent-filter>
         </activity>
 
+        <!-- No-UI router for the assist gesture: bubble running → toggle its
+             recording in place (frontmost app keeps focus); otherwise open
+             the app recording, as before (ticket VF-51). -->
+        <activity
+            android:name=".DictateTrampoline"
+            android:exported="false"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
+
         <!-- Invisible alias that jumps straight into quick capture. It holds
              the ASSIST role so the side-key LONG press starts dictation
              directly (Settings > Apps > Choose default apps > Digital
              assistant app > VF Dictate, side key long press on "Digital
              assistant"). Deliberately NOT a launcher entry — Safet doesn't
-             want a second icon in the app drawer. -->
+             want a second icon in the app drawer. Routes through the
+             trampoline so an enabled bubble handles it without opening the
+             app. -->
         <activity-alias
             android:name=".Dictate"
-            android:targetActivity=".MainActivity"
+            android:targetActivity=".DictateTrampoline"
             android:exported="true"
             android:label="VF Dictate"
             android:icon="@mipmap/ic_dictate">

@@ -87,6 +87,10 @@ class BubbleService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_TOGGLE) {
+            onBubbleTap()
+            return START_STICKY
+        }
         if (bubble == null && Settings.canDrawOverlays(this)) addBubble()
         // Catch up on anything queued offline. "fresh_id" (adb test seam —
         // the service is not exported) marks one queued item as
@@ -385,8 +389,29 @@ class BubbleService : Service() {
         @Volatile var running = false
             private set
         const val ACTION_HIDE = "com.voiceflow.mobile.HIDE_BUBBLE"
+        const val ACTION_TOGGLE = "com.voiceflow.mobile.TOGGLE_BUBBLE_RECORDING"
         private const val CHANNEL = "bubble"
         private const val NOTIF_ID = 3
+    }
+}
+
+/// Invisible trampoline behind the ".Dictate" assist alias (side-key long
+/// press): with the bubble running it toggles bubble recording in place —
+/// the frontmost app keeps focus, so the transcript still lands at the
+/// cursor — and only without the bubble does it open the app to record,
+/// as before. Theme.NoDisplay: nothing flashes on screen.
+class DictateTrampoline : android.app.Activity() {
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (BubbleService.running) {
+            startService(Intent(this, BubbleService::class.java)
+                .setAction(BubbleService.ACTION_TOGGLE))
+        } else {
+            startActivity(Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra("start_recording", true))
+        }
+        finish()
     }
 }
 
