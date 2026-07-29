@@ -59,6 +59,14 @@ enum SnapshotState {
     }
 }
 
+enum CaptureStopPolicy {
+    /// Hotkey releases may stop only the capability that owns them. Callers
+    /// without an expected capability are explicit, internal stop requests.
+    static func permits(active: CaptureCapability, requestedBy owner: CaptureCapability?) -> Bool {
+        owner == nil || active == owner
+    }
+}
+
 enum GrownConversationFocus {
     /// A grown Assistant reply is a visible conversation even though it has
     /// no MCP session id. Session push stacks retain their existing id route.

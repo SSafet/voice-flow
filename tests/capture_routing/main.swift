@@ -9,6 +9,8 @@ struct CaptureSummary {
     let id: String
 }
 
+struct DisplayContext {}
+
 private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     guard condition() else {
         fputs("FAIL: \(message)\n", stderr)
@@ -74,6 +76,15 @@ expect(CaptureCorrelation.resolve(requestId: nil, runs: runs) == nil,
        "ID-less result must never guess between two pending runs")
 expect(CaptureCorrelation.resolve(requestId: nil, runs: [r1: run1]) == r1,
        "legacy ID-less result may resolve only when exactly one run is pending")
+
+expect(!CaptureStopPolicy.permits(active: .continuous, requestedBy: .dictate),
+       "Dictate release must not stop an active continuous capture")
+expect(!CaptureStopPolicy.permits(active: .continuous, requestedBy: .snapshot),
+       "Snapshot release must not stop an active continuous capture")
+expect(CaptureStopPolicy.permits(active: .continuous, requestedBy: .continuous),
+       "Continuous toggle must stop its own active capture")
+expect(CaptureStopPolicy.permits(active: .continuous, requestedBy: nil),
+       "explicit internal stop requests may stop the active capture")
 
 expect(GrownConversationFocus.resolve(routesToAssistant: true, sessionId: nil) == .assistant,
        "a grown Assistant reply must keep contextual dictation in the Assistant conversation")

@@ -731,7 +731,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager.onPress = { [weak self] in
             self?.beginCapture(capability: .dictate, deliveryPolicy: .contextual, handsFree: false)
         }
-        hotkeyManager.onRelease = { [weak self] in self?.stopCapture() }
+        hotkeyManager.onRelease = { [weak self] in
+            self?.stopCapture(expectedCapability: .dictate)
+        }
         hotkeyManager.onCancel = { [weak self] in
             self?.cancelCaptureForHotkeySupersession(capability: .dictate)
         }
@@ -746,7 +748,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if active {
                 self.beginCapture(capability: .dictate, deliveryPolicy: .historyOnly, handsFree: true)
             } else {
-                self.stopCapture()
+                self.stopCapture(expectedCapability: .dictate)
             }
         }
 
@@ -766,7 +768,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         snapshotHotkeyManager.onPress = { [weak self] in
             self?.beginCapture(capability: .snapshot, deliveryPolicy: .contextual, handsFree: false)
         }
-        snapshotHotkeyManager.onRelease = { [weak self] in self?.stopCapture() }
+        snapshotHotkeyManager.onRelease = { [weak self] in
+            self?.stopCapture(expectedCapability: .snapshot)
+        }
         snapshotHotkeyManager.onCancel = { [weak self] in
             self?.cancelCaptureForHotkeySupersession(capability: .snapshot)
         }
@@ -908,7 +912,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 captureRuns[id] = run
                 pendingSessionShots.removeAll()
             }
-            stopCapture()
+            stopCapture(expectedCapability: .continuous)
         }
     }
 
@@ -1501,9 +1505,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         vflog("capture \(id) started capability=\(capability.rawValue) focus=\(focus)")
     }
 
-    private func stopCapture() {
+    private func stopCapture(expectedCapability: CaptureCapability? = nil) {
         guard recorder.isRecording, let id = activeRunId,
-              let run = captureRuns[id] else { return }
+              let run = captureRuns[id],
+              CaptureStopPolicy.permits(
+                active: run.capability, requestedBy: expectedCapability) else { return }
         partialTimer?.invalidate()
         partialTimer = nil
         transcriptPanel.hide()
@@ -2734,12 +2740,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func mcpWaitForMessage(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 600
         timeout = min(max(timeout, 5), 3600)
-        let (messages, userClosed, superseded) = inbox.wait(timeout: timeout, session: session?.id)
+        let (messages, superseded) = inbox.wait(timeout: timeout, session: session?.id)
         if superseded {
-            return .ok("A newer wait_for_message call took over listening for this session — each session keeps exactly one live listener, the latest. This listener is obsolete: do NOT call wait_for_message again from here and do not restart this task; the newer listener will deliver the user's words. Just end.")
-        }
-        if userClosed {
-            return .ok("The user closed this session in Voice Flow (removed or completed it). Stop listening: do NOT re-attach or call wait_for_message again for this session, and end your turn. If the user wants to resume, they will reach out.")
+            return .ok("A newer listener took over this session. Nothing to do: say nothing, end your turn, do not restart this task.")
         }
         guard !messages.isEmpty else {
             return .ok("No message arrived within \(Int(timeout))s. That's normal — call wait_for_message again to keep listening, or move on.")
