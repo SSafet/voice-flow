@@ -838,6 +838,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             manager.onPress = { [weak self] in self?.switchToSession(slot: index + 1) }
             return manager
         }
+        // ⌃⌥0 — the last-session toggle: bounce between the two sessions
+        // you're juggling, the highest-frequency switch there is
+        // (ticket VF-48; tmux prefix-l, vim Ctrl-^).
+        let lastToggle = HotkeyManager(spec: HotkeySpec(
+            keyCode: 29, modifiers: [.maskControl, .maskAlternate], label: "⌃⌥0"))
+        lastToggle.onPress = { [weak self] in self?.toggleLastSession() }
+        sessionSwitchHotkeyManagers.append(lastToggle)
     }
 
     private func startHotkeyWithAccessibilityCheck() {
@@ -1109,6 +1116,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// voice + screen: routes hotkeys, swaps that session's overlays in,
     /// and updates the pill (middle-dot number + picker row). Main thread.
     func setTargetSession(_ id: String?, announce: Bool) {
+        if id != targetSessionId, targetSessionId != nil {
+            previousTargetSessionId = targetSessionId
+        }
         targetSessionId = id
         overlayManager.setActiveSession(id)
         refreshSessionIndicator()
@@ -1315,6 +1325,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
             self.replyBubble.showTransient(note, seconds: 6)
         }
+    }
+
+    /// The session ⌃⌥0 bounces back to (ticket VF-48).
+    private var previousTargetSessionId: String?
+
+    /// ⌃⌥0: jump to the previously active session; with none available
+    /// the press just opens the picker. Main thread.
+    private func toggleLastSession() {
+        guard let previous = previousTargetSessionId,
+              pickerSessions().contains(where: { $0.id == previous }) else {
+            let (entries, activeName) = pickerEntries()
+            indicator.showPicker(entries: entries, activeName: activeName)
+            return
+        }
+        userSelectSession(previous)
     }
 
     /// ⌃⌥1–9 — the number is the session's sticky slot, not a list
