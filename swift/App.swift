@@ -269,13 +269,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onCopyInbox = { [weak self] in self?.copyQueuedMessages() }
         menuBar.claudeSessionsProvider = { [weak self] in
             guard let self else { return [] }
-            // Same list, order, and numbering as the picker and ⌃⌥1–6 —
+            // Same list, order, and numbering as the picker and ⌃⌥1–9 —
             // two orderings of the same sessions would be a routing trap.
-            return self.pickerSessions().enumerated().map { index, entry in
+            return self.slottedSessions().map { entry in
                 let age = self.mcpServer.sessions.session(entry.id)
                     .map { "active \(Self.relativeAge($0.lastSeen))" } ?? "ended — unread"
                 return (entry.id,
-                        "\(index + 1) · \(entry.label) — \(age)",
+                        "\(entry.slot) · \(entry.label) — \(age)",
                         entry.id == self.targetSessionId)
             }
         }
@@ -359,7 +359,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                 guard !self.indicator.isGrownVisible else { return }
                 self.indicator.flashMessage(
-                    "\(waiting) session\(waiting == 1 ? "" : "s") waiting — ⌃⌥1–6", seconds: 4)
+                    "\(waiting) session\(waiting == 1 ? "" : "s") waiting — ⌃⌥1–9", seconds: 4)
             }
         }
         // Trash means "I'm done with this one": it cancels a waiting ask,
@@ -784,15 +784,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.annotationOverlay.toggleEditing()
         }
 
-        // ⌃⌥1–6: jump straight to a Claude session (order = connect order,
-        // mirrored by the session strip's chip numbers).
-        let numberKeyCodes: [CGKeyCode] = [18, 19, 20, 21, 23, 22]   // 1…6
+        // ⌃⌥1–9: jump straight to a Claude session by its sticky slot
+        // number (ticket VF-48 — nine slots, numbers never reorder).
+        let numberKeyCodes: [CGKeyCode] = [18, 19, 20, 21, 23, 22, 26, 28, 25]   // 1…9
         sessionSwitchHotkeyManagers = numberKeyCodes.enumerated().map { index, keyCode in
             let manager = HotkeyManager(spec: HotkeySpec(
                 keyCode: keyCode,
                 modifiers: [.maskControl, .maskAlternate],
                 label: "⌃⌥\(index + 1)"))
-            manager.onPress = { [weak self] in self?.switchToSession(at: index) }
+            manager.onPress = { [weak self] in self?.switchToSession(slot: index + 1) }
             return manager
         }
     }
@@ -997,14 +997,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return title.hasSuffix(" asks") ? String(title.dropLast(5)) : title
     }
 
-    /// The picker's view of the world: one entry per live-or-ghost session
+    // ── Session slots — stable ⌃⌥1–9 numbers (ticket VF-48) ──
+    // A session KEEPS its number for as long as it is picker-eligible;
+    // numbers never shift while occupied. A number frees only when its
+    // session leaves the picker (consumed and finished), and the next
+    // queued session takes the lowest free number. Persisted so ghost
+    // stacks keep their numbers across restarts.
+    static let maxSessionSlots = 9
+    private static var slotsURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/voice-flow/slots.json")
+    }
+    private var sessionSlots: [String: Int] = {
+        guard let data = try? Data(contentsOf: AppDelegate.slotsURL),
+              let slots = try? JSONDecoder().decode([String: Int].self, from: data) else { return [:] }
+        return slots
+    }() {
+        didSet {
+            if let data = try? JSONEncoder().encode(sessionSlots) {
+                try? data.write(to: Self.slotsURL, options: .atomic)
+            }
+        }
+    }
+
+    /// Eligible sessions wearing their sticky numbers, sorted by slot.
+    /// Eligible sessions beyond nine hold no number yet — they are the
+    /// queue, and enter as numbers free up. Main thread.
+    private func slottedSessions() -> [(slot: Int, id: String, label: String)] {
+        let eligible = pickerSessions()
+        let eligibleIds = Set(eligible.map { $0.id })
+        var slots = sessionSlots.filter { eligibleIds.contains($0.key) }
+        var used = Set(slots.values)
+        for session in eligible where slots[session.id] == nil {
+            guard let free = (1...Self.maxSessionSlots).first(where: { !used.contains($0) }) else { continue }
+            slots[session.id] = free
+            used.insert(free)
+        }
+        if slots != sessionSlots { sessionSlots = slots }
+        return eligible
+            .compactMap { session in slots[session.id].map { (slot: $0, id: session.id, label: session.label) } }
+            .sorted { $0.slot < $1.slot }
+    }
+
+    /// The picker's view of the world: one entry per slotted session
     /// (active lit, pending amber) plus the active entry's name.
     /// Main thread.
     private func pickerEntries() -> (entries: [FloatingIndicator.PickerEntry], activeName: String?) {
-        let sessions = pickerSessions()
-        let entries = sessions.enumerated().map { index, session in
+        let sessions = slottedSessions()
+        let entries = sessions.map { session in
             FloatingIndicator.PickerEntry(
-                number: index + 1,
+                number: session.slot,
                 active: session.id == targetSessionId,
                 // Amber means "something is waiting on you" — an unseen
                 // push, an unanswered ask, or an undelivered inbox message.
@@ -1044,7 +1086,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Keep the pill's middle-dot session number current.
     func refreshSessionIndicator() {
         indicator.setActiveSessionNumber(
-            pickerSessions().firstIndex { $0.id == targetSessionId }.map { $0 + 1 })
+            slottedSessions().first { $0.id == targetSessionId }?.slot)
     }
 
     /// Queue a push and announce it with a one-line receipt — the full
@@ -1098,8 +1140,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // surface — never over grown content, never while the user talks.
         guard !surfaceBusy else { return }
         var receipt = push.isAsk ? push.title : "\(push.title) · new message"
-        if let index = pickerSessions().firstIndex(where: { $0.id == sid }) {
-            receipt += " — ⌃⌥\(index + 1)"
+        if let slot = slottedSessions().first(where: { $0.id == sid })?.slot {
+            receipt += " — ⌃⌥\(slot)"
         }
         indicator.flashMessage(receipt, seconds: 4)
     }
@@ -1198,20 +1240,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// ⌃⌥1–6. Any select attempt — valid or aimed at a missing number —
-    /// opens the picker showing what's actually available. Main thread.
-    private func switchToSession(at index: Int) {
+    /// ⌃⌥1–9 — the number is the session's sticky slot, not a list
+    /// position. Any select attempt aimed at an empty number opens the
+    /// picker showing what's actually available. Main thread.
+    private func switchToSession(slot: Int) {
         // Repaint the badge and ring against what actually exists before
         // acting on it — the look itself may have expired live sessions.
         refreshSessionIndicator()
         refreshUnreadIndicator()
-        let sessions = pickerSessions()
-        guard index < sessions.count else {
+        guard let session = slottedSessions().first(where: { $0.slot == slot }) else {
             let (entries, activeName) = pickerEntries()
             indicator.showPicker(entries: entries, activeName: activeName)
             return
         }
-        userSelectSession(sessions[index].id)
+        userSelectSession(session.id)
     }
 
     /// Menu-bar route to the same prompt the post-session bubble offers —
