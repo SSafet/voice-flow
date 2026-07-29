@@ -536,6 +536,7 @@ final class TTSController: NSObject {
 
     var queuedSpeed: Double? { queuedSpeechActive ? currentRequest?.speed : nil }
     var queuedChunkIndex: Int? { queuedSpeechActive ? activeSpeechChunkIndex : nil }
+    var isPaused: Bool { isPlaybackPaused }
 
     /// One toggle, never two controls (VF-48): pause retains position.
     func togglePause() {

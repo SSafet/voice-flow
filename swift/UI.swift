@@ -255,7 +255,7 @@ class FloatingIndicator: NSObject {
     /// What the surface currently is. flash/picker are transient (timer,
     /// click-anywhere, or another hotkey collapse them); grown content
     /// persists until ✕/trash or an explicit hide.
-    private enum SurfaceMode { case pill, flash, picker, grown }
+    private enum SurfaceMode { case pill, flash, picker, grown, player }
     private var mode: SurfaceMode = .pill
     /// Bumped on every transition — in-flight animation completions check
     /// it so a new expand can't be clobbered by a stale collapse.
@@ -740,6 +740,113 @@ class FloatingIndicator: NSObject {
         iconSpeaker?.isHidden = true
         iconTrash?.isHidden = true
         iconClose?.isHidden = true
+        playerBand?.isHidden = true
+    }
+
+    // ── Session player surfaces (ticket VF-48) ──────────
+
+    /// What the player band shows — same row at every size.
+    struct PlayerState {
+        let title: String
+        let playing: Bool
+        let envelope: [Float]
+        let fraction: Double
+        let speed: Double
+    }
+
+    var onPlayerToggle: (() -> Void)?
+    var onPlayerSeek: ((Double) -> Void)?
+    var onPlayerSpeed: ((Double) -> Void)?
+    private var playerBand: PlayerBandView?
+
+    private func ensurePlayerBand() -> PlayerBandView {
+        if let playerBand { return playerBand }
+        let band = PlayerBandView(frame: .zero)
+        band.onToggle = { [weak self] in self?.onPlayerToggle?() }
+        band.onSeek = { [weak self] fraction in self?.onPlayerSeek?(fraction) }
+        band.onSpeed = { [weak self] delta in self?.onPlayerSpeed?(delta) }
+        panel?.contentView?.addSubview(band)
+        playerBand = band
+        return band
+    }
+
+    var isPlayerStripVisible: Bool { mode == .player }
+
+    /// The one-line player strip — the pill while you listen with the
+    /// content collapsed (Telegram's pinned bar). Persists until playback
+    /// ends or the user acts; never auto-hides.
+    func showPlayerStrip(_ state: PlayerState) {
+        guard panel != nil, mode != .grown else { return }
+        let shellW: CGFloat = 340
+        let shellH = H + 8
+        if mode != .player {
+            expandTimer?.invalidate()
+            expandTimer = nil
+            pickerLayer?.removeFromSuperlayer()
+            pickerLayer = nil
+            expandTitleLayer.isHidden = true
+            expandShell(width: shellW, height: shellH, as: .player)
+        }
+        let band = ensurePlayerBand()
+        band.frame = CGRect(x: 12, y: 1, width: shellW - 24, height: shellH - 2)
+        band.isHidden = false
+        band.configure(title: state.title, playing: state.playing, speed: state.speed,
+                       envelope: state.envelope, fraction: state.fraction)
+    }
+
+    func hidePlayerStrip() {
+        guard mode == .player else { return }
+        playerBand?.isHidden = true
+        collapseToPill()
+    }
+
+    /// In grown mode the SAME band replaces the dots in the bottom band
+    /// while this session's stack is playing; nil brings the dots back.
+    func setGrownPlayer(_ state: PlayerState?) {
+        guard mode == .grown else {
+            if state == nil, mode != .player { playerBand?.isHidden = true }
+            return
+        }
+        if let state {
+            let band = ensurePlayerBand()
+            band.frame = CGRect(x: 14, y: 3, width: max(60, capsuleLayer.frame.width - 28), height: 22)
+            band.isHidden = false
+            band.configure(title: state.title, playing: state.playing, speed: state.speed,
+                           envelope: state.envelope, fraction: state.fraction)
+            dotLayers.forEach { $0.isHidden = true }
+        } else {
+            playerBand?.isHidden = true
+            dotLayers.forEach { $0.isHidden = false }
+        }
+    }
+
+    /// Sentence karaoke over the grown text (ticket VF-48): spoken dims,
+    /// the current sentence is bright, what's coming stays muted — and the
+    /// view follows the voice.
+    func renderGrownKaraoke(items: [[String]], currentItem: Int, currentSentence: Int) {
+        guard mode == .grown else { return }
+        let body = NSMutableAttributedString()
+        var currentRange: NSRange?
+        let font = NSFont.systemFont(ofSize: 12.5)
+        let spokenColor = NSColor(r: 111, g: 103, b: 92)
+        for (itemIndex, sentences) in items.enumerated() {
+            for (sentenceIndex, sentence) in sentences.enumerated() {
+                let isSpoken = itemIndex < currentItem
+                    || (itemIndex == currentItem && sentenceIndex < currentSentence)
+                let isCurrent = itemIndex == currentItem && sentenceIndex == currentSentence
+                let color = isCurrent ? Theme.text : (isSpoken ? spokenColor : Theme.text2)
+                let start = body.length
+                body.append(NSAttributedString(
+                    string: sentence + " ",
+                    attributes: [.font: font, .foregroundColor: color]))
+                if isCurrent { currentRange = NSRange(location: start, length: body.length - start) }
+            }
+            if itemIndex < items.count - 1 {
+                body.append(NSAttributedString(string: "\n\n", attributes: [.font: font]))
+            }
+        }
+        grownTextView.textStorage?.setAttributedString(body)
+        if let currentRange { grownTextView.scrollRangeToVisible(currentRange) }
     }
 
     /// Show content grown out of the pill: title/text/hint above, the live
@@ -1567,6 +1674,163 @@ class IndicatorView: NSView {
     override func mouseDown(with event: NSEvent) { onClick?() }
     override func rightMouseDown(with event: NSEvent) {
         onRightClick?(self, convert(event.locationInWindow, from: nil))
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Session player band (ticket VF-48)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// The waveform IS the progress bar and the scrubber (WhatsApp voice
+/// notes): lit bars are what's played, click or drag anywhere to seek.
+/// Bars come from the audio's RMS envelope; the two at the playhead
+/// breathe while playing.
+final class WaveformView: NSView {
+    var onSeek: ((Double) -> Void)?
+    private var envelope: [Float] = []
+    private var fraction: Double = 0
+    private var playing = false
+    private var phase: Double = 0
+    private var pulseTimer: Timer?
+    private let barCount = 18
+
+    override var acceptsFirstResponder: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    func update(envelope: [Float], fraction: Double, playing: Bool) {
+        self.envelope = envelope
+        self.fraction = max(0, min(1, fraction))
+        if playing != self.playing {
+            self.playing = playing
+            pulseTimer?.invalidate()
+            pulseTimer = nil
+            if playing {
+                pulseTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 12.0, repeats: true) { [weak self] _ in
+                    self?.phase += 0.55
+                    self?.needsDisplay = true
+                }
+            }
+        }
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let width = bounds.width, height = bounds.height
+        guard width > 10, height > 4 else { return }
+        let gap: CGFloat = 2
+        let barWidth = max(1.5, (width - gap * CGFloat(barCount - 1)) / CGFloat(barCount))
+        let litColor = NSColor(r: 255, g: 194, b: 75)
+        let dimColor = NSColor(r: 69, g: 63, b: 56)
+        let litBars = fraction * Double(barCount)
+        for bar in 0..<barCount {
+            var level: CGFloat = 0.45
+            if !envelope.isEmpty {
+                let bucket = min(envelope.count - 1, bar * envelope.count / barCount)
+                level = CGFloat(max(0.18, min(1, envelope[bucket] * 2.2)))
+            }
+            // The pair at the playhead breathes while the voice speaks.
+            let isHot = playing && abs(Double(bar) + 0.5 - litBars) < 1.2
+            if isHot { level = min(1, level * (0.75 + 0.45 * CGFloat(abs(sin(phase + Double(bar)))))) }
+            let barHeight = max(3, height * level)
+            let rect = NSRect(x: CGFloat(bar) * (barWidth + gap),
+                              y: (height - barHeight) / 2,
+                              width: barWidth, height: barHeight)
+            let lit = Double(bar) + 0.5 <= litBars || isHot
+            (lit ? litColor : dimColor).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
+        }
+    }
+
+    private func seek(with event: NSEvent) {
+        let x = convert(event.locationInWindow, from: nil).x
+        onSeek?(max(0, min(1, Double(x / max(1, bounds.width)))))
+    }
+
+    override func mouseDown(with event: NSEvent) { seek(with: event) }
+    override func mouseDragged(with event: NSEvent) { seek(with: event) }
+}
+
+/// One row, used at every size (Safet's rule — one action, one
+/// visualization): title on the left, the waveform-scrubber in the middle,
+/// play/pause and the ±0.1× speed chip on the right. No ✕, no stop.
+final class PlayerBandView: NSView {
+    var onToggle: (() -> Void)?
+    var onSpeed: ((Double) -> Void)?
+    var onSeek: ((Double) -> Void)? {
+        didSet { wave.onSeek = onSeek }
+    }
+
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let wave = WaveformView()
+    private let playButton = NSButton()
+    private let speedChip = NSButton()
+    private var playing = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        titleLabel.font = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
+        titleLabel.textColor = Theme.text
+        titleLabel.lineBreakMode = .byTruncatingTail
+        addSubview(titleLabel)
+        addSubview(wave)
+        playButton.isBordered = false
+        playButton.bezelStyle = .regularSquare
+        playButton.imagePosition = .imageOnly
+        playButton.target = self
+        playButton.action = #selector(togglePressed)
+        addSubview(playButton)
+        speedChip.isBordered = false
+        speedChip.bezelStyle = .regularSquare
+        speedChip.wantsLayer = true
+        speedChip.layer?.backgroundColor = NSColor(r: 255, g: 194, b: 75, a: 30).cgColor
+        speedChip.layer?.cornerRadius = 7
+        speedChip.target = self
+        speedChip.action = #selector(speedPressed)
+        addSubview(speedChip)
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    func configure(title: String, playing: Bool, speed: Double,
+                   envelope: [Float], fraction: Double) {
+        self.playing = playing
+        titleLabel.stringValue = title
+        let symbol = playing ? "pause.fill" : "play.fill"
+        playButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: playing ? "pause" : "play")?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .bold))
+        playButton.contentTintColor = NSColor(r: 255, g: 194, b: 75)
+        let label = String(format: speed.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f×" : "%.1f×", speed)
+        speedChip.attributedTitle = NSAttributedString(
+            string: label,
+            attributes: [.font: NSFont.systemFont(ofSize: 9.5, weight: .bold),
+                         .foregroundColor: NSColor(r: 255, g: 194, b: 75)])
+        wave.update(envelope: envelope, fraction: fraction, playing: playing)
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let height = bounds.height
+        titleLabel.sizeToFit()
+        let titleWidth = min(titleLabel.frame.width, bounds.width * 0.42)
+        titleLabel.frame = NSRect(x: 2, y: (height - titleLabel.frame.height) / 2,
+                                  width: titleWidth, height: titleLabel.frame.height)
+        let chipWidth: CGFloat = 34
+        speedChip.frame = NSRect(x: bounds.width - chipWidth, y: (height - 14) / 2,
+                                 width: chipWidth, height: 14)
+        playButton.frame = NSRect(x: speedChip.frame.minX - 24, y: (height - 18) / 2,
+                                  width: 18, height: 18)
+        let waveX = titleLabel.frame.maxX + 10
+        wave.frame = NSRect(x: waveX, y: 3,
+                            width: max(30, playButton.frame.minX - 10 - waveX),
+                            height: height - 6)
+    }
+
+    @objc private func togglePressed() { onToggle?() }
+
+    @objc private func speedPressed() {
+        let shift = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
+        onSpeed?(shift ? -0.1 : 0.1)
     }
 }
 
