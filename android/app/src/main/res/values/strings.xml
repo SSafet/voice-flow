@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="insertion_service_description">Types your dictation into the text field you were using, so the floating bubble works in any app. Voice Flow does not read or store anything else from the screen.</string>
+</resources>

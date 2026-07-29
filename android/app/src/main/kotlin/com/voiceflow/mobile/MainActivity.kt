@@ -17,9 +17,12 @@ import android.content.res.ColorStateList
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
 import android.text.InputType
 import android.util.Base64
 import android.util.TypedValue
@@ -30,6 +33,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import java.io.ByteArrayOutputStream
@@ -103,6 +107,8 @@ class MainActivity : Activity() {
     private lateinit var modeDictate: TextView
     private lateinit var modeIdea: TextView
     private lateinit var recordStatus: TextView
+    private lateinit var bubbleSwitch: Switch
+    private lateinit var bubbleStatus: TextView
     private lateinit var lastCard: LinearLayout
     private lateinit var lastLabel: TextView
     private lateinit var lastTranscript: TextView
@@ -151,6 +157,14 @@ class MainActivity : Activity() {
         applyPairedState()
         refreshHistory()
         refreshChat()
+        // Bubble on but not running (fresh grant, killed service): restart it
+        // silently once every permission it needs is actually in place.
+        if (prefs.getBoolean("bubble_enabled", false) && !BubbleService.running &&
+            Settings.canDrawOverlays(this) &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            startForegroundService(Intent(this, BubbleService::class.java))
+        }
+        refreshBubbleRow()
         executor.execute { processQueue(); quietSync() }
     }
 
@@ -448,6 +462,39 @@ class MainActivity : Activity() {
 
         page.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
 
+        // Floating bubble (ticket VF-51): dictate into any app from an
+        // overlay dot. The status line doubles as setup guidance; tapping the
+        // row opens whichever grant is still missing.
+        val bubbleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = ripple(roundBg(card, 16))
+            setPadding(dp(16), dp(10), dp(12), dp(11))
+            setOnClickListener { bubbleRowTapped() }
+        }
+        val bubbleCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        bubbleCol.addView(TextView(this).apply {
+            text = "Floating bubble"
+            setTextColor(textPrimary); textSize = 14f; setTypeface(null, Typeface.BOLD)
+        })
+        bubbleStatus = TextView(this).apply {
+            setTextColor(textDim); textSize = 11f
+            setPadding(0, dp(2), 0, 0)
+        }
+        bubbleCol.addView(bubbleStatus)
+        bubbleRow.addView(bubbleCol, LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        bubbleSwitch = Switch(this).apply {
+            setOnCheckedChangeListener { _, checked ->
+                if (checked != prefs.getBoolean("bubble_enabled", false)) setBubbleEnabled(checked)
+            }
+        }
+        bubbleRow.addView(bubbleSwitch)
+        page.addView(bubbleRow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            leftMargin = dp(16); rightMargin = dp(16); bottomMargin = dp(10)
+        })
+
         lastCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundBg(card, 16)
@@ -595,6 +642,8 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(code: Int, permissions: Array<String>, results: IntArray) {
         if (code == REQ_MIC && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) toggleRecording()
+        if (code == REQ_BUBBLE && checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED) advanceBubbleSetup()
     }
 
     private fun stopRecording() {
@@ -645,6 +694,10 @@ class MainActivity : Activity() {
             return
         }
         for (item in store.queue()) {
+            // Bubble takes belong to BubbleService's drain while it runs;
+            // with the bubble off they fall through below as plain
+            // dictations (clipboard).
+            if (item.mode == "bubble" && BubbleService.running) continue
             val file = java.io.File(item.file)
             if (!file.exists()) { store.dequeue(item.id); continue }
             val raw = try {
@@ -690,7 +743,11 @@ class MainActivity : Activity() {
                 else -> {
                     // quick-action captures land in the inbox (kept) AND on
                     // the clipboard; in-app Dictate = clipboard, Idea = inbox.
-                    val kind = if (item.mode == "quick") "kept" else item.mode
+                    val kind = when (item.mode) {
+                        "quick" -> "kept"
+                        "bubble" -> "pasted"
+                        else -> item.mode
+                    }
                     val toClipboard = item.mode != "kept"
                     store.addDictation(DictationEntry.now(cleaned, kind))
                     main.post {
@@ -721,6 +778,93 @@ class MainActivity : Activity() {
 
     private fun showOffline(offline: Boolean) {
         offlineBanner.visibility = if (offline) View.VISIBLE else View.GONE
+    }
+
+    // ══════════════════════ floating bubble (ticket VF-51) ══════════════════════
+
+    private fun insertionServiceEnabled(): Boolean =
+        InsertionService.instance != null ||
+            (Settings.Secure.getString(contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: "")
+                .contains(packageName)
+
+    private fun refreshBubbleRow() {
+        if (!::bubbleSwitch.isInitialized) return
+        val enabled = prefs.getBoolean("bubble_enabled", false)
+        bubbleSwitch.isChecked = enabled
+        bubbleStatus.text = when {
+            !enabled -> "dictate into any app from a floating dot"
+            !Settings.canDrawOverlays(this) -> "tap to allow “display over other apps”"
+            !insertionServiceEnabled() -> "clipboard only — tap to enable auto-insert (Accessibility)"
+            !BubbleService.running -> "starting…"
+            else -> "on — tap the dot in any app to dictate"
+        }
+    }
+
+    private fun setBubbleEnabled(on: Boolean) {
+        prefs.edit().putBoolean("bubble_enabled", on).apply()
+        if (!on) {
+            stopService(Intent(this, BubbleService::class.java))
+            refreshBubbleRow()
+            return
+        }
+        advanceBubbleSetup()
+    }
+
+    /// Walks the grants the bubble needs, one screen per call: overlay
+    /// permission → mic/notification runtime prompts → service start, plus
+    /// one-time nudges for accessibility (auto-insert) and battery exemption
+    /// (so One UI doesn't kill the bubble). Re-entrant — each tap of the row
+    /// or return to the app advances whatever is still missing.
+    private fun advanceBubbleSetup() {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this,
+                "Allow Voice Flow to display over other apps", Toast.LENGTH_LONG).show()
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")))
+            refreshBubbleRow()
+            return
+        }
+        val missing = mutableListOf<String>()
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+            missing += Manifest.permission.RECORD_AUDIO
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            missing += Manifest.permission.POST_NOTIFICATIONS
+        if (missing.isNotEmpty()) {
+            requestPermissions(missing.toTypedArray(), REQ_BUBBLE)
+            return
+        }
+        if (!BubbleService.running)
+            startForegroundService(Intent(this, BubbleService::class.java))
+        if (!insertionServiceEnabled() && !prefs.getBoolean("bubble_a11y_asked", false)) {
+            prefs.edit().putBoolean("bubble_a11y_asked", true).apply()
+            Toast.makeText(this,
+                "Enable “Voice Flow” in Accessibility so dictations type themselves into the focused field",
+                Toast.LENGTH_LONG).show()
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            return
+        }
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName) &&
+            !prefs.getBoolean("bubble_battery_asked", false)) {
+            prefs.edit().putBoolean("bubble_battery_asked", true).apply()
+            try {
+                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName")))
+            } catch (_: Exception) {}
+        }
+        main.postDelayed({ refreshBubbleRow() }, 400)
+    }
+
+    private fun bubbleRowTapped() {
+        when {
+            !prefs.getBoolean("bubble_enabled", false) -> setBubbleEnabled(true)
+            !Settings.canDrawOverlays(this) -> startActivity(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            !insertionServiceEnabled() -> startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            else -> {}
+        }
     }
 
     // ══════════════════════ history ══════════════════════
@@ -932,5 +1076,6 @@ class MainActivity : Activity() {
     companion object {
         private const val REQ_MIC = 1
         private const val REQ_PICK_IMAGE = 2
+        private const val REQ_BUBBLE = 3
     }
 }

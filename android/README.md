@@ -21,6 +21,23 @@ and the APK is small.
   Offline is a delay, never a failure.
 - **Quick Settings tile** + **share target** (share text/image into the
   assistant).
+- **Floating bubble** (ticket VF-51) — the Mac-pill experience on the phone:
+  an always-on draggable dot over every app (`BubbleService`, a
+  specialUse/microphone foreground service behind the "Display over other
+  apps" grant). Tap to record (red pulse), tap to stop; the transcript is
+  typed into whatever text field holds the cursor by `InsertionService`
+  (an accessibility service — the bubble window is non-focusable so the
+  field never loses focus), clipboard + toast when no field is focused or
+  the field refuses (passwords). Takes ride the same queue → Transcriber
+  pipeline as mode `"bubble"` — offline recordings surface on the clipboard
+  later — and land in history/sync as normal `pasted` dictations. Toggle on
+  the Record page (walks the overlay → mic/notifications → accessibility →
+  battery-exemption grants); survives reboot via `BubbleBootReceiver`.
+  Deterministic test seam: `am start-foreground-service` with `-e fresh_id
+  <queue-item-id>` treats that queued item as just-recorded (insertion
+  path); needs the service temporarily `exported="true"` on Play-image
+  emulators (no root), and `appops write-settings` before `adb reboot` or
+  the shell overlay grant is silently lost.
 
 Keys (OpenAI + OpenRouter) live encrypted via an Android-Keystore AES key.
 There is no settings screen at all: on first launch the app finds the Mac
