@@ -1076,7 +1076,13 @@ final class TTSController: NSObject {
               let playerTime = playerNode.playerTime(forNodeTime: renderTime) else {
             return playbackBaseFrameOffset
         }
-        return playbackBaseFrameOffset + AVAudioFramePosition(playerTime.sampleTime)
+        // playerTime ticks at ITS reported rate (often the device's 44.1/48k),
+        // while every boundary and byte offset here is in 24k PCM frames —
+        // normalize, or positions run ~2x ahead of the audio (VF-48 QA:
+        // the karaoke outran the voice).
+        let rate = playerTime.sampleRate > 0 ? playerTime.sampleRate : TTSSampleRate
+        let frames = Double(playerTime.sampleTime) * TTSSampleRate / rate
+        return playbackBaseFrameOffset + AVAudioFramePosition(frames.rounded(.down))
     }
 
     private func currentPlaybackTime() -> Double {

@@ -819,7 +819,9 @@ class FloatingIndicator: NSObject {
         }
         if let state {
             let band = ensurePlayerBand()
-            band.frame = CGRect(x: 14, y: 3, width: max(60, capsuleLayer.frame.width - 28), height: 22)
+            // The capsule morphs; its MODEL width mid-transition can be the
+            // collapsed pill's — size the band off the grown width instead.
+            band.frame = CGRect(x: 14, y: 3, width: grownWidth - 28, height: 22)
             band.isHidden = false
             band.configure(title: state.title, playing: state.playing, speed: state.speed,
                            envelope: state.envelope, fraction: state.fraction)

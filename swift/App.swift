@@ -3500,6 +3500,7 @@ extension AppDelegate: AgentsDataSource {
         let count = transportPressCount
         transportPressCount = 0
         guard count > 0 else { return }
+        vflog("transport: \(count) press(es), queue active=\(ttsController.queuedSpeechActive)")
         guard ttsController.queuedSpeechActive else {
             // No player alive: a press reads the shown stack, else it keeps
             // the legacy read-selection/stop meaning.
@@ -3525,6 +3526,7 @@ extension AppDelegate: AgentsDataSource {
         guard let pending = pendingSpeechConsumption,
               let chunk = ttsController.queuedChunkIndex else { return }
         let target = max(0, min(pending.map.totalChunks - 1, chunk + delta))
+        vflog("transport: skip \(delta > 0 ? "+" : "")\(delta) — sentence \(chunk) → \(target) of \(pending.map.totalChunks)")
         guard target != chunk else { return }
         ttsController.skipQueuedSpeech(to: target)
     }
