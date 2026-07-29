@@ -103,6 +103,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingSpeechConsumption: (session: String, indices: [Int],
                                            map: PlaybackQueueMap, sentences: [[String]],
                                            playbackSeen: Bool)?
+    // Transport-key press counting (ticket VF-48).
+    private var transportPressCount = 0
+    private var transportResolveTimer: Timer?
+    private var transportHoldTimer: Timer?
+    private var transportHoldFired = false
     private let maxQueuedPushes = 8
     /// Done pushes included — how much thread history a session keeps.
     private let maxKeptPushes = 40
@@ -3418,11 +3423,6 @@ extension AppDelegate: AgentsDataSource {
     // ── The transport key (ticket VF-48) ────────────────
     // Press-count grammar users already know from their earbuds: 1 press =
     // play/pause, 2 = skip forward a sentence, 3 = skip back, hold = stop.
-    private var transportPressCount = 0
-    private var transportResolveTimer: Timer?
-    private var transportHoldTimer: Timer?
-    private var transportHoldFired = false
-
     private func transportPressBegan() {
         indicator.collapseNow()
         transportHoldFired = false
