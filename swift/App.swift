@@ -3435,7 +3435,8 @@ extension AppDelegate: AgentsDataSource {
             return
         }
         if onGrownStack {
-            indicator.setGrownPlayer(state)
+            // Karaoke first (it relayouts and restores the dots), the band
+            // second (it claims the bottom band back).
             if karaoke, let pending = pendingSpeechConsumption,
                let chunk = ttsController.queuedChunkIndex {
                 let position = pending.map.position(ofChunk: chunk)
@@ -3443,6 +3444,7 @@ extension AppDelegate: AgentsDataSource {
                                              currentItem: position.item,
                                              currentSentence: position.sentence)
             }
+            indicator.setGrownPlayer(state)
         } else {
             indicator.setGrownPlayer(nil)
             indicator.showPlayerStrip(state)

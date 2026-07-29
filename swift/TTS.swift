@@ -355,7 +355,10 @@ final class TTSController: NSObject {
         refreshPlaybackStatus()
         session.start()
         if queuedSpeechActive {
-            onQueuedChunkChanged?(index, speechChunks.count)
+            // Record where this sentence BEGINS in the PCM stream; the
+            // announcement itself waits for the playhead to get there.
+            queuedChunkFrames.append((chunk: index, frame: Int64(currentPCMFrameCount())))
+            announceQueuedPlaybackChunkIfChanged()
         }
     }
 
@@ -478,10 +481,15 @@ final class TTSController: NSObject {
 
     /// True while a sentence queue is the thing playing.
     private(set) var queuedSpeechActive = false
-    /// Fired on every sentence start: (index, count).
+    /// Fired when the PLAYHEAD crosses into a sentence: (index, count).
+    /// Generation runs ahead of playback — everything user-visible keys off
+    /// this, never off which sentence is currently streaming in.
     var onQueuedChunkChanged: ((Int, Int) -> Void)?
     /// Fired once when the queue's last sentence finished playing naturally.
     var onQueuedSpeechFinished: (() -> Void)?
+    /// (chunk, first frame of that chunk in the accumulated PCM stream).
+    private var queuedChunkFrames: [(chunk: Int, frame: Int64)] = []
+    private var lastAnnouncedQueuedChunk: Int?
 
     func beginQueuedSpeech(sentences: [String], voice: String, speed: Double,
                            instructions: String, startAt index: Int = 0) throws {
@@ -499,6 +507,8 @@ final class TTSController: NSObject {
         speechCacheURL = nil
         speechAPIKey = apiKey
         queuedSpeechActive = true
+        queuedChunkFrames = []
+        lastAnnouncedQueuedChunk = nil
         try startSpeechChunk(at: max(0, min(index, sentences.count - 1)))
     }
 
@@ -519,6 +529,8 @@ final class TTSController: NSObject {
         isPlaybackPaused = false
         streamCompleted = false
         playbackBaseFrameOffset = 0
+        queuedChunkFrames = []
+        lastAnnouncedQueuedChunk = nil
         do {
             try startSpeechChunk(at: index)
         } catch {
@@ -535,8 +547,24 @@ final class TTSController: NSObject {
     }
 
     var queuedSpeed: Double? { queuedSpeechActive ? currentRequest?.speed : nil }
-    var queuedChunkIndex: Int? { queuedSpeechActive ? activeSpeechChunkIndex : nil }
+    /// The sentence under the PLAYHEAD — what skips and the UI key off.
+    var queuedChunkIndex: Int? {
+        guard queuedSpeechActive else { return nil }
+        return playbackQueuedChunk() ?? activeSpeechChunkIndex
+    }
     var isPaused: Bool { isPlaybackPaused }
+
+    private func playbackQueuedChunk() -> Int? {
+        QueuedPlayback.chunk(atFrame: Int64(playbackFramePosition()),
+                             boundaries: queuedChunkFrames)
+    }
+
+    private func announceQueuedPlaybackChunkIfChanged() {
+        guard queuedSpeechActive, let chunk = playbackQueuedChunk(),
+              chunk != lastAnnouncedQueuedChunk else { return }
+        lastAnnouncedQueuedChunk = chunk
+        onQueuedChunkChanged?(chunk, speechChunks.count)
+    }
 
     /// One toggle, never two controls (VF-48): pause retains position.
     func togglePause() {
@@ -801,6 +829,7 @@ final class TTSController: NSObject {
     }
 
     private func refreshPlaybackStatus() {
+        announceQueuedPlaybackChunkIfChanged()
         let duration = currentDuration()
         let currentTime = currentPlaybackTime()
         let hasAudio = !currentPCMData.isEmpty || currentCacheURL != nil
@@ -1025,6 +1054,8 @@ final class TTSController: NSObject {
 
     private func clearSpeechPlan() {
         queuedSpeechActive = false
+        queuedChunkFrames.removeAll()
+        lastAnnouncedQueuedChunk = nil
         speechChunks.removeAll()
         activeSpeechChunkIndex = 0
         speechCacheURL = nil

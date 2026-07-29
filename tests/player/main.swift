@@ -49,3 +49,14 @@ expect(map.completedItems(beforeChunk: 2) == 1, "one item completed once the voi
 expect(map.completedItems(beforeChunk: 0) == 0, "nothing completed at the start")
 
 print("player tests passed")
+
+// ── playhead → sentence (sync fix: UI follows PLAYBACK, not generation) ──
+
+let boundaries: [(chunk: Int, frame: Int64)] = [(0, 0), (1, 48_000), (2, 120_000)]
+expect(QueuedPlayback.chunk(atFrame: 0, boundaries: boundaries) == 0, "playhead at 0 = first sentence")
+expect(QueuedPlayback.chunk(atFrame: 47_999, boundaries: boundaries) == 0, "still first just before the boundary")
+expect(QueuedPlayback.chunk(atFrame: 48_000, boundaries: boundaries) == 1, "crossing the boundary advances")
+expect(QueuedPlayback.chunk(atFrame: 999_999, boundaries: boundaries) == 2, "far past the last boundary = last sentence")
+expect(QueuedPlayback.chunk(atFrame: 100, boundaries: []) == nil, "no boundaries yet = no position")
+let afterSkip: [(chunk: Int, frame: Int64)] = [(5, 0), (6, 30_000)]
+expect(QueuedPlayback.chunk(atFrame: 10, boundaries: afterSkip) == 5, "after a skip the playhead maps into the new chunk numbering")

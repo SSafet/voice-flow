@@ -823,10 +823,14 @@ class FloatingIndicator: NSObject {
             band.isHidden = false
             band.configure(title: state.title, playing: state.playing, speed: state.speed,
                            envelope: state.envelope, fraction: state.fraction)
+            // The band OWNS the bottom band: dots AND the grown picker row
+            // both yield (VF-48 QA: they were overlapping the waveform).
             dotLayers.forEach { $0.isHidden = true }
+            pickerLayer?.isHidden = true
         } else {
             playerBand?.isHidden = true
-            dotLayers.forEach { $0.isHidden = false }
+            // Restore whichever bottom band the stack had (dots or picker).
+            relayoutGrown(bottomPicker: currentBottomPicker)
         }
     }
 
@@ -856,6 +860,10 @@ class FloatingIndicator: NSObject {
             }
         }
         grownTextView.textStorage?.setAttributedString(body)
+        // The karaoke text's height differs from the plain render — resize
+        // the container to it (callers re-apply the band AFTER this, since
+        // relayout restores the dots).
+        relayoutGrown(bottomPicker: currentBottomPicker)
         if let currentRange { grownTextView.scrollRangeToVisible(currentRange) }
     }
 
@@ -1764,7 +1772,9 @@ final class WaveformView: NSView {
     private var playing = false
     private var phase: Double = 0
     private var pulseTimer: Timer?
-    private let barCount = 18
+    /// Slim fixed-pitch bars — the count follows the width so the bars
+    /// never fatten into capsules (VF-48 QA).
+    private var barCount: Int { max(8, Int(bounds.width / 4.5)) }
 
     override var acceptsFirstResponder: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -1789,8 +1799,9 @@ final class WaveformView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let width = bounds.width, height = bounds.height
         guard width > 10, height > 4 else { return }
+        let barCount = self.barCount
         let gap: CGFloat = 2
-        let barWidth = max(1.5, (width - gap * CGFloat(barCount - 1)) / CGFloat(barCount))
+        let barWidth = max(1.5, min(3, (width - gap * CGFloat(barCount - 1)) / CGFloat(barCount)))
         let litColor = NSColor(r: 255, g: 194, b: 75)
         let dimColor = NSColor(r: 69, g: 63, b: 56)
         let litBars = fraction * Double(barCount)
@@ -1892,10 +1903,13 @@ final class PlayerBandView: NSView {
                                  width: chipWidth, height: 14)
         playButton.frame = NSRect(x: speedChip.frame.minX - 24, y: (height - 18) / 2,
                                   width: 18, height: 18)
+        // The waveform stays compact and centered in the gap — never a
+        // full-width run of fat bars (VF-48 QA).
         let waveX = titleLabel.frame.maxX + 10
-        wave.frame = NSRect(x: waveX, y: 3,
-                            width: max(30, playButton.frame.minX - 10 - waveX),
-                            height: height - 6)
+        let available = max(30, playButton.frame.minX - 10 - waveX)
+        let waveWidth = min(150, available)
+        wave.frame = NSRect(x: waveX + (available - waveWidth) / 2, y: 3,
+                            width: waveWidth, height: height - 6)
     }
 
     @objc private func togglePressed() { onToggle?() }

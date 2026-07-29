@@ -81,3 +81,19 @@ struct PlaybackQueueMap {
         position(ofChunk: chunk).item
     }
 }
+
+/// Generation runs well ahead of playback (each sentence streams in faster
+/// than it plays), so anything the user SEES must follow the playhead, not
+/// the fetcher (VF-48 QA: "text and audio are out of sync"). Boundaries are
+/// (chunk, first frame of that chunk in the accumulated PCM stream).
+enum QueuedPlayback {
+    static func chunk(atFrame playhead: Int64,
+                      boundaries: [(chunk: Int, frame: Int64)]) -> Int? {
+        guard let first = boundaries.first else { return nil }
+        var current = first.chunk
+        for boundary in boundaries where boundary.frame <= playhead {
+            current = boundary.chunk
+        }
+        return current
+    }
+}
