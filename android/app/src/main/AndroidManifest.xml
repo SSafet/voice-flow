@@ -40,10 +40,13 @@
         <!-- No-UI router for the assist gesture: bubble running → toggle its
              recording in place (frontmost app keeps focus); otherwise open
              the app recording, as before (ticket VF-51). -->
+        <!-- taskAffinity="" keeps it out of the app's task: a side-key press
+             must never drag a backgrounded MainActivity to the front. -->
         <activity
             android:name=".DictateTrampoline"
             android:exported="false"
             android:theme="@android:style/Theme.NoDisplay"
+            android:taskAffinity=""
             android:excludeFromRecents="true"
             android:noHistory="true" />
 

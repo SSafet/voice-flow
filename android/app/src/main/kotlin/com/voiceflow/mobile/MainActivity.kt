@@ -793,11 +793,11 @@ class MainActivity : Activity() {
         val enabled = prefs.getBoolean("bubble_enabled", false)
         bubbleSwitch.isChecked = enabled
         bubbleStatus.text = when {
-            !enabled -> "dictate into any app from a floating dot"
+            !enabled -> "hold the side key to dictate into any app"
             !Settings.canDrawOverlays(this) -> "tap to allow “display over other apps”"
             !insertionServiceEnabled() -> "clipboard only — tap to enable auto-insert (Accessibility)"
             !BubbleService.running -> "starting…"
-            else -> "on — tap the dot in any app to dictate"
+            else -> "on — hold the side key; the dot shows while it works"
         }
     }
 

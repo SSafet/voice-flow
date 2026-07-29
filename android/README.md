@@ -22,9 +22,13 @@ and the APK is small.
 - **Quick Settings tile** + **share target** (share text/image into the
   assistant).
 - **Floating bubble** (ticket VF-51) — the Mac-pill experience on the phone:
-  an always-on draggable dot over every app (`BubbleService`, a
-  specialUse/microphone foreground service behind the "Display over other
-  apps" grant). Tap to record (red pulse), tap to stop; the transcript is
+  the side-key assist gesture (the `.Dictate` alias routes through
+  `DictateTrampoline`, a no-UI own-task activity, so the app itself never
+  surfaces) toggles a recording in `BubbleService` (a specialUse/microphone
+  foreground service behind the "Display over other apps" grant). The dot
+  is drawn over the current app **only while a take is in flight** — red
+  pulse while recording (tap it to stop, or long-press the side key
+  again), amber pulse while transcribing, gone at idle. The transcript is
   typed into whatever text field holds the cursor by `InsertionService`
   (an accessibility service — the bubble window is non-focusable so the
   field never loses focus), clipboard + toast when no field is focused or

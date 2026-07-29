@@ -33,12 +33,15 @@ import android.widget.Toast
 import java.io.File
 import java.util.concurrent.Executors
 
-/// The always-on floating bubble (ticket VF-51): a small draggable dot drawn
-/// over every app — tap to dictate, tap again to stop, and the transcript
-/// lands in whatever text field holds the cursor (InsertionService), with the
-/// clipboard as fallback. A foreground service so it outlives the activity;
-/// recordings ride the same queue → Transcriber pipeline as in-app takes
-/// ("bubble" mode), so offline recordings survive and everything syncs.
+/// The floating dictation bubble (ticket VF-51): a small dot drawn over
+/// every app **only while a take is in flight** — the side-key assist
+/// gesture starts a recording, the dot appears (red pulse; tap it to stop,
+/// or long-press the side key again), pulses amber while transcribing, and
+/// vanishes when the transcript has landed in whatever text field holds the
+/// cursor (InsertionService; clipboard as fallback). The service itself is
+/// always on, just invisible at idle. Recordings ride the same queue →
+/// Transcriber pipeline as in-app takes ("bubble" mode), so offline
+/// recordings survive and everything syncs.
 class BubbleService : Service() {
     private enum class State { IDLE, RECORDING, TRANSCRIBING }
 
@@ -72,7 +75,6 @@ class BubbleService : Service() {
         keys = Keys(this)
         syncClient = SyncClient(this, store, keys)
         startInForeground(recording = false)
-        if (Settings.canDrawOverlays(this)) addBubble()
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) { executor.execute { drain(null) } }
@@ -91,7 +93,6 @@ class BubbleService : Service() {
             onBubbleTap()
             return START_STICKY
         }
-        if (bubble == null && Settings.canDrawOverlays(this)) addBubble()
         // Catch up on anything queued offline. "fresh_id" (adb test seam —
         // the service is not exported) marks one queued item as
         // just-recorded so the insertion path is exercisable end to end.
@@ -102,15 +103,20 @@ class BubbleService : Service() {
 
     override fun onDestroy() {
         running = false
-        pulse?.cancel()
         recorder.stopQuietly()
         netCallback?.let {
             (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager)
                 .unregisterNetworkCallback(it)
         }
+        removeBubble()
+        super.onDestroy()
+    }
+
+    private fun removeBubble() {
+        pulse?.cancel(); pulse = null
         bubble?.let { runCatching { wm?.removeView(it) } }
         bubble = null
-        super.onDestroy()
+        dot = null
     }
 
     // ══════════════════════ foreground plumbing ══════════════════════
@@ -241,6 +247,14 @@ class BubbleService : Service() {
 
     private fun setState(s: State) {
         state = s
+        // The dot exists only while a take is in flight: attach on leaving
+        // IDLE, detach shortly after returning (the delay lets the success
+        // flash play out; re-checked in case a new take started meanwhile).
+        if (s == State.IDLE) {
+            main.postDelayed({ if (state == State.IDLE) removeBubble() }, 700)
+        } else if (bubble == null && Settings.canDrawOverlays(this)) {
+            addBubble()
+        }
         val d = dot ?: return
         pulse?.cancel(); pulse = null
         d.scaleX = 1f; d.scaleY = 1f; d.alpha = 1f
