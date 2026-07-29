@@ -171,8 +171,8 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
     </div></div></div>
 
   <div class="stage wide"><div class="label"><b>Paused strip</b> — waveform freezes, position kept; play resumes.
-      There is still no stop button: hold-F8 stops instantly, and a paused strip collapses itself after a few
-      seconds (position kept, F8 resumes later). <span class="src">Pause-retains-position; dismiss-to-stop.</span></div>
+      Nothing auto-hides (your call): the strip stays until you act — hold-F8 stops it, or click the title to grow
+      it and ✕ from there. <span class="src">Pause-retains-position; dismiss-to-stop.</span></div>
     <div class="screen"><div class="shape stretch" style="width: 330px; gap: 10px;">
       <span class="title-line" style="font-size:10.5px; color:var(--text2);">builder · paused</span>
       <span class="wave still" style="flex:1; justify-content:center;">
@@ -184,13 +184,14 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
 </div>
 
 <div class="row" style="margin-top:20px">
-  <div class="stage wide"><div class="label"><b>The grown player</b> — the stack in transcript order, karaoke follow:
-      spoken sentences dim, the current one bright, the next muted.
-      <span class="src">Apple Music depth-of-field + teleprompter fixed focal row + Netflix caption sizing (2 bright lines).</span>
-      The transport row shows its own hotkeys — <span class="src">Superhuman teaches keys inline</span>.</div>
+  <div class="stage wide"><div class="label"><b>The grown player</b> — the same minimal strip is the player at EVERY
+      size (your call: one action, one visualization); grown just adds the message above it. While playing, the
+      waveform takes the dots' place in the bottom band — the dots return when idle. Karaoke follow: spoken dim,
+      current bright, next muted. <span class="src">Apple Music depth-of-field + teleprompter fixed focal row.</span></div>
     <div class="screen tall">
       <div class="shape grown tts" style="width: 400px;">
         <div class="icons">
+          <span class="ic" title="type a reply"><svg viewBox="0 0 12 12"><path d="M2 3.5h8M2 6h8M2 8.5h5"/></svg></span>
           <span class="ic" title="remove"><svg viewBox="0 0 12 12"><path d="M2.5 3.5h7M5 3.3v-1h2v1M3.5 3.5l.5 6h4l.5-6"/></svg></span>
           <span class="ic" title="close"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></span>
         </div>
@@ -202,22 +203,22 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
             <div class="next">Two follow-ups are queued for tomorrow.</div>
           </div>
         </div>
-        <div class="transport">
-          <span class="tico" title="previous sentence"><svg viewBox="0 0 12 12"><path d="M8.6 2.6v6.8L4.4 6zM3.4 2.6h1.2v6.8H3.4z"/></svg></span>
+        <div class="transport" style="gap:10px;">
+          <span class="pos">2/3</span>
+          <span class="wave" style="flex:1; justify-content:center;">
+            <i class="on" style="height:5px"></i><i class="on" style="height:9px"></i><i class="on" style="height:13px"></i><i class="on" style="height:7px"></i><i class="on" style="height:11px"></i><i class="on" style="height:6px"></i><i class="on" style="height:12px"></i><i class="on" style="height:8px"></i><i class="hot" style="height:10px"></i><i class="hot" style="height:13px"></i><i style="height:7px"></i><i style="height:11px"></i><i style="height:5px"></i><i style="height:9px"></i><i style="height:12px"></i><i style="height:6px"></i><i style="height:8px"></i><i style="height:5px"></i>
+          </span>
           <span class="tico main"><svg viewBox="0 0 12 12"><path d="M3.2 2.5h2v7h-2zM6.8 2.5h2v7h-2z"/></svg></span>
-          <span class="tico" title="next sentence"><svg viewBox="0 0 12 12"><path d="M3.4 2.6v6.8L7.6 6zM7.4 2.6h1.2v6.8h-1.2z"/></svg></span>
-          <span class="pos">msg 2/3 · sent 2/4</span>
           <span class="chip">1.5×</span>
-          <span class="key">F8 · ××fwd · ×××back · hold=stop</span>
         </div>
-        <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
       </div>
     </div>
   </div>
 
   <div class="stage wide"><div class="label"><b>Revealing a swapped span</b> — the voice said "link: the pull request";
-      clicking the ✦ span (or one hotkey) shows what was actually there. The stored message is never rewritten —
-      cleaning is a view. <span class="src">Apple Intelligence italics+glyph, Google Translate "show original", screen-reader role+description.</span></div>
+      clicking the ✦ span shows what was actually there (whole-message verbatim view lives in the panel thread —
+      the chord was cut, 80/20). The stored message is never rewritten — cleaning is a view.
+      <span class="src">Apple Intelligence italics+glyph, screen-reader role+description.</span></div>
     <div class="screen tall">
       <div class="shape grown ttspaused" style="width: 400px;">
         <div class="icons">
@@ -232,13 +233,35 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
             <div class="next">Two follow-ups are queued for tomorrow.</div>
           </div>
         </div>
-        <div class="transport">
-          <span class="tico"><svg viewBox="0 0 12 12"><path d="M8.6 2.6v6.8L4.4 6zM3.4 2.6h1.2v6.8H3.4z"/></svg></span>
+        <div class="transport" style="gap:10px;">
+          <span class="pos">2/3 · paused</span>
+          <span class="wave still" style="flex:1; justify-content:center;">
+            <i class="on" style="height:5px"></i><i class="on" style="height:9px"></i><i class="on" style="height:13px"></i><i class="on" style="height:7px"></i><i class="on" style="height:11px"></i><i class="on" style="height:6px"></i><i class="on" style="height:12px"></i><i class="on" style="height:8px"></i><i class="on" style="height:10px"></i><i style="height:13px"></i><i style="height:7px"></i><i style="height:11px"></i><i style="height:5px"></i><i style="height:9px"></i><i style="height:12px"></i><i style="height:6px"></i><i style="height:8px"></i><i style="height:5px"></i>
+          </span>
           <span class="tico main"><svg viewBox="0 0 12 12"><path d="M4 2.6v6.8l5.4-3.4z"/></svg></span>
-          <span class="tico"><svg viewBox="0 0 12 12"><path d="M3.4 2.6v6.8L7.6 6zM7.4 2.6h1.2v6.8h-1.2z"/></svg></span>
-          <span class="pos">paused</span>
           <span class="chip">1.5×</span>
-          <span class="key">⌃⌥V verbatim view</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage wide"><div class="label"><b>Typed reply</b> (your call — "we aren't always able to talk"): the ⌨
+      icon on any grown stack opens a composer right in the pill; ⏎ sends to that session, exactly like a voice
+      answer would. The panel thread keeps its own composer as before.</div>
+    <div class="screen tall">
+      <div class="shape grown idle ask" style="width: 400px;">
+        <div class="icons">
+          <span class="ic" title="type a reply" style="background: rgba(255,194,75,.16);"><svg viewBox="0 0 12 12"><path d="M2 3.5h8M2 6h8M2 8.5h5" stroke="#ffc24b"/></svg></span>
+          <span class="ic" title="remove"><svg viewBox="0 0 12 12"><path d="M2.5 3.5h7M5 3.3v-1h2v1M3.5 3.5l.5 6h4l.5-6"/></svg></span>
+          <span class="ic" title="close"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></span>
+        </div>
+        <div class="content">
+          <div class="status">pantrella asks</div>
+          <div class="msg bright">Keep the waitlist gate on for new signups?</div>
+          <div style="margin-top:8px; display:flex; align-items:center; gap:8px; background:#191614; border:1px solid #35302a; border-radius:8px; padding:5px 10px;">
+            <span style="font-size:12px; color:var(--text);">Keep it on until the cohort ships<span style="color:var(--accent)">|</span></span>
+            <span style="margin-left:auto; font-size:9.5px; color:var(--text3);">⏎ send · Esc cancel</span>
+          </div>
         </div>
         <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
       </div>
@@ -248,9 +271,11 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
 
 <h2>2 · Consumption — the two-tier ring, and what "consumed" means</h2>
 <div class="row">
-  <div class="stage wide"><div class="label"><b>The new dot grammar</b> — 1 consumed (grey, still selectable),
-      2 active, 3 unread (static amber — no pulse), 4 asking (pulse reserved for questions).
-      <span class="src">Slack: bold for unread, red only for direct address. Stories: seen ring greys, stays tappable.</span></div>
+  <div class="stage wide"><div class="label"><b>The new dot grammar</b> — NINE slots (⌃⌥1–9). 1 consumed (grey —
+      when its session is also done it leaves the picker, freeing the number for the next queued session; numbers
+      never shift while occupied), 2 active, 3 unread (static amber — no pulse), 4 asking (pulse reserved for
+      questions). Everything that ever happened stays in the panel.
+      <span class="src">Slack: bold for unread, red only for direct address. tmux: stable numbers.</span></div>
     <div class="screen"><div class="shape stretch"><div class="picker">
       <span class="lbl">sessions</span>
       <i class="dot numoff consumed">1</i><i class="dot num">2</i><i class="dot numoff unread">3</i><i class="dot numoff asking">4</i>
@@ -266,9 +291,9 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
     <div class="screen"><div class="shape pill idle"><div class="dots"><i class="dot"></i><i class="dot num" style="position:relative">2<span style="position:absolute; inset:0; border:1px solid rgba(255,194,75,.7); border-radius:50%;"></span></i><i class="dot"></i></div></div></div></div>
 
   <div class="stage wide"><div class="label"><b>Stack finished playing</b> — end tone, stack consumed, ring clears,
-      and the receipt points at the next unread session instead of leaving you hanging.
-      <span class="src">WhatsApp's end-of-voice-notes tone; Superhuman's advance-to-next; the transition-gap rule.</span></div>
-    <div class="screen"><div class="shape stretch"><span class="title-line" style="color:var(--text2)">builder heard ✓ · next: pantrella — ⌃⌥3</span></div></div></div>
+      the strip slips away — and that's ALL (your call: no receipt, no auto-advance; the end of a stack is where
+      YOU decide what happens next). <span class="src">WhatsApp's end-of-voice-notes tone.</span></div>
+    <div class="screen"><div class="shape pill idle"><div class="dots"><i class="dot"></i><i class="dot num">2</i><i class="dot"></i></div></div></div></div>
 
   <div class="stage wide"><div class="label"><b>Interrupted mid-stack</b> — stopping is not consuming: the stack keeps
       an in-progress position and resumes there next time. <span class="src">Pocket Casts in-progress episodes; YouTube's resume bar.</span></div>
@@ -278,24 +303,28 @@ Research: <b>research/vf48-session-listening-ux.md</b>.</p>
 <p class="note"><b>The consumption rule</b> (podcast three-state, extended to text): a push is <b>consumed</b> when
 its text was actually rendered in the grown view (Telegram viewport rule — a receipt flash never consumes) OR when
 TTS finished speaking it (~95%). Partial listening leaves an in-progress resume position. A consumed session's dot
-greys but keeps its number and stays selectable; its stack stays browsable in the Agents panel forever (Visual
-Voicemail: the row never moves). A new push fully re-lights the session. Asks are NEVER consumed by reading or
-listening — they pulse until answered. Consumption is strictly user-local: agents never see "seen", only "delivered".</p>
+greys; once its session is also finished it leaves the picker and its number goes to the next queued session
+(numbers never shift while occupied). And because rendered = consumed, <b>nothing auto-hides anymore</b> (your
+call): a grown stack stays until you Esc/✕/switch — no more panel vanishing mid-read. Every stack stays browsable
+in the Agents panel forever (Visual Voicemail: the row never moves). A new push fully re-lights a session. Asks are
+NEVER consumed by reading or listening — they pulse until answered. Consumption is strictly user-local: agents
+never see "seen", only "delivered".</p>
 
 <h2>3 · Hotkeys — the full map (existing keys keep their meaning)</h2>
 <table>
   <tr><th>Key</th><th>Does</th><th>Borrowed from</th></tr>
-  <tr><td><span class="key">⌃⌥1–6</span></td><td><b>Jump to session N</b> — numbers stay fixed, never reorder.</td><td>tmux 0–9, browser ⌘1–9</td></tr>
-  <tr><td><span class="key">⌃⌥0</span></td><td><b>Last-session toggle</b> — bounce between the two sessions you're juggling. NEW.</td><td>tmux prefix-l, vim Ctrl-^, ⌘Tab quick-flick</td></tr>
-  <tr><td><span class="key">⌃⌥.</span> / <span class="key">⌃⌥,</span></td><td><b>Next / previous unread session</b> — the triage walk; lands on the oldest unconsumed push. NEW.</td><td>Slack ⌥⇧↓/↑ unread walk; &lt; &gt; media glyphs</td></tr>
+  <tr><td><span class="key">⌃⌥1–9</span></td><td><b>Jump to session N</b> — NINE slots. Numbers stay fixed while occupied, never reorder; when a session is consumed and done, its number frees and the next queued session takes it.</td><td>tmux 0–9, browser ⌘1–9</td></tr>
+  <tr><td><span class="key">⌃⌥0</span></td><td><b>Last-session toggle</b> — bounce between the two sessions you're juggling. The ONE new chord.</td><td>tmux prefix-l, vim Ctrl-^, ⌘Tab quick-flick</td></tr>
   <tr><td><span class="key">F8 ×1</span></td><td><b>Play / pause</b> — reading the shown session's unconsumed stack, or pausing/resuming what's playing. (Evolves today's read-aloud key.)</td><td>AirPods 1 press; media-key toggle</td></tr>
   <tr><td><span class="key">F8 ×2</span></td><td><b>Skip forward</b> one sentence (at the last sentence: next message).</td><td>AirPods 2 presses; Speechify sentence skip</td></tr>
   <tr><td><span class="key">F8 ×3</span></td><td><b>Skip back</b> one sentence.</td><td>AirPods 3 presses</td></tr>
   <tr><td><span class="key">F8 hold</span></td><td><b>Stop</b> — dismisses the player strip; in-progress position is kept.</td><td>AirPods hold = alternate; Telegram ✕</td></tr>
   <tr><td><span class="key">Esc</span></td><td>On the grown player: <b>collapse to the strip, audio keeps playing</b>. Never destroys, never consumes by itself. (Esc keeps its panic role during agent actions.)</td><td>Raycast/launcher Esc de-escalates</td></tr>
-  <tr><td><span class="key">⌃⌥V</span></td><td><b>Verbatim toggle</b> — whole view flips between listening text and the original (raw URLs, code). NEW.</td><td>Google Translate "show original"</td></tr>
-  <tr><td>speed chip</td><td>Click cycles <b>1× → 1.5× → 2×</b> (full 0.25–4× range stays in the panel's Speech drawer). Applies from the next sentence.</td><td>WhatsApp/Telegram chip; Speechify range</td></tr>
+  <tr><td>speed chip</td><td>Click <b>+0.1×</b>, ⇧click −0.1× (your call — 0.5× jumps were too big; full range stays in the panel's Speech drawer). Applies from the next sentence.</td><td>Audible's 0.1 increments</td></tr>
 </table>
+<p class="note"><b>Cut per your 80/20 rule:</b> the ⌃⌥,/. unread-walk chords (the picker's amber dots + ⌃⌥N cover
+it) and the ⌃⌥V verbatim chord (click the ✦ span; whole-message verbatim lives in the panel thread). Net new
+global chords: one (⌃⌥0), plus ⌃⌥7–9 extending the existing family.</p>
 <p class="note">Transport is global: F8 acts on whatever is playing no matter which app has focus — playback outranks
 surface focus. <span class="src" style="color:var(--accent); font-style:italic">macOS media-key routing.</span>
 Optional (off by default): register as the system Now Playing app while speaking, so real media keys, AirPods stems
@@ -322,7 +351,7 @@ and Control Center drive the session player — at the cost of stealing those ke
       <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
 
   <div class="stage"><div class="label"><b>Esc.</b> Back to the editor; the strip keeps playing at the bottom.
-      Audio finishes → end tone → "builder heard ✓ · next: pantrella — ⌃⌥3".</div>
+      Audio finishes → end tone, the strip slips away, ring clears — nothing else; what's next is yours.</div>
     <div class="screen"><div class="shape stretch" style="width:300px; gap:10px;">
       <span class="title-line" style="font-size:10.5px;">builder · 3/3</span>
       <span class="wave" style="flex:1; justify-content:center;">
@@ -332,8 +361,8 @@ and Control Center drive the session player — at the cost of stealing those ke
       <span class="chip">1.5×</span>
     </div></div></div>
 
-  <div class="stage"><div class="label"><b>⌃⌥. walks to the next unread</b> (pantrella). Its ask pulses — answer by
-      voice, hold Fn. The answered ask is consumed; the walk continues until no ring is lit.</div>
+  <div class="stage"><div class="label"><b>⌃⌥3 when YOU choose.</b> pantrella's ask pulses in the picker — answer by
+      voice (hold Fn) or hit ⌨ and type. The answered ask is consumed and its ring goes quiet.</div>
     <div class="screen tall" style="height:190px"><div class="shape grown idle ask" style="width:270px">
       <div class="content"><div class="status">pantrella asks</div>
       <div class="msg bright">Keep the waitlist gate on for new signups?</div>
@@ -341,38 +370,42 @@ and Control Center drive the session player — at the cost of stealing those ke
       <div class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div></div></div></div>
 
   <div class="stage"><div class="label"><b>Later, in the panel.</b> Agents list, chronological: consumed sessions
-      quiet, the in-progress one shows its thin resume sliver, unread reads bright. Nothing was lost.</div>
+      quiet, the in-progress one says so in words ("paused · 2/3" — no decorations, per your panel rules), unread
+      reads bright. Nothing was lost.</div>
     <div class="screen tall" style="height:190px"><div style="width:270px; margin-bottom:8px; background:var(--shape); border:1px solid #2e2a26; border-radius:10px; padding:8px 10px; font-size:11.5px;">
       <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text);"><span>3&nbsp;&nbsp;pantrella</span><span style="color:var(--text3)">14:22</span></div>
-      <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text2);"><span>2&nbsp;&nbsp;builder <span style="display:inline-block; width:34px; height:2px; background:#3a352f; border-radius:1px; vertical-align:middle;"><span style="display:block; width:58%; height:100%; background:var(--accent); border-radius:1px;"></span></span></span><span style="color:var(--text3)">14:07</span></div>
+      <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text2);"><span>2&nbsp;&nbsp;builder — paused · 2/3</span><span style="color:var(--text3)">14:07</span></div>
       <div style="display:flex; justify-content:space-between; padding:4px 2px; color:var(--text3);"><span>1&nbsp;&nbsp;voice-flow ✓</span><span>11:40</span></div>
     </div></div></div>
 </div>
 
 <h2>5 · Open decisions — needs your call (no product precedent)</h2>
-<div class="decision"><b>1 · What consumes on display?</b> Growing a stack shows all active pushes at once.
-  <span class="rec">Recommend:</span> whatever was actually rendered is consumed (Telegram viewport rule) — for stacks
-  that fit, that's the whole stack; a receipt flash or the 5s re-preview of an already-seen stack consumes nothing new.
-  Alternative: only the newest push, or an explicit consume chord.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>1 · What consumes on display? — RESOLVED:</b>
+  rendered = consumed (Telegram viewport rule), and all auto-hide timers are REMOVED — a grown stack stays until
+  you Esc/✕/switch, because the panel kept hiding mid-read.</div>
 <div class="decision"><b>2 · Does listening to the CLEANED text count as seeing the verbatim one?</b>
   <span class="rec">Recommend:</span> yes for the unread ring (the meaning was delivered); the ✦ marks stay visible in
   the panel so you can always audit what was swapped.</div>
-<div class="decision"><b>3 · Cross-session auto-advance.</b> When a stack finishes playing, continue into the next
-  unread session's audio? Zero precedent anywhere. <span class="rec">Recommend:</span> no — end tone + "next: … — ⌃⌥N"
-  receipt; you advance with ⌃⌥. when you want it. (A "play everything" gesture could be F8 on the picker.)</div>
-<div class="decision"><b>4 · Chord budget.</b> The map adds ⌃⌥0, ⌃⌥, / ⌃⌥. and ⌃⌥V. Is that acceptable, or should
-  any be dropped/merged? Global focus-free triage has no product precedent — this vocabulary is ours to define.</div>
-<div class="decision"><b>5 · Now Playing registration.</b> Free media keys + AirPods + Control Center while VF speaks,
-  but it steals those keys from your music. <span class="rec">Recommend:</span> ship as a Settings toggle, off by default.</div>
-<div class="decision"><b>6 · Six-slot aging.</b> When a 7th session arrives, which dot yields? <span class="rec">Recommend:</span>
-  the oldest fully-consumed, fully-silent session drops off the picker (still in the panel); numbers of surviving
-  sessions never shift mid-day.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>3 · Cross-session auto-advance — RESOLVED:</b>
+  nothing happens at the end of a stack. End tone, done. No auto-advance, no "next" receipt — the end of a stack is
+  where the user decides.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>4 · Chord budget — RESOLVED (80/20):</b>
+  ⌃⌥,/. and ⌃⌥V are cut. Net new: one chord (⌃⌥0 last-session toggle) plus ⌃⌥7–9 extending the session family;
+  F8 gains press-count semantics on the key it already owns.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>5 · Now Playing registration — RESOLVED:</b>
+  Settings toggle, off by default.</div>
+<div class="decision" style="border-left-color: var(--green)"><b>6 · Slot aging — RESOLVED:</b> NINE slots
+  (⌃⌥1–9), not six. Numbers never shift while occupied; sessions beyond nine wait in a queue, and when a slot's
+  session is consumed and finished, it leaves the picker and the next queued session takes the freed number.
+  Everything remains in the panel forever.</div>
 <div class="decision" style="border-left-color: var(--green)"><b>7 · Progress representation — RESOLVED</b> (your 12:56
   capture): the hairline is gone everywhere; on the strip the waveform is the progress bar and the scrubber (lit =
   played, drag to seek), the label carries "2/3" for the stack; the collapsed pill shows no progress at all.</div>
-<div class="decision"><b>8 · Panel progress sliver.</b> The in-progress resume sliver on an Agents row (journey step 6)
-  technically violates panel remark #4 ("no decorations — unread = the row simply reads bright"). It is data, not
-  decoration — but it's your rule to bend or keep.</div>
+<div class="decision"><b>8 · Panel in-progress marker — better approach.</b> <span class="rec">Recommend:</span> no
+  graphics at all — express resume state as plain TEXT in the row's existing preview: the row reads
+  <span class="key">builder — paused · 2/3</span> in the muted color. It respects remark #4 exactly (words, not
+  decoration), reuses the strip's "2/3" vocabulary, and needs zero new UI. The graphical sliver from journey step 6
+  is withdrawn.</div>
 
 <h2>6 · Engineering notes (for the implementation ticket)</h2>
 <p class="note">· <b>Seekability:</b> read-aloud of a stack starts from full known text → generate as cached audio
@@ -383,11 +416,13 @@ player shows pause/stop only there.</p>
 buckets — exactly how WhatsApp draws voice notes), so the strip shows the real shape of the speech. Lit bars =
 played fraction; drag = `seek(to:)`; the 2 bars at the playhead animate while playing. Live streams draw the
 envelope of what has already been fed and mark the strip non-draggable.</p>
-<p class="note">· <b>Speed:</b> baked into generation per request. The cycling chip re-generates from the current
-sentence at the new speed — cheap because speech is already sentence-chunked (AgentReplySpeaker).</p>
+<p class="note">· <b>Speed:</b> baked into generation per request. The chip steps ±0.1× and re-generates from the
+current sentence at the new speed — cheap because speech is already sentence-chunked (AgentReplySpeaker).</p>
 <p class="note">· <b>State:</b> SessionPush already carries seen/spoken/done — the three-state model extends `spoken`
 to a per-push resume position (sentence index). The two-tier ring is a change in `setUnreadIndicator` callers: pulse
-only when an unanswered ask exists.</p>
+only when an unanswered ask exists. Auto-hide removal: the `autoHide` parameter of `showGrown`/`setTargetSession`
+goes away — collapse only on Esc/✕/click/switch. Session slots: register ⌃⌥7/8/9 (keycodes 26/28/25) alongside
+today's six; `pickerSessions()` gains the ≤9 queue with number retention.</p>
 <p class="note">· <b>Cleaning:</b> VF-43's sanitize step produces the listening text + span map {range, spokenAs};
 stored message stays verbatim (messages.json untouched); the grown view renders spans italic+✦; ⌃⌥V flips views.</p>
 
