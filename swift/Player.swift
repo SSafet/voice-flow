@@ -82,6 +82,50 @@ struct PlaybackQueueMap {
     }
 }
 
+/// One player, many inputs (VF-48 unification): whatever is being read —
+/// a session's push stack, the assistant's reply, selected text, pasted
+/// text — feeds the SAME band/waveform/karaoke/transport. The context
+/// only says where the sentences came from, so consumption and karaoke
+/// land on the right surface; playback itself is source-blind.
+final class PlayerContext {
+    enum Source {
+        /// A session push stack — the one source with consumption
+        /// bookkeeping (spoken cursor, resume points, done history).
+        case sessionStack(id: String, indices: [Int])
+        /// The in-app assistant's reply; sentences grow while it streams.
+        case assistantReply(title: String)
+        /// Everything else: selected text, the Speech drawer, the HTTP API.
+        case text(title: String)
+    }
+
+    let source: Source
+    /// Sentences per item, in play order. Fixed for session stacks;
+    /// refreshed from the live TTS queue for still-growing replies.
+    var sentences: [[String]]
+    /// This run has actually been heard generating/playing — the settle
+    /// guard against status transitions from before it started.
+    var playbackSeen = false
+    /// Reply text still streaming in: karaoke waits for the full text so
+    /// it never fights the delta renderer for the same text view.
+    var streaming = false
+
+    var map: PlaybackQueueMap { PlaybackQueueMap(counts: sentences.map { $0.count }) }
+
+    var sessionId: String? {
+        if case .sessionStack(let id, _) = source { return id }
+        return nil
+    }
+    var sessionIndices: [Int]? {
+        if case .sessionStack(_, let indices) = source { return indices }
+        return nil
+    }
+
+    init(source: Source, sentences: [[String]]) {
+        self.source = source
+        self.sentences = sentences
+    }
+}
+
 /// Generation runs well ahead of playback (each sentence streams in faster
 /// than it plays), so anything the user SEES must follow the playhead, not
 /// the fetcher (VF-48 QA: "text and audio are out of sync"). Boundaries are

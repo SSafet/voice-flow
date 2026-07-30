@@ -689,6 +689,7 @@ class FloatingIndicator: NSObject {
         let wasExpanded = expandedSize
         mode = .pill
         grownRoutesToAssistant = false
+        grownPlayerActive = false
         expandTimer?.invalidate()
         expandTimer = nil
         resumeAutoHideOnIdle = false
@@ -768,6 +769,9 @@ class FloatingIndicator: NSObject {
     var onPlayerSeek: ((Double) -> Void)?
     var onPlayerSpeed: ((Double) -> Void)?
     private var playerBand: PlayerBandView?
+    /// True while the band owns the grown bottom band — mid-stream
+    /// relayouts (reply deltas) must not restore the dots under it.
+    private var grownPlayerActive = false
 
     private func ensurePlayerBand() -> PlayerBandView {
         if let playerBand { return playerBand }
@@ -814,10 +818,12 @@ class FloatingIndicator: NSObject {
     /// while this session's stack is playing; nil brings the dots back.
     func setGrownPlayer(_ state: PlayerState?) {
         guard mode == .grown else {
+            grownPlayerActive = false
             if state == nil, mode != .player { playerBand?.isHidden = true }
             return
         }
         if let state {
+            grownPlayerActive = true
             let band = ensurePlayerBand()
             // The capsule morphs; its MODEL width mid-transition can be the
             // collapsed pill's — size the band off the grown width instead.
@@ -830,6 +836,7 @@ class FloatingIndicator: NSObject {
             dotLayers.forEach { $0.isHidden = true }
             pickerLayer?.isHidden = true
         } else {
+            grownPlayerActive = false
             playerBand?.isHidden = true
             // Restore whichever bottom band the stack had (dots or picker).
             relayoutGrown(bottomPicker: currentBottomPicker)
@@ -891,6 +898,10 @@ class FloatingIndicator: NSObject {
         let previousWindowW = panelSize.width
         let previousCapsule = capsuleLayer.frame
         mode = .grown
+        // Fresh content resets the band claim; the app re-applies it right
+        // after when this content is the one playing.
+        grownPlayerActive = false
+        playerBand?.isHidden = true
         grownRoutesToAssistant = spec.routesToAssistant
         transitionGeneration += 1
 
@@ -1019,6 +1030,12 @@ class FloatingIndicator: NSObject {
             } else {
                 self.dotLayers.forEach { $0.isHidden = false }
                 self.capsuleLayer.frame = CGRect(x: (width - self.W) / 2, y: 3, width: self.W, height: self.H)
+            }
+            // While the band owns the bottom band, dots and picker stay
+            // yielded through every relayout (streaming reply deltas).
+            if self.grownPlayerActive {
+                self.dotLayers.forEach { $0.isHidden = true }
+                self.pickerLayer?.isHidden = true
             }
         }
         if seed != nil {

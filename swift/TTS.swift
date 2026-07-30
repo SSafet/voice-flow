@@ -463,6 +463,15 @@ final class TTSController: NSObject {
     }
 
     func seek(to seconds: Double) {
+        // A queued run has no seekable cache — map the position onto the
+        // sentence it falls in and skip there (VF-48: seek unit = sentence).
+        if queuedSpeechActive {
+            let frame = Int64(max(0, seconds) * TTSSampleRate)
+            if let chunk = QueuedPlayback.chunk(atFrame: frame, boundaries: queuedChunkFrames) {
+                skipQueuedSpeech(to: chunk)
+            }
+            return
+        }
         guard let currentCacheURL else { return }
         let targetFrame = AVAudioFramePosition(max(0, min(seconds * TTSSampleRate, Double(cachedTotalFrames))))
         do {
@@ -531,6 +540,7 @@ final class TTSController: NSObject {
         playbackBaseFrameOffset = 0
         queuedChunkFrames = []
         lastAnnouncedQueuedChunk = nil
+        awaitingLiveText = false
         do {
             try startSpeechChunk(at: index)
         } catch {
@@ -552,6 +562,9 @@ final class TTSController: NSObject {
         guard queuedSpeechActive else { return nil }
         return playbackQueuedChunk() ?? activeSpeechChunkIndex
     }
+    /// The queue's sentences as they exist right now — the single source of
+    /// truth for karaoke on live-fed (still growing) queues.
+    var queuedSentences: [String] { queuedSpeechActive ? speechChunks : [] }
     var isPaused: Bool { isPlaybackPaused }
 
     private func playbackQueuedChunk() -> Int? {
@@ -696,6 +709,12 @@ final class TTSController: NSObject {
         speechAPIKey = apiKey
         liveFeedActive = true
         awaitingLiveText = true
+        // A live feed IS a sentence queue that happens to still be growing
+        // (VF-48 unification): boundaries, playhead announcements, skip,
+        // pause and speed all behave exactly like beginQueuedSpeech.
+        queuedSpeechActive = true
+        queuedChunkFrames = []
+        lastAnnouncedQueuedChunk = nil
         currentAudioSource = .live
         setStatus(.generating, "Waiting for reply…")
     }
@@ -723,6 +742,7 @@ final class TTSController: NSObject {
         awaitingLiveText = false
         speechAPIKey = ""
         guard !currentPCMData.isEmpty else {
+            clearSpeechPlan()
             currentRequest = nil
             currentAudioSource = .none
             setStatus(.idle, "Idle")
@@ -821,8 +841,12 @@ final class TTSController: NSObject {
             stopPlaybackTimer()
             let queueFinished = queuedSpeechActive && streamCompleted
             queuedSpeechActive = queuedSpeechActive && !queueFinished
-            setStatus(.ready, "Ready")
+            // Finished MUST fire before the .ready status: both handlers hop
+            // to main in order, and the status side settles consumption —
+            // if it runs first the finish handler finds no context and the
+            // last push never marks spoken (kept resurfacing as unread).
             if queueFinished { onQueuedSpeechFinished?() }
+            setStatus(.ready, "Ready")
         } else {
             refreshPlaybackStatus()
         }

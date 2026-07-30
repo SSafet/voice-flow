@@ -95,14 +95,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var sessionPushes: [String: [SessionPush]] = [:] {
         didSet { Self.savePushes(sessionPushes) }
     }
-    /// Pushes being read aloud by speakSessionUnconsumed, waiting for
-    /// playback to end before they turn into done history (ticket #21).
-    /// `map` translates the player's flat sentence queue back onto the
-    /// stack's pushes — the consumption cursor moves with the voice
-    /// (ticket VF-48).
-    private var pendingSpeechConsumption: (session: String, indices: [Int],
-                                           map: PlaybackQueueMap, sentences: [[String]],
-                                           playbackSeen: Bool)?
+    /// What the player is reading right now — a session stack, the
+    /// assistant's reply, or plain text (VF-48 unification): one player,
+    /// many inputs. Only session stacks carry consumption bookkeeping;
+    /// every source shares the band/waveform/karaoke/transport.
+    private var playerContext: PlayerContext?
+    /// The assistant's last finished reply — the transport's "re-read"
+    /// target while its conversation is the grown surface.
+    private var lastAssistantReply: String?
     // Transport-key press counting (ticket VF-48).
     private var transportPressCount = 0
     private var transportResolveTimer: Timer?
@@ -418,15 +418,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         replyBubble.onSpeakRequested = { [weak self] text in
             guard let self else { return }
             // Session stacks speak from the consumption cursor (ticket #16);
-            // sessionless content falls back to the raw shown text.
+            // sessionless content plays the shown text through the same
+            // player, under the assistant's name when it's their surface.
             if let sid = self.currentPushSessionId, self.sessionPushes[sid]?.isEmpty == false {
                 self.speakSessionUnconsumed(sid)
                 return
             }
             guard !text.isEmpty else { return }
-            var request = self.chatPanel.currentTTSRequest()
-            request.text = text
-            _ = self.handleTTSSpeak(request.normalized(), reveal: false, showSettingsOnMissingKey: false)
+            let source: PlayerContext.Source = self.indicator.isGrownAssistantConversationVisible
+                ? .assistantReply(title: self.assistantPlayerTitle())
+                : .text(title: "Speech")
+            self.speakTextThroughPlayer(text, source: source, showSettingsOnMissingKey: false)
         }
 
 
@@ -612,13 +614,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.playerAdjustSpeed(delta)
         }
         // Typed reply from the grown pill (ticket VF-48) — same routing as
-        // a voice answer: fulfills the blocked ask or queues in the inbox.
+        // a voice answer: fulfills the blocked ask, queues in the inbox,
+        // or — on the assistant's surface — continues its conversation.
         indicator.onGrownTypedReply = { [weak self] text in
-            guard let self, let sid = self.currentPushSessionId else { return }
-            self.sendMessage(toSession: sid, text: text)
-            self.currentPushSessionId = nil
-            self.indicator.hideGrown()
-            self.replyBubble.showTransient("sent ✓", seconds: 3)
+            guard let self else { return }
+            if let sid = self.currentPushSessionId {
+                self.sendMessage(toSession: sid, text: text)
+                self.currentPushSessionId = nil
+                self.indicator.hideGrown()
+                self.replyBubble.showTransient("sent ✓", seconds: 3)
+            } else if self.indicator.isGrownAssistantConversationVisible {
+                self.sendTypedMessage(text)
+            }
         }
         AssistantsStore.shared.load()
         replySpeaker = AgentReplySpeaker(tts: ttsController)
@@ -736,7 +743,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.replyBubble.beginStreaming()
             }
             if UserSettings.shared.voiceRepliesEnabled {
+                if self.playerContext != nil { self.finalizeSpeechConsumption() }
                 self.replySpeaker.begin()
+                if self.replySpeaker.isActive {
+                    // The reply rides the same player as everything else
+                    // (VF-48 unification): band + transport from the first
+                    // word, karaoke once the full text has landed.
+                    let context = PlayerContext(
+                        source: .assistantReply(title: self.assistantPlayerTitle()),
+                        sentences: [[]])
+                    context.streaming = true
+                    self.playerContext = context
+                }
             }
         }
         agent.onAssistantDelta = { [weak self] delta in
@@ -749,6 +767,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.chatPanel.finishAssistantMessage(text)
             self.replyBubble.finishStreaming(text)
             self.replySpeaker.finish()
+            self.lastAssistantReply = text
+            if let context = self.playerContext, case .assistantReply = context.source {
+                context.streaming = false
+                self.refreshPlayerSurface(karaoke: true)
+            }
         }
         agent.onToolActivity = { [weak self] detail in
             self?.chatPanel.setToolDetail(detail)
@@ -1024,7 +1047,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 || overlayOwners.contains(session.id)
                 || session.id == targetSessionId
                 // The thread being read aloud stays reachable (ticket #21).
-                || session.id == pendingSpeechConsumption?.session
+                || session.id == playerContext?.sessionId
         }
             .map { (id: $0.id, label: $0.label) }
         let liveIds = Set(live.map { $0.id })
@@ -1033,7 +1056,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 !liveIds.contains($0.key)
                     && ($0.value.contains { $0.done != true }
                         // A ghost mid-read-aloud keeps its dot (ticket #21).
-                        || $0.key == pendingSpeechConsumption?.session)
+                        || $0.key == playerContext?.sessionId)
             }
             .sorted { ($0.value.last?.at ?? .distantPast) < ($1.value.last?.at ?? .distantPast) }
             .map { (id: $0.key, label: sessionLabels[$0.key] ?? Self.senderLabel($0.value)) }
@@ -1278,7 +1301,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         for (sid, queue) in sessionPushes {
             guard mcpServer.sessions.session(sid) == nil,
                   sid != currentPushSessionId,
-                  sid != pendingSpeechConsumption?.session,
+                  sid != playerContext?.sessionId,
                   queue.contains(where: { $0.done != true }),
                   !queue.contains(where: { !$0.seen }),
                   !queue.contains(where: { $0.isAsk && $0.answer == nil && $0.done != true })
@@ -2360,11 +2383,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        var request = chatPanel.currentTTSRequest()
-        request.text = selectedText
-        let normalized = request.normalized()
-        chatPanel.applyTTSRequest(normalized)
-        _ = handleTTSSpeak(normalized, reveal: false, showSettingsOnMissingKey: true)
+        speakTextThroughPlayer(selectedText, source: .text(title: "Selection"),
+                               showSettingsOnMissingKey: true)
     }
 
     private func setupLocalAPIServer() {
@@ -2526,28 +2546,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if reveal {
             revealSpeechTab()
         }
-
-        do {
-            try ttsController.speak(request: normalized)
+        // The same text already in the player: the Play button is a pause
+        // toggle, matching the old same-request resume behavior.
+        if ttsController.queuedSpeechActive, let context = playerContext,
+           case .text = context.source,
+           context.sentences == [SpeechSentencer.sentences(of: normalized.text)] {
+            ttsController.togglePause()
+            refreshPlayerSurface()
             return nil
-        } catch {
-            let message = error.localizedDescription
-            let currentStatus = ttsController.status
-            chatPanel.setTTSStatus(TTSStatusSnapshot(
-                phase: .error,
-                message: message,
-                currentTime: currentStatus.currentTime,
-                duration: currentStatus.duration,
-                hasAudio: currentStatus.hasAudio,
-                isCached: currentStatus.isCached
-            ))
-            if showSettingsOnMissingKey,
-               let ttsError = error as? TTSError,
-               case .missingAPIKey = ttsError {
-                showSettings()
-            }
-            return message
         }
+        return speakTextThroughPlayer(normalized.text, source: .text(title: "Speech"),
+                                      request: normalized,
+                                      showSettingsOnMissingKey: showSettingsOnMissingKey)
     }
 
     private func handleTTSSet(_ payload: TTSAPIUpdatePayload) -> LocalAPIResponse {
@@ -3380,7 +3390,7 @@ extension AppDelegate: AgentsDataSource {
         let request = chatPanel.currentTTSRequest().normalized()
         // Whatever batch was still settling settles now — only what was
         // actually heard retires (finalize filters on spoken).
-        if pendingSpeechConsumption != nil { finalizeSpeechConsumption() }
+        if playerContext != nil { finalizeSpeechConsumption() }
         do {
             try ttsController.beginQueuedSpeech(
                 sentences: sentences.flatMap { $0 },
@@ -3394,28 +3404,91 @@ extension AppDelegate: AgentsDataSource {
             replyBubble.showTransient("couldn't start speech — check the TTS settings", seconds: 5)
             return
         }
-        pendingSpeechConsumption = (session: sessionId, indices: indices,
-                                    map: map, sentences: sentences, playbackSeen: false)
+        playerContext = PlayerContext(
+            source: .sessionStack(id: sessionId, indices: indices),
+            sentences: sentences)
         refreshUnreadIndicator()
         chatPanel.refreshAgents()
         refreshPlayerSurface(karaoke: true)
     }
 
+    /// Every read-aloud that isn't a session stack lands here (VF-48
+    /// unification): sentence-split the text and run it through the same
+    /// queued player, so replies, selections, the Speech drawer and the
+    /// HTTP API all get the band/waveform/karaoke/transport sessions have.
+    @discardableResult
+    private func speakTextThroughPlayer(_ text: String, source: PlayerContext.Source,
+                                        request baseRequest: TTSRequest? = nil,
+                                        showSettingsOnMissingKey: Bool) -> String? {
+        let sentences = SpeechSentencer.sentences(of: text)
+        guard !sentences.isEmpty else { return "Nothing to read." }
+        var request = baseRequest ?? chatPanel.currentTTSRequest()
+        request.text = text
+        let normalized = request.normalized()
+        chatPanel.applyTTSRequest(normalized)
+        if playerContext != nil { finalizeSpeechConsumption() }
+        do {
+            try ttsController.beginQueuedSpeech(
+                sentences: sentences, voice: normalized.voice, speed: normalized.speed,
+                instructions: normalized.instructions)
+        } catch {
+            let message = error.localizedDescription
+            chatPanel.setTTSStatus(TTSStatusSnapshot(
+                phase: .error, message: message,
+                currentTime: 0, duration: 0, hasAudio: false, isCached: false))
+            if showSettingsOnMissingKey, let ttsError = error as? TTSError,
+               case .missingAPIKey = ttsError {
+                replyBubble.showTransient("add an OpenAI API key for speech — opening Settings", seconds: 5)
+                showSettings()
+            }
+            return message
+        }
+        playerContext = PlayerContext(source: source, sentences: [sentences])
+        refreshPlayerSurface(karaoke: true)
+        return nil
+    }
+
+    /// The assistant's replies play under its own name.
+    private func assistantPlayerTitle() -> String {
+        agent.activeAssistant?.name ?? "Assistant"
+    }
+
+    /// Live sources (a streaming reply) grow their queue after the context
+    /// is created — mirror the engine's queue into the context. Sentences
+    /// only ever append, so a count check is enough.
+    private func syncPlayerSentences(_ context: PlayerContext) {
+        guard context.sessionId == nil else { return }
+        let live = ttsController.queuedSentences
+        guard !live.isEmpty, context.sentences.first?.count != live.count else { return }
+        context.sentences = [live]
+    }
+
     /// The player band's current state, or nil when no sentence queue is
-    /// alive. Main thread.
+    /// alive. One shape for every source (VF-48 unification). Main thread.
     private func playerStateSnapshot(compactTitle: Bool) -> FloatingIndicator.PlayerState? {
-        guard let pending = pendingSpeechConsumption,
+        guard let context = playerContext,
               ttsController.queuedSpeechActive,
               let chunk = ttsController.queuedChunkIndex else { return nil }
-        let position = pending.map.position(ofChunk: chunk)
-        let count = pending.map.counts.indices.contains(position.item)
-            ? max(1, pending.map.counts[position.item]) : 1
-        let progress = "\(position.item + 1)/\(pending.map.itemCount)"
-        let label = sessionLabels[pending.session]
-            ?? pickerSessions().first { $0.id == pending.session }?.label
-            ?? "session"
+        syncPlayerSentences(context)
+        let map = context.map
+        let position = map.position(ofChunk: chunk)
+        let count = map.counts.indices.contains(position.item)
+            ? max(1, map.counts[position.item]) : 1
+        let title: String
+        switch context.source {
+        case .sessionStack(let id, _):
+            let progress = "\(position.item + 1)/\(map.itemCount)"
+            let label = sessionLabels[id]
+                ?? pickerSessions().first { $0.id == id }?.label
+                ?? "session"
+            title = compactTitle ? progress : "\(label) · \(progress)"
+        case .assistantReply(let name):
+            title = name
+        case .text(let name):
+            title = name
+        }
         return FloatingIndicator.PlayerState(
-            title: compactTitle ? progress : "\(label) · \(progress)",
+            title: title,
             playing: !ttsController.isPaused,
             envelope: ttsController.audioEnvelope(buckets: 18),
             fraction: (Double(position.sentence) + 0.5) / Double(count),
@@ -3427,20 +3500,30 @@ extension AppDelegate: AgentsDataSource {
     /// one-line strip carries it. Karaoke re-renders only on sentence
     /// boundaries, not on every status tick. Main thread.
     func refreshPlayerSurface(karaoke: Bool = false) {
-        let onGrownStack = indicator.isGrownVisible
-            && currentPushSessionId == pendingSpeechConsumption?.session
-        guard let state = playerStateSnapshot(compactTitle: onGrownStack) else {
+        // Which grown surface (if any) owns the playing content?
+        let onGrownSurface: Bool
+        switch playerContext?.source {
+        case .sessionStack(let id, _):
+            onGrownSurface = indicator.isGrownVisible && currentPushSessionId == id
+        case .assistantReply:
+            onGrownSurface = indicator.isGrownAssistantConversationVisible
+        case .text, .none:
+            onGrownSurface = false
+        }
+        guard let state = playerStateSnapshot(compactTitle: onGrownSurface) else {
             indicator.setGrownPlayer(nil)
             indicator.hidePlayerStrip()
             return
         }
-        if onGrownStack {
+        if onGrownSurface {
             // Karaoke first (it relayouts and restores the dots), the band
-            // second (it claims the bottom band back).
-            if karaoke, let pending = pendingSpeechConsumption,
+            // second (it claims the bottom band back). A still-streaming
+            // reply keeps its delta renderer — karaoke starts once the
+            // full text landed, so the two never fight for the text view.
+            if karaoke, let context = playerContext, !context.streaming,
                let chunk = ttsController.queuedChunkIndex {
-                let position = pending.map.position(ofChunk: chunk)
-                indicator.renderGrownKaraoke(items: pending.sentences,
+                let position = context.map.position(ofChunk: chunk)
+                indicator.renderGrownKaraoke(items: context.sentences,
                                              currentItem: position.item,
                                              currentSentence: position.sentence)
             }
@@ -3454,13 +3537,15 @@ extension AppDelegate: AgentsDataSource {
     /// The waveform is the scrubber: a click/drag lands on a sentence of
     /// the CURRENT message (seek unit = sentence, VF-48). Main thread.
     private func playerSeek(messageFraction: Double) {
-        guard let pending = pendingSpeechConsumption,
+        guard let context = playerContext,
               let chunk = ttsController.queuedChunkIndex else { return }
-        let item = pending.map.position(ofChunk: chunk).item
-        guard pending.map.counts.indices.contains(item) else { return }
-        let count = pending.map.counts[item]
+        syncPlayerSentences(context)
+        let map = context.map
+        let item = map.position(ofChunk: chunk).item
+        guard map.counts.indices.contains(item) else { return }
+        let count = map.counts[item]
         let sentence = max(0, min(count - 1, Int(messageFraction * Double(count))))
-        ttsController.skipQueuedSpeech(to: pending.map.firstChunk(ofItem: item) + sentence)
+        ttsController.skipQueuedSpeech(to: map.firstChunk(ofItem: item) + sentence)
     }
 
     private func playerAdjustSpeed(_ delta: Double) {
@@ -3502,10 +3587,15 @@ extension AppDelegate: AgentsDataSource {
         guard count > 0 else { return }
         vflog("transport: \(count) press(es), queue active=\(ttsController.queuedSpeechActive)")
         guard ttsController.queuedSpeechActive else {
-            // No player alive: a press reads the shown stack, else it keeps
-            // the legacy read-selection/stop meaning.
+            // No player alive: a press reads the shown stack or the shown
+            // reply, else it keeps the legacy read-selection/stop meaning.
             if indicator.isGrownVisible, let sid = currentPushSessionId {
                 speakSessionUnconsumed(sid)
+            } else if indicator.isGrownAssistantConversationVisible,
+                      let reply = lastAssistantReply, !reply.isEmpty {
+                speakTextThroughPlayer(reply,
+                                       source: .assistantReply(title: assistantPlayerTitle()),
+                                       showSettingsOnMissingKey: false)
             } else {
                 speakSelectedTextOrStop()
             }
@@ -3523,10 +3613,11 @@ extension AppDelegate: AgentsDataSource {
     }
 
     private func playerSkipSentence(_ delta: Int) {
-        guard let pending = pendingSpeechConsumption,
+        guard let context = playerContext,
               let chunk = ttsController.queuedChunkIndex else { return }
-        let target = max(0, min(pending.map.totalChunks - 1, chunk + delta))
-        vflog("transport: skip \(delta > 0 ? "+" : "")\(delta) — sentence \(chunk) → \(target) of \(pending.map.totalChunks)")
+        syncPlayerSentences(context)
+        let target = max(0, min(context.map.totalChunks - 1, chunk + delta))
+        vflog("transport: skip \(delta > 0 ? "+" : "")\(delta) — sentence \(chunk) → \(target) of \(context.map.totalChunks)")
         guard target != chunk else { return }
         ttsController.skipQueuedSpeech(to: target)
     }
@@ -3546,10 +3637,16 @@ extension AppDelegate: AgentsDataSource {
     /// boundary); the one under it keeps a resume point so stopping never
     /// loses the place. Main thread.
     private func handlePlayerChunkChange(_ chunk: Int) {
-        guard let pending = pendingSpeechConsumption,
-              var queue = sessionPushes[pending.session] else { return }
-        let position = pending.map.position(ofChunk: chunk)
-        for (ordinal, index) in pending.indices.enumerated() where queue.indices.contains(index) {
+        guard let context = playerContext else { return }
+        guard let sid = context.sessionId, let indices = context.sessionIndices,
+              var queue = sessionPushes[sid] else {
+            // Sources without consumption (reply, selection, drawer) just
+            // advance the karaoke and the band.
+            refreshPlayerSurface(karaoke: true)
+            return
+        }
+        let position = context.map.position(ofChunk: chunk)
+        for (ordinal, index) in indices.enumerated() where queue.indices.contains(index) {
             if ordinal < position.item {
                 if queue[index].spoken != true {
                     queue[index].spoken = true
@@ -3563,7 +3660,7 @@ extension AppDelegate: AgentsDataSource {
                 queue[index].resumeSentence = position.sentence > 0 ? position.sentence : nil
             }
         }
-        sessionPushes[pending.session] = queue
+        sessionPushes[sid] = queue
         chatPanel.refreshAgents()
         refreshPlayerSurface(karaoke: true)
     }
@@ -3572,17 +3669,18 @@ extension AppDelegate: AgentsDataSource {
     /// sounds — and deliberately NOTHING else happens (Safet's call: the
     /// end of a stack is where the user decides what's next). Main thread.
     private func handlePlayerQueueFinished() {
-        if let pending = pendingSpeechConsumption,
-           var queue = sessionPushes[pending.session] {
-            for index in pending.indices where queue.indices.contains(index) {
+        if let context = playerContext, let sid = context.sessionId,
+           let indices = context.sessionIndices, var queue = sessionPushes[sid] {
+            for index in indices where queue.indices.contains(index) {
                 queue[index].spoken = true
                 queue[index].resumeSentence = nil
             }
-            sessionPushes[pending.session] = queue
+            sessionPushes[sid] = queue
+            NSSound(named: "Purr")?.play()
         }
-        NSSound(named: "Purr")?.play()
-        // Consumption to done history follows via settleSpeechConsumption
-        // on the .ready status this finish produces.
+        // Non-session sources end silently — a heard reply or selection
+        // needs no receipt. Consumption to done history follows via
+        // settleSpeechConsumption on the .ready status this produces.
     }
 
     /// Fed every TTS status change: once the speech begun by
@@ -3590,16 +3688,13 @@ extension AppDelegate: AgentsDataSource {
     /// stop, barge-in, or error — its pushes become done history and the
     /// thread leaves the pill's quick surfaces. Main thread.
     func settleSpeechConsumption(_ phase: TTSPlaybackPhase) {
-        guard var pending = pendingSpeechConsumption else { return }
+        guard let context = playerContext else { return }
         switch phase {
         case .generating, .playing:
-            if !pending.playbackSeen {
-                pending.playbackSeen = true
-                pendingSpeechConsumption = pending
-            }
+            context.playbackSeen = true
         case .idle, .ready, .error:
             // Ignore transitions from before our request actually started.
-            guard pending.playbackSeen else { return }
+            guard context.playbackSeen else { return }
             // A paused player is not finished (ticket VF-48): the sentence
             // queue is still active, just silent — nothing settles yet.
             if ttsController.queuedSpeechActive { return }
@@ -3608,10 +3703,12 @@ extension AppDelegate: AgentsDataSource {
     }
 
     private func finalizeSpeechConsumption() {
-        guard let pending = pendingSpeechConsumption else { return }
-        pendingSpeechConsumption = nil
-        guard var queue = sessionPushes[pending.session] else { return }
-        for index in pending.indices where queue.indices.contains(index) {
+        guard let context = playerContext else { return }
+        playerContext = nil
+        // Only session stacks have consumption to settle.
+        guard let sid = context.sessionId, let indices = context.sessionIndices,
+              var queue = sessionPushes[sid] else { return }
+        for index in indices where queue.indices.contains(index) {
             // Only what was actually HEARD retires (ticket VF-48): an
             // interrupted push keeps its resume point and stays active,
             // and a still-unanswered ask stays hot regardless.
@@ -3620,7 +3717,7 @@ extension AppDelegate: AgentsDataSource {
             queue[index].done = true
             queue[index].seen = true
         }
-        sessionPushes[pending.session] = queue
+        sessionPushes[sid] = queue
         refreshSessionIndicator()
         refreshUnreadIndicator()
         chatPanel.refreshAgents()
