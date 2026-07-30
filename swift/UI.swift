@@ -772,6 +772,10 @@ class FloatingIndicator: NSObject {
     /// True while the band owns the grown bottom band — mid-stream
     /// relayouts (reply deltas) must not restore the dots under it.
     private var grownPlayerActive = false
+    /// Viewport height while karaoke plays — a few lines instead of the
+    /// full text (nil = normal height). The text keeps its full layout
+    /// and slides behind this window.
+    private var karaokeTextCap: CGFloat?
 
     private func ensurePlayerBand() -> PlayerBandView {
         if let playerBand { return playerBand }
@@ -843,58 +847,73 @@ class FloatingIndicator: NSObject {
         }
     }
 
-    /// Sentence karaoke over the grown text (ticket VF-48): while the voice
-    /// is inside the queue the panel is COMPACT — just the sentence heard,
-    /// the one being spoken (bright), and the one coming (Safet QA: the
-    /// full text made the panel huge while listening). Pass currentItem -1
-    /// once playback ended: the full text returns, everything dimmed heard.
+    /// While the voice is inside the queue the viewport shrinks to a few
+    /// lines, but the text underneath NEVER swaps (Safet QA: replacing the
+    /// window every sentence was abrupt): the whole text keeps its layout
+    /// and SLIDES so the bright sentence stays centered — the lyrics-view
+    /// pattern every music app trained users on. Pass currentItem -1 once
+    /// playback ended: the full height returns, everything dimmed heard.
     func renderGrownKaraoke(items: [[String]], currentItem: Int, currentSentence: Int) {
         guard mode == .grown else { return }
         let font = NSFont.systemFont(ofSize: 12.5)
         let spokenColor = NSColor(r: 111, g: 103, b: 92)
-        var flat: [(item: Int, text: String)] = []
-        var currentFlat = -1
-        for (itemIndex, sentences) in items.enumerated() {
-            for (sentenceIndex, sentence) in sentences.enumerated() {
-                if itemIndex == currentItem, sentenceIndex == currentSentence {
-                    currentFlat = flat.count
-                }
-                flat.append((itemIndex, sentence))
-            }
-        }
         let body = NSMutableAttributedString()
         var currentRange: NSRange?
-        if currentFlat >= 0 {
-            for index in max(0, currentFlat - 1)...min(flat.count - 1, currentFlat + 1) {
-                if body.length > 0 {
-                    let separator = flat[index - 1].item == flat[index].item ? " " : "\n\n"
-                    body.append(NSAttributedString(string: separator, attributes: [.font: font]))
+        for (itemIndex, sentences) in items.enumerated() {
+            if body.length > 0 {
+                body.append(NSAttributedString(string: "\n\n", attributes: [.font: font]))
+            }
+            for (sentenceIndex, sentence) in sentences.enumerated() {
+                let isSpoken = itemIndex < currentItem
+                    || (itemIndex == currentItem && sentenceIndex < currentSentence)
+                let isCurrent = itemIndex == currentItem && sentenceIndex == currentSentence
+                let color = isCurrent ? Theme.text : (isSpoken ? spokenColor : Theme.text2)
+                if sentenceIndex > 0 {
+                    body.append(NSAttributedString(string: " ", attributes: [.font: font]))
                 }
-                let color = index < currentFlat ? spokenColor
-                    : (index == currentFlat ? Theme.text : Theme.text2)
                 let start = body.length
                 body.append(NSAttributedString(
-                    string: flat[index].text,
+                    string: sentence,
                     attributes: [.font: font, .foregroundColor: color]))
-                if index == currentFlat { currentRange = NSRange(location: start, length: body.length - start) }
-            }
-        } else {
-            // Playback over — the whole text, all of it heard.
-            for sentences in items {
-                if body.length > 0 {
-                    body.append(NSAttributedString(string: "\n\n", attributes: [.font: font]))
-                }
-                body.append(NSAttributedString(
-                    string: sentences.joined(separator: " "),
-                    attributes: [.font: font, .foregroundColor: spokenColor]))
+                if isCurrent { currentRange = NSRange(location: start, length: body.length - start) }
             }
         }
+        let wasCompact = karaokeTextCap != nil
+        karaokeTextCap = currentRange != nil ? 68 : nil
         grownTextView.textStorage?.setAttributedString(body)
         // The karaoke text's height differs from the plain render — resize
         // the container to it (callers re-apply the band AFTER this, since
         // relayout restores the dots).
         relayoutGrown(bottomPicker: currentBottomPicker)
-        if let currentRange { grownTextView.scrollRangeToVisible(currentRange) }
+        if let currentRange {
+            // First frame lands in place; every later boundary glides.
+            centerKaraoke(on: currentRange, animated: wasCompact)
+        }
+    }
+
+    /// Keep the sentence being spoken vertically centered in the compact
+    /// viewport, sliding to it instead of jumping.
+    private func centerKaraoke(on range: NSRange, animated: Bool) {
+        guard let layoutManager = grownTextView.layoutManager,
+              let container = grownTextView.textContainer else { return }
+        let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        let rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
+        let clip = grownScroll.contentView
+        let visible = clip.bounds.height
+        let docHeight = grownTextView.frame.height
+        let targetY = max(0, min(rect.midY + grownTextView.textContainerInset.height - visible / 2,
+                                 max(0, docHeight - visible)))
+        let target = NSPoint(x: 0, y: targetY)
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.3
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                clip.animator().setBoundsOrigin(target)
+            }
+        } else {
+            clip.setBoundsOrigin(target)
+        }
+        grownScroll.reflectScrolledClipView(clip)
     }
 
     /// Show content grown out of the pill: title/text/hint above, the live
@@ -923,6 +942,7 @@ class FloatingIndicator: NSObject {
         // after when this content is the one playing.
         grownPlayerActive = false
         playerBand?.isHidden = true
+        karaokeTextCap = nil
         grownRoutesToAssistant = spec.routesToAssistant
         transitionGeneration += 1
 
@@ -1008,7 +1028,7 @@ class FloatingIndicator: NSObject {
         }
         layoutManager.ensureLayout(for: container)
         let used = layoutManager.usedRect(for: container).height
-        let textHeight = min(max(used + 6, 22), grownMaxTextHeight)
+        let textHeight = min(max(used + 6, 22), karaokeTextCap ?? grownMaxTextHeight)
 
         let titleSpace: CGFloat = hasTitle ? 24 : 6
         let hintSpace: CGFloat = hasHint ? 20 : 0
