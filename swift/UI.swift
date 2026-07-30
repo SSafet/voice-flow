@@ -298,10 +298,19 @@ class FloatingIndicator: NSObject {
         /// A consumed thread's tail: rendered in the heard (dim) tone —
         /// the reply affordances stay live.
         var consumed = false
+        /// Conversation identity — a half-typed composer draft survives
+        /// same-conversation re-renders and dies when the content changes
+        /// (interaction audit: a switch mid-typing rerouted the draft).
+        var contentKey: String?
     }
     var onGrownSpeak: ((String) -> Void)?
     var onGrownTrash: (() -> Void)?
     var onGrownClose: (() -> Void)?
+    /// Fired whenever ANY expanded surface lands back at the bare pill —
+    /// the app re-evaluates the player surface here, so every close path
+    /// (✕, click, typed reply, flash timers) hands off to the strip the
+    /// way Esc always did (interaction audit).
+    var onCollapsed: (() -> Void)?
     /// Clicking grown Assistant content deep-links into its conversation;
     /// session pushes keep their close-and-keep behavior in AppDelegate.
     var onGrownClick: (() -> Void)?
@@ -319,6 +328,7 @@ class FloatingIndicator: NSObject {
     private var iconType: NSButton!
     private var grownComposer: NSTextField!
     private var composerActive = false
+    private var grownContentKey: String?
     private var currentBottomPicker: (entries: [PickerEntry], activeName: String?)?
     var onGrownTypedReply: ((String) -> Void)?
     private var grownStreaming = false
@@ -693,6 +703,7 @@ class FloatingIndicator: NSObject {
         mode = .pill
         grownRoutesToAssistant = false
         grownPlayerActive = false
+        grownContentKey = nil
         expandTimer?.invalidate()
         expandTimer = nil
         resumeAutoHideOnIdle = false
@@ -734,6 +745,7 @@ class FloatingIndicator: NSObject {
             }
             self.recenter()
             self.applyState(force: true)
+            self.onCollapsed?()
         }
         if wasExpanded == nil {
             finish()
@@ -799,7 +811,10 @@ class FloatingIndicator: NSObject {
     /// content collapsed (Telegram's pinned bar). Persists until playback
     /// ends or the user acts; never auto-hides.
     func showPlayerStrip(_ state: PlayerState) {
-        guard panel != nil, mode != .grown else { return }
+        // Transient surfaces (flash receipts, the picker) finish their few
+        // seconds; their collapse fires onCollapsed and the strip returns
+        // (interaction audit: the 10 Hz ticks were fighting the flash).
+        guard panel != nil, mode != .grown, mode != .flash, mode != .picker else { return }
         let shellW: CGFloat = 340
         let shellH = H + 8
         if mode != .player {
@@ -967,6 +982,12 @@ class FloatingIndicator: NSObject {
         grownPlayerActive = false
         playerBand?.isHidden = true
         karaokeTextCap = nil
+        let key = spec.contentKey ?? (spec.routesToAssistant ? "assistant" : nil)
+        if key == nil || key != grownContentKey {
+            composerActive = false
+            grownComposer?.stringValue = ""
+        }
+        grownContentKey = key
         grownRoutesToAssistant = spec.routesToAssistant
         transitionGeneration += 1
 

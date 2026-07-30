@@ -301,6 +301,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         indicator = FloatingIndicator()
         indicator.onClick = { [weak self] in self?.chatPanel.toggle() }
+        // EVERY collapse re-evaluates the player surface — the strip takes
+        // over after ✕/click/typed-reply/flash exactly like after Esc
+        // (interaction audit: only Esc used to hand off).
+        indicator.onCollapsed = { [weak self] in self?.refreshPlayerSurface() }
         indicator.onGrownClick = { [weak self] in self?.handleGrownPillClick() }
         indicator.onEscape = { [weak self] in self?.handleVoiceFlowEscape() }
         indicator.onShowHistory = { [weak self] in self?.toggleHistory() }
@@ -443,7 +447,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         chatPanel = ChatPanel()
         chatPanel.panelAnchorProvider = { [weak self] in self?.indicator.panelAnchor }
-        chatPanel.onShown = { [weak self] in self?.replyBubble.hide() }
+        chatPanel.onShown = { [weak self] in
+            self?.replyBubble.hide()
+            // The panel owns conversations now — a stale grown-session id
+            // must not keep routing trash/replies (interaction audit).
+            self?.currentPushSessionId = nil
+        }
         chatPanel.agentsDataSource = self
         chatPanel.onOpenSession = { [weak self] id in
             self?.setTargetSession(id, announce: false)
@@ -1181,7 +1190,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         title: sessionLabels[id] ?? tail.title,
                         text: tail.text,
                         hint: "heard — dictate or ⌨ to reply",
-                        consumed: true),
+                        consumed: true,
+                        contentKey: id),
                     bottomPicker: (entries, activeName))
             } else {
                 indicator.showPicker(entries: entries, activeName: activeName)
@@ -1238,6 +1248,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // A push for the stack that's ALREADY on screen refreshes it in
         // place — updating what the user is reading isn't taking the screen.
         if indicator.isGrownVisible, currentPushSessionId == sid {
+            // …unless that stack is being READ ALOUD: the karaoke owns the
+            // text and a re-render would swallow the push AND mark it seen
+            // (interaction audit C1/C8). It stays unseen; the ring says so.
+            if playerContext?.sessionId == sid, ttsController.queuedSpeechActive {
+                refreshUnreadIndicator()
+                return
+            }
             showPushStack(for: sid)
             return
         }
@@ -1272,7 +1289,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 text: newest.text,
                 earlier: queue.dropLast().map { $0.text },
                 hint: ask?.hint,
-                isAsk: ask != nil),
+                isAsk: ask != nil,
+                contentKey: sessionId),
             bottomPicker: bottomPicker,
             autoHide: autoHide)
         // Mark the STORED queue seen — `queue` above is the active subset.
@@ -1454,13 +1472,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if chatPanel?.isVisible == true { chatPanel.hide() }
         if indicator?.isGrownVisible == true {
+            // Esc de-escalates, never stops audio (ticket VF-48): the
+            // collapse's onCollapsed hands the surface to the strip.
             indicator.dismissGrown()
-            // Esc de-escalates, it never stops audio (ticket VF-48): if
-            // that stack was playing, the strip takes over once the
-            // collapse lands.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) { [weak self] in
-                self?.refreshPlayerSurface()
-            }
         } else {
             indicator?.collapseNow()
         }
@@ -2083,7 +2097,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopSpeechPlayback() {
         replySpeaker.cancel()
         let phase = ttsController.status.phase
-        if phase == .playing || phase == .generating {
+        // A PAUSED queue counts too (interaction audit C6/C12): barge-in
+        // ends it cleanly — resume points survive via the settle path, and
+        // no stuck paused strip fights the recording visuals.
+        if phase == .playing || phase == .generating || ttsController.queuedSpeechActive {
             ttsController.stop()
         }
     }
@@ -3405,7 +3422,10 @@ extension AppDelegate: AgentsDataSource {
         let fresh = queue.indices.filter { queue[$0].spoken != true && queue[$0].answer == nil }
         let replay = fresh.isEmpty
         if replay, !allowReplay {
-            indicator.flashMessage("all heard — 🔊 replays", seconds: 3)
+            // Never flashMessage here — it would stomp the grown view the
+            // user is looking at (interaction audit C4/C13); showTransient
+            // yields to grown content on its own.
+            replyBubble.showTransient("all heard — 🔊 replays", seconds: 3)
             return
         }
         let indices = replay ? Array(queue.indices) : fresh
@@ -3562,6 +3582,12 @@ extension AppDelegate: AgentsDataSource {
                                              currentItem: position.item,
                                              currentSentence: position.sentence)
             }
+            indicator.setGrownPlayer(state)
+        } else if indicator.isGrownVisible {
+            // Some OTHER view holds the pill while audio plays: the band
+            // still renders on it — full title, transport, waveform, no
+            // karaoke — so playback is never invisible and uncontrollable
+            // (interaction audit C2/C9).
             indicator.setGrownPlayer(state)
         } else {
             indicator.setGrownPlayer(nil)
