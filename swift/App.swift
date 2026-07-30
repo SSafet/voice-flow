@@ -385,6 +385,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // next tool call, so this is always safe).
         replyBubble.onTrashed = { [weak self] in
             guard let self else { return }
+            // Trashing the stack that is being read aloud SILENCES it
+            // (Safet QA: delete didn't stop the voice).
+            if self.playerContext != nil,
+               self.playerContext?.sessionId == self.currentPushSessionId {
+                self.ttsController.stop()
+            }
             // Cancel only an ask that belongs to the trashed stack — a
             // DIFFERENT session's pending ask must survive this click.
             if let interaction = self.pendingInteraction,
@@ -612,6 +618,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         indicator.onPlayerSpeed = { [weak self] delta in
             self?.playerAdjustSpeed(delta)
+        }
+        // The band's ✕ — a real STOP, not a pause (Safet QA): audio ends,
+        // heard consumption settles, the interrupted push keeps its
+        // resume point.
+        indicator.onPlayerStop = { [weak self] in
+            self?.playerStop()
         }
         // Typed reply from the grown pill (ticket VF-48) — same routing as
         // a voice answer: fulfills the blocked ask, queues in the inbox,
@@ -1400,8 +1412,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// A grown Assistant response is a compact doorway back into that exact
     /// conversation. MCP/session pushes retain their close-and-keep contract.
     private func handleGrownPillClick() {
-        if currentPushSessionId != nil {
-            indicator.dismissGrown()
+        if let sid = currentPushSessionId {
+            // Clicking the shown stack opens its full thread in the panel
+            // (Safet QA: "it definitely should") — ✕ stays the close.
+            setTargetSession(sid, announce: false)
+            chatPanel.show(focusInput: false)
+            chatPanel.openAgentThread(sid)
             return
         }
         guard agent != nil else { return }
@@ -3366,13 +3382,17 @@ extension AppDelegate: AgentsDataSource {
     /// keeps a resume point, and the cursor advances with the voice —
     /// a push is spoken only once the voice moved past it. Consumption to
     /// done history still lands only when playback ends (ticket #21).
-    func speakSessionUnconsumed(_ sessionId: String) {
+    func speakSessionUnconsumed(_ sessionId: String, allowReplay: Bool = true) {
         guard let queue = sessionPushes[sessionId], !queue.isEmpty else {
             replyBubble.showTransient("nothing to read for this session", seconds: 4)
             return
         }
         let fresh = queue.indices.filter { queue[$0].spoken != true && queue[$0].answer == nil }
         let replay = fresh.isEmpty
+        if replay, !allowReplay {
+            indicator.flashMessage("all heard — 🔊 replays", seconds: 3)
+            return
+        }
         let indices = replay ? Array(queue.indices) : fresh
         let sentences = indices.map { SpeechSentencer.sentences(of: queue[$0].text) }
         let map = PlaybackQueueMap(counts: sentences.map { $0.count })
@@ -3472,8 +3492,6 @@ extension AppDelegate: AgentsDataSource {
         syncPlayerSentences(context)
         let map = context.map
         let position = map.position(ofChunk: chunk)
-        let count = map.counts.indices.contains(position.item)
-            ? max(1, map.counts[position.item]) : 1
         let title: String
         switch context.source {
         case .sessionStack(let id, _):
@@ -3491,7 +3509,9 @@ extension AppDelegate: AgentsDataSource {
             title: title,
             playing: !ttsController.isPaused,
             envelope: ttsController.audioEnvelope(buckets: 18),
-            fraction: (Double(position.sentence) + 0.5) / Double(count),
+            // The bar reads over the WHOLE queue, same scale the scrubber
+            // seeks in — one mental model (Safet QA).
+            fraction: (Double(chunk) + 0.5) / Double(max(1, map.totalChunks)),
             speed: ttsController.queuedSpeed ?? UserSettings.shared.ttsSpeed)
     }
 
@@ -3534,23 +3554,27 @@ extension AppDelegate: AgentsDataSource {
         }
     }
 
-    /// The waveform is the scrubber: a click/drag lands on a sentence of
-    /// the CURRENT message (seek unit = sentence, VF-48). Main thread.
+    /// The waveform is the scrubber over the WHOLE queue (Safet QA:
+    /// clicking the end must land at the end): a click/drag maps its
+    /// fraction onto the full sentence run. Seek unit stays the sentence.
     private func playerSeek(messageFraction: Double) {
-        guard let context = playerContext,
-              let chunk = ttsController.queuedChunkIndex else { return }
+        guard let context = playerContext else { return }
         syncPlayerSentences(context)
-        let map = context.map
-        let item = map.position(ofChunk: chunk).item
-        guard map.counts.indices.contains(item) else { return }
-        let count = map.counts[item]
-        let sentence = max(0, min(count - 1, Int(messageFraction * Double(count))))
-        ttsController.skipQueuedSpeech(to: map.firstChunk(ofItem: item) + sentence)
+        let total = context.map.totalChunks
+        guard total > 0 else { return }
+        let target = max(0, min(total - 1, Int(messageFraction * Double(total))))
+        ttsController.skipQueuedSpeech(to: target)
     }
 
     private func playerAdjustSpeed(_ delta: Double) {
         let current = ttsController.queuedSpeed ?? UserSettings.shared.ttsSpeed
         ttsController.setQueuedSpeed(current + delta)
+        // Generation runs ahead of playback, so already-fetched sentences
+        // would keep the old pace (Safet QA: clicks seemed dead until a
+        // skip). Regenerate from the playhead — the change is heard NOW.
+        if !ttsController.isPaused, let chunk = ttsController.queuedChunkIndex {
+            ttsController.skipQueuedSpeech(to: chunk)
+        }
         refreshPlayerSurface()
     }
 
@@ -3589,8 +3613,11 @@ extension AppDelegate: AgentsDataSource {
         guard ttsController.queuedSpeechActive else {
             // No player alive: a press reads the shown stack or the shown
             // reply, else it keeps the legacy read-selection/stop meaning.
+            // A fully-heard stack does NOT replay from here (Safet QA: a
+            // press right after a finish restarted the whole thing) — the
+            // 🔊 icon and the panel remain the explicit replay paths.
             if indicator.isGrownVisible, let sid = currentPushSessionId {
-                speakSessionUnconsumed(sid)
+                speakSessionUnconsumed(sid, allowReplay: false)
             } else if indicator.isGrownAssistantConversationVisible,
                       let reply = lastAssistantReply, !reply.isEmpty {
                 speakTextThroughPlayer(reply,

@@ -768,6 +768,7 @@ class FloatingIndicator: NSObject {
     var onPlayerToggle: (() -> Void)?
     var onPlayerSeek: ((Double) -> Void)?
     var onPlayerSpeed: ((Double) -> Void)?
+    var onPlayerStop: (() -> Void)?
     private var playerBand: PlayerBandView?
     /// True while the band owns the grown bottom band — mid-stream
     /// relayouts (reply deltas) must not restore the dots under it.
@@ -783,6 +784,7 @@ class FloatingIndicator: NSObject {
         band.onToggle = { [weak self] in self?.onPlayerToggle?() }
         band.onSeek = { [weak self] fraction in self?.onPlayerSeek?(fraction) }
         band.onSpeed = { [weak self] delta in self?.onPlayerSpeed?(delta) }
+        band.onStop = { [weak self] in self?.onPlayerStop?() }
         panel?.contentView?.addSubview(band)
         playerBand = band
         return band
@@ -1911,6 +1913,7 @@ final class WaveformView: NSView {
 final class PlayerBandView: NSView {
     var onToggle: (() -> Void)?
     var onSpeed: ((Double) -> Void)?
+    var onStop: (() -> Void)?
     var onSeek: ((Double) -> Void)? {
         didSet { wave.onSeek = onSeek }
     }
@@ -1919,6 +1922,7 @@ final class PlayerBandView: NSView {
     private let wave = WaveformView()
     private let playButton = NSButton()
     private let speedChip = NSButton()
+    private let stopButton = NSButton()
     private var playing = false
 
     override init(frame: NSRect) {
@@ -1942,6 +1946,17 @@ final class PlayerBandView: NSView {
         speedChip.target = self
         speedChip.action = #selector(speedPressed)
         addSubview(speedChip)
+        // A real STOP, distinct from pause (Safet QA: "right now it's
+        // sitting at paused" with no way out).
+        stopButton.isBordered = false
+        stopButton.bezelStyle = .regularSquare
+        stopButton.imagePosition = .imageOnly
+        stopButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "stop")?
+            .withSymbolConfiguration(.init(pointSize: 8, weight: .bold))
+        stopButton.contentTintColor = Theme.text2
+        stopButton.target = self
+        stopButton.action = #selector(stopPressed)
+        addSubview(stopButton)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -1981,8 +1996,10 @@ final class PlayerBandView: NSView {
         let titleWidth = min(titleLabel.frame.width, bounds.width * 0.42)
         titleLabel.frame = NSRect(x: 2, y: (height - titleLabel.frame.height) / 2,
                                   width: titleWidth, height: titleLabel.frame.height)
+        stopButton.frame = NSRect(x: bounds.width - 16, y: (height - 16) / 2,
+                                  width: 16, height: 16)
         let chipWidth: CGFloat = 52
-        speedChip.frame = NSRect(x: bounds.width - chipWidth, y: (height - 14) / 2,
+        speedChip.frame = NSRect(x: stopButton.frame.minX - 8 - chipWidth, y: (height - 14) / 2,
                                  width: chipWidth, height: 14)
         playButton.frame = NSRect(x: speedChip.frame.minX - 24, y: (height - 18) / 2,
                                   width: 18, height: 18)
@@ -1996,6 +2013,8 @@ final class PlayerBandView: NSView {
     }
 
     @objc private func togglePressed() { onToggle?() }
+
+    @objc private func stopPressed() { onStop?() }
 
     @objc private func speedPressed() {
         guard let event = NSApp.currentEvent else {
