@@ -1053,7 +1053,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // nothing but done pushes offers the picker nothing (ticket #17).
         let live = mcpServer.sessions.ordered().filter { session in
             guard session.engaged else { return false }
-            return sessionPushes[session.id]?.contains { $0.done != true } == true
+            // A LIVE session with any thread history stays reachable even
+            // fully consumed (Safet QA: he couldn't answer a heard message
+            // without hunting in the panel) — only dead sessions retire.
+            return sessionPushes[session.id]?.isEmpty == false
                 || inbox.hasWaiter(for: session.id)
                 || pendingInteraction?.sessionId == session.id
                 || overlayOwners.contains(session.id)
@@ -1168,6 +1171,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // vanishing content mid-read.
                 currentPushSessionId = id
                 showPushStack(for: id, bottomPicker: (entries, activeName))
+            } else if let id, let tail = sessionPushes[id]?.last {
+                // Fully consumed thread: its tail stays visible in the
+                // heard tone with the reply affordances LIVE (Safet QA:
+                // answering must not require hunting in the panel).
+                currentPushSessionId = id
+                indicator.showGrown(
+                    FloatingIndicator.GrownSpec(
+                        title: sessionLabels[id] ?? tail.title,
+                        text: tail.text,
+                        hint: "heard — dictate or ⌨ to reply",
+                        consumed: true),
+                    bottomPicker: (entries, activeName))
             } else {
                 indicator.showPicker(entries: entries, activeName: activeName)
             }

@@ -295,6 +295,9 @@ class FloatingIndicator: NSObject {
         /// lets capture routing continue that conversation without treating
         /// unrelated grown notices as Assistant context.
         var routesToAssistant = false
+        /// A consumed thread's tail: rendered in the heard (dim) tone —
+        /// the reply affordances stay live.
+        var consumed = false
     }
     var onGrownSpeak: ((String) -> Void)?
     var onGrownTrash: (() -> Void)?
@@ -978,7 +981,9 @@ class FloatingIndicator: NSObject {
         }
         body.append(NSAttributedString(
             string: spec.text,
-            attributes: [.font: NSFont.systemFont(ofSize: 12.5), .foregroundColor: Theme.text]))
+            attributes: [.font: NSFont.systemFont(ofSize: 12.5),
+                         .foregroundColor: spec.consumed
+                             ? NSColor(r: 111, g: 103, b: 92) : Theme.text]))
         grownTextView.textStorage?.setAttributedString(body)
         withoutAnimation {
             grownBackdropLayer.borderColor = spec.isAsk
