@@ -3705,6 +3705,21 @@ extension AppDelegate: AgentsDataSource {
     private func finalizeSpeechConsumption() {
         guard let context = playerContext else { return }
         playerContext = nil
+        // The compact karaoke window opens back up once listening ends —
+        // the full text returns, everything marked heard (dimmed).
+        let ownedGrown: Bool
+        switch context.source {
+        case .sessionStack(let id, _):
+            ownedGrown = indicator.isGrownVisible && currentPushSessionId == id
+        case .assistantReply:
+            ownedGrown = indicator.isGrownAssistantConversationVisible
+        case .text:
+            ownedGrown = false
+        }
+        if ownedGrown, !context.streaming {
+            indicator.renderGrownKaraoke(items: context.sentences,
+                                         currentItem: -1, currentSentence: 0)
+        }
         // Only session stacks have consumption to settle.
         guard let sid = context.sessionId, let indices = context.sessionIndices,
               var queue = sessionPushes[sid] else { return }

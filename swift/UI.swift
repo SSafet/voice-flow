@@ -843,29 +843,50 @@ class FloatingIndicator: NSObject {
         }
     }
 
-    /// Sentence karaoke over the grown text (ticket VF-48): spoken dims,
-    /// the current sentence is bright, what's coming stays muted — and the
-    /// view follows the voice.
+    /// Sentence karaoke over the grown text (ticket VF-48): while the voice
+    /// is inside the queue the panel is COMPACT — just the sentence heard,
+    /// the one being spoken (bright), and the one coming (Safet QA: the
+    /// full text made the panel huge while listening). Pass currentItem -1
+    /// once playback ended: the full text returns, everything dimmed heard.
     func renderGrownKaraoke(items: [[String]], currentItem: Int, currentSentence: Int) {
         guard mode == .grown else { return }
-        let body = NSMutableAttributedString()
-        var currentRange: NSRange?
         let font = NSFont.systemFont(ofSize: 12.5)
         let spokenColor = NSColor(r: 111, g: 103, b: 92)
+        var flat: [(item: Int, text: String)] = []
+        var currentFlat = -1
         for (itemIndex, sentences) in items.enumerated() {
             for (sentenceIndex, sentence) in sentences.enumerated() {
-                let isSpoken = itemIndex < currentItem
-                    || (itemIndex == currentItem && sentenceIndex < currentSentence)
-                let isCurrent = itemIndex == currentItem && sentenceIndex == currentSentence
-                let color = isCurrent ? Theme.text : (isSpoken ? spokenColor : Theme.text2)
+                if itemIndex == currentItem, sentenceIndex == currentSentence {
+                    currentFlat = flat.count
+                }
+                flat.append((itemIndex, sentence))
+            }
+        }
+        let body = NSMutableAttributedString()
+        var currentRange: NSRange?
+        if currentFlat >= 0 {
+            for index in max(0, currentFlat - 1)...min(flat.count - 1, currentFlat + 1) {
+                if body.length > 0 {
+                    let separator = flat[index - 1].item == flat[index].item ? " " : "\n\n"
+                    body.append(NSAttributedString(string: separator, attributes: [.font: font]))
+                }
+                let color = index < currentFlat ? spokenColor
+                    : (index == currentFlat ? Theme.text : Theme.text2)
                 let start = body.length
                 body.append(NSAttributedString(
-                    string: sentence + " ",
+                    string: flat[index].text,
                     attributes: [.font: font, .foregroundColor: color]))
-                if isCurrent { currentRange = NSRange(location: start, length: body.length - start) }
+                if index == currentFlat { currentRange = NSRange(location: start, length: body.length - start) }
             }
-            if itemIndex < items.count - 1 {
-                body.append(NSAttributedString(string: "\n\n", attributes: [.font: font]))
+        } else {
+            // Playback over — the whole text, all of it heard.
+            for sentences in items {
+                if body.length > 0 {
+                    body.append(NSAttributedString(string: "\n\n", attributes: [.font: font]))
+                }
+                body.append(NSAttributedString(
+                    string: sentences.joined(separator: " "),
+                    attributes: [.font: font, .foregroundColor: spokenColor]))
             }
         }
         grownTextView.textStorage?.setAttributedString(body)
@@ -1902,10 +1923,21 @@ final class PlayerBandView: NSView {
             .withSymbolConfiguration(.init(pointSize: 9, weight: .bold))
         playButton.contentTintColor = NSColor(r: 255, g: 194, b: 75)
         let label = String(format: speed.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f×" : "%.1f×", speed)
-        speedChip.attributedTitle = NSAttributedString(
+        // Two-way chip (Safet QA: "no way to slow down"): the chevrons ARE
+        // the buttons — left half −0.1, right half +0.1.
+        let title = NSMutableAttributedString(
+            string: "‹ ",
+            attributes: [.font: NSFont.systemFont(ofSize: 10, weight: .bold),
+                         .foregroundColor: NSColor(r: 255, g: 194, b: 75, a: 140)])
+        title.append(NSAttributedString(
             string: label,
             attributes: [.font: NSFont.systemFont(ofSize: 9.5, weight: .bold),
-                         .foregroundColor: NSColor(r: 255, g: 194, b: 75)])
+                         .foregroundColor: NSColor(r: 255, g: 194, b: 75)]))
+        title.append(NSAttributedString(
+            string: " ›",
+            attributes: [.font: NSFont.systemFont(ofSize: 10, weight: .bold),
+                         .foregroundColor: NSColor(r: 255, g: 194, b: 75, a: 140)]))
+        speedChip.attributedTitle = title
         wave.update(envelope: envelope, fraction: fraction, playing: playing)
         needsLayout = true
     }
@@ -1917,7 +1949,7 @@ final class PlayerBandView: NSView {
         let titleWidth = min(titleLabel.frame.width, bounds.width * 0.42)
         titleLabel.frame = NSRect(x: 2, y: (height - titleLabel.frame.height) / 2,
                                   width: titleWidth, height: titleLabel.frame.height)
-        let chipWidth: CGFloat = 34
+        let chipWidth: CGFloat = 52
         speedChip.frame = NSRect(x: bounds.width - chipWidth, y: (height - 14) / 2,
                                  width: chipWidth, height: 14)
         playButton.frame = NSRect(x: speedChip.frame.minX - 24, y: (height - 18) / 2,
@@ -1934,8 +1966,13 @@ final class PlayerBandView: NSView {
     @objc private func togglePressed() { onToggle?() }
 
     @objc private func speedPressed() {
-        let shift = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
-        onSpeed?(shift ? -0.1 : 0.1)
+        guard let event = NSApp.currentEvent else {
+            onSpeed?(0.1)
+            return
+        }
+        let point = speedChip.convert(event.locationInWindow, from: nil)
+        let slower = event.modifierFlags.contains(.shift) || point.x < speedChip.bounds.midX
+        onSpeed?(slower ? -0.1 : 0.1)
     }
 }
 
