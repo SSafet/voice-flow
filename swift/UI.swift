@@ -879,8 +879,20 @@ class FloatingIndicator: NSObject {
             }
         }
         let wasCompact = karaokeTextCap != nil
-        karaokeTextCap = currentRange != nil ? 68 : nil
         grownTextView.textStorage?.setAttributedString(body)
+        // The viewport is a few lines — but NEVER smaller than the
+        // sentence being spoken (Safet QA: a long sentence was clipped
+        // mid-read). It grows to fit the bright sentence plus a peek of
+        // context, and sits at the compact minimum otherwise.
+        if let currentRange, let layoutManager = grownTextView.layoutManager,
+           let container = grownTextView.textContainer {
+            layoutManager.ensureLayout(for: container)
+            let glyphs = layoutManager.glyphRange(forCharacterRange: currentRange, actualCharacterRange: nil)
+            let rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
+            karaokeTextCap = max(68, rect.height + 30)
+        } else {
+            karaokeTextCap = nil
+        }
         // The karaoke text's height differs from the plain render — resize
         // the container to it (callers re-apply the band AFTER this, since
         // relayout restores the dots).
