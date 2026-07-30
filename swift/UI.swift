@@ -807,6 +807,13 @@ class FloatingIndicator: NSObject {
             expandTitleLayer.isHidden = true
             expandShell(width: shellW, height: shellH, as: .player)
         }
+        // The idle pill is deliberately see-through; a strip carrying text
+        // is NOT (Safet QA: the window behind — a mic button — bled right
+        // through and read as our UI). Same backdrop as the grown panel.
+        withoutAnimation {
+            pillLayer.backgroundColor = NSColor(r: 33, g: 30, b: 27, a: 245).cgColor
+            pillLayer.borderColor = NSColor(r: 255, g: 170, b: 60, a: 140).cgColor
+        }
         let band = ensurePlayerBand()
         band.frame = CGRect(x: 12, y: 1, width: shellW - 24, height: shellH - 2)
         band.isHidden = false
@@ -1516,6 +1523,10 @@ class FloatingIndicator: NSObject {
             watcherRingLayer.opacity = (watcherActive && !sessionActive) ? 1.0 : 0.0
             CATransaction.commit()
         }
+
+        // The player strip owns the pill skin while it shows (opaque
+        // backdrop) — status churn must not repaint it translucent.
+        if mode == .player { return }
 
         let visual = resolveVisual()
         if !force, visual == appliedVisual { return }
