@@ -41,6 +41,9 @@ let current = AssistantConversation(
         AssistantHistoryMessage(role: .assistant, text: "Use a 48-hour follow-up and measure return rate"),
     ])
 
+expect(AssistantContinuityClassifier.defaultTimeoutSeconds == 15,
+       "the production FLORA classifier budget should be 15 seconds")
+
 let reuseClassifier = AssistantContinuityClassifier(runner: { _ in
     #"{"decision":"reuse","confidence":0.92,"reason":"referential follow-up"}"#
 })

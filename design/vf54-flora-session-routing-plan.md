@@ -117,7 +117,7 @@ sequenceDiagram
 | Part | Disposition | Closed contract |
 |---|---|---|
 | `AssistantContinuityClassifier` (`swift/AssistantContinuity.swift`) | **NET-NEW** | Input is the current conversation's title plus the last six non-note messages, each clipped and total context capped at 6,000 characters, and the incoming stripped FLORA prompt. Output is `reuse` or `new`, confidence 0…1, and a short reason. User text is delimited as data; the schema permits no extra fields. |
-| Classifier Codex invocation | **NET-NEW** | One `codex exec` process with `gpt-5.6-luna`, low reasoning, read-only sandbox, no MCP servers, ignored user config/rules, `--ephemeral`, and a temporary output schema/file. It receives no images, tools, memory files, or resumable thread. Timeout is 8 seconds; cancellation terminates the process and removes temp files. |
+| Classifier Codex invocation | **NET-NEW** | One `codex exec` process with `gpt-5.6-luna`, low reasoning, read-only sandbox, no MCP servers, ignored user config/rules, `--ephemeral`, and a temporary output schema/file. It receives no images, tools, memory files, or resumable thread. Timeout is 15 seconds; cancellation terminates the process and removes temp files. |
 | Continuity policy | **NET-NEW** | Empty/draft current conversation reuses without a model call. Otherwise accept `new` only from valid schema output at confidence ≥0.65; every timeout/error/invalid/low-confidence result reuses. The classifier is invoked only when `wakeMatch != nil` for `.dictate`. |
 | Wake orchestration (`AppDelegate`) | **REPLACE branch** | Engage stable `assistant:<slug>` first; wait for any interrupted old turn to settle; classify against a frozen current conversation ID; if that ID changed before the result, re-evaluate once. On `new`, call only `agent.createConversation`; never `activateConversation` with a historical ID. Restore the new transcript model off-screen, then call the existing `agent.send`. |
 | `AssistantHistoryMessage` | **EXTEND** | Add optional `seen: Bool?`. Legacy missing/nil means historical/neutral; newly appended assistant replies get `false`; user/note messages get nil. `markAssistantRepliesSeen` flips false→true without changing `updatedAt`, so viewing does not reorder history. |
@@ -232,7 +232,7 @@ Rollback is reversible: remove the local adapter and classifier call, stop writi
 
 ## Open questions
 
-None blocking. Conservative defaults are fixed above: only wake dictations classify; only current-vs-new is legal; ambiguity/failure reuses; classifier timeout is 8 seconds; `new` requires confidence ≥0.65; current context is bounded to title plus six recent non-note messages; FLORA uses one stable identity across conversation rollovers; historical conversations stay panel-only; and the existing nine-slot capacity remains unchanged.
+None blocking. Conservative defaults are fixed above: only wake dictations classify; only current-vs-new is legal; ambiguity/failure reuses; classifier timeout is 15 seconds; `new` requires confidence ≥0.65; current context is bounded to title plus six recent non-note messages; FLORA uses one stable identity across conversation rollovers; historical conversations stay panel-only; and the existing nine-slot capacity remains unchanged.
 
 ## Assumptions
 

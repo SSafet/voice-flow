@@ -115,7 +115,7 @@
   <section>
     <h2>Build contract</h2>
     <dl class="contract">
-      <dt>CLASSIFY</dt><dd>Only matched FLORA dictations. Current title + six recent non-note messages, capped at 6k characters. Luna low, schema output, 8-second timeout.</dd>
+      <dt>CLASSIFY</dt><dd>Only matched FLORA dictations. Current title + six recent non-note messages, capped at 6k characters. Luna low, schema output, 15-second timeout.</dd>
       <dt>FAIL SAFE</dt><dd>Reuse on infrastructure failure, malformed output, or confidence below 0.65. A stale result is never applied after the active conversation changes.</dd>
       <dt>ROUTE</dt><dd><code>reuse</code> preserves the UUID/thread. <code>new</code> calls only <code>createConversation</code>. No older conversation is activated.</dd>
       <dt>PRESENT</dt><dd>Stable <code>assistant:flora</code> slot. Hidden-panel replies set unread and flash receipts; explicit selection reveals and consumes them.</dd>

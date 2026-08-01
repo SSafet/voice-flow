@@ -64,11 +64,13 @@ final class AssistantContinuityClassifier {
     static let minimumNewConfidence = 0.65
     static let maxContextCharacters = 6_000
     static let maxIncomingCharacters = 4_000
+    static let defaultTimeoutSeconds: TimeInterval = 15
 
     private let runner: Runner
     private let timeoutNanoseconds: UInt64
 
-    init(timeoutSeconds: TimeInterval = 8, runner: Runner? = nil) {
+    init(timeoutSeconds: TimeInterval = AssistantContinuityClassifier.defaultTimeoutSeconds,
+         runner: Runner? = nil) {
         self.timeoutNanoseconds = UInt64(max(0.05, timeoutSeconds) * 1_000_000_000)
         self.runner = runner ?? { prompt in
             try await Self.runCodex(prompt)
