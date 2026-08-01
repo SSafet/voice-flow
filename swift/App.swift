@@ -190,6 +190,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var captureScheduler: CaptureScheduler!
     var workflowWatcher: WorkflowWatcher!
     var agent: AgentSession!
+    private let assistantContinuityClassifier = AssistantContinuityClassifier()
+    private struct PendingAssistantWakeTurn {
+        let assistant: AssistantDefinition
+        let displayText: String
+        let agentText: String
+        let screenshots: [Data]
+        let attachmentNote: String?
+    }
+    private var pendingAssistantWakeTurns: [PendingAssistantWakeTurn] = []
+    private var processingAssistantWakeTurns = false
+    private var assistantWakeInFlight = false
+    private var assistantPickerDismissed = false
+    /// True only for an automatically routed wake turn whose full reply must
+    /// not take over the closed-panel grown surface (VF-54).
+    private var assistantTurnUsesReceiptPresentation = false
     private var sessionActive = false
     private var lastCaptureData: Data?
     private let diffThreshold: Double = 0.01
@@ -285,8 +300,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Same list, order, and numbering as the picker and ⌃⌥1–9 —
             // two orderings of the same sessions would be a routing trap.
             return self.slottedSessions().map { entry in
-                let age = self.mcpServer.sessions.session(entry.id)
-                    .map { "active \(Self.relativeAge($0.lastSeen))" } ?? "ended — unread"
+                let age: String
+                if self.isAssistantPickerSession(entry.id) {
+                    age = "active \(Self.relativeAge(self.agent.currentConversation.updatedAt))"
+                } else {
+                    age = self.mcpServer.sessions.session(entry.id)
+                        .map { "active \(Self.relativeAge($0.lastSeen))" } ?? "ended — unread"
+                }
                 return (entry.id,
                         "\(entry.slot) · \(entry.label) — \(age)",
                         entry.id == self.targetSessionId)
@@ -317,6 +337,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.onRemoveSession = { [weak self] id in
             guard let self else { return }
             let label = self.pickerSessions().first { $0.id == id }?.label ?? "session"
+            if self.isAssistantPickerSession(id) {
+                self.assistantPickerDismissed = true
+                self.agent.markCurrentAssistantRepliesSeen()
+                if self.targetSessionId == id {
+                    self.setTargetSession(self.firstAvailableTarget(excluding: id), announce: false)
+                }
+                if self.indicator.isGrownAssistantConversationVisible { self.replyBubble.hide() }
+                self.refreshSessionIndicator()
+                self.refreshUnreadIndicator()
+                self.replyBubble.showTransient("\(label) removed", seconds: 4)
+                return
+            }
             _ = self.mcpServer.sessions.close(id)   // nil for a ghost — fine
             self.markStackDone(id)
             self.inbox.cancelWait(for: id)
@@ -326,7 +358,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.replyBubble.hide()
             }
             if self.targetSessionId == id {
-                self.setTargetSession(self.mcpServer.sessions.list().first { $0.engaged }?.id, announce: false)
+                self.setTargetSession(self.firstAvailableTarget(excluding: id), announce: false)
             }
             self.refreshSessionIndicator()
             self.refreshUnreadIndicator()
@@ -389,6 +421,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // next tool call, so this is always safe).
         replyBubble.onTrashed = { [weak self] in
             guard let self else { return }
+            if self.indicator.isGrownAssistantConversationVisible,
+               self.isAssistantPickerSession(self.targetSessionId) {
+                if self.playerContext != nil { self.ttsController.stop() }
+                let removed = self.assistantPickerLabel
+                let id = self.targetSessionId
+                self.assistantPickerDismissed = true
+                self.agent.markCurrentAssistantRepliesSeen()
+                self.replyBubble.hide()
+                self.setTargetSession(self.firstAvailableTarget(excluding: id), announce: false)
+                self.refreshSessionIndicator()
+                self.refreshUnreadIndicator()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    guard !self.indicator.isGrownVisible else { return }
+                    self.indicator.flashMessage("\(removed) removed", seconds: 4)
+                }
+                return
+            }
             // Trashing the stack that is being read aloud SILENCES it
             // (Safet QA: delete didn't stop the voice).
             if self.playerContext != nil,
@@ -412,7 +461,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.overlayManager.removeAll(forSession: id)
                 if let closed = self.mcpServer.sessions.close(id) {
                     if self.targetSessionId == id {
-                        self.setTargetSession(self.mcpServer.sessions.list().first { $0.engaged }?.id, announce: false)
+                        self.setTargetSession(self.firstAvailableTarget(excluding: id), announce: false)
                     }
                     self.refreshSessionIndicator()
                     // The receipt has to wait for the collapse to land.
@@ -473,6 +522,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             self.chatPanel.restoreAssistantConversation(conversation, open: true)
+            self.agent.markCurrentAssistantRepliesSeen()
+            self.refreshUnreadIndicator()
         }
         chatPanel.onDeleteAssistant = { [weak self] in
             guard let self else { return }
@@ -757,13 +808,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         agent.onAssistantStart = { [weak self] in
             guard let self else { return }
             self.chatPanel.beginAssistantMessage()
-            if !self.chatPanel.isVisible {
+            if !self.chatPanel.isVisible && !self.assistantTurnUsesReceiptPresentation {
                 // The grown surface now shows a reply, not a push stack —
                 // trash/double-select must not hit a stale session.
                 self.currentPushSessionId = nil
                 self.replyBubble.beginStreaming()
             }
-            if UserSettings.shared.voiceRepliesEnabled {
+            if UserSettings.shared.voiceRepliesEnabled && !self.assistantTurnUsesReceiptPresentation {
                 if self.playerContext != nil { self.finalizeSpeechConsumption() }
                 self.replySpeaker.begin()
                 if self.replySpeaker.isActive {
@@ -779,14 +830,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         agent.onAssistantDelta = { [weak self] delta in
-            self?.chatPanel.appendAssistantDelta(delta)
-            self?.replyBubble.appendDelta(delta)
-            self?.replySpeaker.append(delta)
+            guard let self else { return }
+            self.chatPanel.appendAssistantDelta(delta)
+            if !self.assistantTurnUsesReceiptPresentation {
+                self.replyBubble.appendDelta(delta)
+            }
+            if !self.assistantTurnUsesReceiptPresentation {
+                self.replySpeaker.append(delta)
+            }
         }
         agent.onAssistantDone = { [weak self] text in
             guard let self else { return }
             self.chatPanel.finishAssistantMessage(text)
-            self.replyBubble.finishStreaming(text)
+            let receiptPresentation = self.assistantTurnUsesReceiptPresentation
+            if receiptPresentation {
+                if self.chatPanel.conversationFocus == .assistant {
+                    self.agent.markCurrentAssistantRepliesSeen()
+                    self.refreshUnreadIndicator()
+                } else {
+                    self.assistantReplyArrived()
+                }
+            } else {
+                self.replyBubble.finishStreaming(text)
+                if self.chatPanel.conversationFocus == .assistant
+                    || self.indicator.isGrownAssistantConversationVisible {
+                    self.agent.markCurrentAssistantRepliesSeen()
+                    self.refreshUnreadIndicator()
+                }
+            }
+            self.assistantTurnUsesReceiptPresentation = false
             self.replySpeaker.finish()
             self.lastAssistantReply = text
             if let context = self.playerContext, case .assistantReply = context.source {
@@ -802,7 +874,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.chatPanel.addNote(message)
             self.replySpeaker.finish()
-            if !self.chatPanel.isVisible {
+            if self.assistantTurnUsesReceiptPresentation {
+                self.assistantTurnUsesReceiptPresentation = false
+                self.assistantWakeInFlight = self.processingAssistantWakeTurns
+                    || !self.pendingAssistantWakeTurns.isEmpty
+                self.refreshSessionIndicator()
+                self.refreshUnreadIndicator()
+                if !self.surfaceBusy {
+                    self.indicator.flashMessage("\(self.assistantPickerLabel) · error", seconds: 6, isError: true)
+                }
+            } else if !self.chatPanel.isVisible {
                 self.replyBubble.showNote(message)
             }
         }
@@ -1033,6 +1114,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // ── Local Assistant session adapter (ticket VF-54) ─────
+
+    private var assistantPickerSessionId: String? {
+        guard let assistant = agent?.activeAssistant else { return nil }
+        return LocalAssistantSessionAdapter.id(for: assistant.slug)
+    }
+
+    private func isAssistantPickerSession(_ id: String?) -> Bool {
+        guard let id, let assistantId = assistantPickerSessionId else { return false }
+        return id == assistantId
+    }
+
+    private var assistantPickerLabel: String {
+        agent?.activeAssistant?.name ?? DefaultAssistantWakeWord
+    }
+
+    private var assistantPickerEligible: Bool {
+        guard agent != nil, assistantPickerSessionId != nil, !assistantPickerDismissed else { return false }
+        let conversation = agent.currentConversation
+        return assistantWakeInFlight || agent.isRunning
+            || !conversation.messages.isEmpty || conversation.codexThreadId != nil
+    }
+
+    private var assistantHasUnseenReply: Bool {
+        agent?.currentConversation.hasUnseenAssistantReply == true
+    }
+
+    private func firstAvailableTarget(excluding excluded: String? = nil) -> String? {
+        pickerSessions().first { $0.id != excluded }?.id
+    }
+
     /// "just now" / "3m ago" / "2h ago" for the sessions submenu.
     private static func relativeAge(_ date: Date) -> String {
         let seconds = Int(Date().timeIntervalSince(date))
@@ -1050,6 +1162,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// and its stack until the user reads or trashes it; nothing marked
     /// unread ever becomes unviewable. Main thread.
     private func pickerSessions() -> [(id: String, label: String)] {
+        let local: [(id: String, label: String)]
+        if assistantPickerEligible, let id = assistantPickerSessionId {
+            local = [(id: id, label: assistantPickerLabel)]
+        } else {
+            local = []
+        }
         // Only ENGAGED sessions are user-visible — a connected-but-silent
         // session (every Claude Code session initializes every MCP server)
         // has nothing for the user to switch to. And even engaged, a
@@ -1084,7 +1202,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .sorted { ($0.value.last?.at ?? .distantPast) < ($1.value.last?.at ?? .distantPast) }
             .map { (id: $0.key, label: sessionLabels[$0.key] ?? Self.senderLabel($0.value)) }
-        return live + ghosts
+        return local + live + ghosts
     }
 
     /// A ghost has no registry entry anymore — its newest push remembers
@@ -1142,7 +1260,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func pickerEntries() -> (entries: [FloatingIndicator.PickerEntry], activeName: String?) {
         let sessions = slottedSessions()
         let entries = sessions.map { session in
-            FloatingIndicator.PickerEntry(
+            if isAssistantPickerSession(session.id) {
+                return FloatingIndicator.PickerEntry(
+                    number: session.slot,
+                    active: session.id == targetSessionId,
+                    pending: assistantWakeInFlight || agent?.isRunning == true || assistantHasUnseenReply,
+                    asking: false)
+            }
+            return FloatingIndicator.PickerEntry(
                 number: session.slot,
                 active: session.id == targetSessionId,
                 // Amber means "something is waiting on you" — an unseen
@@ -1159,6 +1284,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return (entries, sessions.first { $0.id == targetSessionId }?.label)
     }
 
+    private func showAssistantPreview(
+        bottomPicker: (entries: [FloatingIndicator.PickerEntry], activeName: String?)? = nil
+    ) {
+        guard let id = assistantPickerSessionId else { return }
+        let conversation = agent.currentConversation
+        let replies = conversation.assistantPreviewReplies
+        guard let newest = replies.last else {
+            let picker = bottomPicker ?? pickerEntries()
+            indicator.showPicker(entries: picker.entries, activeName: picker.activeName)
+            return
+        }
+        let wasUnseen = conversation.hasUnseenAssistantReply
+        currentPushSessionId = nil
+        indicator.showGrown(
+            FloatingIndicator.GrownSpec(
+                title: assistantPickerLabel,
+                text: newest.text,
+                earlier: replies.dropLast().map(\.text),
+                hint: wasUnseen ? nil : "heard — dictate or ⌨ to reply",
+                routesToAssistant: true,
+                consumed: !wasUnseen,
+                contentKey: id),
+            bottomPicker: bottomPicker)
+        agent.markCurrentAssistantRepliesSeen()
+        refreshUnreadIndicator()
+        refreshPlayerSurface(karaoke: true)
+    }
+
     /// Single entry for changing which Claude session owns the user's
     /// voice + screen: routes hotkeys, swaps that session's overlays in,
     /// and updates the pill (middle-dot number + picker row). Main thread.
@@ -1167,12 +1320,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             previousTargetSessionId = targetSessionId
         }
         targetSessionId = id
-        overlayManager.setActiveSession(id)
+        overlayManager.setActiveSession(isAssistantPickerSession(id) ? nil : id)
         refreshSessionIndicator()
         refreshUnreadIndicator()
         if announce {
             let (entries, activeName) = pickerEntries()
-            if let id, let queue = sessionPushes[id]?.filter({ $0.done != true }), !queue.isEmpty {
+            if isAssistantPickerSession(id) {
+                showAssistantPreview(bottomPicker: (entries, activeName))
+            } else if let id, let queue = sessionPushes[id]?.filter({ $0.done != true }), !queue.isEmpty {
                 // The session has something to show — the picker grows
                 // straight into its whole stack, picker row at the bottom.
                 // NOTHING auto-hides (ticket VF-48): the stack stays up
@@ -1317,9 +1472,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// stay reachable via the picker until read or trashed. Main thread.
     private func unseenSessions(excluding excluded: String? = nil) -> Int {
         sessionPushes = sessionPushes.filter { !$0.value.isEmpty }
-        return sessionPushes.filter { sid, queue in
+        var count = sessionPushes.filter { sid, queue in
             sid != excluded && queue.contains { !$0.seen }
         }.count
+        if let assistantId = assistantPickerSessionId,
+           assistantId != excluded, assistantPickerEligible, assistantHasUnseenReply {
+            count += 1
+        }
+        return count
     }
 
     /// An ask stays hot until answered — the only thing that pulses
@@ -1367,7 +1527,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // the pill flow stays untouched when the panel is closed.
         if chatPanel.isVisible {
             setTargetSession(id, announce: false)
-            chatPanel.openAgentThread(id)
+            if isAssistantPickerSession(id) {
+                agent.markCurrentAssistantRepliesSeen()
+                chatPanel.restoreAssistantConversation(agent.currentConversation, open: true)
+                refreshUnreadIndicator()
+            } else {
+                chatPanel.openAgentThread(id)
+            }
+            return
+        }
+        if isAssistantPickerSession(id), id == targetSessionId,
+           indicator.isGrownAssistantConversationVisible,
+           UserSettings.shared.doubleSelectSpeak,
+           let text = agent.currentConversation.latestAssistantReply?.text, !text.isEmpty {
+            speakTextThroughPlayer(
+                text,
+                source: .assistantReply(title: assistantPlayerTitle()),
+                showSettingsOnMissingKey: false)
             return
         }
         if id == targetSessionId, indicator.isGrownVisible, currentPushSessionId == id,
@@ -1454,7 +1630,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         guard agent != nil else { return }
+        agent.markCurrentAssistantRepliesSeen()
         chatPanel.restoreAssistantConversation(agent.currentConversation, open: true)
+        refreshUnreadIndicator()
         chatPanel.show()
     }
 
@@ -1478,6 +1656,124 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             indicator?.collapseNow()
         }
+    }
+
+    private func flashAssistantReceipt(_ status: String, isError: Bool = false) {
+        guard !surfaceBusy else { return }
+        var text = "\(assistantPickerLabel) · \(status)"
+        if let id = assistantPickerSessionId,
+           let slot = slottedSessions().first(where: { $0.id == id })?.slot {
+            text += " — ⌃⌥\(slot)"
+        }
+        indicator.flashMessage(text, seconds: 4, isError: isError)
+    }
+
+    private func assistantReplyArrived() {
+        assistantWakeInFlight = processingAssistantWakeTurns
+            || !pendingAssistantWakeTurns.isEmpty
+        refreshSessionIndicator()
+        refreshUnreadIndicator()
+        chatPanel.refreshAgents()
+        if isAssistantPickerSession(targetSessionId),
+           indicator.isGrownAssistantConversationVisible {
+            showAssistantPreview(bottomPicker: pickerEntries())
+            return
+        }
+        flashAssistantReceipt("new message")
+    }
+
+    private func enqueueAssistantWakeTurn(
+        assistant: AssistantDefinition,
+        displayText: String,
+        agentText: String,
+        screenshots: [Data],
+        attachmentNote: String?
+    ) {
+        assistantPickerDismissed = false
+        assistantWakeInFlight = true
+        pendingAssistantWakeTurns.append(PendingAssistantWakeTurn(
+            assistant: assistant,
+            displayText: displayText,
+            agentText: agentText,
+            screenshots: screenshots,
+            attachmentNote: attachmentNote))
+        refreshSessionIndicator()
+        refreshUnreadIndicator()
+        processAssistantWakeTurnsIfNeeded()
+    }
+
+    private func processAssistantWakeTurnsIfNeeded() {
+        guard !processingAssistantWakeTurns else { return }
+        processingAssistantWakeTurns = true
+        if agent.isRunning { agent.interrupt() }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !self.pendingAssistantWakeTurns.isEmpty {
+                while self.agent.isRunning {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                let turn = self.pendingAssistantWakeTurns.removeFirst()
+                let priorSessionId = self.agent.currentSessionId
+                self.agent.activateAssistant(turn.assistant)
+                self.replySpeaker.voiceOverride = turn.assistant.voice
+                if self.agent.currentSessionId != priorSessionId {
+                    self.chatPanel.restoreAssistantConversation(self.agent.currentConversation)
+                }
+                self.refreshSessionIndicator()
+                self.refreshUnreadIndicator()
+                if self.targetSessionId == nil
+                    || !self.pickerSessions().contains(where: { $0.id == self.targetSessionId }) {
+                    self.setTargetSession(self.assistantPickerSessionId, announce: false)
+                }
+                self.flashAssistantReceipt("working")
+
+                let outcome = await self.assistantContinuityDecision(
+                    incoming: turn.displayText, staleRetries: 1)
+                vflog("assistant continuity: \(outcome.decision.rawValue) confidence=\(outcome.confidence) fallback=\(outcome.usedFallback) reason=\(outcome.reason)")
+                if outcome.decision == .new {
+                    let conversation = self.agent.createConversation()
+                    self.chatPanel.restoreAssistantConversation(conversation)
+                }
+
+                self.assistantTurnUsesReceiptPresentation = self.chatPanel.conversationFocus != .assistant
+                self.chatPanel.addUserMessage(turn.displayText, attachmentNote: turn.attachmentNote)
+                self.agent.send(text: turn.agentText, screenshots: turn.screenshots)
+
+                // Preserve bursts: the next queued dictation is classified
+                // only after this one has updated the current conversation.
+                while self.agent.isRunning {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                // AgentSession persists the reply before dispatching its UI
+                // completion callback. Wait for that callback before a queued
+                // wake changes the global presentation state. An interrupted
+                // or empty turn has no callback, so cap this handoff at 0.5 s.
+                var callbackChecks = 0
+                while self.assistantTurnUsesReceiptPresentation && callbackChecks < 50 {
+                    callbackChecks += 1
+                    try? await Task.sleep(nanoseconds: 10_000_000)
+                }
+                self.assistantTurnUsesReceiptPresentation = false
+            }
+            self.processingAssistantWakeTurns = false
+            self.assistantWakeInFlight = false
+            self.refreshSessionIndicator()
+            self.refreshUnreadIndicator()
+        }
+    }
+
+    private func assistantContinuityDecision(
+        incoming: String,
+        staleRetries: Int
+    ) async -> AssistantContinuityOutcome {
+        let snapshot = agent.currentConversation
+        let outcome = await assistantContinuityClassifier.decide(current: snapshot, incoming: incoming)
+        guard agent.currentSessionId != snapshot.id else { return outcome }
+        guard staleRetries > 0 else {
+            return .fallback("the active conversation changed while continuity was being classified")
+        }
+        return await assistantContinuityDecision(incoming: incoming, staleRetries: staleRetries - 1)
     }
 
     private func sendTypedMessage(_ text: String) {
@@ -1581,6 +1877,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func sendToAgent(text: String?, includeFreshScreenshot: Bool, forceScreenshot: Bool = false) {
+        assistantTurnUsesReceiptPresentation = false
         if !chatPanel.isVisible {
             currentPushSessionId = nil   // grown shows agent content now
             replyBubble.showThinking(echo: text)
@@ -1610,6 +1907,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        assistantTurnUsesReceiptPresentation = false
         agent.send(text: text, screenshots: screenshots)
     }
 
@@ -2015,24 +2313,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .assistant:
             destination = .assistant
             seen = nil
-            if let wakeMatch {
-                // The spoken name picks the assistant: the folder variant's
-                // definition, memory, workspace and voice take the turn.
-                if let matched = AssistantsStore.shared.assistant(slug: wakeMatch.slug) {
-                    agent.activateAssistant(matched)
-                    replySpeaker.voiceOverride = matched.voice
-                    indicator.flashMessage("\(matched.name) → Assistant", seconds: 4)
-                } else {
-                    indicator.flashMessage("\(DefaultAssistantWakeWord) → Assistant", seconds: 4)
-                }
-            }
             let assistantNote = wakeMatch?.prompt ?? note
-            if !chatPanel.isVisible { replyBubble.showThinking(echo: assistantNote.isEmpty ? "Screen capture" : assistantNote) }
-            chatPanel.addUserMessage(assistantNote, attachmentNote: Self.attachmentNote(count: screenshotData.count))
             let assistantText = run.capability == .continuous
                 ? "I recorded a continuous screen capture. Read the ordered screenshots alongside my narration: \(externalText)"
                 : assistantNote
-            deliverToAgent(assistantText, screenshots: screenshotData, retriesLeft: 2)
+            if let wakeMatch,
+               let matched = AssistantsStore.shared.assistant(slug: wakeMatch.slug) {
+                // A wake turn is classified before choosing its Codex thread
+                // and reports like a normal session; it never auto-grows the
+                // user's prompt or streamed response (ticket VF-54).
+                enqueueAssistantWakeTurn(
+                    assistant: matched,
+                    displayText: assistantNote,
+                    agentText: assistantText,
+                    screenshots: screenshotData,
+                    attachmentNote: Self.attachmentNote(count: screenshotData.count))
+            } else {
+                assistantTurnUsesReceiptPresentation = false
+                if !chatPanel.isVisible {
+                    replyBubble.showThinking(echo: assistantNote.isEmpty ? "Screen capture" : assistantNote)
+                }
+                chatPanel.addUserMessage(
+                    assistantNote,
+                    attachmentNote: Self.attachmentNote(count: screenshotData.count))
+                deliverToAgent(assistantText, screenshots: screenshotData, retriesLeft: 2)
+            }
         case .session(let sessionId, let interaction):
             destination = .session
             seen = nil
@@ -2528,9 +2833,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.refreshUnreadIndicator()
                 if self.targetSessionId == closed.id {
-                    self.setTargetSession(self.mcpServer.sessions.list().first { $0.engaged }?.id, announce: false)
-                    if let next = self.mcpServer.sessions.session(self.targetSessionId) {
-                        self.replyBubble.showTransient("\(closed.label) ended — now talking to \(next.label)", seconds: 5)
+                    let nextId = self.firstAvailableTarget(excluding: closed.id)
+                    self.setTargetSession(nextId, announce: false)
+                    if let nextId,
+                       let next = self.pickerSessions().first(where: { $0.id == nextId }) {
+                        self.replyBubble.showTransient(
+                            "\(closed.label) ended — now talking to \(next.label)", seconds: 5)
                         return
                     }
                 }
@@ -2568,7 +2876,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if self.targetSessionId != nil,
                !self.pickerSessions().contains(where: { $0.id == self.targetSessionId }) {
-                self.setTargetSession(self.mcpServer.sessions.list().first { $0.engaged }?.id, announce: false)
+                self.setTargetSession(self.firstAvailableTarget(), announce: false)
             }
             self.refreshSessionIndicator()
             self.refreshUnreadIndicator()
@@ -2676,7 +2984,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // is never stolen from; the receipt's "⌃⌥N" is how the user
             // switches deliberately.
             DispatchQueue.main.sync {
-                if self.mcpServer.sessions.session(self.targetSessionId)?.engaged != true {
+                if self.targetSessionId == nil
+                    || !self.pickerSessions().contains(where: { $0.id == self.targetSessionId }) {
                     self.setTargetSession(session.id, announce: false)
                 }
                 self.refreshSessionIndicator()
@@ -3250,26 +3559,31 @@ extension AppDelegate: AgentsDataSource {
     }()
 
     func agentSessionRows() -> [AgentSessionRow] {
+        let activeAssistantConversationId = agent?.currentSessionId
+        let assistantNumber = assistantPickerSessionId.flatMap { id in
+            slottedSessions().first { $0.id == id }?.slot
+        }
         let assistantRows: [AgentSessionRow] = (agent?.conversations ?? [])
             .filter { !$0.messages.isEmpty || $0.codexThreadId != nil || $0.turnState != .idle }
             .map { conversation in
+            let isActive = conversation.id == activeAssistantConversationId && assistantPickerEligible
             var preview = conversation.preview
             if preview.count > 120 { preview = String(preview.prefix(120)) + "…" }
             return AgentSessionRow(
                 id: conversation.id,
                 kind: .assistant,
-                number: nil,
+                number: isActive ? assistantNumber : nil,
                 name: conversation.title,
                 preview: preview,
                 time: Self.pushTimeFormatter.string(from: conversation.updatedAt),
-                unread: false,
+                unread: isActive && conversation.hasUnseenAssistantReply,
                 completed: false,
                 ghost: false)
         }
         // Numbers stay ≡ the pill picker (⌃⌥N identity); the LIST order is
         // latest activity first, per the mock. No-push sessions trail in
         // picker order.
-        let picker = pickerSessions()
+        let picker = pickerSessions().filter { !isAssistantPickerSession($0.id) }
         let pickerIds = Set(picker.map { $0.id })
         // Consumed threads (every push done) have left the pill but stay
         // browsable here until ✓-completed — numberless: they hold no
@@ -3280,7 +3594,7 @@ extension AppDelegate: AgentsDataSource {
             .map { (id: $0.key,
                     label: mcpServer.sessions.session($0.key)?.label
                         ?? sessionLabels[$0.key] ?? Self.senderLabel($0.value)) }
-        let slotted = slottedSessions()
+        let slotted = slottedSessions().filter { !isAssistantPickerSession($0.id) }
         let slottedIds = Set(slotted.map { $0.id })
         // Eligible but unnumbered = the queue waiting for a freed slot
         // (ticket VF-48: nine sticky numbers, overflow waits).
@@ -3399,7 +3713,7 @@ extension AppDelegate: AgentsDataSource {
         overlayManager.removeAll(forSession: sessionId)
         _ = mcpServer.sessions.close(sessionId)
         if targetSessionId == sessionId {
-            setTargetSession(mcpServer.sessions.list().first { $0.engaged }?.id, announce: false)
+            setTargetSession(firstAvailableTarget(excluding: sessionId), announce: false)
         }
         refreshSessionIndicator()
         refreshUnreadIndicator()

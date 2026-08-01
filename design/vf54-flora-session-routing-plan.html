@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VF-54 — FLORA session routing</title>
+<style>
+  :root {
+    --bg: #11100f;
+    --panel: #1b1917;
+    --panel-2: #211e1b;
+    --line: #3c352e;
+    --text: #f3ede5;
+    --muted: #aaa097;
+    --amber: #ffad48;
+    --green: #6ed6a0;
+    --red: #ef7e73;
+    --blue: #86b7ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(circle at 82% -12%, #3a2817 0, transparent 28%), var(--bg);
+    color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  main { width: min(1320px, calc(100vw - 56px)); margin: 44px auto 80px; }
+  header { display: grid; grid-template-columns: 1fr 420px; gap: 42px; align-items: end; margin-bottom: 42px; }
+  .eyebrow { color: var(--amber); font: 700 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; }
+  h1 { max-width: 820px; margin: 10px 0 12px; font-size: clamp(42px, 5vw, 72px); line-height: .98; letter-spacing: -.045em; }
+  .lede { margin: 0; max-width: 780px; color: var(--muted); font-size: 18px; }
+  .verdict { border-left: 3px solid var(--amber); padding: 14px 18px; background: #241c14; color: #dfd2c4; }
+  .verdict b { display: block; color: var(--amber); margin-bottom: 4px; }
+  section { margin-top: 54px; }
+  h2 { margin: 0 0 18px; font-size: 24px; letter-spacing: -.02em; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card { min-width: 0; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(155deg, var(--panel-2), var(--panel)); padding: 18px; }
+  .card h3 { margin: 0 0 8px; color: var(--amber); font-size: 16px; }
+  .card p { margin: 0; color: var(--muted); }
+  .diagram { min-height: 410px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .diagram .mermaid-host { width: 100%; }
+  .diagram.current { border-top: 3px solid var(--red); }
+  .diagram.target { border-top: 3px solid var(--green); }
+  .diagram.delta { border-top: 3px solid var(--blue); }
+  .tag { display: inline-block; margin-bottom: 10px; padding: 3px 8px; border-radius: 999px; background: #30281f; color: var(--amber); font: 700 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .decision-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .choice { border: 1px solid var(--line); border-radius: 12px; padding: 15px 16px; background: var(--panel); }
+  .choice strong { display: block; margin-bottom: 5px; }
+  .choice p { margin: 0; color: var(--muted); }
+  .choice.survivor { border-color: #4c8f69; background: #15231b; }
+  .choice.survivor strong { color: var(--green); }
+  .contract { display: grid; grid-template-columns: 160px 1fr; gap: 14px 22px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 20px; }
+  .contract dt { color: var(--amber); font: 700 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .contract dd { margin: 0; color: var(--muted); }
+  footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); }
+  @media (max-width: 980px) {
+    header, .grid, .decision-grid { grid-template-columns: 1fr; }
+    .diagram { min-height: 360px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <div class="eyebrow">VF-54 · architecture decision</div>
+      <h1>FLORA chooses continuity, then behaves like a session.</h1>
+      <p class="lede">Only wake-word dictations are classified. The choice is binary: reuse the current FLORA conversation or create a fresh one. Older conversations are never searched or selected.</p>
+    </div>
+    <div class="verdict"><b>Survivor</b>Ephemeral Luna classification + one stable <code>assistant:flora</code> adapter over the native Assistant history and existing 1–9 slot system.</div>
+  </header>
+
+  <section>
+    <h2>The decision in three cuts</h2>
+    <div class="grid">
+      <article class="card"><span class="tag">CONTINUITY</span><h3>Luna, low reasoning</h3><p>Schema-constrained current-vs-new preflight. Empty drafts skip the model. Any timeout, invalid response, or low confidence safely reuses today's thread.</p></article>
+      <article class="card"><span class="tag">IDENTITY</span><h3>One stable FLORA endpoint</h3><p>The picker targets FLORA's current conversation through <code>assistant:flora</code>. A conversation rollover does not change her hotkey slot.</p></article>
+      <article class="card"><span class="tag">ARRIVAL</span><h3>Receipt, never takeover</h3><p>Closed-panel work produces one-line working/new-message receipts and unread state. The full reply appears only after explicit hotkey, pill, or panel selection.</p></article>
+    </div>
+  </section>
+
+  <section>
+    <h2>Current</h2>
+    <article class="card diagram current">
+      <div class="mermaid-host" id="currentGraph"></div>
+    </article>
+  </section>
+
+  <section>
+    <h2>Target</h2>
+    <article class="card diagram target">
+      <div class="mermaid-host" id="targetGraph"></div>
+    </article>
+  </section>
+
+  <section>
+    <h2>Delta</h2>
+    <article class="card diagram delta">
+      <div class="mermaid-host" id="deltaGraph"></div>
+    </article>
+  </section>
+
+  <section>
+    <h2>Elimination trail</h2>
+    <div class="decision-grid">
+      <article class="choice"><strong>Fixed reuse / fixed new</strong><p>Each fails half the goal: unrelated topics leak context, or follow-ups lose it.</p></article>
+      <article class="choice"><strong>Heuristics / embeddings</strong><p>Semantic continuity is the hard part; these add silent errors or extra infrastructure without stronger judgment.</p></article>
+      <article class="choice"><strong>Choose among all histories</strong><p>Eliminated by the explicit current-or-new constraint. The system never guesses which old thread the user meant.</p></article>
+      <article class="choice"><strong>Fake MCP / duplicate SessionPush store</strong><p>Breaks lifecycle invariants or creates two durable owners for FLORA's text and consumption state.</p></article>
+      <article class="choice"><strong>Universal session refactor</strong><p>Rewrites stable MCP behavior for a single local endpoint and has a much larger failure surface.</p></article>
+      <article class="choice survivor"><strong>Ephemeral classifier + local adapter</strong><p>Uses existing auth, source-of-truth history, slots, hotkeys, speech, and grown routing with explicit MCP guards.</p></article>
+    </div>
+  </section>
+
+  <section>
+    <h2>Build contract</h2>
+    <dl class="contract">
+      <dt>CLASSIFY</dt><dd>Only matched FLORA dictations. Current title + six recent non-note messages, capped at 6k characters. Luna low, schema output, 8-second timeout.</dd>
+      <dt>FAIL SAFE</dt><dd>Reuse on infrastructure failure, malformed output, or confidence below 0.65. A stale result is never applied after the active conversation changes.</dd>
+      <dt>ROUTE</dt><dd><code>reuse</code> preserves the UUID/thread. <code>new</code> calls only <code>createConversation</code>. No older conversation is activated.</dd>
+      <dt>PRESENT</dt><dd>Stable <code>assistant:flora</code> slot. Hidden-panel replies set unread and flash receipts; explicit selection reveals and consumes them.</dd>
+      <dt>ISOLATE</dt><dd>Local IDs never enter MCP registry, inbox, push persistence, overlays, asks, or remote completion paths.</dd>
+      <dt>ROLL BACK</dt><dd>Remove the classifier/adapter and stop writing the optional seen bit. Existing Assistant and MCP data remain readable.</dd>
+    </dl>
+  </section>
+
+  <footer>Implementation source of truth: <code>design/vf54-flora-session-routing-plan.md</code></footer>
+</main>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "base",
+    flowchart: { curve: "basis", htmlLabels: true, useMaxWidth: true },
+    themeVariables: {
+      background: "#1b1917",
+      primaryColor: "#2a241e",
+      primaryTextColor: "#f3ede5",
+      primaryBorderColor: "#7d6650",
+      lineColor: "#c18a52",
+      secondaryColor: "#1b2820",
+      tertiaryColor: "#1a2330",
+      clusterBkg: "#191715",
+      clusterBorder: "#594b3e",
+      fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, sans-serif"
+    }
+  });
+  const graphs = [
+    ["currentGraph", `flowchart LR
+      cur_D["Dictation transcript"] --> cur_W["AssistantWakeMatcher"]
+      cur_W -->|"FLORA prefix"| cur_A["Current AgentSession"]
+      cur_A <--> cur_H["AssistantHistoryStore<br/>active conversation"]
+      cur_A --> cur_C["Codex exec / resume"]
+      cur_W --> cur_E["Grown pill<br/>You: prompt"]
+      cur_C --> cur_S["Grown pill<br/>streamed reply"]
+      cur_M["Engaged MCP sessions"] --> cur_P["pickerSessions + slots"]
+      cur_H --> cur_V["Agents tab<br/>unnumbered history"]
+      cur_P --> cur_V`],
+    ["targetGraph", `flowchart TB
+      tar_D["FLORA-prefixed dictation"] --> tar_R["Binary continuity router"]
+      tar_L["gpt-5.6-luna<br/>low reasoning"] -. "ephemeral schema call" .-> tar_R
+      tar_R -->|"reuse"| tar_A["Active FLORA conversation"]
+      tar_R -->|"new"| tar_N["createConversation"]
+      tar_N --> tar_A
+      tar_A <--> tar_H["AssistantHistoryStore<br/>transcript + unseen reply"]
+      tar_A --> tar_C["Codex resumable turn"]
+      tar_H --> tar_X["assistant:flora adapter"]
+      tar_X --> tar_P["existing picker + slots + hotkeys"]
+      tar_M["Engaged MCP sessions"] --> tar_P
+      tar_C --> tar_Q["one-line receipt + unread ring"]
+      tar_P -->|"explicit selection"| tar_G["grown reply preview<br/>or native panel chat"]`],
+    ["deltaGraph", `flowchart LR
+      del_W["PRESERVE<br/>Wake matcher"] --> del_C["ADD<br/>Luna continuity classifier"]
+      del_C --> del_H["PRESERVE<br/>Assistant history + thread resume"]
+      del_H --> del_U["ADD<br/>Assistant reply seen cursor"]
+      del_U --> del_A["ADD<br/>assistant:flora picker adapter"]
+      del_A --> del_S["PRESERVE<br/>Sticky 1–9 slot allocator"]
+      del_P["PRESERVE<br/>MCP registry / pushes / inbox / overlays"] --> del_S
+      del_H --> del_R["ADD<br/>receipt-only closed-panel behavior"]
+      del_E["REMOVE<br/>Prompt echo takeover"] -.-> del_R
+      del_T["REMOVE<br/>Automatic grown reply stream"] -.-> del_R`]
+  ];
+  for (let index = 0; index < graphs.length; index += 1) {
+    const [hostId, source] = graphs[index];
+    const { svg, bindFunctions } = await mermaid.render(`vf54-${index}`, source);
+    const host = document.getElementById(hostId);
+    host.innerHTML = svg;
+    bindFunctions?.(host);
+  }
+</script>
+</body>
+</html>

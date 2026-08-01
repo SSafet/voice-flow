@@ -211,7 +211,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// option A): connected = ⌃⌥ number in an amber ring, ghost = bare
     /// muted number, completed = quiet outlined check. No text suffixes.
     private func leadingIcon(for row: AgentSessionRow) -> NSView {
-        if row.kind == .assistant { return WaveformIconView() }
+        if row.kind == .assistant {
+            if let number = row.number { return RingNumberView(number: number) }
+            return WaveformIconView()
+        }
         guard let number = row.number else {
             let image = NSImageView(image: NSImage(systemSymbolName: "checkmark.circle",
                                                    accessibilityDescription: "completed") ?? NSImage())

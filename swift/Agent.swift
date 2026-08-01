@@ -163,6 +163,11 @@ final class AgentSession {
         return active
     }
 
+    func markCurrentAssistantRepliesSeen() {
+        history.markAssistantRepliesSeen(for: currentSessionId)
+        notifyHistoryChanged()
+    }
+
     func interrupt() {
         interruptRequested = true
         codex.interrupt()

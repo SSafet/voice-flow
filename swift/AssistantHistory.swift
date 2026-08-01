@@ -18,14 +18,19 @@ struct AssistantHistoryMessage: Codable, Equatable {
     let role: AssistantMessageRole
     let text: String
     let attachmentNote: String?
+    /// Consumption cursor for local Assistant replies in the shared session
+    /// picker (VF-54). Missing/nil is legacy history, not unread; only a
+    /// freshly completed Assistant reply is written as false.
+    var seen: Bool?
 
     init(id: UUID = UUID(), at: Date = Date(), role: AssistantMessageRole,
-         text: String, attachmentNote: String? = nil) {
+         text: String, attachmentNote: String? = nil, seen: Bool? = nil) {
         self.id = id
         self.at = at
         self.role = role
         self.text = text
         self.attachmentNote = attachmentNote
+        self.seen = seen
     }
 }
 
@@ -56,6 +61,20 @@ struct AssistantConversation: Codable, Equatable {
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? "talk · type · snap — the in-app agent" : value
+    }
+
+    var hasUnseenAssistantReply: Bool {
+        messages.contains { $0.role == .assistant && $0.seen == false }
+    }
+
+    var latestAssistantReply: AssistantHistoryMessage? {
+        messages.last { $0.role == .assistant && !$0.text.isEmpty }
+    }
+
+    var assistantPreviewReplies: [AssistantHistoryMessage] {
+        let unseen = messages.filter { $0.role == .assistant && $0.seen == false && !$0.text.isEmpty }
+        if !unseen.isEmpty { return Array(unseen.suffix(8)) }
+        return latestAssistantReply.map { [$0] } ?? []
     }
 }
 
@@ -192,7 +211,8 @@ final class AssistantHistoryStore {
             guard !trimmed.isEmpty || attachmentNote != nil else { return }
             let now = Date()
             envelope.sessions[index].messages.append(AssistantHistoryMessage(
-                at: now, role: role, text: text, attachmentNote: attachmentNote))
+                at: now, role: role, text: text, attachmentNote: attachmentNote,
+                seen: role == .assistant ? false : nil))
             if envelope.sessions[index].messages.count > Self.maxMessagesPerSession {
                 envelope.sessions[index].messages.removeFirst(
                     envelope.sessions[index].messages.count - Self.maxMessagesPerSession)
@@ -214,6 +234,22 @@ final class AssistantHistoryStore {
     func setTurnState(_ state: AssistantTurnState, for sessionId: String) {
         mutateConversation(sessionId) { conversation in
             conversation.turnState = state
+        }
+    }
+
+    /// Viewing a local Assistant preview consumes its unread replies without
+    /// making the conversation look newly updated in the history list.
+    func markAssistantRepliesSeen(for sessionId: String) {
+        lock.withLock {
+            guard let index = envelope.sessions.firstIndex(where: { $0.id == sessionId }) else { return }
+            var changed = false
+            for messageIndex in envelope.sessions[index].messages.indices
+                where envelope.sessions[index].messages[messageIndex].role == .assistant
+                    && envelope.sessions[index].messages[messageIndex].seen == false {
+                envelope.sessions[index].messages[messageIndex].seen = true
+                changed = true
+            }
+            if changed { persistLocked() }
         }
     }
 

@@ -39,6 +39,20 @@ expect(reloaded.conversation(first.id)?.messages.map(\.text) == ["First question
 expect(reloaded.conversation(second.id)?.messages.map(\.text) == ["Second question", "Second answer"], "second transcript changed")
 expect(reloaded.conversation(first.id)?.title == "First question", "title should derive from first user turn")
 
+// New Assistant replies carry the local-picker unread cursor. Viewing them
+// consumes that cursor without reordering conversation activity.
+expect(reloaded.conversation(first.id)?.hasUnseenAssistantReply == true,
+       "new Assistant reply should reload as unseen")
+let updatedBeforeSeen = reloaded.conversation(first.id)!.updatedAt
+reloaded.markAssistantRepliesSeen(for: first.id)
+let seenFirst = reloaded.conversation(first.id)!
+expect(seenFirst.hasUnseenAssistantReply == false, "viewing should consume Assistant replies")
+expect(seenFirst.messages.last?.seen == true, "seen cursor should persist on the Assistant reply")
+expect(seenFirst.updatedAt == updatedBeforeSeen, "viewing must not reorder the conversation")
+let seenReloaded = AssistantHistoryStore(url: url, legacySessionsRoot: nil)
+expect(seenReloaded.conversation(first.id)?.messages.last?.seen == true,
+       "seen cursor should survive reload")
+
 // A process death while a turn is running becomes one durable interruption,
 // never a blank thread and never another duplicate note on later launches.
 reloaded.setTurnState(.running, for: first.id)
@@ -103,6 +117,7 @@ expect(legacy.codexThreadId == "legacy-thread", "legacy resume pointer should im
 expect(legacy.messages.map(\.role) == [.user, .assistant], "legacy roles should reconstruct")
 expect(legacy.messages[0].text == "Recover this conversation", "Voice Flow preamble should not appear in history")
 expect(legacy.messages[1].text == "Working on it.\n\nRecovered result.", "streamed pieces should reconstruct one reply")
+expect(legacy.messages[1].seen == nil, "legacy replies without a cursor must remain neutral")
 let importedAgain = AssistantHistoryStore(
     url: legacyURL,
     legacySessionsRoot: directory.appendingPathComponent("legacy"))

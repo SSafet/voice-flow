@@ -69,6 +69,12 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   freezes a UUID, visible conversation, pending interaction, and explicit
   paste target when capture begins. Screenshot/transcription callbacks join by
   UUID, so later UI/session/app changes cannot reroute an earlier result.
+- A plain Dictate whose leading wake name resolves to FLORA runs a bounded
+  binary continuity preflight (`AssistantContinuityClassifier`): reuse only
+  the current FLORA conversation or create a fresh one, never select history.
+  FLORA then appears as the stable local `assistant:flora` picker session.
+  Closed-panel turns show only working/new-message receipts and unread state;
+  the prompt and reply grow only after the user explicitly selects FLORA.
 - **The pill IS the whole surface** (design spec: `design/pill-states.html`;
   one shape, nothing overlaid, dots never move). `FloatingIndicator` has four
   modes — `pill` (collapsed 52×18; middle dot grows to 9px and carries the
@@ -138,7 +144,11 @@ Goes To" submenu, does not route a capture by itself. The submenu lists the
 same `pickerSessions()` order/numbering. Switching grows the pill into the session's
 push stack (or the one-line picker when it has none); the middle dot
 carries the active session's number; re-selecting the current session
-while its stack shows reads it aloud (`double_select_speak`). **Overlays
+while its stack shows reads it aloud (`double_select_speak`). The current
+FLORA conversation joins this projection through `assistant:<slug>` without
+entering `MCPSessionRegistry`, `sessionPushes`, the MCP inbox, or overlay
+ownership; its transcript and unread cursor stay in `AssistantHistoryStore`.
+**Overlays
 are session-scoped** (`"session"` field, stamped by the tools): only the
 active session's elements render; a background session's overlay triggers
 a transient note instead of drawing over the user. The inbox is per-session
@@ -255,6 +265,7 @@ deployed copies are build outputs.
 | `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
 | `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Codex. |
 | `Agent.swift` | `AgentSession`, `ComputerControl` | LLM loop that reasons over screenshots and issues screen-control tool calls. |
+| `AssistantContinuity.swift` | `AssistantContinuityClassifier`, `LocalAssistantSessionAdapter` | Ephemeral current-vs-new wake routing and the stable local picker identity for FLORA. |
 | `AssistantHistory.swift` | `AssistantHistoryStore`, `AssistantConversation`, `AssistantHistoryMessage` | Atomic local history and resume metadata for selectable in-app Assistant sessions. |
 | `Codex.swift` | `CodexExecBackend` | ChatGPT-subscription assistant turns via `codex exec --json` (OAuth, thread resume, image attach); the default backend, API key is the fallback. |
 | `Annotation.swift` | `AnnotationOverlay` | Draw-on-screen overlay (pen + multiline text notes with size presets). |
