@@ -210,7 +210,7 @@ flowchart LR
 
 ### Assistant conversations
 
-Add optional `assistantSlug` and `archivedAt` fields to `AssistantConversation`. Missing legacy ownership migrates to the loaded base assistant the first time the application has both stores available. Keep the envelope version readable by the previous decoder; optional fields make the expansion rollback-readable. Creation always supplies an owner. Selecting a conversation resolves and restores its assistant before composing the next prompt.
+Add optional `assistantSlug`, `assistantNameSnapshot`, and `archivedAt` fields to `AssistantConversation`, plus versioned per-conversation files under `assistant-thread-metadata/`. The sidecar is canonical only for owner/archive metadata; Assistant history remains canonical for transcript/runtime state. This mirror is required because an older build can decode unknown JSON keys and then drop them when it rewrites its older struct. Missing legacy ownership migrates to the loaded base assistant once both stores are available. Creation always supplies an owner. Selecting a conversation resolves and restores its assistant before composing the next prompt. A downgraded build remains history-readable but cannot honor the new ownership/archive behavior; the sidecar restores those facts on the next upgraded launch and newer downgraded activity reopens an archived thread.
 
 ### Assistant folders
 
@@ -228,7 +228,7 @@ Persist archive metadata separately from the live `sessionPushes` payload so rol
 
 1. **Plan and visual contract** — commit this plan plus verified destination mockups.
 2. **Pure navigation model** — typed destinations, object IDs, state classifiers, snapshot/search projections, and unit tests. No UI mutation.
-3. **Assistant ownership expansion** — optional conversation owner/archive fields, migration, owner restoration, lifecycle tests.
+3. **Assistant ownership expansion** — optional conversation mirrors, rollback-surviving owner/archive sidecars, migration, owner restoration, lifecycle tests.
 4. **Assistant folder editing** — revisioned atomic CRUD/duplicate/trash contracts and filesystem tests.
 5. **Automation persistence expansion** — durable name, run history query, dedicated conversation creation, migrations/tests.
 6. **Thread archive/inbox seams** — reversible archive, restore, explicit delete, exact-session inbox mutation and tests.
@@ -245,6 +245,7 @@ Each slice is independently buildable and committed even if the next slice is un
 ### Unit and migration
 
 - Legacy assistant-history JSON decodes unchanged; missing owner is assigned once and persisted.
+- Simulating an older encoder that drops unknown conversation fields still restores owner/archive from the sidecar; newer old-build activity clears archive.
 - Switching between two conversations restores different assistant personas, directories, memories, voices, and selected skills.
 - Duplicate assistant excludes memory, ledger, workspace contents, conversations, bindings, and jobs.
 - Stale assistant/memory revision cannot overwrite a newer file.

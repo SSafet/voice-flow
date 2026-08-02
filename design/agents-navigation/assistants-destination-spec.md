@@ -212,7 +212,7 @@ Rules:
 
 ### Persisted history expansion
 
-Extend `AssistantConversation` with optional, rollback-readable fields:
+Extend `AssistantConversation` with optional fast-path mirror fields:
 
 ```swift
 var assistantSlug: String?
@@ -221,6 +221,7 @@ var assistantOwnerWasInferred: Bool?
 ```
 
 - Keep envelope version `1`; older builds ignore unknown JSON keys and continue reading mirrored `codexThreadId`.
+- Unknown keys are decoder-compatible but not rollback-durable: an older build can rewrite the file from its older struct and drop ownership. Use the versioned per-conversation `assistant-thread-metadata/<conversation-id>.json` sidecar defined by `threads-destination-spec.md` as canonical for owner/archive metadata. Upgraded load repopulates missing mirrors from it; old-build activity newer than the sidecar reopens an archived conversation.
 - After `AssistantsStore.load()` and before `AgentSession` construction, migrate nil owners to the current default assistant and set `assistantOwnerWasInferred = true`.
 - Every new conversation writes slug/name and `false`.
 - `createConversation(force:assistant:)` reuses a blank draft only when its `assistantSlug` matches.
@@ -295,7 +296,8 @@ Add `UserSettings.defaultAssistantSlug`, encoded as `default_assistant_slug`. Mi
 | File | Disposition | Required change |
 |---|---|---|
 | `swift/Assistants.swift` | **Replace loader contract / extend store** | Typed load issues, document revision/serializer, mutation APIs, safe first-run scaffold, configured default resolution. |
-| `swift/AssistantHistory.swift` | **Expand persisted model** | Optional ownership fields, scoped queries, owner-aware create/delete/move, migration that preserves v1 rollback. |
+| `swift/AssistantHistory.swift` | **Expand persisted model** | Optional ownership mirrors, scoped queries, owner-aware create/delete/move, and sidecar reconciliation. |
+| `swift/AssistantThreadMetadata.swift` | **NET-NEW** | Per-conversation owner/archive sidecars that survive an older build rewriting Assistant history. |
 | `swift/Agent.swift` | **Replace activation seam** | Conversation activation resolves and aligns its owner; owner-aware creation; no independent global assistant/conversation mutation. |
 | `swift/AssistantWorkspaceCoordinator.swift` | **NET-NEW** | Join folders/history/jobs; serialize lifecycle actions and rollback job disable on delete failure. |
 | `swift/AssistantsDestinationView.swift` | **NET-NEW** | Directory, workspace header, four local sections, forms, and state rendering. |
@@ -425,7 +427,8 @@ Security assertions:
 
 ## Rollback
 
-- Keep `assistant-sessions.json` envelope version 1 and `codexThreadId`; old builds ignore new optional owner keys.
+- Keep `assistant-sessions.json` envelope version 1 and `codexThreadId`; old builds decode the file, while the sidecar preserves owner/archive facts across an older rewrite.
+- Downgrade is history-readable but feature-degraded: the old build cannot honor per-conversation ownership or Done state. Returning to the new build restores preserved metadata and treats newer old-build activity as a reopen.
 - New directory UI is reversible by routing Agents back to the old list while leaving owner fields inert.
 - Folder writes remain ordinary markdown and directories; no proprietary migration is introduced.
 - The assistant-slug SQLite index is additive.
