@@ -95,7 +95,8 @@ Task {
     let limited = ModelGatewayServer(credentials: {
         ModelGatewayCredentialSnapshot(
             apiKey: "provider-secret", upstreamBaseURL: upstream,
-            allowedModels: ["test/model"], maxOutputTokens: 32_000,
+            allowedModels: ["test/model"],
+            modelOutputTokenLimits: ["test/model": 32_000],
             // Two successful lifecycle requests above settled at $0.40 in
             // the same durable daily ledger. Admit one more estimate and
             // reject the following one just above the shared $0.60 boundary

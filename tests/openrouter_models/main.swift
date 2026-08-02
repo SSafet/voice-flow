@@ -36,6 +36,7 @@ final class CatalogProtocol: URLProtocol {
 let fixture = """
 {"data":[
   {"id":"test/tool-image","name":"Tool Image","context_length":131072,
+   "top_provider":{"context_length":131072,"max_completion_tokens":16384},
    "architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},
    "pricing":{"prompt":"0.000001","completion":"0.000004"},
    "supported_parameters":["tools","tool_choice","temperature"]},
@@ -66,6 +67,8 @@ expect(live.models.map(\.id) == ["test/tool-image", "test/manual"],
 let model = live.models.first { $0.id == "test/tool-image" }!
 expect(model.supportsImages && model.supportsTools && model.hasTextOutput,
        "catalog lost agent capability metadata")
+expect(model.openCodeContextLimit == 131_072 && model.openCodeOutputLimit == 16_384,
+       "catalog lost OpenCode context/output limits")
 expect(model.detail.replacingOccurrences(of: ",", with: "").contains("131072")
        && model.detail.contains("$1.00 / $4.00"),
        "catalog detail lost context or pricing: \(model.detail)")
@@ -95,4 +98,7 @@ let fallback = await OpenRouterModelCatalog(cacheURL: emptyCacheURL, session: se
     fallbackIDs: ["test/manual"])
 expect(fallback.source == .fallback && fallback.models.map(\.id) == ["test/manual"],
        "empty offline catalog did not preserve manual/default selection")
+expect(fallback.models[0].openCodeContextLimit == 128_000
+       && fallback.models[0].openCodeOutputLimit == 32_000,
+       "manual model fallback limits are not conservative")
 print("OpenRouter model catalog tests passed")

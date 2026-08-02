@@ -6,20 +6,25 @@ struct ModelGatewayCredentialSnapshot {
     let apiKey: String?
     let upstreamBaseURL: URL
     let allowedModels: Set<String>
-    let maxOutputTokens: Int
+    let modelOutputTokenLimits: [String: Int]
+    let fallbackMaxOutputTokens: Int
     let requestTimeout: TimeInterval
     let dailyBudgetUSD: Double?
     let estimatedRequestCostUSD: Double
 
     init(apiKey: String?, upstreamBaseURL: URL, allowedModels: Set<String>,
-         maxOutputTokens: Int = 32_000,
+         modelOutputTokenLimits: [String: Int] = [:],
+         fallbackMaxOutputTokens: Int = 32_000,
          requestTimeout: TimeInterval = 600,
          dailyBudgetUSD: Double? = 5.0,
          estimatedRequestCostUSD: Double = 0.25) {
         self.apiKey = apiKey
         self.upstreamBaseURL = upstreamBaseURL
         self.allowedModels = allowedModels
-        self.maxOutputTokens = min(max(maxOutputTokens, 256), 128_000)
+        self.modelOutputTokenLimits = modelOutputTokenLimits.mapValues {
+            min(max($0, 256), 128_000)
+        }
+        self.fallbackMaxOutputTokens = min(max(fallbackMaxOutputTokens, 256), 128_000)
         self.requestTimeout = min(max(requestTimeout, 5), 3_600)
         self.dailyBudgetUSD = dailyBudgetUSD.map { min(max($0, 0), 10_000) }
         self.estimatedRequestCostUSD = min(max(estimatedRequestCostUSD, 0), 100)
@@ -265,10 +270,12 @@ final class ModelGatewayServer {
         }
         defer { admission.signal() }
 
+        let modelMax = snapshot.modelOutputTokenLimits[model]
+            ?? snapshot.fallbackMaxOutputTokens
         let existingMax = (json["max_tokens"] as? NSNumber)?.intValue
             ?? (json["max_completion_tokens"] as? NSNumber)?.intValue
-            ?? snapshot.maxOutputTokens
-        json["max_tokens"] = min(max(1, existingMax), snapshot.maxOutputTokens)
+            ?? modelMax
+        json["max_tokens"] = min(max(1, existingMax), modelMax)
         json.removeValue(forKey: "max_completion_tokens")
         guard let forwardBody = try? JSONSerialization.data(withJSONObject: json) else {
             budget.settle(estimate: estimate, actual: 0)

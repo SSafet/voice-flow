@@ -3,27 +3,25 @@ import Cocoa
 /// Compact AppKit editor embedded in the existing automation alert. The model
 /// field is an editable, filtered combo box: catalog rows are searchable and
 /// an exact OpenRouter model ID remains valid when the network is unavailable.
-final class AgentJobEditorView: NSView, NSComboBoxDataSource, NSComboBoxDelegate {
+final class AgentJobEditorView: NSView {
     let promptField = NSTextField(string: "")
     let runtimePopUp = NSComboBox()
     let triggerPopUp = NSComboBox()
     let intervalField = NSTextField(string: "60")
     let budgetField = NSTextField(string: "1.00")
-    let modelCombo = NSComboBox()
+    let modelCombo = OpenRouterModelComboBox()
 
     private let modelStatus = NSTextField(wrappingLabelWithString: "")
     private let modelDetail = NSTextField(labelWithString: "")
     private let catalogStatus: String
     private let allModels: [OpenRouterModel]
-    private var filteredModels: [OpenRouterModel]
 
     init(models: OpenRouterModelCatalogResult,
          preferredRuntime: AgentRuntimeKind,
          defaultModelID: String) {
         allModels = models.models
-        filteredModels = models.models
         catalogStatus = models.statusText
-        super.init(frame: NSRect(x: 0, y: 0, width: 470, height: 216))
+        super.init(frame: NSRect(x: 0, y: 0, width: 590, height: 216))
         appearance = NSAppearance(named: .darkAqua)
 
         promptField.placeholderString = "What should the assistant do?"
@@ -48,17 +46,18 @@ final class AgentJobEditorView: NSView, NSComboBoxDataSource, NSComboBoxDelegate
         intervalField.setAccessibilityLabel("Automation interval in minutes")
         budgetField.setAccessibilityLabel("Automation daily budget in US dollars")
 
-        modelCombo.usesDataSource = true
-        modelCombo.dataSource = self
-        modelCombo.delegate = self
-        modelCombo.completes = false
-        modelCombo.numberOfVisibleItems = 14
         modelCombo.setAccessibilityLabel("OpenCode model")
+        modelCombo.setAccessibilityHelp(
+            "Search the current OpenRouter catalog or type an exact provider/model ID.")
+        modelCombo.configure(models: allModels, selectedID: defaultModelID)
+        modelCombo.onModelSelected = { [weak self] model in
+            self?.modelDetail.stringValue = model.detail
+        }
+        modelCombo.onQueryChanged = { [weak self] model in
+            self?.modelDetail.stringValue = model?.detail ?? "Type an exact provider/model ID"
+        }
         if let preferred = allModels.first(where: { $0.id == defaultModelID }) {
-            modelCombo.stringValue = preferred.displayLabel
             modelDetail.stringValue = preferred.detail
-        } else {
-            modelCombo.stringValue = defaultModelID
         }
         modelStatus.stringValue = catalogStatus
         modelStatus.textColor = models.source == .live ? Theme.text3 : Theme.accent
@@ -89,7 +88,15 @@ final class AgentJobEditorView: NSView, NSComboBoxDataSource, NSComboBoxDelegate
             grid.topAnchor.constraint(equalTo: topAnchor),
             grid.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
         ])
-        grid.column(at: 1).width = 350
+        grid.column(at: 1).width = 470
+        for control in [runtimePopUp, triggerPopUp] {
+            control.translatesAutoresizingMaskIntoConstraints = false
+            control.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        }
+        for control in [promptField, modelCombo, intervalField, budgetField] {
+            control.translatesAutoresizingMaskIntoConstraints = false
+            control.widthAnchor.constraint(equalToConstant: 470).isActive = true
+        }
         runtimeChanged()
     }
 
@@ -102,51 +109,7 @@ final class AgentJobEditorView: NSView, NSComboBoxDataSource, NSComboBoxDelegate
 
     var selectedModelID: String? {
         guard selectedRuntime == .opencode else { return nil }
-        let raw = modelCombo.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let exact = allModels.first(where: {
-            $0.id.caseInsensitiveCompare(raw) == .orderedSame
-                || $0.displayLabel.caseInsensitiveCompare(raw) == .orderedSame
-        }) { return exact.id }
-        // Manual fallback is deliberately exact-ID shaped. It must not turn a
-        // half-written natural-language search into a durable model choice.
-        guard raw.contains("/"), !raw.contains(" "), !raw.contains("—") else { return nil }
-        return raw
-    }
-
-    func numberOfItems(in comboBox: NSComboBox) -> Int { filteredModels.count }
-
-    func comboBox(_ comboBox: NSComboBox, objectValueForItemAt index: Int) -> Any? {
-        filteredModels.indices.contains(index) ? filteredModels[index].displayLabel : nil
-    }
-
-    func controlTextDidChange(_ notification: Notification) {
-        guard (notification.object as? NSComboBox) === modelCombo else { return }
-        let query = modelCombo.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if query.isEmpty {
-            filteredModels = allModels
-        } else {
-            filteredModels = allModels.filter {
-                $0.id.localizedCaseInsensitiveContains(query)
-                    || $0.name.localizedCaseInsensitiveContains(query)
-            }
-        }
-        modelCombo.noteNumberOfItemsChanged()
-        if let exact = allModels.first(where: {
-            $0.id.caseInsensitiveCompare(query) == .orderedSame
-                || $0.displayLabel.caseInsensitiveCompare(query) == .orderedSame
-        }) {
-            modelDetail.stringValue = exact.detail
-        } else {
-            modelDetail.stringValue = filteredModels.first?.detail ?? "Type an exact provider/model ID"
-        }
-    }
-
-    func comboBoxSelectionDidChange(_ notification: Notification) {
-        guard (notification.object as? NSComboBox) === modelCombo,
-              filteredModels.indices.contains(modelCombo.indexOfSelectedItem) else { return }
-        let model = filteredModels[modelCombo.indexOfSelectedItem]
-        modelCombo.stringValue = model.displayLabel
-        modelDetail.stringValue = model.detail
+        return modelCombo.selectedModelID
     }
 
     @objc private func runtimeChanged() {
@@ -162,15 +125,10 @@ final class AgentJobEditorView: NSView, NSComboBoxDataSource, NSComboBoxDelegate
     }
 
 #if VOICE_FLOW_QA
-    var qaFilteredModelIDs: [String] { filteredModels.map(\.id) }
+    var qaFilteredModelIDs: [String] { modelCombo.filteredModels.map(\.id) }
 
     func qaSelectModel(id: String) -> Bool {
-        guard let model = allModels.first(where: { $0.id == id }) else { return false }
-        filteredModels = allModels
-        modelCombo.noteNumberOfItemsChanged()
-        modelCombo.stringValue = model.displayLabel
-        modelDetail.stringValue = model.detail
-        return true
+        modelCombo.selectModel(id: id)
     }
 
     func qaSnapshot() throws -> (path: String, width: Int, height: Int) {

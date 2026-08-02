@@ -596,6 +596,10 @@
       "runner": "e2e"
     },
     {
+      "id": "visual:settings_model_picker",
+      "runner": "e2e"
+    },
+    {
       "id": "visual:watcher_status",
       "runner": "e2e"
     }

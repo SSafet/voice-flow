@@ -177,8 +177,6 @@ class UserSettings {
     var agentModel: String = DefaultAgentModel
     var agentBaseURL: String = DefaultAgentBaseURL
     var agentDailyBudgetUSD: Double = 5.0
-    var agentMaxOutputTokens: Int = 32_000
-    var agentRequestTimeoutSeconds: Int = 600
     // Default runtime for new Assistant conversations. Existing conversations
     // persist their own preferred runtime in assistant-sessions.json.
     var agentBackend: String = AgentBackendCodex
@@ -269,12 +267,6 @@ class UserSettings {
         } else if let v = dict["agent_daily_budget_usd"] as? Int {
             agentDailyBudgetUSD = min(max(Double(v), 0.25), 500)
         }
-        if let v = dict["agent_max_output_tokens"] as? Int {
-            agentMaxOutputTokens = min(max(v, 256), 128_000)
-        }
-        if let v = dict["agent_request_timeout_seconds"] as? Int {
-            agentRequestTimeoutSeconds = min(max(v, 30), 3_600)
-        }
         if let v = dict["agent_backend"] as? String {
             // The old direct API choice expands to OpenCode. The direct loop
             // remains only as a hidden Codex failure fallback for one release.
@@ -326,8 +318,6 @@ class UserSettings {
             "agent_model": agentModel,
             "agent_base_url": agentBaseURL,
             "agent_daily_budget_usd": agentDailyBudgetUSD,
-            "agent_max_output_tokens": agentMaxOutputTokens,
-            "agent_request_timeout_seconds": agentRequestTimeoutSeconds,
             "agent_backend": agentBackend,
             "voice_replies_enabled": voiceRepliesEnabled,
             "assistant_wake_enabled": assistantWakeEnabled,

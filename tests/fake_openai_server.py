@@ -27,6 +27,10 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "id": "test/model", "name": "QA balanced model",
                     "context_length": 131072,
+                    "top_provider": {
+                        "context_length": 131072,
+                        "max_completion_tokens": 16384,
+                    },
                     "architecture": {
                         "input_modalities": ["text", "image"],
                         "output_modalities": ["text"],
@@ -37,6 +41,10 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "id": "test/model-fast", "name": "QA fast model",
                     "context_length": 32768,
+                    "top_provider": {
+                        "context_length": 32768,
+                        "max_completion_tokens": 8192,
+                    },
                     "architecture": {
                         "input_modalities": ["text"],
                         "output_modalities": ["text"],

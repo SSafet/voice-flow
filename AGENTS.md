@@ -54,6 +54,10 @@ heartbeats, retries, trigger idempotency, concurrency keys, budgets, maximum
 runtime, cancellation, and visible blocked/failure results live in
 `agent-jobs.sqlite`. Initial caps are three global agents, three OpenCode runs,
 two Codex runs, and one active run per conversation/concurrency key.
+Settings and each OpenCode automation use the same searchable, cached
+OpenRouter model catalog. The user chooses a model and budget; Voice Flow reads
+that model's context/output limits from the provider catalog and writes them
+into OpenCode's private custom-provider config automatically.
 
 Quick type-check without installing:
 

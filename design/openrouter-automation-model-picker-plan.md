@@ -1,4 +1,4 @@
-# OpenRouter model picker for OpenCode automations
+# OpenRouter model picker for OpenCode Settings and automations
 
 ## Outcome
 
@@ -96,7 +96,7 @@ flowchart LR
 
 | ID | Assertion | Evidence |
 |---|---|---|
-| MOD-01 | A successful OpenRouter response produces only unique tool-capable text-output models and preserves name, context, modalities, and pricing metadata. | deterministic catalog unit fixture |
+| MOD-01 | A successful OpenRouter response produces only unique tool-capable text-output models and preserves name, context, provider output limit, modalities, and pricing metadata. | deterministic catalog unit fixture plus generated OpenCode config inspection |
 | MOD-02 | Network/API failure returns cached models; no cache returns the configured/manual default without losing the ability to create a job. | offline/corrupt-cache unit cases |
 | MOD-03 | The cache contains no API key or authorization header. | canary scan |
 | JOB-15 | A new OpenCode job persists its exact model; changing the global default does not mutate it after reopen. | SQLite round-trip and migration tests |
@@ -110,4 +110,4 @@ Release gate: compile the release and QA variants, run the complete unit/live re
 
 **Rendered and verified:** `design/openrouter-automation-model-picker-plan.html` was rendered at 1440×3600 and inspected in `design/openrouter-automation-model-picker-plan.png`. All three diagrams rendered, every edge lands on a declared node, current/target/delta remain visually distinct, and no label clips or overlaps.
 
-**Implemented and verified:** the 144-capability signed-app E2E gate passed all 22 high-level checks, including distinct concurrent outbound model IDs, relaunch persistence, credential canary containment, and Codex rollback. The focused signed visual retest then verified the final dark dropdown rendering in `design/openrouter-automation-model-picker-ui.png`; prompt, runtime, resolved model, context/pricing metadata, trigger, interval, budget, and live-catalog status are all visible without clipping.
+**Implemented and verified:** the 144-capability signed-app E2E gate now passes 23 high-level checks, including distinct concurrent outbound model IDs, relaunch persistence, credential canary containment, Codex rollback, and both catalog-backed picker surfaces. Settings exposes the default OpenCode model and daily budget, while context/output limits are catalog metadata projected into OpenCode rather than user-entered knobs. The automation editor uses a 470-point model field and 240-point fixed dropdowns, so model and trigger choices remain usable without truncation.

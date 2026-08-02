@@ -4,6 +4,7 @@ struct OpenRouterModel: Codable, Equatable {
     let id: String
     let name: String
     let contextLength: Int?
+    let maxCompletionTokens: Int?
     let inputModalities: [String]
     let outputModalities: [String]
     let promptPrice: String?
@@ -13,6 +14,18 @@ struct OpenRouterModel: Codable, Equatable {
     var supportsTools: Bool { supportedParameters.contains("tools") }
     var supportsImages: Bool { inputModalities.contains("image") }
     var hasTextOutput: Bool { outputModalities.contains("text") }
+
+    /// OpenCode needs these limits for context accounting because Voice Flow
+    /// presents OpenRouter through a private custom provider. Catalog values
+    /// win; conservative fallbacks keep offline/manual IDs usable.
+    var openCodeContextLimit: Int {
+        min(max(contextLength ?? 128_000, 4_096), 2_000_000)
+    }
+
+    var openCodeOutputLimit: Int {
+        let providerLimit = maxCompletionTokens ?? min(openCodeContextLimit, 32_000)
+        return min(max(providerLimit, 256), min(openCodeContextLimit, 128_000))
+    }
 
     var displayLabel: String {
         name == id ? id : "\(name) — \(id)"
@@ -24,6 +37,7 @@ struct OpenRouterModel: Codable, Equatable {
             let formatter = NumberFormatter()
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.numberStyle = .decimal
+            formatter.usesGroupingSeparator = true
             parts.append("\(formatter.string(from: NSNumber(value: contextLength)) ?? String(contextLength)) context")
         }
         parts.append(supportsImages ? "text + images" : "text")
@@ -36,7 +50,7 @@ struct OpenRouterModel: Codable, Equatable {
 
     static func fallback(id: String) -> OpenRouterModel {
         OpenRouterModel(
-            id: id, name: id, contextLength: nil,
+            id: id, name: id, contextLength: nil, maxCompletionTokens: nil,
             inputModalities: ["text", "image"], outputModalities: ["text"],
             promptPrice: nil, completionPrice: nil,
             supportedParameters: ["tools"])
@@ -114,16 +128,28 @@ final class OpenRouterModelCatalog {
                 let completion: String?
             }
 
+            struct TopProvider: Decodable {
+                let contextLength: Int?
+                let maxCompletionTokens: Int?
+
+                enum CodingKeys: String, CodingKey {
+                    case contextLength = "context_length"
+                    case maxCompletionTokens = "max_completion_tokens"
+                }
+            }
+
             let id: String
             let name: String?
             let contextLength: Int?
             let architecture: Architecture?
             let pricing: Pricing?
+            let topProvider: TopProvider?
             let supportedParameters: [String]?
 
             enum CodingKeys: String, CodingKey {
                 case id, name, architecture, pricing
                 case contextLength = "context_length"
+                case topProvider = "top_provider"
                 case supportedParameters = "supported_parameters"
             }
         }
@@ -191,7 +217,8 @@ final class OpenRouterModelCatalog {
             return OpenRouterModel(
                 id: id,
                 name: item.name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? id,
-                contextLength: item.contextLength,
+                contextLength: item.topProvider?.contextLength ?? item.contextLength,
+                maxCompletionTokens: item.topProvider?.maxCompletionTokens,
                 inputModalities: item.architecture?.inputModalities ?? ["text"],
                 outputModalities: outputs,
                 promptPrice: item.pricing?.prompt,

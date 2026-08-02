@@ -306,6 +306,19 @@ actor OpenCodeSupervisor: OpenCodeServing {
             throw OpenCodeSupervisorError.portUnavailable
         }
 
+        let credentialSnapshot = ModelGatewayCredentials.shared.snapshot()
+        let allowedModels = credentialSnapshot.allowedModels
+        let refreshedCatalog: OpenRouterModelCatalogResult
+        if allowedModels.isEmpty {
+            refreshedCatalog = OpenRouterModelCatalogResult(
+                models: [], source: .fallback, fetchedAt: nil, warning: nil)
+        } else {
+            refreshedCatalog = await OpenRouterModelCatalog.shared.refresh(
+                baseURL: credentialSnapshot.upstreamBaseURL,
+                apiKey: credentialSnapshot.apiKey,
+                fallbackIDs: allowedModels)
+        }
+
         let username = "voice-flow"
         let password = try Self.randomSecret()
         let gateway = ModelGatewayServer()
@@ -327,14 +340,12 @@ actor OpenCodeSupervisor: OpenCodeServing {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
 
-        let allowedModels = ModelGatewayCredentials.shared.snapshot().allowedModels
         // Custom OpenAI-compatible models default to text-only in OpenCode's
         // v1 API unless their input modalities are declared explicitly. Voice
         // Flow screenshots are JPEG data URLs, so advertise the capability in
         // the generated, process-private provider catalog.
-        let catalog = Dictionary(uniqueKeysWithValues: OpenRouterModelCatalog.shared
-            .cachedModels(including: allowedModels)
-            .map { ($0.id, $0) })
+        let catalog = Dictionary(uniqueKeysWithValues:
+            refreshedCatalog.models.map { ($0.id, $0) })
         let models = Dictionary(uniqueKeysWithValues: allowedModels.map { id in
             let model = catalog[id] ?? .fallback(id: id)
             return (id, [
@@ -342,6 +353,10 @@ actor OpenCodeSupervisor: OpenCodeServing {
                 "modalities": [
                     "input": model.supportsImages ? ["text", "image"] : ["text"],
                     "output": ["text"],
+                ],
+                "limit": [
+                    "context": model.openCodeContextLimit,
+                    "output": model.openCodeOutputLimit,
                 ],
             ] as [String: Any])
         })

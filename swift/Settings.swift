@@ -27,8 +27,6 @@ final class SettingsStore: ObservableObject {
     @Published var agentModel: String { didSet { commit() } }
     @Published var agentBaseURL: String { didSet { commit() } }
     @Published var agentDailyBudgetUSD: Double { didSet { commit() } }
-    @Published var agentMaxOutputTokens: Double { didSet { commit() } }
-    @Published var agentRequestTimeoutSeconds: Double { didSet { commit() } }
     @Published var agentBackend: String { didSet { commit() } }
     @Published var assistantWakeEnabled: Bool { didSet { commit() } }
     @Published var assistantWakeWord: String { didSet { commit() } }
@@ -72,8 +70,6 @@ final class SettingsStore: ObservableObject {
         agentModel = s.agentModel
         agentBaseURL = s.agentBaseURL
         agentDailyBudgetUSD = s.agentDailyBudgetUSD
-        agentMaxOutputTokens = Double(s.agentMaxOutputTokens)
-        agentRequestTimeoutSeconds = Double(s.agentRequestTimeoutSeconds)
         agentBackend = s.agentBackend
         assistantWakeEnabled = s.assistantWakeEnabled
         assistantWakeWord = s.assistantWakeWord
@@ -97,6 +93,17 @@ final class SettingsStore: ObservableObject {
 
     var needsOpenAIKey: Bool { provider == .openai && !hasOpenAIKey }
 
+    func reloadAssistantSettings() {
+        loaded = false
+        let settings = UserSettings.shared
+        agentModel = settings.agentModel
+        agentBaseURL = settings.agentBaseURL
+        agentDailyBudgetUSD = settings.agentDailyBudgetUSD
+        agentBackend = settings.agentBackend
+        hasAgentKey = KeychainStore.shared.hasAgentAPIKey
+        loaded = true
+    }
+
     private func commit() {
         guard loaded else { return }
         let s = UserSettings.shared
@@ -117,8 +124,6 @@ final class SettingsStore: ObservableObject {
         let url = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         s.agentBaseURL = url.isEmpty ? DefaultAgentBaseURL : url
         s.agentDailyBudgetUSD = min(max(agentDailyBudgetUSD, 0.25), 500)
-        s.agentMaxOutputTokens = min(max(Int(agentMaxOutputTokens), 256), 128_000)
-        s.agentRequestTimeoutSeconds = min(max(Int(agentRequestTimeoutSeconds), 30), 3_600)
         s.agentBackend = agentBackend == AgentBackendOpenCode
             ? AgentBackendOpenCode : AgentBackendCodex
         s.assistantWakeEnabled = assistantWakeEnabled
@@ -491,6 +496,9 @@ private struct VoiceSettingsView: View {
 private struct AssistantSettingsView: View {
     @ObservedObject var store: SettingsStore
     @State private var openCodeStatus = "Starts on demand"
+    @State private var modelCatalog = OpenRouterModelCatalogResult(
+        models: [], source: .fallback, fetchedAt: nil, warning: nil)
+    @State private var refreshingModels = false
 
     private var codexStatus: String {
         guard CodexExecBackend.findBinary() != nil else { return "Not installed" }
@@ -500,6 +508,17 @@ private struct AssistantSettingsView: View {
     private var displayedWakeWord: String {
         let word = store.assistantWakeWord.trimmingCharacters(in: .whitespacesAndNewlines)
         return word.isEmpty ? DefaultAssistantWakeWord : word
+    }
+
+    private var pickerModels: [OpenRouterModel] {
+        if modelCatalog.models.contains(where: { $0.id == store.agentModel }) {
+            return modelCatalog.models
+        }
+        return modelCatalog.models + [.fallback(id: store.agentModel)]
+    }
+
+    private var selectedModelDetail: String {
+        pickerModels.first(where: { $0.id == store.agentModel })?.detail ?? ""
     }
 
     var body: some View {
@@ -561,13 +580,38 @@ private struct AssistantSettingsView: View {
 
             Section {
                 LabeledContent {
-                    TextField("", text: $store.agentModel, prompt: Text(DefaultAgentModel))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(minWidth: 260)
-                        .multilineTextAlignment(.trailing)
+                    VStack(alignment: .trailing, spacing: 5) {
+                        OpenRouterModelPicker(
+                            selection: $store.agentModel,
+                            models: pickerModels)
+                            .frame(minWidth: 360, minHeight: 26)
+                        HStack(spacing: 8) {
+                            Text(selectedModelDetail)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 8)
+                            if refreshingModels {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Button {
+                                    Task { await refreshOpenRouterModels() }
+                                } label: {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Refresh OpenRouter models")
+                                .accessibilityLabel("Refresh OpenRouter models")
+                            }
+                        }
+                        .font(.caption)
+                        Text(modelCatalog.statusText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 } label: {
-                    SettingRowLabel(title: "Model",
-                                    subtitle: "Any OpenRouter model that supports images and tools")
+                    SettingRowLabel(title: "OpenCode model",
+                                    subtitle: "Default for new OpenCode conversations")
                 }
                 LabeledContent {
                     TextField("", value: $store.agentDailyBudgetUSD,
@@ -580,28 +624,10 @@ private struct AssistantSettingsView: View {
                     SettingRowLabel(title: "Daily budget",
                                     subtitle: "Voice Flow stops new OpenCode requests at this total")
                 }
-                LabeledContent {
-                    TextField("", value: $store.agentMaxOutputTokens, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 100)
-                        .multilineTextAlignment(.trailing)
-                        .accessibilityLabel("Maximum output tokens per agent request")
-                } label: {
-                    SettingRowLabel(title: "Output limit")
-                }
-                LabeledContent {
-                    TextField("", value: $store.agentRequestTimeoutSeconds, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 100)
-                        .multilineTextAlignment(.trailing)
-                        .accessibilityLabel("Agent request timeout in seconds")
-                } label: {
-                    SettingRowLabel(title: "Request timeout")
-                }
             } header: {
                 Text("Intelligence")
             } footer: {
-                Text("Budget accounting is conservative when a provider omits cost; changing these values affects new requests.")
+                Text("Voice Flow reads context and output limits from OpenRouter and supplies them to OpenCode automatically. Automations pin their own model; the daily budget remains your cost guardrail.")
             }
 
             Section {
@@ -650,7 +676,10 @@ private struct AssistantSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .task { await refreshOpenCodeStatus() }
+        .task {
+            await refreshOpenCodeStatus()
+            await refreshOpenRouterModels()
+        }
     }
 
     @MainActor
@@ -665,6 +694,19 @@ private struct AssistantSettingsView: View {
         case .versionMismatch: openCodeStatus = "Version mismatch\(version)"
         case .stopped: openCodeStatus = "Ready · starts on demand"
         }
+    }
+
+    @MainActor
+    private func refreshOpenRouterModels() async {
+        refreshingModels = true
+        defer { refreshingModels = false }
+        let configured = store.agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL = URL(string: configured.isEmpty ? DefaultAgentBaseURL : configured)
+            ?? URL(string: DefaultAgentBaseURL)!
+        modelCatalog = await OpenRouterModelCatalog.shared.refresh(
+            baseURL: baseURL,
+            apiKey: KeychainStore.shared.loadAgentAPIKey(),
+            fallbackIDs: [store.agentModel])
     }
 }
 
@@ -915,6 +957,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    func prepareForPresentation() {
+        store.reloadAssistantSettings()
+    }
+
     private func addTab<V: View>(_ label: String, symbol: String, height: CGFloat, view: V) {
         let hosting = NSHostingController(rootView: view.frame(width: 680))
         hosting.preferredContentSize = NSSize(width: 680, height: height)
@@ -929,6 +975,74 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         onWindowClosed?()
         return false
     }
+
+#if VOICE_FLOW_QA
+    var qaAssistantVisible: Bool {
+        window?.isVisible == true && tabController.selectedTabViewItemIndex == 2
+    }
+
+    var qaAssistantState: [String: Any] {
+        guard let content = window?.contentView else { return [:] }
+        let views = qaDescendants(of: content)
+        let combo = views.compactMap { $0 as? OpenRouterModelComboBox }.first
+        return [
+            "model_accessibility_label": combo?.accessibilityLabel() ?? "",
+            "model_text": combo?.stringValue ?? "",
+            "model_count": combo?.allModels.count ?? 0,
+            "model_width": Int(combo?.bounds.width ?? 0),
+            "default_model": UserSettings.shared.agentModel,
+            "visible_text": views.compactMap { ($0 as? NSTextField)?.stringValue },
+        ]
+    }
+
+    func qaShowAssistant() {
+        prepareForPresentation()
+        tabController.selectedTabViewItemIndex = 2
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+        window?.contentView?.layoutSubtreeIfNeeded()
+    }
+
+    func qaClose() { window?.orderOut(nil) }
+
+    @discardableResult
+    func qaSelectModel(id: String) -> Bool {
+        guard let content = window?.contentView,
+              let combo = qaDescendants(of: content)
+                .compactMap({ $0 as? OpenRouterModelComboBox }).first else { return false }
+        return combo.selectModel(id: id)
+    }
+
+    func qaSnapshot() throws -> (path: String, width: Int, height: Int) {
+        guard let view = window?.contentView else {
+            throw NSError(
+                domain: "VoiceFlowQA", code: 41,
+                userInfo: [NSLocalizedDescriptionKey: "Settings content view is unavailable."])
+        }
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
+        let bounds = view.bounds
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: bounds) else {
+            throw NSError(
+                domain: "VoiceFlowQA", code: 42,
+                userInfo: [NSLocalizedDescriptionKey: "Settings bitmap allocation failed."])
+        }
+        view.cacheDisplay(in: bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw NSError(
+                domain: "VoiceFlowQA", code: 43,
+                userInfo: [NSLocalizedDescriptionKey: "Settings PNG encoding failed."])
+        }
+        let url = VoiceFlowPaths.shared.directory("qa-artifacts")
+            .appendingPathComponent("settings-opencode-model-picker.png")
+        try png.write(to: url, options: .atomic)
+        return (url.path, bitmap.pixelsWide, bitmap.pixelsHigh)
+    }
+
+    private func qaDescendants(of view: NSView) -> [NSView] {
+        [view] + view.subviews.flatMap(qaDescendants(of:))
+    }
+#endif
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

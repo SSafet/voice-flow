@@ -135,7 +135,7 @@
     {"id":"JOB-12","area":"jobs","name":"Run three isolated agents without process, text, or tool leakage","kind":"new","risk":"critical","tests":["soak:three_agents"]},
     {"id":"JOB-13","area":"jobs","name":"Persist an exact OpenRouter model per OpenCode automation across default changes and relaunch","kind":"new","risk":"critical","tests":["contract:job_model_pin","e2e:job_model_pin"]},
 
-    {"id":"MOD-01","area":"models","name":"Refresh and cache the tool-capable text-output OpenRouter model catalog with offline fallback","kind":"new","risk":"critical","tests":["contract:model_catalog","tests/openrouter_models/main.swift"]},
+    {"id":"MOD-01","area":"models","name":"Refresh and cache OpenRouter model capabilities, prices, context, and output limits with offline fallback","kind":"new","risk":"critical","tests":["contract:model_catalog","tests/openrouter_models/main.swift"]},
     {"id":"MOD-02","area":"models","name":"Route concurrently scheduled OpenCode jobs through their distinct pinned models","kind":"new","risk":"critical","tests":["e2e:job_model_pin"]},
 
     {"id":"SEC-01","area":"security","name":"Bind embedded runtime and QA services to loopback only","kind":"new","risk":"critical","tests":["security:loopback_bind"]},
@@ -161,6 +161,6 @@
     {"id":"UI-06","area":"ui","name":"Show queued, running, blocked, failed, and completed agent jobs","kind":"new","risk":"high","tests":["visual:job_status"]},
     {"id":"UI-07","area":"ui","name":"Present legacy conversation migration without transcript loss or duplicate scaffolds","kind":"new","risk":"high","tests":["e2e:migration_presentation"]},
     {"id":"UI-08","area":"ui","name":"Expose keyboard navigation and accessibility labels for every new control","kind":"new","risk":"high","tests":["e2e:accessibility_labels"]},
-    {"id":"UI-09","area":"ui","name":"Search the current OpenRouter catalog and pin a model while creating an OpenCode automation","kind":"new","risk":"high","tests":["visual:automation_model_picker","e2e:accessibility_labels"]}
+    {"id":"UI-09","area":"ui","name":"Search the current OpenRouter catalog in Settings and while pinning an OpenCode automation model","kind":"new","risk":"high","tests":["visual:automation_model_picker","visual:settings_model_picker","e2e:accessibility_labels"]}
   ]
 }

@@ -1028,6 +1028,13 @@ class SignedAppGate:
         wait_for("double-select speech stop", lambda: (lambda value:
             value if value["phase"] not in ("generating", "playing") else None
         )(self.state()["tts"]), timeout=8)
+        # Barge-in may collapse the grown surface as part of recording focus.
+        # Re-open the same session before testing its explicit speaker button.
+        if self.state()["pill"]["mode"] != "grown":
+            self.qa("POST", "/__qa/mcp/select", {"session_id": session_a})
+            wait_for("regrown MCP push stack", lambda: (lambda value:
+                value if value["mode"] == "grown" else None
+            )(self.state()["pill"]), timeout=5)
         self.qa("POST", "/__qa/pill/action", {"action": "speaker"},
                 expect_status=202)
         wait_for("grown speaker read aloud", lambda: (lambda value:
@@ -1411,7 +1418,45 @@ class SignedAppGate:
                "Agents panel snapshot is blank or visually degenerate")
 
         self.record("signed_agents_panel_visual")
+        self.verify_settings_model_picker()
         self.verify_automation_model_picker()
+
+    def verify_settings_model_picker(self) -> None:
+        self.qa("POST", "/__qa/settings/assistant", {"action": "open"}, expect_status=202)
+
+        def loaded_settings() -> dict[str, Any] | None:
+            value = self.state()
+            editor = value.get("settings_assistant", {})
+            return value if (value.get("settings_assistant_visible")
+                             and editor.get("model_count", 0) >= 2
+                             and editor.get("model_width", 0) >= 350) else None
+
+        state = wait_for("Assistant Settings model picker", loaded_settings, timeout=15)
+        editor = state["settings_assistant"]
+        expect(editor["model_accessibility_label"] == "Default OpenCode model",
+               f"Settings model picker lacks its accessibility label: {editor}")
+        self.qa("POST", "/__qa/settings/assistant", {
+            "action": "select_model", "model_id": "test/model-fast",
+        })
+        wait_for(
+            "Settings model selection",
+            lambda: (lambda value: value if value.get("settings_assistant", {}).get(
+                "default_model") == "test/model-fast" else None)(self.state()),
+        )
+        result = self.qa("POST", "/__qa/settings/snapshot", {})
+        source = Path(result["path"])
+        screenshot = self.artifacts / "settings-opencode-model-picker.png"
+        shutil.copyfile(source, screenshot)
+        expect(result["width"] >= 650 and result["height"] >= 450,
+               f"Assistant Settings rendered at unexpected size {result}")
+        expect(screenshot.stat().st_size > 10_000
+               and png_channel_range(screenshot) >= 32,
+               "Assistant Settings model-picker snapshot was blank or degenerate")
+        self.qa("POST", "/__qa/settings/assistant", {
+            "action": "select_model", "model_id": "test/model",
+        })
+        self.qa("POST", "/__qa/settings/assistant", {"action": "close"}, expect_status=202)
+        self.record("signed_settings_model_picker_visual")
 
     def verify_automation_model_picker(self) -> None:
         self.qa("POST", "/__qa/automation/editor", {"action": "open"}, expect_status=202)

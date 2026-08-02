@@ -686,8 +686,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let configured = UserSettings.shared.agentBaseURL
             let baseURL = URL(string: configured) ?? URL(string: DefaultAgentBaseURL)!
             let globalModel = UserSettings.shared.agentModel
-            var allowed = Set(OpenRouterModelCatalog.shared.cachedModels(
-                including: [globalModel]).map(\.id))
+            let catalogModels = OpenRouterModelCatalog.shared.cachedModels(
+                including: [globalModel])
+            var allowed = Set(catalogModels.map(\.id))
             if let store = self?.agentJobStore,
                let jobs = try? store.jobs(limit: 500) {
                 allowed.formUnion(jobs.compactMap(\.modelID))
@@ -696,8 +697,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 apiKey: KeychainStore.shared.loadAgentAPIKey(),
                 upstreamBaseURL: baseURL,
                 allowedModels: allowed,
-                maxOutputTokens: UserSettings.shared.agentMaxOutputTokens,
-                requestTimeout: TimeInterval(UserSettings.shared.agentRequestTimeoutSeconds),
+                modelOutputTokenLimits: Dictionary(uniqueKeysWithValues:
+                    catalogModels.map { ($0.id, $0.openCodeOutputLimit) }),
                 dailyBudgetUSD: UserSettings.shared.agentDailyBudgetUSD)
         }
         AgentJobRuntimeConfiguration.shared.configure {
@@ -2993,6 +2994,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func showSettings() {
         showDock()
         chatPanel.hide()
+        settingsWindow.prepareForPresentation()
         settingsWindow.showWindow(nil)
         settingsWindow.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -3299,7 +3301,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.sync {
                     guard let editor = self.activeAgentJobEditor else { return }
                     editor.modelCombo.stringValue = query
-                    editor.controlTextDidChange(Notification(
+                    editor.modelCombo.controlTextDidChange(Notification(
                         name: NSControl.textDidChangeNotification,
                         object: editor.modelCombo))
                     accepted = true
@@ -3322,6 +3324,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let editor = self.activeAgentJobEditor else { return }
                 do {
                     let shot = try editor.qaSnapshot()
+                    response = .ok([
+                        "path": shot.path, "width": shot.width, "height": shot.height,
+                    ])
+                } catch {
+                    response = .error(500, error.localizedDescription)
+                }
+            }
+            return response
+        case ("POST", "/__qa/settings/assistant"):
+            let action = payload["action"] as? String ?? "open"
+            var response = LocalAPIResponse.error(400, "Unknown Settings action.")
+            DispatchQueue.main.sync {
+                switch action {
+                case "open":
+                    self.settingsWindow.qaShowAssistant()
+                    response = .accepted(["opening": true])
+                case "close":
+                    self.settingsWindow.qaClose()
+                    response = .accepted(["closing": true])
+                case "select_model":
+                    guard let id = payload["model_id"] as? String,
+                          self.settingsWindow.qaSelectModel(id: id) else {
+                        response = .error(400, "model_id is not in the Settings catalog.")
+                        return
+                    }
+                    response = .ok(["model_id": id])
+                default:
+                    break
+                }
+            }
+            return response
+        case ("POST", "/__qa/settings/snapshot"):
+            var response = LocalAPIResponse.error(409, "Assistant Settings is not visible.")
+            DispatchQueue.main.sync {
+                guard self.settingsWindow.qaAssistantVisible else { return }
+                do {
+                    let shot = try self.settingsWindow.qaSnapshot()
                     response = .ok([
                         "path": shot.path, "width": shot.width, "height": shot.height,
                     ])
@@ -3700,6 +3739,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     "trigger_title": editor.triggerPopUp.stringValue,
                     "model_text": editor.modelCombo.stringValue,
                 ] as [String: Any]
+            }
+            state["settings_assistant_visible"] = self.settingsWindow.qaAssistantVisible
+            if self.settingsWindow.qaAssistantVisible {
+                state["settings_assistant"] = self.settingsWindow.qaAssistantState
             }
             state["capture"] = [
                 "state": self.state.rawValue,
