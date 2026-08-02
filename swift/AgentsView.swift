@@ -28,7 +28,12 @@ struct AgentSessionRow {
     let name: String
     let preview: String      // newest push, one line ("asks: …" when waiting)
     let time: String         // the only timestamps in the whole panel
+    let updatedAt: Date
+    let owner: String
     let unread: Bool
+    let pendingAsk: Bool
+    let live: Bool
+    let archived: Bool
     /// Consumed thread kept as history (ticket #17) — tagged "completed".
     let completed: Bool
     /// Session died with the stack still active — tagged "ghost".
@@ -40,11 +45,26 @@ struct AgentJobRow {
     let name: String
     let preview: String
     let time: String
+    let updatedAt: Date
+    let assistantName: String
     let state: AgentJobState
     let runtime: AgentRuntimeKind
     let trigger: AgentJobTriggerKind
     let modelID: String?
     let prompt: String
+}
+
+struct AgentAssistantRow {
+    let slug: String
+    let name: String
+    let description: String
+    let isDefault: Bool
+    let conversationCount: Int
+    let automationCount: Int
+    let skillCount: Int
+    let attentionCount: Int
+    let running: Bool
+    let updatedAt: Date?
 }
 
 protocol AgentsDataSource: AnyObject {
@@ -59,6 +79,7 @@ protocol AgentsDataSource: AnyObject {
     func speakThread(_ sessionId: String)
     /// User marked the thread done — delete its stack, session, overlays.
     func completeThread(_ sessionId: String)
+    func agentAssistantRows() -> [AgentAssistantRow]
     func agentJobRows() -> [AgentJobRow]
     func runAgentJob(_ jobId: String)
     func cancelAgentJob(_ jobId: String)
@@ -72,16 +93,21 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     var onNewAssistant: (() -> Void)?
     var onNewAgentJob: (() -> Void)?
     var onOpenAssistantSession: ((String) -> Void)?
+    /// Preferred Agents content height. ChatPanel adds its shared chrome and
+    /// clamps the whole panel to its 520pt maximum.
+    var onPreferredHeightChanged: ((CGFloat) -> Void)?
     /// A concrete session row was chosen. ChatPanel/AppDelegate use this to
     /// align visible conversation focus with overlay/picker targeting.
     var onOpenSession: ((String) -> Void)?
 
     private enum Mode {
-        case list
+        case destination(AgentsDestination)
+        case search
         case thread(String)
         case job(String)
     }
-    private var mode: Mode = .list
+    private var mode: Mode = .destination(.now)
+    private var currentDestination: AgentsDestination = .now
 
     var openSessionId: String? {
         if case .thread(let id) = mode { return id }
@@ -90,6 +116,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     private var contentStack: NSView!          // flipped document view
     private var scrollView: NSScrollView!
+    private var navigationBar: NSView!
+    private var navigationButtons: [AgentsDestination: NSButton] = [:]
+    private var searchButton: NSButton!
+    private var searchField: NSTextField?
+    private var searchQuery = ""
     private var composerField: NSTextField?
     private var scrollObserver: NSObjectProtocol?
 
@@ -125,9 +156,15 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             self?.refreshHoverStatesForPointer()
         }
 
+        navigationBar = buildNavigationBar()
+        addSubview(navigationBar)
         addSubview(scrollView)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            navigationBar.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            navigationBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            navigationBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            navigationBar.heightAnchor.constraint(equalToConstant: 36),
+            scrollView.topAnchor.constraint(equalTo: navigationBar.bottomAnchor, constant: 2),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
@@ -135,14 +172,70 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         ])
     }
 
+    private func buildNavigationBar() -> NSView {
+        let bar = NSView()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.distribution = .fill
+        stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        bar.addSubview(stack)
+
+        for destination in AgentsDestination.allCases {
+            let button = NSButton(
+                title: destination.label, target: self,
+                action: #selector(destinationTapped(_:)))
+            button.isBordered = false
+            button.font = .systemFont(ofSize: 10.5, weight: .medium)
+            button.identifier = NSUserInterfaceItemIdentifier(destination.rawValue)
+            button.setAccessibilityLabel("Open \(destination.label)")
+            button.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            navigationButtons[destination] = button
+            stack.addArrangedSubview(button)
+        }
+
+        searchButton = NSButton(
+            image: NSImage(systemSymbolName: "magnifyingglass",
+                           accessibilityDescription: "Search agents") ?? NSImage(),
+            target: self, action: #selector(searchTapped))
+        searchButton.isBordered = false
+        searchButton.contentTintColor = Theme.text3
+        searchButton.toolTip = "Search assistants, automations, and threads"
+        searchButton.setAccessibilityLabel("Search agents")
+        searchButton.translatesAutoresizingMaskIntoConstraints = false
+        searchButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        stack.addArrangedSubview(searchButton)
+
+        let line = NSView()
+        line.wantsLayer = true
+        line.layer?.backgroundColor = Theme.border.cgColor
+        line.translatesAutoresizingMaskIntoConstraints = false
+        bar.addSubview(line)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: bar.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: line.topAnchor, constant: -2),
+            line.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            line.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            line.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+            line.heightAnchor.constraint(equalToConstant: 1),
+        ])
+        return bar
+    }
+
     // ── Public surface ──────────────────────────────────
 
     func showList() {
-        mode = .list
+        currentDestination = .now
+        mode = .destination(.now)
         rebuild()
     }
 
     func openThread(_ sessionId: String) {
+        currentDestination = .threads
         mode = .thread(sessionId)
         dataSource?.markThreadSeen(sessionId)
         rebuild()
@@ -157,11 +250,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             // thread — fall back to the list only when the session is gone.
             let known = dataSource?.agentSessionRows().contains { $0.id == sid } ?? false
             if !known, dataSource?.agentThread(for: sid).isEmpty ?? true {
-                mode = .list
+                mode = .destination(currentDestination)
             }
         } else if case .job(let id) = mode,
                   dataSource?.agentJobRows().contains(where: { $0.id == id }) != true {
-            mode = .list
+            mode = .destination(currentDestination)
         }
         let draft = composerField?.stringValue ?? ""
         let hadFocus = composerField.map { field in
@@ -177,8 +270,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func buildJob(_ jobId: String) {
         guard let dataSource,
               let job = dataSource.agentJobRows().first(where: { $0.id == jobId }) else {
-            mode = .list
-            buildList()
+            mode = .destination(.automations)
+            buildAutomations()
             return
         }
         var top = contentStack.topAnchor
@@ -272,9 +365,23 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         contentStack.subviews.forEach { $0.removeFromSuperview() }
         composerField = nil
         switch mode {
-        case .list: buildList()
+        case .destination(let destination): buildDestination(destination)
+        case .search: buildSearch()
         case .thread(let sid): buildThread(sid)
         case .job(let id): buildJob(id)
+        }
+        styleNavigation()
+        let preferredHeight: CGFloat
+        if case .destination(.now) = mode {
+            let snapshot = nowSnapshot()
+            let rows = snapshot.needsYou.count + snapshot.running.count
+            let sections = (snapshot.needsYou.isEmpty ? 0 : 1) + (snapshot.running.isEmpty ? 0 : 1)
+            preferredHeight = rows == 0 ? 126 : min(420, 64 + CGFloat(rows * 48 + sections * 28))
+        } else {
+            preferredHeight = 420
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.onPreferredHeightChanged?(preferredHeight)
         }
         DispatchQueue.main.async { [weak self] in self?.refreshHoverStatesForPointer() }
     }
@@ -297,44 +404,303 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
     }
 
-    private func buildList() {
+    private func buildDestination(_ destination: AgentsDestination) {
+        currentDestination = destination
+        switch destination {
+        case .now: buildNow()
+        case .assistants: buildAssistants()
+        case .automations: buildAutomations()
+        case .threads: buildThreads()
+        }
+    }
+
+    private func styleNavigation() {
+        let threads = dataSource?.agentSessionRows() ?? []
+        let unreadThreads = threads.filter { $0.unread && !$0.archived }.count
+        let attention = nowSnapshot().attentionCount
+        for destination in AgentsDestination.allCases {
+            guard let button = navigationButtons[destination] else { continue }
+            let count: Int
+            switch destination {
+            case .now: count = attention
+            case .threads: count = unreadThreads
+            case .assistants, .automations: count = 0
+            }
+            let title = count > 0 ? "\(destination.label)  \(count)" : destination.label
+            let selected = destination == currentDestination
+            let attributed = NSMutableAttributedString(string: title, attributes: [
+                .font: NSFont.systemFont(ofSize: 10.5, weight: selected ? .semibold : .medium),
+                .foregroundColor: selected ? Theme.text : Theme.text3,
+            ])
+            if selected {
+                attributed.addAttributes([
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                    .underlineColor: Theme.accent,
+                ], range: NSRange(location: 0, length: title.count))
+            } else if count > 0 {
+                attributed.addAttribute(
+                    .foregroundColor, value: Theme.accent,
+                    range: NSRange(location: destination.label.count + 2,
+                                   length: title.count - destination.label.count - 2))
+            }
+            button.attributedTitle = attributed
+        }
+        searchButton.contentTintColor = {
+            if case .search = mode { return Theme.accent }
+            return Theme.text3
+        }()
+    }
+
+    private func threadProjectionInputs() -> [AgentsThreadProjectionInput] {
+        (dataSource?.agentSessionRows() ?? []).map { row in
+            AgentsThreadProjectionInput(
+                id: AgentsThreadID(
+                    source: row.kind == .assistant ? .assistant : .mcp,
+                    value: row.id),
+                title: row.name, owner: row.owner, preview: row.preview,
+                updatedAt: row.updatedAt, unread: row.unread,
+                pendingAsk: row.pendingAsk, live: row.live,
+                archived: row.archived)
+        }
+    }
+
+    private func automationProjectionInputs() -> [AgentsAutomationProjectionInput] {
+        (dataSource?.agentJobRows() ?? []).compactMap { row in
+            guard let state = AgentsAutomationState(rawValue: row.state.rawValue) else { return nil }
+            return AgentsAutomationProjectionInput(
+                id: row.id, name: row.name, assistantName: row.assistantName,
+                updatedAt: row.updatedAt, state: state)
+        }
+    }
+
+    private func nowSnapshot() -> AgentsNowSnapshot {
+        AgentsNowProjection.snapshot(
+            threads: threadProjectionInputs(), automations: automationProjectionInputs())
+    }
+
+    private func buildNow() {
         var top = contentStack.topAnchor
+        let snapshot = nowSnapshot()
+        if snapshot.needsYou.isEmpty && snapshot.running.isEmpty {
+            let empty = NSTextField(wrappingLabelWithString: "All clear\nNothing needs you and no agent is running.")
+            empty.font = .systemFont(ofSize: 12.5, weight: .medium)
+            empty.textColor = Theme.text2
+            empty.alignment = .center
+            place(empty, below: &top, gap: 34)
+        } else {
+            if !snapshot.needsYou.isEmpty {
+                place(sectionHeader("NEEDS YOU", count: snapshot.needsYou.count), below: &top, gap: 8)
+                for item in snapshot.needsYou { place(makeNowRow(item), below: &top, gap: 0) }
+            }
+            if !snapshot.running.isEmpty {
+                place(sectionHeader("RUNNING NOW", count: snapshot.running.count), below: &top, gap: 14)
+                for item in snapshot.running { place(makeNowRow(item), below: &top, gap: 0) }
+            }
+        }
+        finishContent(top)
+    }
 
-        // Starting a fresh Assistant conversation is an explicit action;
-        // durable Assistant sessions then appear as normal selectable rows.
-        let assistantRow = makeRow(
-            leading: WaveformIconView(),
-            name: "new assistant", unread: false,
-            preview: "start a separate conversation", time: "")
-        assistantRow.rowAction = .newAssistant
-        place(assistantRow, below: &top, gap: 2)
-
-        let jobRow = makeRow(
-            leading: symbolIcon("clock.arrow.circlepath", description: "new automation"),
-            name: "new automation", unread: false,
-            preview: "run an assistant manually, on a schedule, or from an event", time: "")
-        jobRow.rowAction = .newJob
-        place(jobRow, below: &top, gap: 2)
-
-        for job in dataSource?.agentJobRows() ?? [] {
+    private func buildAssistants() {
+        var top = contentStack.topAnchor
+        let rows = dataSource?.agentAssistantRows() ?? []
+        place(sectionHeader("ASSISTANTS", count: rows.count), below: &top, gap: 8)
+        for assistant in rows {
+            let inventory = "\(assistant.conversationCount) conversations · \(assistant.automationCount) automations · \(assistant.skillCount) skills"
+            let state: String
+            if assistant.attentionCount > 0 { state = "\(assistant.attentionCount) waiting" }
+            else if assistant.running { state = "running" }
+            else if assistant.isDefault { state = "default" }
+            else { state = "" }
             let view = makeRow(
-                leading: jobStateIcon(job.state), name: job.name,
-                unread: job.state == .blocked || job.state == .failed,
-                preview: job.preview, time: job.time)
-            view.rowAction = .job(job.id)
-            place(view, below: &top, gap: 2)
+                leading: WaveformIconView(), name: assistant.name,
+                unread: assistant.attentionCount > 0,
+                preview: assistant.description.isEmpty ? inventory : "\(assistant.description) · \(inventory)",
+                time: state)
+            place(view, below: &top, gap: 0)
         }
+        if rows.isEmpty { place(emptyLabel("No assistants available"), below: &top, gap: 28) }
+        finishContent(top)
+    }
 
-        for row in dataSource?.agentSessionRows() ?? [] {
-            let view = makeRow(leading: leadingIcon(for: row), name: row.name,
-                               unread: row.unread, preview: row.preview, time: row.time)
-            view.rowAction = row.kind == .assistant ? .assistant(row.id) : .mcp(row.id)
-            place(view, below: &top, gap: 2)
+    private func buildAutomations() {
+        var top = contentStack.topAnchor
+        let create = makeRow(
+            leading: symbolIcon("plus", description: "new automation"),
+            name: "New automation", unread: false,
+            preview: "Run an assistant manually, on a schedule, or from an event", time: "")
+        create.rowAction = .newJob
+        place(create, below: &top, gap: 2)
+
+        let jobs = dataSource?.agentJobRows() ?? []
+        let grouped = AgentsAutomationProjection.grouped(automationProjectionInputs())
+        for group in AgentsAutomationGroup.allCases {
+            let ids = Set((grouped[group] ?? []).map(\.id))
+            let members = jobs.filter { ids.contains($0.id) }
+            guard !members.isEmpty else { continue }
+            place(sectionHeader(group.label.uppercased(), count: members.count), below: &top, gap: 12)
+            for job in members {
+                let view = makeRow(
+                    leading: jobStateIcon(job.state), name: job.name,
+                    unread: job.state == .blocked || job.state == .failed,
+                    preview: "\(job.assistantName) · \(job.preview)", time: job.time)
+                view.rowAction = .job(job.id)
+                place(view, below: &top, gap: 0)
+            }
         }
+        finishContent(top)
+    }
 
+    private func buildThreads() {
+        var top = contentStack.topAnchor
+        let create = makeRow(
+            leading: symbolIcon("plus", description: "new conversation"),
+            name: "New conversation", unread: false,
+            preview: "Start a separate Assistant conversation", time: "")
+        create.rowAction = .newAssistant
+        place(create, below: &top, gap: 2)
+
+        let rows = dataSource?.agentSessionRows() ?? []
+        let grouped = AgentsThreadProjection.grouped(threadProjectionInputs())
+        for group in AgentsThreadGroup.allCases {
+            let ids = Set((grouped[group] ?? []).map(\.id))
+            let members = rows.filter { row in
+                ids.contains(AgentsThreadID(
+                    source: row.kind == .assistant ? .assistant : .mcp,
+                    value: row.id))
+            }
+            guard !members.isEmpty else { continue }
+            place(sectionHeader(group.label.uppercased(), count: members.count), below: &top, gap: 12)
+            for row in members {
+                let view = makeRow(
+                    leading: leadingIcon(for: row), name: row.name,
+                    unread: row.unread || row.pendingAsk,
+                    preview: "\(row.owner) · \(row.preview)", time: row.time)
+                view.rowAction = row.kind == .assistant ? .assistant(row.id) : .mcp(row.id)
+                place(view, below: &top, gap: 0)
+            }
+        }
+        finishContent(top)
+    }
+
+    private func makeNowRow(_ item: AgentsNowItem) -> AgentListRowView {
+        let leading: NSView
+        switch item.objectID {
+        case .thread(let id):
+            if let row = dataSource?.agentSessionRows().first(where: { $0.id == id.value }) {
+                leading = leadingIcon(for: row)
+            } else {
+                leading = symbolIcon("text.bubble", description: "thread")
+            }
+        case .automation(let id):
+            let state = dataSource?.agentJobRows().first(where: { $0.id == id })?.state ?? .failed
+            leading = jobStateIcon(state)
+        case .assistant:
+            leading = WaveformIconView()
+        }
+        let view = makeRow(
+            leading: leading, name: item.title, unread: item.needsAttention,
+            preview: "\(item.owner) · \(item.summary)", time: "")
+        view.rowAction = .object(item.objectID)
+        return view
+    }
+
+    private func sectionHeader(_ title: String, count: Int) -> NSView {
+        let text = NSTextField(labelWithString: "\(title)  \(count)")
+        text.font = .systemFont(ofSize: 10.5, weight: .semibold)
+        text.textColor = Theme.text3
+        text.setAccessibilityLabel("\(title), \(count)")
+        return text
+    }
+
+    private func emptyLabel(_ value: String) -> NSView {
+        let text = NSTextField(labelWithString: value)
+        text.font = .systemFont(ofSize: 12)
+        text.textColor = Theme.text3
+        text.alignment = .center
+        return text
+    }
+
+    private func finishContent(_ top: NSLayoutYAxisAnchor) {
         let bottom = top.constraint(equalTo: contentStack.bottomAnchor, constant: -12)
         bottom.priority = .defaultLow
         bottom.isActive = true
+    }
+
+    private func buildSearch() {
+        var top = contentStack.topAnchor
+        let field = NSTextField()
+        field.placeholderString = "Search assistants, automations, and threads"
+        field.stringValue = searchQuery
+        field.font = .systemFont(ofSize: 12.5)
+        field.textColor = Theme.text
+        field.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10)
+        field.isBezeled = false
+        field.focusRingType = .none
+        field.wantsLayer = true
+        field.layer?.cornerRadius = 8
+        field.delegate = self
+        field.setAccessibilityLabel("Search assistants, automations, and threads")
+        field.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        searchField = field
+        place(field, below: &top, gap: 8)
+
+        let documents = searchDocuments()
+        if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let hint = emptyLabel("Type to search every Agents destination")
+            place(hint, below: &top, gap: 24)
+        } else {
+            let results = AgentsSearchIndex.search(searchQuery, in: documents)
+            if results.isEmpty {
+                place(emptyLabel("No results for “\(searchQuery)”"), below: &top, gap: 24)
+            } else {
+                for result in results {
+                    let icon: NSView
+                    switch result.objectID {
+                    case .assistant: icon = WaveformIconView()
+                    case .automation: icon = symbolIcon("clock.arrow.circlepath", description: "automation")
+                    case .thread(let id):
+                        if id.source == .assistant { icon = WaveformIconView() }
+                        else { icon = symbolIcon("text.bubble", description: "thread") }
+                    }
+                    let row = makeRow(
+                        leading: icon, name: result.primaryText, unread: false,
+                        preview: "\(result.destination.label) · \(result.secondaryText)", time: "")
+                    row.rowAction = .object(result.objectID)
+                    place(row, below: &top, gap: 0)
+                }
+            }
+        }
+        finishContent(top)
+        DispatchQueue.main.async { [weak self, weak field] in
+            guard let self, let field, case .search = self.mode else { return }
+            self.window?.makeFirstResponder(field)
+            field.currentEditor()?.selectedRange = NSRange(location: field.stringValue.count, length: 0)
+        }
+    }
+
+    private func searchDocuments() -> [AgentsSearchDocument] {
+        var documents: [AgentsSearchDocument] = []
+        for assistant in dataSource?.agentAssistantRows() ?? [] {
+            documents.append(AgentsSearchDocument(
+                objectID: .assistant(slug: assistant.slug), primaryText: assistant.name,
+                secondaryText: assistant.description, indexText: assistant.description,
+                updatedAt: assistant.updatedAt ?? .distantPast))
+        }
+        for job in dataSource?.agentJobRows() ?? [] {
+            documents.append(AgentsSearchDocument(
+                objectID: .automation(jobID: job.id), primaryText: job.name,
+                secondaryText: job.assistantName, indexText: job.prompt,
+                updatedAt: job.updatedAt))
+        }
+        for row in dataSource?.agentSessionRows() ?? [] {
+            documents.append(AgentsSearchDocument(
+                objectID: .thread(AgentsThreadID(
+                    source: row.kind == .assistant ? .assistant : .mcp,
+                    value: row.id)),
+                primaryText: row.name, secondaryText: row.owner,
+                indexText: row.preview, updatedAt: row.updatedAt))
+        }
+        return documents
     }
 
     /// The leading slot carries the session's state (design/agent-row-icons
@@ -429,8 +795,32 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             onOpenSession?(id)
             openThread(id)
         case .job(let id):
+            currentDestination = .automations
             mode = .job(id)
             rebuild()
+        case .object(let objectID):
+            open(objectID)
+        }
+    }
+
+    private func open(_ objectID: AgentsObjectID) {
+        switch objectID {
+        case .assistant:
+            currentDestination = .assistants
+            mode = .destination(.assistants)
+            rebuild()
+        case .automation(let id):
+            currentDestination = .automations
+            mode = .job(id)
+            rebuild()
+        case .thread(let id):
+            currentDestination = .threads
+            if id.source == .assistant {
+                onOpenAssistantSession?(id.value)
+            } else {
+                onOpenSession?(id.value)
+                openThread(id.value)
+            }
         }
     }
 
@@ -670,7 +1060,23 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     // ── Actions ─────────────────────────────────────────
 
-    @objc private func backTapped() { showList() }
+    @objc private func destinationTapped(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue,
+              let destination = AgentsDestination(rawValue: raw) else { return }
+        currentDestination = destination
+        mode = .destination(destination)
+        rebuild()
+    }
+
+    @objc private func searchTapped() {
+        mode = .search
+        rebuild()
+    }
+
+    @objc private func backTapped() {
+        mode = .destination(currentDestination)
+        rebuild()
+    }
 
     @objc private func runJobTapped(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue else { return }
@@ -698,7 +1104,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     @objc private func completeTapped(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue else { return }
         dataSource?.completeThread(id)
-        showList()
+        currentDestination = .threads
+        mode = .destination(.threads)
+        rebuild()
     }
 
     @objc private func composerSent(_ sender: NSTextField) { submit(sender) }
@@ -714,6 +1122,17 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
         submit(field)
         return true
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField, field === searchField else { return }
+        let value = field.stringValue
+        guard value != searchQuery else { return }
+        searchQuery = value
+        DispatchQueue.main.async { [weak self] in
+            guard let self, case .search = self.mode else { return }
+            self.rebuild()
+        }
     }
 
     @objc private func sendTapped(_ sender: NSButton) {
@@ -736,6 +1155,7 @@ private enum AgentListRowAction {
     case assistant(String)
     case mcp(String)
     case job(String)
+    case object(AgentsObjectID)
 }
 
 private final class AgentListRowView: HoverRowView {

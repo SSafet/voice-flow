@@ -44,7 +44,8 @@ final class ChatPanel {
     var onTTSStop: (() -> Void)?
 
     private let width: CGFloat = 400
-    private let height: CGFloat = 520
+    private let maxHeight: CGFloat = 520
+    private var height: CGFloat = 520
 
     private var panel: KeyablePanel!
     private var inboxTabButton: NSButton!
@@ -465,7 +466,11 @@ final class ChatPanel {
             panel.makeFirstResponder(inputField)
             scrollToBottom()
         }
-        if agentsList { agentsView.refresh() }
+        if agentsList {
+            agentsView.refresh()
+        } else {
+            setPreferredAgentsContentHeight(maxHeight - 100)
+        }
     }
 
     private func updateEmptyLabel() {
@@ -768,6 +773,9 @@ final class ChatPanel {
         agentsView.onNewAgentJob = { [weak self] in self?.onNewAgentJob?() }
         agentsView.onOpenAssistantSession = { [weak self] id in self?.onOpenAssistantSession?(id) }
         agentsView.onOpenSession = { [weak self] id in self?.onOpenSession?(id) }
+        agentsView.onPreferredHeightChanged = { [weak self] contentHeight in
+            self?.setPreferredAgentsContentHeight(contentHeight)
+        }
         ttsView = TTSView()
         ttsView.isHidden = true
         ttsView.setContentHuggingPriority(.defaultLow, for: .vertical)
@@ -807,6 +815,14 @@ final class ChatPanel {
         setControlAllowed(false)
         setSessionActive(false)
         selectTab(.agents)
+    }
+
+    private func setPreferredAgentsContentHeight(_ contentHeight: CGFloat) {
+        let desired = min(maxHeight, max(286, contentHeight + 100))
+        guard abs(desired - height) > 0.5 else { return }
+        height = desired
+        guard panel.isVisible else { return }
+        position()
     }
 
     /// Nav bar over the assistant thread: ‹ back, waveform + name centered,

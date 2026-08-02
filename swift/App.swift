@@ -4774,12 +4774,51 @@ extension AppDelegate: AgentsDataSource {
             if let next = job.nextRunAt, job.state == .queued {
                 preview += " · " + Self.pushTimeFormatter.string(from: next)
             }
+            let assistantName = AssistantsStore.shared.assistant(slug: job.assistantSlug)?.name
+                ?? job.assistantSlug
             return AgentJobRow(
                 id: job.id, name: title.isEmpty ? "automation" : title,
                 preview: preview,
                 time: Self.pushTimeFormatter.string(from: job.updatedAt),
+                updatedAt: job.updatedAt, assistantName: assistantName,
                 state: job.state, runtime: job.runtime,
                 trigger: job.trigger, modelID: job.modelID, prompt: job.prompt)
+        }
+    }
+
+    func agentAssistantRows() -> [AgentAssistantRow] {
+        let definitions = AssistantsStore.shared.assistants
+        let jobs = (try? agentJobStore?.jobs(limit: 500)) ?? []
+        let conversations = agent?.conversations ?? []
+        let baseSlug = AssistantsStore.shared.base?.slug
+        return definitions.map { assistant in
+            let ownedJobs = jobs.filter { $0.assistantSlug == assistant.slug }
+            // Conversations do not carry assistant ownership yet. Until the
+            // ownership migration lands, the deterministic legacy projection
+            // assigns them to the configured base Assistant only.
+            let ownedConversations = assistant.slug == baseSlug ? conversations : []
+            let latestConversation = ownedConversations.map(\.updatedAt).max()
+            let latestJob = ownedJobs.map(\.updatedAt).max()
+            let updatedAt = [latestConversation, latestJob].compactMap { $0 }.max()
+            return AgentAssistantRow(
+                slug: assistant.slug, name: assistant.name,
+                description: assistant.description,
+                isDefault: assistant.slug == baseSlug,
+                conversationCount: ownedConversations.filter {
+                    !$0.messages.isEmpty || $0.codexThreadId != nil || $0.turnState != .idle
+                }.count,
+                automationCount: ownedJobs.count,
+                skillCount: assistant.selectedSkills.count,
+                attentionCount: ownedJobs.filter { $0.state == .blocked || $0.state == .failed }.count,
+                running: ownedJobs.contains { $0.state == .running }
+                    || ownedConversations.contains { $0.turnState == .running },
+                updatedAt: updatedAt)
+        }.sorted { lhs, rhs in
+            if lhs.isDefault != rhs.isDefault { return lhs.isDefault }
+            if lhs.attentionCount != rhs.attentionCount { return lhs.attentionCount > rhs.attentionCount }
+            if lhs.running != rhs.running { return lhs.running }
+            if lhs.updatedAt != rhs.updatedAt { return (lhs.updatedAt ?? .distantPast) > (rhs.updatedAt ?? .distantPast) }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
     }
 
@@ -4828,7 +4867,12 @@ extension AppDelegate: AgentsDataSource {
                 name: conversation.title,
                 preview: preview,
                 time: Self.pushTimeFormatter.string(from: conversation.updatedAt),
-                unread: isActive && conversation.hasUnseenAssistantReply,
+                updatedAt: conversation.updatedAt,
+                owner: agent?.activeAssistant?.name ?? DefaultAssistantWakeWord,
+                unread: conversation.hasUnseenAssistantReply,
+                pendingAsk: false,
+                live: conversation.turnState == .running,
+                archived: false,
                 completed: false,
                 ghost: false)
         }
@@ -4877,7 +4921,12 @@ extension AppDelegate: AgentsDataSource {
                 name: session.label,
                 preview: preview,
                 time: newest.map { Self.pushTimeFormatter.string(from: $0.at) } ?? "",
+                updatedAt: newest?.at ?? .distantPast,
+                owner: session.label,
                 unread: queue.contains { !$0.seen },
+                pendingAsk: hasPendingAsk(for: session.id),
+                live: false,
+                archived: session.number == nil && !pickerIds.contains(session.id),
                 // A numberless, no-longer-eligible row IS a consumed thread —
                 // "completed"; a numberless ELIGIBLE row is just queued for
                 // a slot (ticket VF-48).
