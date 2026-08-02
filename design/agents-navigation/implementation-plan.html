@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Agents Mission Control — implementation plan</title>
+  <style>
+    :root { color-scheme: dark; --bg:#11110f; --panel:#1a1916; --line:#3b352d; --ink:#f2ede4; --muted:#a39788; --amber:#e0aa4a; --red:#df775f; --green:#84ba85; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:radial-gradient(circle at 50% 0,#272016 0,#11110f 36rem); color:var(--ink); font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif; }
+    main { width:min(1180px,calc(100vw - 48px)); margin:0 auto; padding:48px 0 80px; }
+    h1 { margin:0 0 8px; font-size:40px; letter-spacing:-1.4px; }
+    h2 { margin:52px 0 16px; font-size:22px; }
+    p { color:var(--muted); max-width:840px; }
+    .eyebrow { color:var(--amber); font-size:12px; font-weight:750; letter-spacing:.14em; text-transform:uppercase; }
+    .principles,.screens { display:grid; gap:12px; grid-template-columns:repeat(5,minmax(0,1fr)); }
+    .card,.diagram { border:1px solid var(--line); border-radius:16px; background:linear-gradient(180deg,rgba(35,32,27,.94),rgba(25,24,21,.96)); }
+    .principles .card { padding:16px; min-height:128px; }
+    .card strong { display:block; margin-bottom:7px; }
+    .card span { color:var(--muted); font-size:13px; }
+    .screens { grid-template-columns:repeat(4,minmax(0,1fr)); }
+    .screen { padding:18px; min-height:210px; }
+    .screen h3 { margin:0 0 14px; font-size:18px; }
+    .screen ul { margin:0; padding-left:18px; color:var(--muted); font-size:13px; }
+    .screen li+li { margin-top:8px; }
+    .badge { display:inline-block; min-width:20px; padding:2px 6px; margin-left:5px; border-radius:7px; background:#332819; color:var(--amber); text-align:center; font-size:12px; }
+    .diagram { padding:24px; overflow:hidden; }
+    .diagram.current { border-left:3px solid var(--red); }
+    .diagram.target { border-left:3px solid var(--green); }
+    .diagram.delta { border-left:3px solid var(--amber); }
+    .mermaid-host { width:100%; min-height:310px; display:grid; place-items:center; }
+    .matrix { display:grid; grid-template-columns:1.2fr 1fr 1.25fr; border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+    .matrix > div { padding:11px 14px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); }
+    .matrix > div:nth-child(3n) { border-right:0; }
+    .matrix > div:nth-last-child(-n+3) { border-bottom:0; }
+    .head { color:var(--amber); font-size:12px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; background:#201c16; }
+    .quiet { color:var(--muted); }
+    .footer { margin-top:48px; padding-top:20px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+    @media(max-width:900px){ .principles{grid-template-columns:repeat(2,1fr)} .screens{grid-template-columns:repeat(2,1fr)} }
+  </style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Voice Flow · design contract</div>
+  <h1>Agents Mission Control</h1>
+  <p>One compact shell, four canonical destinations, and a root that shows only exceptions and live work. Consequential actions happen in the object’s own context.</p>
+
+  <h2>Product philosophy</h2>
+  <section class="principles">
+    <article class="card"><strong>Orient first</strong><span>Needs-you and running state lead. Inventory waits in its destination.</span></article>
+    <article class="card"><strong>One object, one home</strong><span>Now and Search deep-link; they never fork behavior.</span></article>
+    <article class="card"><strong>State in words</strong><span>What, owner, state/progress, and time form one row grammar.</span></article>
+    <article class="card"><strong>Reversible first</strong><span>Archive and disable are routine. Delete is separate and explicit.</span></article>
+    <article class="card"><strong>Compact, not flat</strong><span>Hierarchy comes from routing, groups, and disclosure—not nested cards.</span></article>
+  </section>
+
+  <h2>Screen system</h2>
+  <section class="screens">
+    <article class="card screen"><h3>Now <span class="badge">2</span></h3><ul><li>Needs you</li><li>Running now</li><li>Rows navigate only</li><li>Adaptive sparse height</li></ul></article>
+    <article class="card screen"><h3>Assistants</h3><ul><li>Persistent identities</li><li>Overview · conversations</li><li>Memory & skills</li><li>Revision-safe configuration</li></ul></article>
+    <article class="card screen"><h3>Automations</h3><ul><li>Attention · active · ready · disabled</li><li>Dedicated owned thread</li><li>Run history</li><li>Stop run ≠ disable</li></ul></article>
+    <article class="card screen"><h3>Threads <span class="badge">3</span></h3><ul><li>Needs you · unread · live · recent</li><li>Unified shell, separate stores</li><li>Archive/restore</li><li>Explicit source-aware delete</li></ul></article>
+  </section>
+
+  <h2>Current</h2>
+  <section class="diagram current"><div class="mermaid-host" id="currentGraph"></div></section>
+
+  <h2>Target</h2>
+  <section class="diagram target"><div class="mermaid-host" id="targetGraph"></div></section>
+
+  <h2>Structural delta</h2>
+  <section class="diagram delta"><div class="mermaid-host" id="deltaGraph"></div></section>
+
+  <h2>Interaction invariants</h2>
+  <section class="matrix">
+    <div class="head">State</div><div class="head">Canonical home</div><div class="head">Guardrail</div>
+    <div>Pending ask</div><div>Threads · Needs you</div><div class="quiet">Open context before replying</div>
+    <div>Running automation</div><div>Automations · Active</div><div class="quiet">Stop current run; disable is separate</div>
+    <div>Unread thread</div><div>Threads · Unread</div><div class="quiet">List/search rendering never marks seen</div>
+    <div>Archived thread</div><div>Threads · Done</div><div class="quiet">Restore is routine; delete confirms</div>
+    <div>Assistant edit</div><div>Assistants · Configuration</div><div class="quiet">Revision conflict never overwrites silently</div>
+  </section>
+
+  <div class="footer">Implementation slices are migration-first, independently buildable, and committed before the next slice. Validation includes data-diff proof that navigation-only actions are read-only.</div>
+</main>
+
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+mermaid.initialize({startOnLoad:false,theme:"base",flowchart:{curve:"basis",htmlLabels:true,useMaxWidth:true},themeVariables:{background:"#1a1916",primaryColor:"#29251f",primaryTextColor:"#f2ede4",primaryBorderColor:"#665944",lineColor:"#d6a34b",secondaryColor:"#1d2a21",tertiaryColor:"#2c201c",clusterBkg:"#191816",clusterBorder:"#4a4136",fontFamily:"-apple-system,BlinkMacSystemFont,SF Pro Text,sans-serif"}});
+const graphs = [
+  ["currentGraph", String.raw`flowchart TD
+    P["ChatPanel fixed 400 × 520"] --> A["AgentsView: list / thread / job"]
+    A --> L["One mixed latest-first list"]
+    L --> J["AgentJobStore jobs"]
+    L --> H["AssistantHistoryStore conversations"]
+    L --> M["MCP registry + sessionPushes"]
+    A --> JD["Job detail"]
+    A --> TD["MCP thread detail"]
+    H --> AS["One global activeAssistant"]
+    J --> C["Creation reuses foreground conversation"]`],
+  ["targetGraph", String.raw`flowchart TD
+    FS["Assistant folders · atomic revisions"] --> VM["Navigation snapshot"]
+    HS["Assistant history · owner + archive"] --> VM
+    JS["Job store · name + run history"] --> VM
+    MCP["MCP adapter · pushes + archive + exact inbox"] --> VM
+    VM --> S["Agents shell + typed destination router"]
+    P["Adaptive 400 pt panel · 520 pt cap"] --> S
+    S --> N["Now · attention + running"]
+    S --> AD["Assistants"]
+    S --> AU["Automations"]
+    S --> T["Threads"]
+    S --> Q["Search · Command-K"]`],
+  ["deltaGraph", String.raw`flowchart LR
+    subgraph Keep
+      K1["Assistant folders"]
+      K2["History store"]
+      K3["Job store"]
+      K4["MCP push stacks"]
+      K5["Exact reply routing"]
+    end
+    subgraph Change
+      C1["Mixed list → router"]
+      C2["Fixed → adaptive height"]
+      C3["Complete deletes → archive"]
+      C4["Global → owned assistant"]
+      C5["Prompt title → job name"]
+    end
+    subgraph Add
+      A1["Assistant CRUD revisions"]
+      A2["Thread adapters"]
+      A3["Run history"]
+      A4["Typed search"]
+      A5["State classifiers"]
+      A6["Exact inbox mutation"]
+    end`]
+];
+for (let i=0;i<graphs.length;i++) {
+  const [id,source]=graphs[i];
+  const {svg}=await mermaid.render(`agents-plan-${i}`,source);
+  document.getElementById(id).innerHTML=svg;
+}
+</script>
+</body>
+</html>
