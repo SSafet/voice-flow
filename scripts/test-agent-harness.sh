@@ -96,6 +96,7 @@ compile_and_run assistant_wake swift/AssistantWake.swift tests/assistant_wake/ma
 compile_and_run capture_routing swift/CaptureRouting.swift tests/capture_routing/main.swift
 compile_and_run display_context swift/DisplayContext.swift tests/display_context/main.swift -framework Cocoa -framework CoreGraphics
 compile_and_run window_placement swift/WindowPlacement.swift tests/window_placement/main.swift -framework Cocoa
+compile_and_run agents_navigation swift/AgentsNavigation.swift tests/agents_navigation/main.swift
 compile_and_run capture_clipboard swift/CaptureClipboard.swift tests/capture_clipboard/main.swift -framework Cocoa
 compile_and_run capture_store swift/VoiceFlowPaths.swift swift/DisplayContext.swift \
     swift/ScreenCapture.swift swift/Capture.swift tests/capture_store/main.swift \

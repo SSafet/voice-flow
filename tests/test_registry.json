@@ -20,6 +20,10 @@
   },
   "tests": [
     {
+      "id": "tests/agents_navigation/main.swift",
+      "runner": "unit"
+    },
+    {
       "id": "contract:capture_bundle",
       "runner": "unit"
     },

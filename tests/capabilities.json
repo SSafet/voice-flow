@@ -161,6 +161,7 @@
     {"id":"UI-06","area":"ui","name":"Show queued, running, blocked, failed, and completed agent jobs","kind":"new","risk":"high","tests":["visual:job_status"]},
     {"id":"UI-07","area":"ui","name":"Present legacy conversation migration without transcript loss or duplicate scaffolds","kind":"new","risk":"high","tests":["e2e:migration_presentation"]},
     {"id":"UI-08","area":"ui","name":"Expose keyboard navigation and accessibility labels for every new control","kind":"new","risk":"high","tests":["e2e:accessibility_labels"]},
-    {"id":"UI-09","area":"ui","name":"Search the current OpenRouter catalog in Settings and while pinning an OpenCode automation model","kind":"new","risk":"high","tests":["tests/openrouter_model_picker/main.swift","visual:automation_model_picker","visual:settings_model_picker","e2e:accessibility_labels"]}
+    {"id":"UI-09","area":"ui","name":"Search the current OpenRouter catalog in Settings and while pinning an OpenCode automation model","kind":"new","risk":"high","tests":["tests/openrouter_model_picker/main.swift","visual:automation_model_picker","visual:settings_model_picker","e2e:accessibility_labels"]},
+    {"id":"UI-10","area":"ui","name":"Classify Mission Control threads and automations into typed destinations without ambiguous deep links","kind":"new","risk":"high","tests":["tests/agents_navigation/main.swift"]}
   ]
 }
