@@ -9,6 +9,7 @@ final class OpenRouterModelComboBox: NSComboBox,
     private(set) var allModels: [OpenRouterModel] = []
     private(set) var filteredModels: [OpenRouterModel] = []
     private(set) var committedModelID: String?
+    private var pendingPopupModelID: String?
 
     var onModelSelected: ((OpenRouterModel) -> Void)?
     var onQueryChanged: ((OpenRouterModel?) -> Void)?
@@ -93,24 +94,61 @@ final class OpenRouterModelComboBox: NSComboBox,
 
     func comboBoxSelectionDidChange(_ notification: Notification) {
         guard (notification.object as? NSComboBox) === self,
-              filteredModels.indices.contains(indexOfSelectedItem) else { return }
-        select(filteredModels[indexOfSelectedItem], notify: true)
+              let model = popupSelection() else { return }
+        pendingPopupModelID = model.id
+        commit(model, notify: true)
+    }
+
+    func comboBoxWillDismiss(_ notification: Notification) {
+        guard (notification.object as? NSComboBox) === self else { return }
+        let selectedID = pendingPopupModelID ?? committedModelID
+        pendingPopupModelID = nil
+
+        // AppKit still owns the popup's filtered row index while it is
+        // dismissing. Restoring the full data source synchronously causes that
+        // row to be reinterpreted against the original catalog.
+        DispatchQueue.main.async { [weak self] in
+            self?.restoreFullCatalog(selectedID: selectedID)
+        }
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard (notification.object as? NSComboBox) === self else { return }
+        let raw = stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let model = exactModel(for: raw) else { return }
+        commit(model, notify: true)
+        restoreFullCatalog(selectedID: model.id)
     }
 
     @discardableResult
     func selectModel(id: String, notify: Bool = true) -> Bool {
         guard let model = allModels.first(where: { $0.id == id }) else { return false }
-        select(model, notify: notify)
+        commit(model, notify: notify)
+        restoreFullCatalog(selectedID: model.id)
         return true
     }
 
-    private func select(_ model: OpenRouterModel, notify: Bool) {
+    private func commit(_ model: OpenRouterModel, notify: Bool) {
         committedModelID = model.id
         stringValue = model.displayLabel
-        filteredModels = allModels
-        noteNumberOfItemsChanged()
         onQueryChanged?(model)
         if notify { onModelSelected?(model) }
+    }
+
+    private func popupSelection() -> OpenRouterModel? {
+        let visibleValue = stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let exact = exactModel(for: visibleValue) { return exact }
+        guard filteredModels.indices.contains(indexOfSelectedItem) else { return nil }
+        return filteredModels[indexOfSelectedItem]
+    }
+
+    private func restoreFullCatalog(selectedID: String?) {
+        filteredModels = allModels
+        noteNumberOfItemsChanged()
+        if let selectedID,
+           let model = allModels.first(where: { $0.id == selectedID }) {
+            stringValue = model.displayLabel
+        }
     }
 
     private func exactModel(for value: String) -> OpenRouterModel? {

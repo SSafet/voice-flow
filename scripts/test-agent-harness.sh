@@ -130,6 +130,8 @@ compile_and_run agent_jobs swift/VoiceFlowPaths.swift swift/AssistantWake.swift 
     tests/agent_jobs/main.swift -lsqlite3
 compile_and_run openrouter_models swift/VoiceFlowPaths.swift swift/OpenRouterModels.swift \
     tests/openrouter_models/main.swift
+compile_and_run openrouter_model_picker swift/VoiceFlowPaths.swift swift/OpenRouterModels.swift \
+    swift/OpenRouterModelPicker.swift tests/openrouter_model_picker/main.swift -framework Cocoa
 compile_and_run agent_supervisor swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
     swift/AgentCapabilities.swift swift/AgentJobStore.swift swift/AgentSupervisor.swift \

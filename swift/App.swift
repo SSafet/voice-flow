@@ -1130,9 +1130,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             replyBubble.showTransient("Choose an OpenRouter model or type its exact provider/model ID", seconds: 7)
             return
         }
-        let triggerKinds: [AgentJobTriggerKind] = [.manual, .interval, .inbox, .capture, .watcher]
-        let selectedTrigger = triggerKinds[
-            min(max(editor.triggerPopUp.indexOfSelectedItem, 0), triggerKinds.count - 1)]
+        let selectedTrigger = editor.selectedTrigger
         let minutes = min(max(editor.intervalField.doubleValue, 1), 43_200)
         let dailyBudget = min(max(editor.budgetField.doubleValue, 0), 10_000)
         let now = Date()
@@ -3317,7 +3315,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return selected ? .ok(["model_id": modelID])
                     : .error(400, "model_id is not in the current picker catalog.")
             }
-            return .error(400, "action must be open, search, select_model, or close.")
+            if action == "select_runtime", let runtime = payload["runtime"] as? String {
+                var selected = false
+                DispatchQueue.main.sync {
+                    guard let editor = self.activeAgentJobEditor,
+                          let kind = AgentRuntimeKind(rawValue: runtime) else { return }
+                    editor.qaSetVisibleRuntime(kind.label)
+                    selected = true
+                }
+                return selected ? .ok(["runtime": runtime])
+                    : .error(400, "runtime must be codex or opencode.")
+            }
+            if action == "select_trigger", let trigger = payload["trigger"] as? String {
+                let labels = [
+                    "manual": "Manual", "interval": "Interval",
+                    "inbox": "Inbox message", "capture": "Capture completed",
+                    "watcher": "Watcher action",
+                ]
+                var selected = false
+                DispatchQueue.main.sync {
+                    guard let editor = self.activeAgentJobEditor,
+                          let label = labels[trigger] else { return }
+                    editor.qaSetVisibleTrigger(label)
+                    selected = true
+                }
+                return selected ? .ok(["trigger": trigger])
+                    : .error(400, "trigger is not supported.")
+            }
+            return .error(
+                400,
+                "action must be open, search, select_model, select_runtime, select_trigger, or close.")
         case ("POST", "/__qa/automation/editor_snapshot"):
             var response = LocalAPIResponse.error(409, "Automation editor is not visible.")
             DispatchQueue.main.sync {
@@ -3737,6 +3764,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     "matching_model_ids": editor.qaFilteredModelIDs,
                     "runtime_title": editor.runtimePopUp.stringValue,
                     "trigger_title": editor.triggerPopUp.stringValue,
+                    "selected_runtime": editor.selectedRuntime.rawValue,
+                    "selected_trigger": editor.selectedTrigger.rawValue,
+                    "model_enabled": editor.qaModelEnabled,
+                    "model_status": editor.qaModelStatus,
                     "model_text": editor.modelCombo.stringValue,
                 ] as [String: Any]
             }

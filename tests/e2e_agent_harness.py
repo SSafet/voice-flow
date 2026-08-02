@@ -1471,6 +1471,27 @@ class SignedAppGate:
                and editor_state["trigger_title"] == "Manual",
                f"automation popup selections are not visible: {editor_state}")
         self.qa("POST", "/__qa/automation/editor", {
+            "action": "select_runtime", "runtime": "codex",
+        })
+        codex_state = self.state()["automation_editor"]
+        expect(codex_state["selected_runtime"] == "codex"
+               and not codex_state["model_enabled"],
+               f"Codex automation selection did not disable its model picker: {codex_state}")
+        self.qa("POST", "/__qa/automation/editor", {
+            "action": "select_runtime", "runtime": "opencode",
+        })
+        opencode_state = self.state()["automation_editor"]
+        expect(opencode_state["selected_runtime"] == "opencode"
+               and opencode_state["model_enabled"]
+               and "Codex chooses" not in opencode_state["model_status"],
+               f"visible OpenCode selection did not enable its model picker: {opencode_state}")
+        self.qa("POST", "/__qa/automation/editor", {
+            "action": "select_trigger", "trigger": "capture",
+        })
+        trigger_state = self.state()["automation_editor"]
+        expect(trigger_state["selected_trigger"] == "capture",
+               f"visible automation trigger did not resolve by stable value: {trigger_state}")
+        self.qa("POST", "/__qa/automation/editor", {
             "action": "search", "query": "fast",
         })
         filtered = self.state()["automation_editor"]["matching_model_ids"]

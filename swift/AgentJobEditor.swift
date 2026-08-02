@@ -4,6 +4,14 @@ import Cocoa
 /// field is an editable, filtered combo box: catalog rows are searchable and
 /// an exact OpenRouter model ID remains valid when the network is unavailable.
 final class AgentJobEditorView: NSView {
+    private static let triggerChoices: [(label: String, kind: AgentJobTriggerKind)] = [
+        ("Manual", .manual),
+        ("Interval", .interval),
+        ("Inbox message", .inbox),
+        ("Capture completed", .capture),
+        ("Watcher action", .watcher),
+    ]
+
     let promptField = NSTextField(string: "")
     let runtimePopUp = NSComboBox()
     let triggerPopUp = NSComboBox()
@@ -32,10 +40,8 @@ final class AgentJobEditorView: NSView {
         runtimePopUp.isEditable = false
         runtimePopUp.setAccessibilityLabel("Automation runtime")
         runtimePopUp.target = self
-        runtimePopUp.action = #selector(runtimeChanged)
-        triggerPopUp.addItems(withObjectValues: [
-            "Manual", "Interval", "Inbox message", "Capture completed", "Watcher action",
-        ])
+        runtimePopUp.action = #selector(runtimeSelectionChanged)
+        triggerPopUp.addItems(withObjectValues: Self.triggerChoices.map(\.label))
         triggerPopUp.selectItem(at: 0)
         triggerPopUp.isEditable = false
         triggerPopUp.setAccessibilityLabel("Automation trigger")
@@ -103,8 +109,29 @@ final class AgentJobEditorView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     var selectedRuntime: AgentRuntimeKind {
-        AgentRuntimeKind.allCases[
-            min(max(runtimePopUp.indexOfSelectedItem, 0), AgentRuntimeKind.allCases.count - 1)]
+        let visibleValue = runtimePopUp.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let runtime = AgentRuntimeKind.allCases.first(where: {
+            $0.label.caseInsensitiveCompare(visibleValue) == .orderedSame
+        }) {
+            return runtime
+        }
+        let index = min(max(runtimePopUp.indexOfSelectedItem, 0),
+                        AgentRuntimeKind.allCases.count - 1)
+        return AgentRuntimeKind.allCases[index]
+    }
+
+    var selectedTrigger: AgentJobTriggerKind {
+        let visibleValue = triggerPopUp.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let choice = Self.triggerChoices.first(where: {
+            $0.label.caseInsensitiveCompare(visibleValue) == .orderedSame
+        }) {
+            return choice.kind
+        }
+        let index = min(max(triggerPopUp.indexOfSelectedItem, 0),
+                        Self.triggerChoices.count - 1)
+        return Self.triggerChoices[index].kind
     }
 
     var selectedModelID: String? {
@@ -112,7 +139,14 @@ final class AgentJobEditorView: NSView {
         return modelCombo.selectedModelID
     }
 
-    @objc private func runtimeChanged() {
+    @objc private func runtimeSelectionChanged() {
+        // NSComboBox can dispatch its action before indexOfSelectedItem has
+        // caught up with the title displayed to the user. Resolve by title on
+        // the next main-loop turn so the visible selection is authoritative.
+        DispatchQueue.main.async { [weak self] in self?.runtimeChanged() }
+    }
+
+    private func runtimeChanged() {
         let enabled = selectedRuntime == .opencode
         modelCombo.isEnabled = enabled
         modelDetail.isEnabled = enabled
@@ -126,6 +160,17 @@ final class AgentJobEditorView: NSView {
 
 #if VOICE_FLOW_QA
     var qaFilteredModelIDs: [String] { modelCombo.filteredModels.map(\.id) }
+    var qaModelEnabled: Bool { modelCombo.isEnabled }
+    var qaModelStatus: String { modelStatus.stringValue }
+
+    func qaSetVisibleRuntime(_ label: String) {
+        runtimePopUp.stringValue = label
+        runtimeChanged()
+    }
+
+    func qaSetVisibleTrigger(_ label: String) {
+        triggerPopUp.stringValue = label
+    }
 
     func qaSelectModel(id: String) -> Bool {
         modelCombo.selectModel(id: id)

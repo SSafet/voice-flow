@@ -532,6 +532,10 @@
       "runner": "unit"
     },
     {
+      "id": "tests/openrouter_model_picker/main.swift",
+      "runner": "unit"
+    },
+    {
       "id": "tests/player/main.swift",
       "runner": "unit"
     },
