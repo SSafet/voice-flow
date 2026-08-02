@@ -127,6 +127,17 @@ enum ImageUtils {
     }
 }
 
+/// One deterministic predicate owns continuous-capture frame deduplication.
+/// Keeping it outside AppDelegate makes the exact threshold independently
+/// testable while preserving the current capture routing and storage flow.
+enum CaptureFrameDeduplicator {
+    static func shouldKeep(previous: Data?, candidate: Data,
+                           threshold: Double = 0.01) -> Bool {
+        guard let previous else { return true }
+        return ImageUtils.difference(previous, candidate) >= threshold
+    }
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Screen Capture (SCKit + CLI fallback)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

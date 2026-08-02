@@ -28,8 +28,10 @@ final class ChatPanel {
     var onStop: (() -> Void)?
     var onClear: (() -> Void)?
     var onNewAssistant: (() -> Void)?
+    var onNewAgentJob: (() -> Void)?
     var onOpenAssistantSession: ((String) -> Void)?
     var onDeleteAssistant: (() -> Void)?
+    var onSelectAssistantRuntime: ((AgentRuntimeKind) -> Void)?
     var onEscape: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenSession: ((String) -> Void)?
@@ -52,6 +54,7 @@ final class ChatPanel {
     private var agentsView: AgentsView!
     private var assistantHeader: NSView!
     private var assistantTitleLabel: NSTextField!
+    private var assistantRuntimeButton: NSPopUpButton!
     private var speechButton: NSButton!
     private var ttsView: TTSView!
     private var currentTab: ChatTab = .agents
@@ -75,6 +78,11 @@ final class ChatPanel {
     private var controlButton: NSButton!
 
     private var streamingLabel: NSTextField?
+    /// Coalesce repeated layout/scroll requests while a persisted conversation
+    /// is being restored. A long history can enqueue hundreds of requests in a
+    /// single run-loop turn; retaining each closure until it executes creates a
+    /// visible memory ramp during repeated conversation switching.
+    private var scrollToBottomScheduled = false
     private var voiceRepliesOn = false
     private var controlOn = false
     private var sessionActive = false
@@ -152,6 +160,51 @@ final class ChatPanel {
         if isVisible { hide() } else { show() }
     }
 
+#if VOICE_FLOW_QA
+    var qaControlState: [String: Any] {
+        let controls: [NSControl] = [
+            assistantRuntimeButton, sendButton, stopButton, sessionButton,
+            annotateButton, voiceButton, controlButton,
+        ].compactMap { $0 }
+        return [
+            "runtime_enabled": assistantRuntimeButton?.isEnabled ?? false,
+            "runtime_title": assistantRuntimeButton?.titleOfSelectedItem ?? "",
+            "accessibility_labels": controls.compactMap {
+                $0.accessibilityLabel()?.trimmingCharacters(in: .whitespacesAndNewlines)
+            }.filter { !$0.isEmpty },
+        ]
+    }
+
+    /// Render the signed AppKit hierarchy itself. This remains valid on test
+    /// machines where macOS denies desktop capture to an ad-hoc QA bundle.
+    func qaSnapshot() throws -> (path: String, width: Int, height: Int) {
+        precondition(Thread.isMainThread)
+        guard let view = panel.contentView else {
+            throw NSError(
+                domain: "VoiceFlowQA", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "ChatPanel has no content view."])
+        }
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
+        let bounds = view.bounds
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: bounds) else {
+            throw NSError(
+                domain: "VoiceFlowQA", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "ChatPanel bitmap allocation failed."])
+        }
+        view.cacheDisplay(in: bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw NSError(
+                domain: "VoiceFlowQA", code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "ChatPanel PNG encoding failed."])
+        }
+        let directory = VoiceFlowPaths.shared.directory("qa-artifacts")
+        let url = directory.appendingPathComponent("agents-panel.png")
+        try png.write(to: url, options: .atomic)
+        return (url.path, bitmap.pixelsWide, bitmap.pixelsHigh)
+    }
+#endif
+
     private func position() {
         let anchor: PanelAnchor?
         if let exact = panelAnchorProvider?() {
@@ -228,6 +281,9 @@ final class ChatPanel {
     func restoreAssistantConversation(_ conversation: AssistantConversation, open: Bool = false) {
         clearConversation()
         assistantTitleLabel?.stringValue = conversation.title
+        let runtime = conversation.preferredRuntime
+            ?? (UserSettings.shared.agentBackend == AgentBackendOpenCode ? .opencode : .codex)
+        setAssistantRuntime(runtime, enabled: conversation.turnState != .running)
         lastAssistantText = ""
         for message in conversation.messages {
             switch message.role {
@@ -251,6 +307,15 @@ final class ChatPanel {
 
     func setAssistantTitle(_ title: String) {
         assistantTitleLabel?.stringValue = title
+    }
+
+    func setAssistantRuntime(_ runtime: AgentRuntimeKind, enabled: Bool) {
+        guard assistantRuntimeButton != nil else { return }
+        assistantRuntimeButton.selectItem(at: runtime == .codex ? 0 : 1)
+        assistantRuntimeButton.isEnabled = enabled
+        assistantRuntimeButton.toolTip = enabled
+            ? "Runtime for this Assistant conversation"
+            : "Wait for this turn to finish before switching runtimes"
     }
 
     private func finishStreaming() {
@@ -288,6 +353,7 @@ final class ChatPanel {
     }
 
     func setActivity(_ activity: AgentActivity, detail: String? = nil) {
+        assistantRuntimeButton?.isEnabled = activity == .idle
         switch activity {
         case .idle:
             statusLabel.stringValue = ""
@@ -486,6 +552,10 @@ final class ChatPanel {
     func appendDictation(entryId: String, text: String) {
         dictationsView.appendToEntry(id: entryId, text: text)
         styleTabs()
+    }
+
+    func setContinuationActive(entryId: String?) {
+        dictationsView.setContinuationActive(entryId: entryId)
     }
 
     /// Sync upsert (ticket #36): add, or update-in-place when the id is known.
@@ -695,6 +765,7 @@ final class ChatPanel {
         agentsView.isHidden = true
         agentsView.setContentHuggingPriority(.defaultLow, for: .vertical)
         agentsView.onNewAssistant = { [weak self] in self?.onNewAssistant?() }
+        agentsView.onNewAgentJob = { [weak self] in self?.onNewAgentJob?() }
         agentsView.onOpenAssistantSession = { [weak self] id in self?.onOpenAssistantSession?(id) }
         agentsView.onOpenSession = { [weak self] id in self?.onOpenSession?(id) }
         ttsView = TTSView()
@@ -757,7 +828,16 @@ final class ChatPanel {
         assistantTitleLabel.maximumNumberOfLines = 1
         assistantTitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let mid = NSStackView(views: [icon, assistantTitleLabel])
+        assistantRuntimeButton = NSPopUpButton(frame: .zero, pullsDown: false)
+        assistantRuntimeButton.addItems(withTitles: ["Codex", "OpenCode"])
+        assistantRuntimeButton.target = self
+        assistantRuntimeButton.action = #selector(assistantRuntimeChanged)
+        assistantRuntimeButton.controlSize = .mini
+        assistantRuntimeButton.font = .systemFont(ofSize: 10, weight: .medium)
+        assistantRuntimeButton.toolTip = "Runtime for this Assistant conversation"
+        assistantRuntimeButton.setAccessibilityLabel("Assistant runtime")
+
+        let mid = NSStackView(views: [icon, assistantTitleLabel, assistantRuntimeButton])
         mid.orientation = .horizontal
         mid.spacing = 7
 
@@ -798,6 +878,12 @@ final class ChatPanel {
             line.heightAnchor.constraint(equalToConstant: 1),
         ])
         return headerView
+    }
+
+    @objc private func assistantRuntimeChanged() {
+        let runtime: AgentRuntimeKind = assistantRuntimeButton.indexOfSelectedItem == 1
+            ? .opencode : .codex
+        onSelectAssistantRuntime?(runtime)
     }
 
     private func iconButton(_ symbolName: String, action: Selector, tip: String) -> NSButton {
@@ -893,7 +979,11 @@ final class ChatPanel {
     }
 
     private func scrollToBottom() {
-        DispatchQueue.main.async {
+        guard !scrollToBottomScheduled else { return }
+        scrollToBottomScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.scrollToBottomScheduled = false
             guard let documentView = self.scrollView.documentView else { return }
             documentView.layoutSubtreeIfNeeded()
             let height = documentView.frame.height

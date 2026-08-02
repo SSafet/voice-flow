@@ -35,6 +35,18 @@ struct AgentSessionRow {
     let ghost: Bool
 }
 
+struct AgentJobRow {
+    let id: String
+    let name: String
+    let preview: String
+    let time: String
+    let state: AgentJobState
+    let runtime: AgentRuntimeKind
+    let trigger: AgentJobTriggerKind
+    let modelID: String?
+    let prompt: String
+}
+
 protocol AgentsDataSource: AnyObject {
     func agentSessionRows() -> [AgentSessionRow]
     func agentThread(for sessionId: String) -> [AppDelegate.SessionPush]
@@ -47,6 +59,10 @@ protocol AgentsDataSource: AnyObject {
     func speakThread(_ sessionId: String)
     /// User marked the thread done — delete its stack, session, overlays.
     func completeThread(_ sessionId: String)
+    func agentJobRows() -> [AgentJobRow]
+    func runAgentJob(_ jobId: String)
+    func cancelAgentJob(_ jobId: String)
+    func setAgentJob(_ jobId: String, enabled: Bool)
 }
 
 final class AgentsView: NSView, NSTextFieldDelegate {
@@ -54,6 +70,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// Local Assistant sessions share this list but keep their native chat
     /// lifecycle instead of being forced through MCP push semantics.
     var onNewAssistant: (() -> Void)?
+    var onNewAgentJob: (() -> Void)?
     var onOpenAssistantSession: ((String) -> Void)?
     /// A concrete session row was chosen. ChatPanel/AppDelegate use this to
     /// align visible conversation focus with overlay/picker targeting.
@@ -62,6 +79,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private enum Mode {
         case list
         case thread(String)
+        case job(String)
     }
     private var mode: Mode = .list
 
@@ -141,6 +159,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             if !known, dataSource?.agentThread(for: sid).isEmpty ?? true {
                 mode = .list
             }
+        } else if case .job(let id) = mode,
+                  dataSource?.agentJobRows().contains(where: { $0.id == id }) != true {
+            mode = .list
         }
         let draft = composerField?.stringValue ?? ""
         let hadFocus = composerField.map { field in
@@ -153,6 +174,98 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
     }
 
+    private func buildJob(_ jobId: String) {
+        guard let dataSource,
+              let job = dataSource.agentJobRows().first(where: { $0.id == jobId }) else {
+            mode = .list
+            buildList()
+            return
+        }
+        var top = contentStack.topAnchor
+
+        let header = NSView()
+        let back = NSButton(title: "‹", target: self, action: #selector(backTapped))
+        back.isBordered = false
+        back.font = .systemFont(ofSize: 16, weight: .medium)
+        back.contentTintColor = Theme.text2
+        back.setAccessibilityLabel("Back to agents")
+        let title = NSTextField(labelWithString: job.name)
+        title.font = .systemFont(ofSize: 12, weight: .semibold)
+        title.textColor = Theme.text
+        title.lineBreakMode = .byTruncatingTail
+        title.alignment = .center
+        let line = NSView()
+        line.wantsLayer = true
+        line.layer?.backgroundColor = Theme.border.cgColor
+        for view in [back, title, line] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            back.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 2),
+            back.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -4),
+            title.centerXAnchor.constraint(equalTo: header.centerXAnchor),
+            title.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -4),
+            title.leadingAnchor.constraint(greaterThanOrEqualTo: back.trailingAnchor, constant: 8),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -28),
+            line.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            line.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            line.bottomAnchor.constraint(equalTo: header.bottomAnchor),
+            line.heightAnchor.constraint(equalToConstant: 1),
+            header.heightAnchor.constraint(equalToConstant: 34),
+        ])
+        place(header, below: &top, gap: 0)
+
+        var metaText = "\(job.state.rawValue)  ·  \(job.runtime.label)  ·  \(job.trigger.rawValue)"
+        if let modelID = job.modelID { metaText += "  ·  \(modelID)" }
+        let meta = NSTextField(labelWithString: metaText)
+        meta.font = .monospacedSystemFont(ofSize: 10.5, weight: .medium)
+        meta.textColor = job.state == .blocked || job.state == .failed ? Theme.accent : Theme.text3
+        meta.setAccessibilityLabel(
+            "Automation state \(job.state.rawValue), runtime \(job.runtime.label), trigger \(job.trigger.rawValue)"
+                + (job.modelID.map { ", model \($0)" } ?? ""))
+        place(meta, below: &top, gap: 14)
+
+        let prompt = NSTextField(wrappingLabelWithString: job.prompt)
+        prompt.font = .systemFont(ofSize: 12.5)
+        prompt.textColor = Theme.text2
+        prompt.maximumNumberOfLines = 0
+        prompt.isSelectable = true
+        place(prompt, below: &top, gap: 10)
+
+        let actions = NSStackView()
+        actions.orientation = .horizontal
+        actions.spacing = 8
+        actions.distribution = .fillEqually
+        let run = NSButton(title: "Run now", target: self, action: #selector(runJobTapped(_:)))
+        run.identifier = NSUserInterfaceItemIdentifier(job.id)
+        run.isEnabled = job.state != .running
+        run.setAccessibilityLabel("Run automation now")
+        let secondary: NSButton
+        if job.state == .running {
+            secondary = NSButton(title: "Cancel", target: self, action: #selector(cancelJobTapped(_:)))
+            secondary.setAccessibilityLabel("Cancel running automation")
+        } else {
+            let enable = job.state == .disabled || job.state == .cancelled
+            secondary = NSButton(
+                title: enable ? "Enable" : "Disable",
+                target: self, action: #selector(toggleJobTapped(_:)))
+            secondary.tag = enable ? 1 : 0
+            secondary.setAccessibilityLabel(enable ? "Enable automation" : "Disable automation")
+        }
+        secondary.identifier = NSUserInterfaceItemIdentifier(job.id)
+        for button in [run, secondary] {
+            button.bezelStyle = .rounded
+            button.controlSize = .small
+            actions.addArrangedSubview(button)
+        }
+        place(actions, below: &top, gap: 18)
+
+        let bottom = top.constraint(equalTo: contentStack.bottomAnchor, constant: -12)
+        bottom.priority = .defaultLow
+        bottom.isActive = true
+    }
+
     // ── Rendering ───────────────────────────────────────
 
     private func rebuild() {
@@ -161,6 +274,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         switch mode {
         case .list: buildList()
         case .thread(let sid): buildThread(sid)
+        case .job(let id): buildJob(id)
         }
         DispatchQueue.main.async { [weak self] in self?.refreshHoverStatesForPointer() }
     }
@@ -194,6 +308,22 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             preview: "start a separate conversation", time: "")
         assistantRow.rowAction = .newAssistant
         place(assistantRow, below: &top, gap: 2)
+
+        let jobRow = makeRow(
+            leading: symbolIcon("clock.arrow.circlepath", description: "new automation"),
+            name: "new automation", unread: false,
+            preview: "run an assistant manually, on a schedule, or from an event", time: "")
+        jobRow.rowAction = .newJob
+        place(jobRow, below: &top, gap: 2)
+
+        for job in dataSource?.agentJobRows() ?? [] {
+            let view = makeRow(
+                leading: jobStateIcon(job.state), name: job.name,
+                unread: job.state == .blocked || job.state == .failed,
+                preview: job.preview, time: job.time)
+            view.rowAction = .job(job.id)
+            place(view, below: &top, gap: 2)
+        }
 
         for row in dataSource?.agentSessionRows() ?? [] {
             let view = makeRow(leading: leadingIcon(for: row), name: row.name,
@@ -291,12 +421,40 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         switch action {
         case .newAssistant:
             onNewAssistant?()
+        case .newJob:
+            onNewAgentJob?()
         case .assistant(let id):
             onOpenAssistantSession?(id)
         case .mcp(let id):
             onOpenSession?(id)
             openThread(id)
+        case .job(let id):
+            mode = .job(id)
+            rebuild()
         }
+    }
+
+    private func symbolIcon(_ name: String, description: String) -> NSView {
+        let image = NSImageView(image: NSImage(
+            systemSymbolName: name, accessibilityDescription: description) ?? NSImage())
+        image.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+        image.contentTintColor = Theme.text3
+        return image
+    }
+
+    private func jobStateIcon(_ state: AgentJobState) -> NSView {
+        let symbol: String
+        switch state {
+        case .running: symbol = "bolt.circle.fill"
+        case .blocked, .failed: symbol = "exclamationmark.circle.fill"
+        case .queued: symbol = "clock.fill"
+        case .completed: symbol = "checkmark.circle"
+        case .cancelled, .disabled: symbol = "pause.circle"
+        }
+        let view = symbolIcon(symbol, description: "automation \(state.rawValue)")
+        (view as? NSImageView)?.contentTintColor = state == .blocked || state == .failed
+            ? Theme.accent : Theme.text3
+        return view
     }
 
     private func buildThread(_ sessionId: String) {
@@ -514,6 +672,24 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     @objc private func backTapped() { showList() }
 
+    @objc private func runJobTapped(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        dataSource?.runAgentJob(id)
+        DispatchQueue.main.async { self.refresh() }
+    }
+
+    @objc private func cancelJobTapped(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        dataSource?.cancelAgentJob(id)
+        DispatchQueue.main.async { self.refresh() }
+    }
+
+    @objc private func toggleJobTapped(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        dataSource?.setAgentJob(id, enabled: sender.tag == 1)
+        DispatchQueue.main.async { self.refresh() }
+    }
+
     @objc private func speakTapped(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue else { return }
         dataSource?.speakThread(id)
@@ -556,8 +732,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
 private enum AgentListRowAction {
     case newAssistant
+    case newJob
     case assistant(String)
     case mcp(String)
+    case job(String)
 }
 
 private final class AgentListRowView: HoverRowView {

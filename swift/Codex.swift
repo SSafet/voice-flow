@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Codex subscription backend (ChatGPT OAuth via the Codex CLI)
@@ -9,6 +10,8 @@ import Foundation
 // conversation state; we keep only the thread id and resume it per turn.
 
 let AgentBackendCodex = "codex"
+let AgentBackendOpenCode = "opencode"
+/// One-release decode/fallback identifier. New settings never write it.
 let AgentBackendAPI = "api"
 
 enum CodexBackendError: LocalizedError {
@@ -41,6 +44,7 @@ final class CodexExecBackend {
 
     private var process: Process?
     private var interrupted = false
+    private let stateLock = NSLock()
 
     static func findBinary() -> String? {
         var candidates = [
@@ -58,9 +62,65 @@ final class CodexExecBackend {
         FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.codex/auth.json")
     }
 
+    /// Codex needs its own home/config plus ordinary locale and network
+    /// plumbing, but must not inherit provider keys or unrelated process
+    /// authority from Voice Flow.
+    static func sanitizedEnvironment(
+        source: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+        let allowlist = [
+            "PATH", "HOME", "CODEX_HOME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+            "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
+        ]
+        var result: [String: String] = [:]
+        for key in allowlist where source[key] != nil { result[key] = source[key] }
+        return result
+    }
+
+    static func executionArguments(
+        prompt: String, imagePaths: [String], resumeThread: String?,
+        extraWritableRoots: [String]) -> [String] {
+        // `exec` and `exec resume` diverge slightly in supported flags
+        // (resume has no --sandbox/-C), so permissions go through -c. The
+        // Assistant needs outbound access for user-requested integrations
+        // such as the tickets CLI, while filesystem writes stay sandboxed.
+        // mcp_servers={} neutralizes the user's ~/.codex MCP servers: they
+        // slow every turn's startup and tempt the model into "contacting"
+        // the user through tools instead of just answering the panel.
+        var args = ["exec"]
+        if let thread = resumeThread { args.append(contentsOf: ["resume", thread]) }
+        args.append(contentsOf: ["--json", "--skip-git-repo-check",
+                                 "-c", "sandbox_mode=\"workspace-write\"",
+                                 "-c", "sandbox_workspace_write.network_access=true",
+                                 "-c", "mcp_servers={}"])
+        if !extraWritableRoots.isEmpty {
+            // -c goes through TOML, and `resume` has no --add-dir flag, so the
+            // extra roots ride the config key both paths accept.
+            let toml = extraWritableRoots
+                .map { "\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+                .joined(separator: ", ")
+            args.append(contentsOf: ["-c", "sandbox_workspace_write.writable_roots=[\(toml)]"])
+        }
+        imagePaths.forEach { args.append(contentsOf: ["-i", $0]) }
+        args.append(prompt)
+        return args
+    }
+
     func interrupt() {
-        interrupted = true
-        process?.terminate()
+        let active = stateLock.withLock { () -> Process? in
+            interrupted = true
+            return process
+        }
+        guard let active, active.isRunning else { return }
+        let pid = active.processIdentifier
+        let descendants = Self.descendants(of: pid)
+        descendants.reversed().forEach { kill($0, SIGTERM) }
+        kill(pid, SIGTERM)
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 1) {
+            descendants.reversed().forEach { child in
+                if kill(child, 0) == 0 { kill(child, SIGKILL) }
+            }
+            if active.isRunning { kill(pid, SIGKILL) }
+        }
     }
 
     /// Run one turn. `onAgentText` fires per completed assistant message so
@@ -88,33 +148,14 @@ final class CodexExecBackend {
         }
         defer { imagePaths.forEach { try? FileManager.default.removeItem(atPath: $0) } }
 
-        // `exec` and `exec resume` diverge slightly in supported flags
-        // (resume has no --sandbox/-C), so permissions go through -c. The
-        // Assistant needs outbound access for user-requested integrations
-        // such as the tickets CLI, while filesystem writes stay sandboxed.
-        // mcp_servers={} neutralizes the user's ~/.codex MCP servers: they
-        // slow every turn's startup and tempt the model into "contacting"
-        // the user through tools instead of just answering the panel.
-        var args = ["exec"]
-        if let thread = resumeThread { args.append(contentsOf: ["resume", thread]) }
-        args.append(contentsOf: ["--json", "--skip-git-repo-check",
-                                 "-c", "sandbox_mode=\"workspace-write\"",
-                                 "-c", "sandbox_workspace_write.network_access=true",
-                                 "-c", "mcp_servers={}"])
-        if !extraWritableRoots.isEmpty {
-            // -c goes through TOML, and `resume` has no --add-dir flag, so the
-            // extra roots ride the config key both paths accept.
-            let toml = extraWritableRoots
-                .map { "\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
-                .joined(separator: ", ")
-            args.append(contentsOf: ["-c", "sandbox_workspace_write.writable_roots=[\(toml)]"])
-        }
-        imagePaths.forEach { args.append(contentsOf: ["-i", $0]) }
-        args.append(prompt)
+        let args = Self.executionArguments(
+            prompt: prompt, imagePaths: imagePaths, resumeThread: resumeThread,
+            extraWritableRoots: extraWritableRoots)
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
         proc.arguments = args
+        proc.environment = Self.sanitizedEnvironment()
         proc.currentDirectoryURL = workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser
         let stdout = Pipe()
         let stderr = Pipe()
@@ -122,7 +163,7 @@ final class CodexExecBackend {
         proc.standardError = stderr
         proc.standardInput = FileHandle.nullDevice
 
-        interrupted = false
+        stateLock.withLock { interrupted = false }
         var threadId: String?
         var replyParts: [String] = []
         var eventError: String?
@@ -174,8 +215,12 @@ final class CodexExecBackend {
             if !chunk.isEmpty { processChunk(chunk) }
         }
 
-        process = proc
-        defer { process = nil }
+        stateLock.withLock { process = proc }
+        defer {
+            stateLock.withLock {
+                if process === proc { process = nil }
+            }
+        }
 
         try proc.run()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -187,7 +232,7 @@ final class CodexExecBackend {
         processChunk(remainder)
         let errData = stderr.fileHandleForReading.readDataToEndOfFile()
 
-        if interrupted { throw CancellationError() }
+        if stateLock.withLock({ interrupted }) { throw CancellationError() }
 
         let (finalThread, text, failure) = parseQueue.sync { (threadId, replyParts.joined(separator: "\n\n"), eventError) }
 
@@ -222,4 +267,41 @@ final class CodexExecBackend {
         default: return nil
         }
     }
+
+    private static func descendants(of parent: pid_t) -> [pid_t] {
+        var result: [pid_t] = []
+        var queue: [pid_t] = [parent]
+        var seen: Set<pid_t> = [parent]
+        while let current = queue.first {
+            queue.removeFirst()
+            var children = [pid_t](repeating: 0, count: 128)
+            let bytes = proc_listchildpids(
+                current, &children,
+                Int32(children.count * MemoryLayout<pid_t>.size))
+            guard bytes > 0 else { continue }
+            let count = min(Int(bytes) / MemoryLayout<pid_t>.size, children.count)
+            for child in children.prefix(count) where child > 0 && !seen.contains(child) {
+                seen.insert(child)
+                result.append(child)
+                queue.append(child)
+            }
+        }
+        return result
+    }
 }
+
+/// Injection seam for deterministic runtime contract tests. Production uses
+/// `CodexExecBackend`; tests provide a JSONL-free fake with the same lifecycle.
+protocol CodexExecuting: AnyObject {
+    func interrupt()
+    func run(prompt: String,
+             images: [Data],
+             resumeThread: String?,
+             workingDirectory: URL?,
+             extraWritableRoots: [String],
+             onThreadStarted: @escaping (String) -> Void,
+             onToolActivity: @escaping (String) -> Void,
+             onAgentText: @escaping (String) -> Void) async throws -> CodexExecBackend.TurnResult
+}
+
+extension CodexExecBackend: CodexExecuting {}

@@ -36,7 +36,12 @@ struct AssistantHistoryMessage: Codable, Equatable {
 
 struct AssistantConversation: Codable, Equatable {
     let id: String
+    /// Kept during the expand/contract migration so the previous app build
+    /// can still resume/read Codex conversations after a rollback.
     var codexThreadId: String?
+    var preferredRuntime: AgentRuntimeKind?
+    /// String keys keep the on-disk JSON stable and human-readable.
+    var runtimeBindings: [String: RuntimeBinding]?
     let createdAt: Date
     var updatedAt: Date
     var title: String
@@ -44,11 +49,15 @@ struct AssistantConversation: Codable, Equatable {
     var messages: [AssistantHistoryMessage]
 
     init(id: String = UUID().uuidString, codexThreadId: String? = nil,
+         preferredRuntime: AgentRuntimeKind? = nil,
+         runtimeBindings: [String: RuntimeBinding]? = nil,
          createdAt: Date = Date(), updatedAt: Date = Date(),
          title: String = "New assistant", turnState: AssistantTurnState = .idle,
          messages: [AssistantHistoryMessage] = []) {
         self.id = id
         self.codexThreadId = codexThreadId
+        self.preferredRuntime = preferredRuntime
+        self.runtimeBindings = runtimeBindings
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.title = title
@@ -76,6 +85,23 @@ struct AssistantConversation: Codable, Equatable {
         if !unseen.isEmpty { return Array(unseen.suffix(8)) }
         return latestAssistantReply.map { [$0] } ?? []
     }
+
+    func runtimeBinding(_ runtime: AgentRuntimeKind) -> RuntimeBinding? {
+        runtimeBindings?[runtime.rawValue]
+    }
+
+    var lastContextMessageID: UUID? {
+        messages.last { $0.role == .user || $0.role == .assistant }?.id
+    }
+}
+
+struct AssistantTurnPreparation {
+    let priorMessages: [AssistantHistoryMessage]
+    let priorContextMessageID: UUID?
+    let previousBinding: RuntimeBinding?
+    let resumeExternalSessionID: String?
+    let requiresFreshSession: Bool
+    let userMessageID: UUID
 }
 
 private struct AssistantHistoryEnvelope: Codable {
@@ -89,6 +115,7 @@ private struct AssistantHistoryEnvelope: Codable {
 /// The durable source of truth for in-app Assistant conversations. Callers
 /// receive value copies; all mutations and atomic snapshots are serialized.
 final class AssistantHistoryStore {
+    static let shared = AssistantHistoryStore()
     static let maxSessions = 100
     static let maxMessagesPerSession = 200
 
@@ -97,8 +124,7 @@ final class AssistantHistoryStore {
     private var envelope: AssistantHistoryEnvelope
 
     static var defaultURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/voice-flow/assistant-sessions.json")
+        VoiceFlowPaths.shared.file("assistant-sessions.json")
     }
 
     static var defaultLegacySessionsRoot: URL {
@@ -107,8 +133,19 @@ final class AssistantHistoryStore {
     }
 
     init(url: URL = AssistantHistoryStore.defaultURL,
-         legacySessionsRoot: URL? = AssistantHistoryStore.defaultLegacySessionsRoot) {
+         legacySessionsRoot: URL? = nil) {
         self.url = url
+        // A redirected root is a hard privacy boundary: never auto-import
+        // production Codex rollouts into QA/test history. Unit migrations may
+        // still pass an explicit fixture root.
+        let resolvedLegacyRoot: URL?
+        if let legacySessionsRoot {
+            resolvedLegacyRoot = legacySessionsRoot
+        } else if VoiceFlowPaths.shared.isIsolated {
+            resolvedLegacyRoot = nil
+        } else {
+            resolvedLegacyRoot = Self.defaultLegacySessionsRoot
+        }
         let fileExisted = FileManager.default.fileExists(atPath: url.path)
         var canPersist = !fileExisted
         if let data = try? Data(contentsOf: url),
@@ -116,6 +153,7 @@ final class AssistantHistoryStore {
            loaded.version == 1, !loaded.sessions.isEmpty {
             envelope = loaded
             canPersist = true
+            if migrateRuntimeBindingsLocked() { persistLocked() }
             repairActiveSessionLocked()
             recoverInterruptedTurnsLocked()
         } else {
@@ -130,7 +168,7 @@ final class AssistantHistoryStore {
             }
         }
         if canPersist, envelope.legacyImportCompleted != true {
-            importLegacyConversationsLocked(from: legacySessionsRoot)
+            importLegacyConversationsLocked(from: resolvedLegacyRoot)
             envelope.legacyImportCompleted = true
             persistLocked()
         } else if canPersist, !fileExisted {
@@ -157,11 +195,11 @@ final class AssistantHistoryStore {
     }
 
     @discardableResult
-    func createConversation() -> AssistantConversation {
+    func createConversation(force: Bool = false) -> AssistantConversation {
         lock.withLock {
             // Repeated presses on "new assistant" must not manufacture empty
             // history. Reuse the active blank draft until the user writes.
-            if let current = conversationLocked(envelope.activeSessionId),
+            if !force, let current = conversationLocked(envelope.activeSessionId),
                current.messages.isEmpty, current.codexThreadId == nil,
                current.turnState == .idle {
                 return current
@@ -207,27 +245,112 @@ final class AssistantHistoryStore {
                        text: String, attachmentNote: String? = nil) {
         lock.withLock {
             guard let index = envelope.sessions.firstIndex(where: { $0.id == sessionId }) else { return }
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty || attachmentNote != nil else { return }
-            let now = Date()
-            envelope.sessions[index].messages.append(AssistantHistoryMessage(
-                at: now, role: role, text: text, attachmentNote: attachmentNote,
-                seen: role == .assistant ? false : nil))
-            if envelope.sessions[index].messages.count > Self.maxMessagesPerSession {
-                envelope.sessions[index].messages.removeFirst(
-                    envelope.sessions[index].messages.count - Self.maxMessagesPerSession)
-            }
-            if role == .user, envelope.sessions[index].title == "New assistant" {
-                envelope.sessions[index].title = Self.title(from: trimmed, attachmentNote: attachmentNote)
-            }
-            envelope.sessions[index].updatedAt = now
+            guard appendMessageLocked(index: index, role: role, text: text,
+                                      attachmentNote: attachmentNote) != nil else { return }
             persistLocked()
+        }
+    }
+
+    /// Atomically capture the pre-turn synchronization point, append the user
+    /// message, and dirty only the selected runtime binding before I/O starts.
+    func beginRuntimeTurn(sessionId: String, runtime: AgentRuntimeKind,
+                          text: String, attachmentNote: String? = nil) -> AssistantTurnPreparation? {
+        lock.withLock {
+            guard let index = envelope.sessions.firstIndex(where: { $0.id == sessionId }),
+                  envelope.sessions[index].turnState != .running else { return nil }
+            let priorMessages = envelope.sessions[index].messages
+            let priorContextMessageID = envelope.sessions[index].lastContextMessageID
+            let previous = envelope.sessions[index].runtimeBinding(runtime)
+            let resume = previous?.canResume(through: priorContextMessageID) == true
+                ? previous?.externalSessionID : nil
+            guard let user = appendMessageLocked(
+                index: index, role: .user, text: text, attachmentNote: attachmentNote) else { return nil }
+
+            var binding = previous ?? RuntimeBinding()
+            binding.state = .dirty
+            binding.lastUsedAt = Date()
+            var bindings = envelope.sessions[index].runtimeBindings ?? [:]
+            bindings[runtime.rawValue] = binding
+            envelope.sessions[index].runtimeBindings = bindings
+            envelope.sessions[index].turnState = .running
+            persistLocked()
+            return AssistantTurnPreparation(
+                priorMessages: priorMessages,
+                priorContextMessageID: priorContextMessageID,
+                previousBinding: previous,
+                resumeExternalSessionID: resume,
+                requiresFreshSession: resume == nil,
+                userMessageID: user.id)
+        }
+    }
+
+    func recordRuntimeStarted(sessionId: String, runtime: AgentRuntimeKind,
+                              externalSessionID: String, runtimeVersion: String? = nil,
+                              fresh: Bool) {
+        lock.withLock {
+            guard let index = envelope.sessions.firstIndex(where: { $0.id == sessionId }) else { return }
+            var bindings = envelope.sessions[index].runtimeBindings ?? [:]
+            var binding = bindings[runtime.rawValue] ?? RuntimeBinding()
+            if fresh { binding.generation += 1 }
+            binding.externalSessionID = externalSessionID
+            binding.runtimeVersion = runtimeVersion ?? binding.runtimeVersion
+            binding.state = .dirty
+            binding.lastUsedAt = Date()
+            bindings[runtime.rawValue] = binding
+            envelope.sessions[index].runtimeBindings = bindings
+            if runtime == .codex { envelope.sessions[index].codexThreadId = externalSessionID }
+            persistLocked()
+        }
+    }
+
+    @discardableResult
+    func completeRuntimeTurn(sessionId: String, runtime: AgentRuntimeKind,
+                             text: String, externalSessionID: String? = nil,
+                             runtimeVersion: String? = nil) -> AssistantHistoryMessage? {
+        lock.withLock {
+            guard let index = envelope.sessions.firstIndex(where: { $0.id == sessionId }),
+                  let message = appendMessageLocked(index: index, role: .assistant, text: text,
+                                                    attachmentNote: nil) else { return nil }
+            var bindings = envelope.sessions[index].runtimeBindings ?? [:]
+            var binding = bindings[runtime.rawValue] ?? RuntimeBinding()
+            binding.externalSessionID = externalSessionID ?? binding.externalSessionID
+            binding.runtimeVersion = runtimeVersion ?? binding.runtimeVersion
+            binding.syncedThroughMessageID = message.id
+            binding.state = .clean
+            binding.lastUsedAt = Date()
+            bindings[runtime.rawValue] = binding
+            envelope.sessions[index].runtimeBindings = bindings
+            if runtime == .codex { envelope.sessions[index].codexThreadId = binding.externalSessionID }
+            envelope.sessions[index].turnState = .idle
+            persistLocked()
+            return message
+        }
+    }
+
+    /// End UI running state but intentionally preserve the dirty binding. A
+    /// later turn must reseed rather than trust an uncertain external session.
+    func endRuntimeTurnWithoutFinal(sessionId: String, interrupted: Bool) {
+        mutateConversation(sessionId) { conversation in
+            conversation.turnState = interrupted ? .interrupted : .idle
+        }
+    }
+
+    func setPreferredRuntime(_ runtime: AgentRuntimeKind?, for sessionId: String) {
+        mutateConversation(sessionId) { conversation in
+            conversation.preferredRuntime = runtime
         }
     }
 
     func setCodexThreadId(_ threadId: String, for sessionId: String) {
         mutateConversation(sessionId) { conversation in
             conversation.codexThreadId = threadId
+            var bindings = conversation.runtimeBindings ?? [:]
+            var binding = bindings[AgentRuntimeKind.codex.rawValue] ?? RuntimeBinding()
+            binding.externalSessionID = threadId
+            binding.state = .dirty
+            binding.lastUsedAt = Date()
+            bindings[AgentRuntimeKind.codex.rawValue] = binding
+            conversation.runtimeBindings = bindings
         }
     }
 
@@ -266,6 +389,50 @@ final class AssistantHistoryStore {
         envelope.sessions.first { $0.id == id }
     }
 
+    @discardableResult
+    private func appendMessageLocked(index: Int, role: AssistantMessageRole,
+                                     text: String, attachmentNote: String?) -> AssistantHistoryMessage? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || attachmentNote != nil else { return nil }
+        let now = Date()
+        let message = AssistantHistoryMessage(
+            at: now, role: role, text: text, attachmentNote: attachmentNote,
+            seen: role == .assistant ? false : nil)
+        envelope.sessions[index].messages.append(message)
+        if envelope.sessions[index].messages.count > Self.maxMessagesPerSession {
+            envelope.sessions[index].messages.removeFirst(
+                envelope.sessions[index].messages.count - Self.maxMessagesPerSession)
+        }
+        if role == .user, envelope.sessions[index].title == "New assistant" {
+            envelope.sessions[index].title = Self.title(from: trimmed, attachmentNote: attachmentNote)
+        }
+        envelope.sessions[index].updatedAt = now
+        return message
+    }
+
+    /// Expand legacy conversations in place. A legacy Codex thread is dirty
+    /// because a prior direct-API fallback may have advanced the canonical
+    /// transcript without advancing that external thread.
+    @discardableResult
+    private func migrateRuntimeBindingsLocked() -> Bool {
+        var changed = false
+        for index in envelope.sessions.indices {
+            if envelope.sessions[index].runtimeBindings == nil {
+                envelope.sessions[index].runtimeBindings = [:]
+                changed = true
+            }
+            guard let thread = envelope.sessions[index].codexThreadId else { continue }
+            var bindings = envelope.sessions[index].runtimeBindings ?? [:]
+            if bindings[AgentRuntimeKind.codex.rawValue] == nil {
+                bindings[AgentRuntimeKind.codex.rawValue] = RuntimeBinding(
+                    externalSessionID: thread, state: .dirty)
+                envelope.sessions[index].runtimeBindings = bindings
+                changed = true
+            }
+        }
+        return changed
+    }
+
     private func repairActiveSessionLocked() {
         guard !envelope.sessions.contains(where: { $0.id == envelope.activeSessionId }) else { return }
         envelope.activeSessionId = envelope.sessions.max { $0.updatedAt < $1.updatedAt }!.id
@@ -276,6 +443,12 @@ final class AssistantHistoryStore {
         var changed = false
         for index in envelope.sessions.indices where envelope.sessions[index].turnState == .running {
             envelope.sessions[index].turnState = .interrupted
+            if var bindings = envelope.sessions[index].runtimeBindings {
+                for key in bindings.keys {
+                    bindings[key]?.state = .dirty
+                }
+                envelope.sessions[index].runtimeBindings = bindings
+            }
             envelope.sessions[index].messages.append(AssistantHistoryMessage(
                 role: .note,
                 text: "Interrupted by an app restart — send another message to continue this session."))

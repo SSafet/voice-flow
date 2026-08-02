@@ -242,9 +242,13 @@ final class DesktopSource: WatcherSource {
     // ── the tick ───────────────────────────────────────────────────────
 
     func tick(bus: DayBus, done: @escaping (String?) -> Void) {
-        if Self.screenIsLocked() { return pause("locked", bus: bus, done: done) }
-        guard Self.secondsSinceLastInput() < idleCutoff else {
-            return pause("idle", bus: bus, done: done)
+        switch WatcherPolicy.tickDecision(
+            screenLocked: Self.screenIsLocked(),
+            secondsSinceLastInput: Self.secondsSinceLastInput(), idleCutoff: idleCutoff) {
+        case .pause(let reason):
+            return pause(reason, bus: bus, done: done)
+        case .capture:
+            break
         }
         resume(bus: bus)
         generation &+= 1
@@ -327,15 +331,17 @@ final class DesktopSource: WatcherSource {
             if let plane { tickPlanes[display.id] = plane }
 
             // Whether the frame we already hold is still a fair picture.
-            var save = true
+            var changedBlocks: Int?
             if let plane, let saved = savedPlanes[display.id], saved.width == plane.width {
-                save = ScreenDiff.compare(saved, plane).changedBlocks >= diffBlocks
-                if !save, denseSeconds > 0, isDense(bundle: bundle),
-                   let last = lastFrameAt, now.timeIntervalSince(last) >= denseSeconds {
-                    save = true
-                    line["forced"] = true
-                }
+                changedBlocks = ScreenDiff.compare(saved, plane).changedBlocks
             }
+            let naturallyChanged = changedBlocks.map { $0 >= diffBlocks } ?? true
+            let save = WatcherPolicy.shouldSaveScreen(
+                previousChangedBlocks: changedBlocks, threshold: diffBlocks,
+                denseApp: isDense(bundle: bundle),
+                secondsSinceLastFrame: lastFrameAt.map { now.timeIntervalSince($0) },
+                denseFloor: denseSeconds)
+            if save && !naturallyChanged { line["forced"] = true }
 
             if save {
                 if let plane { savedPlanes[display.id] = plane }
@@ -352,8 +358,9 @@ final class DesktopSource: WatcherSource {
         }
 
         if let cam = latestCamJpeg {
-            let moved = lastSavedCamJpeg.map { ImageUtils.difference($0, cam) >= camDiffThreshold } ?? true
-            if moved {
+            let difference = lastSavedCamJpeg.map { ImageUtils.difference($0, cam) }
+            if WatcherPolicy.shouldSaveCamera(
+                previousDifference: difference, threshold: camDiffThreshold) {
                 lastSavedCamJpeg = cam
                 line["cam"] = bus.artifact(prefix: "cam", ext: "jpg", at: now) {
                     ImageUtils.compress(cam, maxDimension: 960, quality: 0.5)
@@ -557,6 +564,9 @@ final class WorkflowWatcher {
 
     private let scheduler = SourceScheduler()
     private var statusTimer: Timer?
+    var onEvent: ((String, [String: Any], Date) -> Void)? {
+        didSet { scheduler.bus.onAppend = onEvent }
+    }
 
     var isRunning: Bool { scheduler.isRunning }
 
@@ -583,4 +593,14 @@ final class WorkflowWatcher {
     func applySettings() { scheduler.applySettings() }
 
     func statusLine() -> String { scheduler.statusLine() }
+
+#if VOICE_FLOW_QA
+    /// Exercise the same watcher-bus callback used by coalesced desktop
+    /// actions without collecting the user's real screen archive.
+    func emitQAAction(id: String) {
+        scheduler.bus.append(
+            ["kind": "qa_action", "id": String(id.prefix(160))],
+            to: "actions", at: Date())
+    }
+#endif
 }

@@ -52,8 +52,7 @@ struct CaptureSummary {
 
 final class CaptureStore {
     static let baseDir: URL = {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/voice-flow/captures")
+        let dir = VoiceFlowPaths.shared.directory("captures")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
@@ -73,6 +72,7 @@ final class CaptureStore {
     private var startDate: Date?
     private var frames: [CaptureFrameMeta] = []
     private var frameCounter = 0
+    var onFinalized: ((CaptureSummary) -> Void)?
 
     var isCapturing: Bool { activeDir != nil }
 
@@ -152,13 +152,18 @@ final class CaptureStore {
         }
 
         vflog("capture: finished bundle \(id) — \(collected.count) frames, \(Int(duration))s")
-        return CaptureSummary(
+        let summary = CaptureSummary(
             id: id, directory: activeDir,
             frameCount: collected.count,
             durationSeconds: duration,
             transcript: text,
             framePaths: collected.map { activeDir.appendingPathComponent($0.file).path }
         )
+        // keepEmpty+nil is the provisional close used while continuous
+        // capture transcription is still in flight. Its durable event fires
+        // from updateTranscript, once the bundle has its final narration.
+        if !(keepEmpty && transcript == nil) { onFinalized?(summary) }
+        return summary
     }
 
     /// A continuous run closes its frame bundle before transcription returns,
@@ -182,13 +187,15 @@ final class CaptureStore {
             try? Data(Self.renderTranscript(meta: updated).utf8).write(
                 to: directory.appendingPathComponent("transcript.md"), options: .atomic)
         }
-        return CaptureSummary(
+        let updatedSummary = CaptureSummary(
             id: summary.id,
             directory: summary.directory,
             frameCount: summary.frameCount,
             durationSeconds: summary.durationSeconds,
             transcript: text,
             framePaths: summary.framePaths)
+        onFinalized?(updatedSummary)
+        return updatedSummary
     }
 
     private static func renderTranscript(meta: CaptureBundleMeta) -> String {

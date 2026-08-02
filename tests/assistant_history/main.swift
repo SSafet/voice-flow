@@ -17,6 +17,15 @@ let directory = FileManager.default.temporaryDirectory
     .appendingPathComponent("voice-flow-assistant-history-tests-\(UUID().uuidString)")
 let url = directory.appendingPathComponent("assistant-sessions.json")
 
+// Redirected stores are a privacy boundary: the default initializer must not
+// discover or import the host user's ~/.codex rollouts.
+expect(VoiceFlowPaths.shared.isIsolated, "history test root is not isolated")
+let isolatedDefault = AssistantHistoryStore(
+    url: directory.appendingPathComponent("isolated-default.json"))
+expect(isolatedDefault.conversations().count == 1
+       && isolatedDefault.activeConversation().messages.isEmpty,
+       "isolated history imported host Codex data")
+
 // Two conversations round-trip with distinct transcripts and resume pointers.
 let store = AssistantHistoryStore(url: url, legacySessionsRoot: nil)
 let first = store.activeConversation()
@@ -81,6 +90,9 @@ let draftA = drafts.activeConversation()
 let draftB = drafts.createConversation()
 expect(draftA.id == draftB.id, "new assistant should reuse the active empty draft")
 expect(drafts.conversations().count == 1, "empty draft presses should not multiply sessions")
+let forcedDraft = drafts.createConversation(force: true)
+expect(forcedDraft.id != draftA.id && drafts.conversations().count == 2,
+       "QA force-create could not establish isolated concurrency fixtures")
 
 // A pre-store Voice Flow rollout imports once by its explicit preamble and
 // keeps all streamed agent messages as the single Assistant reply shown in UI.
@@ -122,5 +134,67 @@ let importedAgain = AssistantHistoryStore(
     url: legacyURL,
     legacySessionsRoot: directory.appendingPathComponent("legacy"))
 expect(importedAgain.conversations().count == 1, "legacy import must run only once")
+
+// Runtime synchronization is transactional: resume only through the exact
+// canonical context cursor, dirty before I/O, clean only after one final.
+let bindingsURL = directory.appendingPathComponent("runtime-bindings.json")
+let bindings = AssistantHistoryStore(url: bindingsURL, legacySessionsRoot: nil)
+let bindingConversation = bindings.activeConversation()
+bindings.appendMessage(sessionId: bindingConversation.id, role: .user, text: "Canonical one")
+bindings.appendMessage(sessionId: bindingConversation.id, role: .assistant, text: "Canonical two")
+bindings.setCodexThreadId("legacy-codex-thread", for: bindingConversation.id)
+
+let migratedBinding = AssistantHistoryStore(url: bindingsURL, legacySessionsRoot: nil)
+    .conversation(bindingConversation.id)?.runtimeBinding(.codex)
+expect(migratedBinding?.externalSessionID == "legacy-codex-thread",
+       "legacy Codex id must expand into a runtime binding")
+expect(migratedBinding?.state == .dirty,
+       "legacy Codex binding must be dirty because API fallback may have advanced history")
+
+bindings.setPreferredRuntime(.opencode, for: bindingConversation.id)
+let firstOpenCode = bindings.beginRuntimeTurn(
+    sessionId: bindingConversation.id, runtime: .opencode, text: "OpenCode turn")!
+expect(firstOpenCode.requiresFreshSession, "first OpenCode turn must create a fresh session")
+expect(firstOpenCode.resumeExternalSessionID == nil, "first OpenCode turn cannot resume")
+expect(bindings.conversation(bindingConversation.id)?.runtimeBinding(.opencode)?.state == .dirty,
+       "binding must persist dirty before runtime I/O")
+bindings.recordRuntimeStarted(
+    sessionId: bindingConversation.id, runtime: .opencode,
+    externalSessionID: "oc-one", runtimeVersion: "1.2.3", fresh: true)
+let openCodeFinal = bindings.completeRuntimeTurn(
+    sessionId: bindingConversation.id, runtime: .opencode,
+    text: "OpenCode answer", externalSessionID: "oc-one", runtimeVersion: "1.2.3")!
+let cleanOpenCode = bindings.conversation(bindingConversation.id)!.runtimeBinding(.opencode)!
+expect(cleanOpenCode.state == .clean, "authoritative final must clean the selected binding")
+expect(cleanOpenCode.syncedThroughMessageID == openCodeFinal.id,
+       "clean cursor must point at the canonical final message")
+expect(cleanOpenCode.generation == 1, "fresh external session increments generation once")
+
+let resumedOpenCode = bindings.beginRuntimeTurn(
+    sessionId: bindingConversation.id, runtime: .opencode, text: "Resume OpenCode")!
+expect(resumedOpenCode.resumeExternalSessionID == "oc-one",
+       "exact clean cursor must resume its external session")
+bindings.endRuntimeTurnWithoutFinal(sessionId: bindingConversation.id, interrupted: true)
+expect(bindings.conversation(bindingConversation.id)?.runtimeBinding(.opencode)?.state == .dirty,
+       "interruption must leave the binding dirty")
+let recoveredOpenCode = bindings.beginRuntimeTurn(
+    sessionId: bindingConversation.id, runtime: .opencode, text: "Recover OpenCode")!
+expect(recoveredOpenCode.requiresFreshSession,
+       "a turn after interruption must reseed instead of resuming uncertain state")
+let messagesBeforeOverlap = bindings.conversation(bindingConversation.id)!.messages.count
+let overlappingTurn = bindings.beginRuntimeTurn(
+    sessionId: bindingConversation.id, runtime: .codex, text: "Must not overlap")
+expect(overlappingTurn == nil, "foreground/background turns overlapped one conversation")
+expect(bindings.conversation(bindingConversation.id)!.messages.count == messagesBeforeOverlap,
+       "rejected overlapping turn still appended a user message")
+bindings.endRuntimeTurnWithoutFinal(sessionId: bindingConversation.id, interrupted: true)
+
+let persistedBindingData = try! Data(contentsOf: bindingsURL)
+let persistedBindingJSON = try! JSONSerialization.jsonObject(with: persistedBindingData) as! [String: Any]
+expect(persistedBindingJSON["version"] as? Int == 1,
+       "expand migration must retain the rollback-readable version-1 envelope")
+let persistedSessions = persistedBindingJSON["sessions"] as! [[String: Any]]
+expect(persistedSessions.first?["codexThreadId"] as? String == "legacy-codex-thread",
+       "legacy Codex id must remain mirrored during the rollback window")
 
 print("assistant history tests passed")

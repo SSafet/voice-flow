@@ -10,8 +10,7 @@ import ApplicationServices
 func vflog(_ msg: String) {
     let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(msg)\n"
     print(line, terminator: "")
-    let logURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/voice-flow/app.log")
+    let logURL = VoiceFlowPaths.shared.file("app.log")
     if let data = line.data(using: .utf8) {
         if FileManager.default.fileExists(atPath: logURL.path) {
             if let fh = try? FileHandle(forWritingTo: logURL) {
@@ -177,8 +176,11 @@ class UserSettings {
     var annotateHotkey = HotkeySpec(keyCode: 96, modifiers: [], label: "F5")
     var agentModel: String = DefaultAgentModel
     var agentBaseURL: String = DefaultAgentBaseURL
-    // "codex" = ChatGPT-subscription turns via the Codex CLI (OAuth, no
-    // per-token billing), falling back to the API key; "api" = key only.
+    var agentDailyBudgetUSD: Double = 5.0
+    var agentMaxOutputTokens: Int = 32_000
+    var agentRequestTimeoutSeconds: Int = 600
+    // Default runtime for new Assistant conversations. Existing conversations
+    // persist their own preferred runtime in assistant-sessions.json.
     var agentBackend: String = AgentBackendCodex
     var voiceRepliesEnabled: Bool = false
     var assistantWakeEnabled: Bool = true
@@ -211,12 +213,7 @@ class UserSettings {
         "com.anthropic.claudefordesktop", "com.openai.chat", "notion.id",
     ]
 
-    private let url: URL = {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/voice-flow")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("settings.json")
-    }()
+    private let url = VoiceFlowPaths.shared.file("settings.json")
 
     private func loadHotkey(_ dict: [String: Any], key: String, fallback: HotkeySpec) -> HotkeySpec {
         if let d = dict[key] as? [String: Any], let spec = HotkeySpec.fromDict(d) { return spec }
@@ -267,8 +264,22 @@ class UserSettings {
         if let v = dict["agent_base_url"] as? String {
             agentBaseURL = Self.trimmed(v, fallback: DefaultAgentBaseURL)
         }
+        if let v = dict["agent_daily_budget_usd"] as? Double {
+            agentDailyBudgetUSD = min(max(v, 0.25), 500)
+        } else if let v = dict["agent_daily_budget_usd"] as? Int {
+            agentDailyBudgetUSD = min(max(Double(v), 0.25), 500)
+        }
+        if let v = dict["agent_max_output_tokens"] as? Int {
+            agentMaxOutputTokens = min(max(v, 256), 128_000)
+        }
+        if let v = dict["agent_request_timeout_seconds"] as? Int {
+            agentRequestTimeoutSeconds = min(max(v, 30), 3_600)
+        }
         if let v = dict["agent_backend"] as? String {
-            agentBackend = v == AgentBackendAPI ? AgentBackendAPI : AgentBackendCodex
+            // The old direct API choice expands to OpenCode. The direct loop
+            // remains only as a hidden Codex failure fallback for one release.
+            agentBackend = (v == AgentBackendOpenCode || v == AgentBackendAPI)
+                ? AgentBackendOpenCode : AgentBackendCodex
         }
         if let v = dict["voice_replies_enabled"] as? Bool { voiceRepliesEnabled = v }
         if let v = dict["assistant_wake_enabled"] as? Bool { assistantWakeEnabled = v }
@@ -314,6 +325,9 @@ class UserSettings {
             "annotate_hotkey": annotateHotkey.toDict(),
             "agent_model": agentModel,
             "agent_base_url": agentBaseURL,
+            "agent_daily_budget_usd": agentDailyBudgetUSD,
+            "agent_max_output_tokens": agentMaxOutputTokens,
+            "agent_request_timeout_seconds": agentRequestTimeoutSeconds,
             "agent_backend": agentBackend,
             "voice_replies_enabled": voiceRepliesEnabled,
             "assistant_wake_enabled": assistantWakeEnabled,
@@ -344,6 +358,20 @@ class KeychainStore {
     private let service = "com.voiceflow.app"
     private let openAIAPIKeyAccount = "openai_api_key"
     private let agentAPIKeyAccount = "agent_api_key"
+#if VOICE_FLOW_QA
+    private let qaLock = NSLock()
+    private lazy var qaValues: [String: String] = {
+        var values: [String: String] = [:]
+        let environment = ProcessInfo.processInfo.environment
+        if let value = environment["VOICE_FLOW_QA_OPENAI_API_KEY"], !value.isEmpty {
+            values[openAIAPIKeyAccount] = value
+        }
+        if let value = environment["VOICE_FLOW_QA_AGENT_API_KEY"], !value.isEmpty {
+            values[agentAPIKeyAccount] = value
+        }
+        return values
+    }()
+#endif
 
     var hasOpenAIAPIKey: Bool {
         loadOpenAIAPIKey() != nil
@@ -382,6 +410,9 @@ class KeychainStore {
     }
 
     private func load(account: String) -> String? {
+#if VOICE_FLOW_QA
+        return qaLock.withLock { qaValues[account] }
+#else
         var query = baseQuery(account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -399,12 +430,17 @@ class KeychainStore {
             return nil
         }
         return key
+#endif
     }
 
     @discardableResult
     private func save(_ key: String, account: String) -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
+#if VOICE_FLOW_QA
+        qaLock.withLock { qaValues[account] = trimmed }
+        return true
+#else
 
         let deleteStatus = SecItemDelete(baseQuery(account: account) as CFDictionary)
         if deleteStatus != errSecSuccess && deleteStatus != errSecItemNotFound {
@@ -422,16 +458,22 @@ class KeychainStore {
             return false
         }
         return true
+#endif
     }
 
     @discardableResult
     private func remove(account: String) -> Bool {
+#if VOICE_FLOW_QA
+        qaLock.withLock { qaValues.removeValue(forKey: account) }
+        return true
+#else
         let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
         if status != errSecSuccess && status != errSecItemNotFound {
             vflog("keychain delete failed: \(status)")
             return false
         }
         return true
+#endif
     }
 
     private func baseQuery(account: String) -> [String: Any] {
@@ -499,6 +541,15 @@ class HotkeyManager {
     private static let chordResolutionDelay: TimeInterval = 0.12
     private static var registry: [WeakHotkeyManagerRef] = []
     private static let ownPID = Int64(ProcessInfo.processInfo.processIdentifier)
+#if VOICE_FLOW_QA
+    private static let qaSyntheticEventTag: Int64 = 0x56465141
+    /// Desktop E2E runs beside the user's real session. In this mode only the
+    /// explicitly tagged fixture events may reach Voice Flow's hotkey state;
+    /// physical Shift/Control/Fn input must remain completely inert.
+    private static let qaSyntheticInputOnly =
+        ProcessInfo.processInfo.environment["VOICE_FLOW_QA_SYNTHETIC_INPUT_ONLY"] == "1"
+    static var qaSyntheticInputIsolationEnabled: Bool { qaSyntheticInputOnly }
+#endif
 
     // All taps live on one dedicated thread. Active taps make every keystroke
     // wait for the callback — if that ran on the main run loop, any busy or
@@ -573,7 +624,18 @@ class HotkeyManager {
                 }
                 // Never touch events we synthesized ourselves — the paste
                 // Cmd+V and read-aloud Cmd+C must sail through untouched.
-                if event.getIntegerValueField(.eventSourceUnixProcessID) == HotkeyManager.ownPID {
+                let isOwnEvent = event.getIntegerValueField(.eventSourceUnixProcessID)
+                    == HotkeyManager.ownPID
+#if VOICE_FLOW_QA
+                let isQASynthetic = event.getIntegerValueField(.eventSourceUserData)
+                    == HotkeyManager.qaSyntheticEventTag
+                if HotkeyManager.qaSyntheticInputOnly && !isQASynthetic {
+                    return Unmanaged.passUnretained(event)
+                }
+#else
+                let isQASynthetic = false
+#endif
+                if isOwnEvent && !isQASynthetic {
                     return Unmanaged.passUnretained(event)
                 }
                 if mgr.handleEvent(event) {
@@ -593,6 +655,53 @@ class HotkeyManager {
         CGEvent.tapEnable(tap: tap, enable: true)
         vflog("hotkey listener started (keyCode=\(keyCode), mods=\(requiredModifiers.rawValue))")
     }
+
+#if VOICE_FLOW_QA
+    /// Post a tagged HID event through the actual global event taps. The tag
+    /// is accepted only by QA builds; production keeps ignoring every event
+    /// synthesized by Voice Flow itself.
+    static func qaPost(keyCode: CGKeyCode, action: String) -> Bool {
+        guard ["press", "release", "tap", "double_tap"].contains(action) else {
+            return false
+        }
+        let source = CGEventSource(stateID: .hidSystemState)
+        func post(_ down: Bool) {
+            guard let event = CGEvent(
+                keyboardEventSource: source, virtualKey: keyCode, keyDown: down)
+            else { return }
+            let modifier = HotkeySpec.modifierFlag(for: keyCode)
+            if let modifier {
+                event.type = .flagsChanged
+                event.flags = down ? modifier : []
+            }
+            event.setIntegerValueField(.eventSourceUserData, value: qaSyntheticEventTag)
+            if modifier != nil {
+                event.post(tap: .cghidEventTap)
+            } else {
+                // Secure Input suppresses synthetic keyDown/keyUp at the HID
+                // tap in headless QA. Deliver those events to the signed app
+                // itself so its real key window/responder handles Escape.
+                event.postToPid(pid_t(ProcessInfo.processInfo.processIdentifier))
+            }
+        }
+        func tap() {
+            post(true)
+            usleep(30_000)
+            post(false)
+        }
+        switch action {
+        case "press": post(true)
+        case "release": post(false)
+        case "tap": tap()
+        case "double_tap":
+            tap()
+            usleep(80_000)
+            tap()
+        default: return false
+        }
+        return true
+    }
+#endif
 
     private func reenableTap() {
         guard let eventTap else { return }
@@ -1162,6 +1271,20 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     }
 
     func start() {
+#if VOICE_FLOW_QA
+        if ProcessInfo.processInfo.environment["VOICE_FLOW_QA_AUDIO_FIXTURE"] == "1" {
+            var samples = [Int16](repeating: 6_000, count: 3_200)
+            audioData = samples.withUnsafeBytes { Data($0) }
+            isRecording = true
+            clippingDetected = false
+            speechSinceLastPartial = true
+            lastSpeechDataLength = audioData.count
+            voicedFrames = samples.count
+            lastCaptureBytes = 0
+            lastCaptureWasSilent = false
+            return
+        }
+#endif
         // Pre-allocate for up to 60 seconds of 16kHz int16 audio
         audioData = Data(capacity: Int(sampleRate) * 2 * 60)
         isRecording = true
@@ -1538,6 +1661,13 @@ class BackendBridge {
         vocabulary: [String] = [],
         wakeWord: String? = nil
     ) {
+#if VOICE_FLOW_QA
+        if let fixture = ProcessInfo.processInfo.environment["VOICE_FLOW_QA_TRANSCRIPT_FIXTURE"],
+           !fixture.isEmpty {
+            DispatchQueue.main.async { self.onResult?(requestId, fixture, fixture) }
+            return
+        }
+#endif
         let b64 = pcmData.base64EncodedString()
         var msg: [String: Any] = [
             "cmd": "transcribe",

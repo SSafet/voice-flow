@@ -11,6 +11,7 @@ import Foundation
 //  from background MCP threads.
 
 struct InboxMessage: Codable {
+    let id: String?
     let time: String            // ISO8601
     let text: String
     let attachments: [String]   // absolute screenshot paths
@@ -20,8 +21,7 @@ struct InboxMessage: Codable {
 }
 
 final class MessageInbox {
-    private static let url = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/voice-flow/inbox.json")
+    private static let url = VoiceFlowPaths.shared.file("inbox.json")
     private static let maxQueued = 100
 
     private let queue = DispatchQueue(label: "voiceflow.inbox")
@@ -39,6 +39,7 @@ final class MessageInbox {
     /// them: a session keeps exactly one live listener — the latest — so
     /// stale background `vf listen` tasks finish instead of accumulating.
     private var superseded: Set<ObjectIdentifier> = []
+    var onAdded: ((InboxMessage) -> Void)?
 
     init() {
         if let data = try? Data(contentsOf: Self.url),
@@ -70,6 +71,7 @@ final class MessageInbox {
 
     func add(text: String, attachments: [String], session: String? = nil) {
         let message = InboxMessage(
+            id: UUID().uuidString,
             time: ISO8601DateFormatter().string(from: Date()),
             text: text,
             attachments: attachments,
@@ -86,6 +88,7 @@ final class MessageInbox {
             }
             waiters.removeAll { Self.matches(session, $0.session) }
         }
+        onAdded?(message)
         vflog("inbox: queued message (\(text.prefix(60))…)")
     }
 

@@ -1,0 +1,603 @@
+{
+  "version": 1,
+  "runners": {
+    "unit": {
+      "command": "scripts/test-agent-harness.sh --unit",
+      "description": "Static, compile, unit, schema, and deterministic contract gate."
+    },
+    "live": {
+      "command": "scripts/test-agent-harness.sh --live",
+      "description": "Unit gate plus pinned real Codex/OpenCode runtime smoke and canary."
+    },
+    "e2e": {
+      "command": "scripts/test-agent-harness.sh --e2e",
+      "description": "Live gate plus isolated signed-app UI, hotkey, tool, failure, and persistence checks."
+    },
+    "release": {
+      "command": "scripts/test-agent-harness.sh --release",
+      "description": "E2E gate plus the four-hour three-agent soak and release evidence audit."
+    }
+  },
+  "tests": [
+    {
+      "id": "contract:capture_bundle",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:capture_frame_dedupe",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:capture_pruning",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:capture_recent_list",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:dirty_turn_recovery",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:job_budget",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:job_cancel",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:job_concurrency",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:job_exclusion",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:job_idempotency",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:job_leases",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:job_model_pin",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:job_retry_attempts",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:job_triggers",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_annotate_screen",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_check_messages",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_clear_annotations",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_get_latest_capture",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_get_recent_dictations",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_list_captures",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_list_overlays",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_remove_overlay",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_report_to_user",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_set_session_name",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_show_guide",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_show_panel",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_take_screenshot",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_update_guide",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:mcp_wait_for_message",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:memory_ledger",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:memory_revision",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:model_catalog",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:overlay_documents",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:prompt_layers",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:runtime_binding_switch",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:runtime_failure_note",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:skill_manifest",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:skill_projection",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:skill_validation",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:sync_dedupe_upsert",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:sync_ingest",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:sync_pairing",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:sync_recovery",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:tool_results",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:tool_schemas",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:tts_configuration",
+      "runner": "e2e"
+    },
+    {
+      "id": "contract:watcher_activity",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:watcher_camera",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:watcher_capture",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:watcher_lock",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:watcher_retention",
+      "runner": "unit"
+    },
+    {
+      "id": "contract:watcher_review",
+      "runner": "unit"
+    },
+    {
+      "id": "e2e:accessibility_labels",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:annotation_escape",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:assistant_callback_reduction",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:assistant_image",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:assistant_interrupt",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:continuous_capture",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:dictate_hold",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:dictate_inbox",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:dictate_snapshot",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:double_select_speech",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:escape_panic",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:ghost_pushes",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:install_signature",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:job_result_push",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:job_model_pin",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:launch_relaunch",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:live_reply_speech",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:message_speaker",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:migration_presentation",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:no_arrival_autoplay",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:overlay_file_poll",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:overlay_session_scope",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:overlay_user_close",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:paste_fallback",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:pasteboard_write",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:permission_prompt",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:push_close_keep",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:push_stack_persistence",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:push_trash_delete",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:runtime_selector",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:runtime_selector_running",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:session_slots",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:tts_barge_in",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:tts_speak",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:tts_transport",
+      "runner": "e2e"
+    },
+    {
+      "id": "e2e:unread_ring",
+      "runner": "e2e"
+    },
+    {
+      "id": "failure:job_lease_recovery",
+      "runner": "unit"
+    },
+    {
+      "id": "failure:job_timeout",
+      "runner": "unit"
+    },
+    {
+      "id": "failure:opencode_restart",
+      "runner": "e2e"
+    },
+    {
+      "id": "live:codex_discovery_auth",
+      "runner": "live"
+    },
+    {
+      "id": "live:codex_image_interrupt",
+      "runner": "live"
+    },
+    {
+      "id": "live:codex_new_resume",
+      "runner": "live"
+    },
+    {
+      "id": "live:opencode_image_read",
+      "runner": "live"
+    },
+    {
+      "id": "live:opencode_session_stream",
+      "runner": "live"
+    },
+    {
+      "id": "live:skill_runtime_parity",
+      "runner": "live"
+    },
+    {
+      "id": "scripts/test-agent-harness.sh:compile_app",
+      "runner": "unit"
+    },
+    {
+      "id": "security:capability_scope",
+      "runner": "live"
+    },
+    {
+      "id": "security:child_environment",
+      "runner": "unit"
+    },
+    {
+      "id": "security:config_isolation",
+      "runner": "e2e"
+    },
+    {
+      "id": "security:log_redaction",
+      "runner": "unit"
+    },
+    {
+      "id": "security:loopback_bind",
+      "runner": "unit"
+    },
+    {
+      "id": "security:mcp_allowlist",
+      "runner": "unit"
+    },
+    {
+      "id": "security:model_catalog_secret",
+      "runner": "unit"
+    },
+    {
+      "id": "security:memory_boundaries",
+      "runner": "unit"
+    },
+    {
+      "id": "security:path_containment",
+      "runner": "unit"
+    },
+    {
+      "id": "security:permission_policy",
+      "runner": "e2e"
+    },
+    {
+      "id": "security:provider_key_canary",
+      "runner": "e2e"
+    },
+    {
+      "id": "security:release_qa_absent",
+      "runner": "unit"
+    },
+    {
+      "id": "e2e:qa_physical_input_isolation",
+      "runner": "e2e"
+    },
+    {
+      "id": "security:runtime_auth",
+      "runner": "live"
+    },
+    {
+      "id": "security:skill_isolation",
+      "runner": "unit"
+    },
+    {
+      "id": "security:tool_session_isolation",
+      "runner": "unit"
+    },
+    {
+      "id": "security:tool_token_replay",
+      "runner": "live"
+    },
+    {
+      "id": "soak:three_agents",
+      "runner": "release"
+    },
+    {
+      "id": "tests/assistant_continuity/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/assistant_history/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/assistant_wake/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/assistants/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/capture_clipboard/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/capture_routing/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/codex_runtime/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/hotkey_precedence/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/model_gateway/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/opencode_runtime/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/opencode_supervisor/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/openrouter_models/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/player/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/test_backend_protocol.py",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/voice_flow_paths/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tool:computer_control",
+      "runner": "unit"
+    },
+    {
+      "id": "tool:computer_screenshot",
+      "runner": "unit"
+    },
+    {
+      "id": "tool:context",
+      "runner": "unit"
+    },
+    {
+      "id": "tool:memory",
+      "runner": "unit"
+    },
+    {
+      "id": "tool:overlay",
+      "runner": "unit"
+    },
+    {
+      "id": "tool:user_interaction",
+      "runner": "unit"
+    },
+    {
+      "id": "visual:assistant_receipt",
+      "runner": "e2e"
+    },
+    {
+      "id": "visual:automation_model_picker",
+      "runner": "e2e"
+    },
+    {
+      "id": "visual:job_status",
+      "runner": "e2e"
+    },
+    {
+      "id": "visual:overlay_coordinates",
+      "runner": "e2e"
+    },
+    {
+      "id": "visual:pill_modes",
+      "runner": "e2e"
+    },
+    {
+      "id": "visual:runtime_default",
+      "runner": "e2e"
+    },
+    {
+      "id": "visual:runtime_health",
+      "runner": "e2e"
+    },
+    {
+      "id": "visual:watcher_status",
+      "runner": "e2e"
+    }
+  ]
+}

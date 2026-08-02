@@ -20,6 +20,7 @@ struct AssistantDefinition {
     let voice: String?        // optional TTS voice for her replies
     let instructions: String  // assistant.md body — the user-authored persona
     let directory: URL
+    let selectedSkills: [String]
 
     var memoryDirectory: URL { directory.appendingPathComponent("memory") }
     var coreMemoryURL: URL { memoryDirectory.appendingPathComponent("core.md") }
@@ -75,8 +76,7 @@ final class AssistantsStore {
     static let shared = AssistantsStore()
 
     static var rootURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/voice-flow/assistants")
+        VoiceFlowPaths.shared.directory("assistants")
     }
 
     private(set) var assistants: [AssistantDefinition] = []
@@ -125,9 +125,14 @@ final class AssistantsStore {
         let slug = directory.lastPathComponent
         let name = fields["name"].flatMap { $0.isEmpty ? nil : $0 } ?? slug.uppercased()
         let voice = fields["voice"].flatMap { $0.isEmpty ? nil : $0 }
+        let selectedSkills = (fields["skills"] ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
         return AssistantDefinition(slug: slug, name: name,
                                    description: fields["description"] ?? "",
-                                   voice: voice, instructions: body, directory: directory)
+                                   voice: voice, instructions: body, directory: directory,
+                                   selectedSkills: selectedSkills)
     }
 
     private func scaffoldFlora() {

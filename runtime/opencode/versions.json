@@ -1,0 +1,25 @@
+{
+  "version": "1.17.11",
+  "assets": {
+    "arm64": {
+      "url": "https://github.com/anomalyco/opencode/releases/download/v1.17.11/opencode-darwin-arm64.zip",
+      "archiveSHA256": "40723446013dea8252eea4f180d707f75e805af54ee85a14fd7c126513ba8342",
+      "binarySHA256": "996fea55451be04cfa27c0d9dbbf0468cb611cde43075fe3dac799772d0b710f"
+    },
+    "x86_64": {
+      "url": "https://github.com/anomalyco/opencode/releases/download/v1.17.11/opencode-darwin-x64.zip",
+      "archiveSHA256": "7f3e517bb9c7e671e8d311feecf890ccb336a20a0653fb8953b6a117c9750701",
+      "binarySHA256": "712fc97e386f43c2a77186438524766f76d51a9ea3adcff0a07b9992b1c94a31"
+    }
+  },
+  "developerFallbacks": {
+    "arm64": {
+      "path": "/opt/homebrew/bin/opencode",
+      "sha256": "996fea55451be04cfa27c0d9dbbf0468cb611cde43075fe3dac799772d0b710f"
+    },
+    "x86_64": {
+      "path": "/usr/local/bin/opencode",
+      "sha256": "712fc97e386f43c2a77186438524766f76d51a9ea3adcff0a07b9992b1c94a31"
+    }
+  }
+}

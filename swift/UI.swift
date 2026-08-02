@@ -270,6 +270,56 @@ class FloatingIndicator: NSObject {
         CATransaction.commit()
     }
     var isGrownVisible: Bool { mode == .grown }
+#if VOICE_FLOW_QA
+    var qaState: [String: Any] {
+        let modeName: String
+        switch mode {
+        case .pill: modeName = "pill"
+        case .flash: modeName = "flash"
+        case .picker: modeName = "picker"
+        case .grown: modeName = "grown"
+        case .player: modeName = "player"
+        }
+        return [
+            "mode": modeName,
+            "active_number": activeNumber ?? 0,
+            "unread_visible": unreadRingLayer?.isHidden == false,
+            "unread_asking": unreadRingAsking,
+            "width": Int(panel?.contentView?.bounds.width ?? 0),
+            "height": Int(panel?.contentView?.bounds.height ?? 0),
+        ]
+    }
+
+    func qaSnapshot(name: String = "pill") throws -> (path: String, width: Int, height: Int) {
+        precondition(Thread.isMainThread)
+        guard let view = panel.contentView else {
+            throw NSError(
+                domain: "VoiceFlowQA", code: 21,
+                userInfo: [NSLocalizedDescriptionKey: "Indicator has no content view."])
+        }
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
+        let bounds = view.bounds
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: bounds) else {
+            throw NSError(
+                domain: "VoiceFlowQA", code: 22,
+                userInfo: [NSLocalizedDescriptionKey: "Indicator bitmap allocation failed."])
+        }
+        view.cacheDisplay(in: bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw NSError(
+                domain: "VoiceFlowQA", code: 23,
+                userInfo: [NSLocalizedDescriptionKey: "Indicator PNG encoding failed."])
+        }
+        let safeName = name.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "-" }
+        let directory = VoiceFlowPaths.shared.directory("qa-artifacts")
+        let url = directory.appendingPathComponent("indicator-\(safeName.isEmpty ? "state" : safeName).png")
+        try png.write(to: url, options: .atomic)
+        return (url.path, bitmap.pixelsWide, bitmap.pixelsHigh)
+    }
+
+    func qaTapSpeaker() { grownSpeakTapped() }
+#endif
     /// Exact geometry consumed by ChatPanel. The screen is resolved from the
     /// pill window itself, never independently from display ordering.
     var panelAnchor: PanelAnchor? {
@@ -2248,8 +2298,7 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
 
     private let renderCap = 60
     private let storeCap = 200
-    private static let storeURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/voice-flow/dictations.json")
+    private static let storeURL = VoiceFlowPaths.shared.file("dictations.json")
 
     /// Kept items not yet revisited — surfaced on the Kept chip and usable
     /// for a future tab badge.
@@ -2258,6 +2307,10 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
     /// Hover "Continue" tapped on a row — carries the entry's stable id so
     /// the capture pipeline can freeze the append target (ticket #36).
     var onContinueRequested: ((String) -> Void)?
+    /// The entry currently receiving a continuation. Kept independently of
+    /// any one button instance so rebuilds, scrolling, and hotkey stops cannot
+    /// leave stale row chrome behind.
+    private var activeContinuationEntryId: String?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -2379,6 +2432,14 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
         onUnreadChanged?(unrevisitedCount)
     }
 
+    /// Keep the row affordance aligned with the recorder's actual state.
+    /// Rebuilding also makes a newly opened/scrolled row show Stop while its
+    /// continuation is active.
+    func setContinuationActive(entryId: String?) {
+        activeContinuationEntryId = entryId
+        rebuildContent()
+    }
+
     /// Sync path (ticket #36): the phone sends whole entries with stable ids.
     /// A known id whose text changed is an update-in-place (continued on the
     /// phone) — refresh text/timestamp, reset unseen, re-sort to top; an
@@ -2484,11 +2545,15 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
         // Hover-only "Continue" (ticket #36): dictate more into this entry.
         let continueBtn = PaddedInlineButton(title: "Continue", target: self,
                                              action: #selector(continueClicked(_:)))
+        continueBtn.setButtonType(.toggle)
         continueBtn.bezelStyle = .inline
         continueBtn.font = .systemFont(ofSize: 11)
         continueBtn.tag = index
         continueBtn.toolTip = "Continue this dictation — record and append"
-        continueBtn.alphaValue = 0
+        let continuationActive = entry.id == activeContinuationEntryId
+        continueBtn.state = continuationActive ? .on : .off
+        continueBtn.title = continuationActive ? "Stop" : "Continue"
+        continueBtn.alphaValue = continuationActive ? 1 : 0
         continueBtn.setContentHuggingPriority(.required, for: .horizontal)
         continueBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
         row.addArrangedSubview(continueBtn)
@@ -2558,15 +2623,6 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
             DictationsView.saveEntries(entries)
         }
         guard let id = entries[index].id else { return }
-        // Toggle feedback: recording-in-progress shows as Stop; the rebuild
-        // after the transcript lands resets the row to a fresh Continue.
-        if sender.state == .on {
-            sender.state = .off
-            sender.title = "Continue"
-        } else {
-            sender.state = .on
-            sender.title = "Stop"
-        }
         onContinueRequested?(id)
     }
 
@@ -2612,7 +2668,16 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
 
     private static func loadEntries() -> [HistoryEntry] {
         guard let data = try? Data(contentsOf: storeURL),
-              let list = try? JSONDecoder().decode([HistoryEntry].self, from: data) else { return [] }
+              var list = try? JSONDecoder().decode([HistoryEntry].self, from: data) else { return [] }
+        // One-time compatibility migration for pre-Continue history. IDs must
+        // be durable before sync exports an entry; otherwise Android invents
+        // an identity the Mac cannot recognize when the continued text returns.
+        var migrated = false
+        for index in list.indices where list[index].id?.isEmpty ?? true {
+            list[index].id = UUID().uuidString
+            migrated = true
+        }
+        if migrated { saveEntries(list) }
         return list
     }
 
@@ -2647,8 +2712,7 @@ final class MessagesView: NSView {
 
     private let renderCap = 60
     private let storeCap = 200
-    private static let storeURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/voice-flow/messages.json")
+    private static let storeURL = VoiceFlowPaths.shared.file("messages.json")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)

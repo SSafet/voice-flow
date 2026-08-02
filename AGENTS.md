@@ -12,11 +12,48 @@ uv sync                 # once — creates .venv with the Python backend deps
 ./install.sh            # compiles swift/*.swift → "/Applications/Voice Flow.app", codesigns
 open "/Applications/Voice Flow.app"
 ./uninstall.sh          # remove
+./scripts/test-agent-harness.sh --unit     # deterministic compile + unit/contracts
+./scripts/test-agent-harness.sh --live     # plus real Codex + pinned OpenCode smoke
+./scripts/test-agent-harness.sh --e2e      # plus isolated signed-app computer QA
 ```
 
 `install.sh` compiles every file in `swift/` into one binary and prefers a stable
 **Developer ID** signing identity so macOS keeps TCC / Keychain grants across
 rebuilds (falls back to ad-hoc, which resets permissions each build).
+
+`--nightly` adds a two-hour three-agent soak. `--release` runs the complete
+gate plus the four-hour soak and emits audited evidence for every ID in
+`tests/capabilities.json` through `tests/test_registry.json`.
+
+## Dual-runtime Assistant harness
+
+Voice Flow owns the Assistant contract and canonical transcript. Each
+conversation can select **Codex** or **OpenCode** between turns; Settings sets
+only the default for new conversations. Codex remains a first-class rollback
+path. A legacy `codexThreadId` expands into a dirty Codex runtime binding, so
+the next turn safely reseeds from canonical history without losing rollback
+readability.
+
+OpenCode 1.17.11 is checksum-pinned in `runtime/opencode/versions.json`, copied
+into the signed app, and run as one supervised `--pure` loopback server per
+trust profile. Its XDG roots are isolated under the Voice Flow config root,
+auto-update/sharing/subagents are disabled, concurrent cold starts coalesce,
+and stop/cancel terminates the process tree. Long-lived provider credentials
+stay in Keychain: a rotating loopback model-gateway token is all OpenCode sees.
+
+Assistant folders remain canonical for persona, bounded `memory/core.md` and
+`memory/ledger.md`, and selected `skills/<name>/SKILL.md`. Voice Flow projects
+only selected skills and five narrow first-party tools into OpenCode:
+`voiceflow_computer`, `voiceflow_context`, `voiceflow_overlay`,
+`voiceflow_user`, and `voiceflow_memory`. These tools use a private rotating
+capability endpoint and never enter the public MCP session registry. External
+integrations remain deny-by-default MCP selections.
+
+The **Agents** surface owns durable background work. Jobs, runs, leases,
+heartbeats, retries, trigger idempotency, concurrency keys, budgets, maximum
+runtime, cancellation, and visible blocked/failure results live in
+`agent-jobs.sqlite`. Initial caps are three global agents, three OpenCode runs,
+two Codex runs, and one active run per conversation/concurrency key.
 
 Quick type-check without installing:
 
@@ -234,8 +271,8 @@ deployed copies are build outputs.
 - `messages.json` — every agent push (`[AgentMessageEntry]`: time, session,
   text, isAsk), written by `MessagesView` (same caps). The Messages tab's store.
 - `assistant-sessions.json` — versioned in-app Assistant conversations: ordered
-  user/assistant/note messages, per-session Codex thread IDs, titles, and turn
-  state. Restored on launch so Assistant sessions remain selectable/resumable;
+  user/assistant/note messages, per-runtime bindings/cursors, preferred runtime,
+  titles, and turn state. Restored on launch so Assistant sessions remain selectable/resumable;
   the first upgraded launch imports only Codex rollouts carrying Voice Flow's
   explicit Assistant preamble and removes empty scaffold drafts.
 - `pushes.json` — the live per-session push stacks (`sessionPushes`), saved on
@@ -243,6 +280,9 @@ deployed copies are build outputs.
 - `inbox.json` — queued contextual-capture messages for Codex (`MessageInbox`).
 - `overlays/*.json` — live on-screen elements (`OverlayManager`); `_schema.md` documents the format.
 - `watcher/` — ambient workflow log (`WorkflowWatcher`): per-day `activity.jsonl` + deduped frames, plus `ANALYZE.md` / `ledger.md` / `reviews/` for the nightly review.
+- `agent-jobs.sqlite` — durable agent jobs, runs, leases, retries, costs, and trigger dedupe.
+- `agent-security.jsonl` — redacted permission/security decisions for private agent tools.
+- `runtime/opencode/<trust-profile>/` — generated private config/XDG roots and bounded runtime logs; never provider credentials.
 - `app.log` — `vflog` output.
 - OpenAI / agent API keys live in the **Keychain** (`KeychainStore`), not on disk.
 
@@ -265,6 +305,14 @@ deployed copies are build outputs.
 | `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
 | `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Codex. |
 | `Agent.swift` | `AgentSession`, `ComputerControl` | LLM loop that reasons over screenshots and issues screen-control tool calls. |
+| `AgentRuntime*.swift`, `CodexAgentRuntime.swift`, `OpenCodeAgentRuntime.swift` | `AgentRuntime`, `AgentTurnRequest`, `RuntimeBinding` | Runtime-neutral turn contract, canonical event/result types, and Codex/OpenCode adapters. |
+| `OpenCodeSupervisor.swift`, `OpenCodeHTTPClient.swift` | `OpenCodeSupervisor`, `OpenCodeConnection`, `OpenCodeHTTPClient` | Pinned authenticated server lifecycle, isolated config, SSE/HTTP normalization, cancellation, restart, and process-tree cleanup. |
+| `ModelGateway.swift` | `ModelGatewayServer`, `ModelGatewayCredentials` | Loopback OpenAI-compatible credential boundary, model/budget/token limits, and redaction. |
+| `AgentTools.swift`, `AgentToolServer.swift`, `AgentPermissionPolicy.swift` | `AgentToolDispatcher`, `AgentToolSessionRegistry`, `AgentPermissionPolicy` | Five private tool families, strict schemas/session capabilities, projection, permissions, and audit. |
+| `AgentCapabilities.swift`, `AgentPromptComposer.swift` | `AgentMemoryStore`, `AgentSkillStore`, `AgentPromptComposer` | Bounded memory revisions, selected-skill validation/projection, and runtime-parity prompt layers. |
+| `AgentJobStore.swift`, `AgentSupervisor.swift`, `AgentRuntimeJobExecutor.swift` | `AgentJobStore`, `AgentSupervisor`, `AgentRuntimeJobExecutor` | SQLite jobs/runs/events, leases, fair concurrency, retries, budgets, triggers, and durable background execution. |
+| `AgentsView.swift` | `AgentsView` | Assistant threads, runtime selector, durable job status, create/cancel/delete controls. |
+| `VoiceFlowPaths.swift`, `QAControl.swift` | `VoiceFlowPaths`, `QAEventRecorder` | Config-root isolation plus the compile-time-absent QA authority/event plane. |
 | `AssistantContinuity.swift` | `AssistantContinuityClassifier`, `LocalAssistantSessionAdapter` | Ephemeral current-vs-new wake routing and the stable local picker identity for FLORA. |
 | `AssistantHistory.swift` | `AssistantHistoryStore`, `AssistantConversation`, `AssistantHistoryMessage` | Atomic local history and resume metadata for selectable in-app Assistant sessions. |
 | `Codex.swift` | `CodexExecBackend` | ChatGPT-subscription assistant turns via `codex exec --json` (OAuth, thread resume, image attach); the default backend, API key is the fallback. |

@@ -669,7 +669,10 @@ final class TTSController: NSObject {
         }
 
         streamCompleted = true
-        speechAPIKey = ""
+        // A sentence queue may still seek/skip while paused. Keep its key
+        // only until playback finishes or the run is stopped; non-queued
+        // cached speech can release it immediately.
+        if !queuedSpeechActive { speechAPIKey = "" }
         speechCacheURL = nil
         if let cacheURL {
             do {
@@ -740,7 +743,6 @@ final class TTSController: NSObject {
         // If a chunk is still fetching, finishLiveStream finalizes when it ends.
         guard awaitingLiveText, currentStreamSession == nil else { return }
         awaitingLiveText = false
-        speechAPIKey = ""
         guard !currentPCMData.isEmpty else {
             clearSpeechPlan()
             currentRequest = nil
@@ -774,7 +776,17 @@ final class TTSController: NSObject {
             body["instructions"] = request.instructions
         }
 
-        let url = URL(string: "https://api.openai.com/v1/audio/speech")!
+        let url: URL
+#if VOICE_FLOW_QA
+        if let raw = ProcessInfo.processInfo.environment["VOICE_FLOW_QA_TTS_URL"],
+           let fixtureURL = URL(string: raw) {
+            url = fixtureURL
+        } else {
+            url = URL(string: "https://api.openai.com/v1/audio/speech")!
+        }
+#else
+        url = URL(string: "https://api.openai.com/v1/audio/speech")!
+#endif
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.timeoutInterval = 120
@@ -845,7 +857,10 @@ final class TTSController: NSObject {
             // to main in order, and the status side settles consumption —
             // if it runs first the finish handler finds no context and the
             // last push never marks spoken (kept resurfacing as unread).
-            if queueFinished { onQueuedSpeechFinished?() }
+            if queueFinished {
+                speechAPIKey = ""
+                onQueuedSpeechFinished?()
+            }
             setStatus(.ready, "Ready")
         } else {
             refreshPlaybackStatus()
@@ -1311,7 +1326,15 @@ private struct LocalHTTPRequest {
 
 final class LocalAPIServer {
     static let host = "127.0.0.1"
-    static let port: UInt16 = 8792
+    static let port: UInt16 = {
+#if VOICE_FLOW_QA
+        if let raw = ProcessInfo.processInfo.environment["VOICE_FLOW_QA_PORT"],
+           let value = UInt16(raw), value > 0 { return value }
+        return 18_792
+#else
+        return 8_792
+#endif
+    }()
 
     var onStatus: (() -> LocalAPIResponse)?
     var onSet: ((TTSAPIUpdatePayload) -> LocalAPIResponse)?
@@ -1331,6 +1354,10 @@ final class LocalAPIServer {
     var onMCP: ((Data, String?) -> (status: Int, payload: Data?, sessionId: String?))?
     /// DELETE /mcp with a session id — Claude Code ending its session.
     var onMCPSessionEnd: ((String) -> Void)?
+#if VOICE_FLOW_QA
+    var qaToken: String?
+    var onQA: ((_ method: String, _ path: String, _ body: Data) -> LocalAPIResponse)?
+#endif
 
     private let queue = DispatchQueue(label: "voiceflow.local-api", qos: .userInitiated)
     // Each connection is served on its own thread so one long-running MCP
@@ -1465,6 +1492,20 @@ final class LocalAPIServer {
     }
 
     private func route(_ request: LocalHTTPRequest) -> LocalAPIResponse {
+#if VOICE_FLOW_QA
+        if request.path.hasPrefix("/__qa/") {
+            let prefix = "Bearer "
+            let authorization = request.headers["authorization"] ?? ""
+            let candidate = authorization.hasPrefix(prefix)
+                ? String(authorization.dropFirst(prefix.count)) : ""
+            guard let qaToken,
+                  QAControlSecurity.matches(candidate, token: qaToken) else {
+                return LocalAPIResponse.error(401, "QA capability required.")
+            }
+            return onQA?(request.method, request.path, request.body)
+                ?? LocalAPIResponse.error(503, "QA control unavailable.")
+        }
+#endif
         switch (request.method, request.path) {
         case ("GET", "/api/tts/status"):
             return onStatus?() ?? LocalAPIResponse.error(503, "TTS status unavailable.")
@@ -1594,6 +1635,10 @@ final class LocalAPIServer {
         switch status {
         case 200: statusText = "OK"
         case 202: statusText = "Accepted"
+        case 401: statusText = "Unauthorized"
+        case 403: statusText = "Forbidden"
+        case 409: statusText = "Conflict"
+        case 429: statusText = "Too Many Requests"
         case 400: statusText = "Bad Request"
         case 404: statusText = "Not Found"
         case 405: statusText = "Method Not Allowed"

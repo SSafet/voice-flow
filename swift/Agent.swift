@@ -39,6 +39,8 @@ final class AgentSession {
     var onToolActivity: ((String) -> Void)?
     var onError: ((String) -> Void)?
     var onHistoryChanged: (() -> Void)?
+    var onEmbeddedOverlayTool: (([String: Any], String) async throws -> AgentToolOutput)?
+    var onEmbeddedUserTool: (([String: Any], String) async throws -> AgentToolOutput)?
 
     /// When false, the computer tool only allows screenshots.
     var allowControl = false
@@ -54,12 +56,23 @@ final class AgentSession {
     private let history: AssistantHistoryStore
     private(set) var currentSessionId: String
 
-    // Codex subscription backend: the CLI keeps the conversation server-side,
-    // we hold the thread id; `messages` still accumulates so the API path can
-    // take over mid-conversation on fallback.
-    private let codex = CodexExecBackend()
+    // Runtime adapters emit one normalized event vocabulary. The direct API
+    // loop remains only as a one-release fallback while OpenCode is added.
+    private let codexRuntime = CodexAgentRuntime()
+    private let openCodeRuntime = OpenCodeAgentRuntime()
     private var codexThreadId: String?
-    private var pendingCodexTurn: (text: String, images: [Data])?
+    private var pendingCodexTurn: (
+        text: String,
+        images: [Data],
+        preparation: AssistantTurnPreparation
+    )?
+    private var pendingOpenCodeTurn: (
+        text: String,
+        images: [Data],
+        preparation: AssistantTurnPreparation
+    )?
+    private var runningRuntimeKind: AgentRuntimeKind?
+    private var runningTurnID: UUID?
 
     // Screenshot geometry: everything sent to the model uses one fixed size
     // so computer-tool coordinates stay consistent across the session.
@@ -73,7 +86,7 @@ final class AgentSession {
         }
     }
 
-    init(screenCapture: ScreenCapture, history: AssistantHistoryStore = AssistantHistoryStore()) {
+    init(screenCapture: ScreenCapture, history: AssistantHistoryStore = .shared) {
         self.screenCapture = screenCapture
         self.history = history
         currentSessionId = history.activeSessionId
@@ -91,11 +104,35 @@ final class AgentSession {
     var currentConversation: AssistantConversation { history.activeConversation() }
     var conversations: [AssistantConversation] { history.conversations() }
 
+    var preferredRuntime: AgentRuntimeKind {
+        if let runtime = currentConversation.preferredRuntime { return runtime }
+        return UserSettings.shared.agentBackend == AgentBackendOpenCode ? .opencode : .codex
+    }
+
+    @discardableResult
+    func setPreferredRuntime(_ runtime: AgentRuntimeKind) -> AssistantConversation? {
+        guard !isRunning else { return nil }
+        history.setPreferredRuntime(runtime, for: currentSessionId)
+        notifyHistoryChanged()
+        return history.conversation(currentSessionId)
+    }
+
     // ── Persistent assistant (ticket VF-49) ─────────────
     /// The folder-defined assistant this session embodies: her identity and
     /// instructions compose into the prompt, her memory rides every turn,
     /// and her folder is the working directory of shell turns.
     private(set) var activeAssistant: AssistantDefinition?
+#if VOICE_FLOW_QA
+    var qaTrustProfile: AgentTrustProfile = .workspace
+#endif
+
+    private var foregroundTrustProfile: AgentTrustProfile {
+#if VOICE_FLOW_QA
+        return qaTrustProfile
+#else
+        return .workspace
+#endif
+    }
 
     func setActiveAssistant(_ assistant: AssistantDefinition?) {
         activeAssistant = assistant
@@ -110,22 +147,11 @@ final class AgentSession {
         createConversation()
     }
 
-    /// First-turn identity: assistant.md's body plus the folder contract.
+    /// First-turn identity. Tool and file mechanics deliberately live in the
+    /// corresponding tool definitions, not in this persona layer.
     private var assistantPersonaBlock: String {
         guard let assistant = activeAssistant else { return "" }
-        return """
-
-
-        You are \(assistant.name). \(assistant.instructions)
-
-        Your folder is \(assistant.directory.path) — it is yours, and shell commands start inside it:
-        - memory/core.md — your memory. When you learn a durable fact, decision, or preference — or the user \
-        corrects one — update the file yourself in the same turn. Date each fact (YYYY-MM-DD); supersede changed \
-        facts (~~old~~ → new) instead of deleting; keep it under ~200 lines; never store secrets or credentials.
-        - memory/ledger.md — your scratch notes between conversations.
-        - workspace/ — put files you produce for the user here unless they name another place.
-        The current core.md rides along with every message, so an update you write is in force from your next turn on.
-        """
+        return "\n\nYou are \(assistant.name).\n\n\(assistant.instructions)"
     }
 
     /// Every-turn block: her memory as it is on disk right now.
@@ -135,9 +161,14 @@ final class AgentSession {
         return "\n\n## Your memory — core.md right now\n" + (memory.isEmpty ? "(empty)" : memory)
     }
 
+    private var assistantSkillBlock: String {
+        guard let assistant = activeAssistant else { return "" }
+        return (try? AgentSkillStore.promptBlock(for: assistant)) ?? ""
+    }
+
     @discardableResult
-    func createConversation() -> AssistantConversation {
-        let conversation = history.createConversation()
+    func createConversation(force: Bool = false) -> AssistantConversation {
+        let conversation = history.createConversation(force: force)
         currentSessionId = conversation.id
         loadRuntime(from: conversation)
         notifyHistoryChanged()
@@ -170,8 +201,33 @@ final class AgentSession {
 
     func interrupt() {
         interruptRequested = true
-        codex.interrupt()
+        if let turnID = runningTurnID {
+            let runtime = runningRuntimeKind
+            Task {
+                if runtime == .opencode {
+                    await openCodeRuntime.cancel(turnID: turnID)
+                } else {
+                    await codexRuntime.cancel(turnID: turnID)
+                }
+            }
+        }
         activeTask?.cancel()
+    }
+
+    /// Termination needs a joinable form of interrupt so a menu-bar app exit
+    /// cannot orphan Codex/OpenCode descendants after AppKit tears down.
+    func shutdown() async {
+        interruptRequested = true
+        let task = activeTask
+        if let turnID = runningTurnID {
+            if runningRuntimeKind == .opencode {
+                await openCodeRuntime.cancel(turnID: turnID)
+            } else {
+                await codexRuntime.cancel(turnID: turnID)
+            }
+        }
+        task?.cancel()
+        await task?.value
     }
 
     private func loadRuntime(from conversation: AssistantConversation) {
@@ -191,6 +247,9 @@ final class AgentSession {
         }
         codexThreadId = conversation.codexThreadId
         pendingCodexTurn = nil
+        pendingOpenCodeTurn = nil
+        runningRuntimeKind = nil
+        runningTurnID = nil
     }
 
     private func notifyHistoryChanged() {
@@ -217,11 +276,9 @@ final class AgentSession {
         How to respond:
         - Your replies appear in a compact chat panel, so be concise and direct. A few short sentences beat a structured report. Plain text only — no markdown headings or tables.
         - If something on screen is ambiguous, say what you see and ask one focused question.
-        - You have a `computer` tool for looking at and controlling the user's Mac. All coordinates are pixels in the \(imageWidth)x\(imageHeight) screenshot space, origin at the top-left.
-        - When the user asks you to do something on their computer and control is enabled, act in small steps: take a screenshot to orient yourself, act, then take another screenshot to verify. Stop as soon as the request is fulfilled and summarize what you did in one or two sentences.
-        - If the computer tool reports that control is disabled, don't retry — briefly tell the user what you would do and that they can enable control from the panel.
+        - When the user asks you to act on their computer, work in small verified steps and stop as soon as the request is fulfilled.
         - Never take destructive or irreversible actions (deleting data, sending messages or emails, completing purchases) unless the user explicitly asked for that exact action.
-        """ + assistantPersonaBlock + assistantMemoryBlock
+        """ + assistantPersonaBlock + assistantMemoryBlock + assistantSkillBlock
     }
 
     private var computerToolDefinition: [String: Any] {
@@ -275,8 +332,10 @@ final class AgentSession {
             onError?("The agent is still working — stop it first or wait.")
             return
         }
-        let usingCodex = UserSettings.shared.agentBackend == AgentBackendCodex
-        // Codex needs no key; problems there surface (or fall back) per turn.
+        let selectedRuntime = preferredRuntime
+        let usingCodex = selectedRuntime == .codex
+        // Codex uses its subscription. OpenCode's model gateway requires the
+        // provider credential already stored in Voice Flow's Keychain.
         guard usingCodex || KeychainStore.shared.loadAgentAPIKey() != nil else {
             let message = AgentError.missingAPIKey.localizedDescription
             history.appendMessage(sessionId: currentSessionId, role: .note, text: message)
@@ -308,21 +367,37 @@ final class AgentSession {
         let sessionId = currentSessionId
         runningSessionId = sessionId
         let promptText = trimmed.isEmpty ? "(No note — the screenshots are the message.)" : trimmed
-        history.appendMessage(
-            sessionId: sessionId,
-            role: .user,
-            text: trimmed,
-            attachmentNote: Self.attachmentNote(count: screenshots.count))
-        history.setTurnState(.running, for: sessionId)
+        let attachmentNote = Self.attachmentNote(count: screenshots.count)
+        let runtimePreparation = history.beginRuntimeTurn(
+                sessionId: sessionId, runtime: selectedRuntime,
+                text: trimmed, attachmentNote: attachmentNote)
+        guard let runtimePreparation else {
+            isRunning = false
+            runningSessionId = nil
+            let message = history.conversation(sessionId)?.turnState == .running
+                ? "This conversation is already running in the background."
+                : "This conversation is no longer available."
+            onError?(message)
+            return
+        }
+        runningRuntimeKind = selectedRuntime
+        runningTurnID = UUID()
         notifyHistoryChanged()
         messages.append(["role": "user", "content": content])
         pruneOldImages()
 
+        let jpegs = screenshots.compactMap { ImageUtils.resizeExact($0, width: imageWidth, height: imageHeight) }
         if usingCodex {
-            let jpegs = screenshots.compactMap { ImageUtils.resizeExact($0, width: imageWidth, height: imageHeight) }
             pendingCodexTurn = (
                 text: promptText,
-                images: jpegs
+                images: jpegs,
+                preparation: runtimePreparation
+            )
+        } else {
+            pendingOpenCodeTurn = (
+                text: promptText,
+                images: jpegs,
+                preparation: runtimePreparation
             )
         }
 
@@ -331,17 +406,31 @@ final class AgentSession {
         }
     }
 
-    private func finish(_ finalText: String?) {
+    private func finish(_ finalText: String?, finalAlreadyPersisted: Bool = false) {
         let sessionId = runningSessionId
         runningSessionId = nil
+        let runtime = runningRuntimeKind
+        runningRuntimeKind = nil
+        runningTurnID = nil
         isRunning = false
         activeTask = nil
         activity = .idle
         if let sessionId {
             if let finalText, !finalText.isEmpty {
-                history.appendMessage(sessionId: sessionId, role: .assistant, text: finalText)
+                if !finalAlreadyPersisted {
+                    history.appendMessage(sessionId: sessionId, role: .assistant, text: finalText)
+                }
             }
-            history.setTurnState(.idle, for: sessionId)
+            if finalText == nil || finalText?.isEmpty == true {
+                if runtime != nil {
+                    history.endRuntimeTurnWithoutFinal(
+                        sessionId: sessionId, interrupted: interruptRequested)
+                } else {
+                    history.setTurnState(.idle, for: sessionId)
+                }
+            } else if !finalAlreadyPersisted {
+                history.setTurnState(.idle, for: sessionId)
+            }
             notifyHistoryChanged()
         }
         if let finalText, !finalText.isEmpty {
@@ -358,7 +447,11 @@ final class AgentSession {
     }
 
     private func runLoop() async {
-        if UserSettings.shared.agentBackend == AgentBackendCodex {
+        if runningRuntimeKind == .opencode {
+            await runOpenCodeTurn()
+            return
+        }
+        if runningRuntimeKind == .codex {
             let fallBackToAPI = await runCodexTurn()
             guard fallBackToAPI else { return }
             // `messages` already holds the whole conversation, including this
@@ -442,6 +535,124 @@ final class AgentSession {
         finish(nil)
     }
 
+    private func runOpenCodeTurn() async {
+        activity = .thinking
+        guard let turn = pendingOpenCodeTurn else {
+            let message = "OpenCode turn was not prepared."
+            recordNote(message)
+            DispatchQueue.main.async { self.onError?(message) }
+            finish(nil)
+            return
+        }
+        pendingOpenCodeTurn = nil
+        let sessionId = runningSessionId ?? currentSessionId
+        let turnID = runningTurnID ?? UUID()
+        let workingDirectory = activeAssistant?.directory
+            ?? VoiceFlowPaths.shared.directory("assistants/default")
+        do {
+            if let activeAssistant { _ = try AgentSkillStore.project(for: activeAssistant) }
+        } catch {
+            let message = error.localizedDescription
+            recordNote(message)
+            DispatchQueue.main.async { self.onError?(message) }
+            finish(nil)
+            return
+        }
+        let layers = AgentPromptComposer.layers(
+            assistant: activeAssistant,
+            priorMessages: turn.preparation.priorMessages,
+            task: turn.text,
+            includeHandoff: turn.preparation.requiresFreshSession,
+            includeSkillBodies: false)
+        let prompt = AgentPromptComposer.compose(
+            layers, includeIdentity: turn.preparation.requiresFreshSession)
+        let binding = turn.preparation.resumeExternalSessionID.map {
+            RuntimeBinding(
+                externalSessionID: $0,
+                syncedThroughMessageID: turn.preparation.priorContextMessageID,
+                state: .clean)
+        }
+        let request = AgentTurnRequest(
+            turnID: turnID, conversationID: sessionId,
+            assistant: activeAssistant,
+            priorMessages: turn.preparation.priorMessages,
+            prompt: prompt, screenshots: turn.images,
+            workingDirectory: workingDirectory,
+            extraWritableRoots: [], trustProfile: foregroundTrustProfile,
+            model: AgentModelSelection(
+                provider: "openrouter", model: UserSettings.shared.agentModel))
+
+        AgentToolSessionRegistry.shared.prepare(
+            turnID: turnID,
+            environment: embeddedToolEnvironment(conversationID: sessionId),
+            overrides: [
+                .computerControl: allowControl ? .allow : .deny,
+                .userAsk: .allow,
+            ])
+
+        do {
+            var startedResponding = false
+            let result = try await openCodeRuntime.run(
+                request, binding: binding,
+                emit: { [weak self] event in
+                    guard let self else { return }
+                    switch event {
+                    case .started(let id):
+                        self.history.recordRuntimeStarted(
+                            sessionId: sessionId, runtime: .opencode,
+                            externalSessionID: id,
+                            runtimeVersion: nil,
+                            fresh: turn.preparation.requiresFreshSession)
+                        self.notifyHistoryChanged()
+                    case .activity(let label):
+                        self.activity = .acting
+                        DispatchQueue.main.async { self.onToolActivity?(label) }
+                    case .textDelta(_, let piece):
+                        if !startedResponding {
+                            startedResponding = true
+                            self.activity = .responding
+                            DispatchQueue.main.async { self.onAssistantStart?() }
+                        }
+                        DispatchQueue.main.async { self.onAssistantDelta?(piece) }
+                    case .permission(let permission):
+                        DispatchQueue.main.async {
+                            self.onToolActivity?("Permission required: \(permission.title)")
+                        }
+                    case .usage:
+                        break
+                    case .completed, .failed, .interrupted:
+                        break
+                    }
+                })
+            if !startedResponding && !result.text.isEmpty {
+                startedResponding = true
+                activity = .responding
+                DispatchQueue.main.async {
+                    self.onAssistantStart?()
+                    self.onAssistantDelta?(result.text)
+                }
+            }
+            history.completeRuntimeTurn(
+                sessionId: sessionId, runtime: .opencode,
+                text: result.text,
+                externalSessionID: result.externalSessionID,
+                runtimeVersion: result.runtimeVersion)
+            messages.append(["role": "assistant", "content": result.text])
+            finish(result.text, finalAlreadyPersisted: true)
+        } catch is CancellationError {
+            handleInterruption()
+        } catch {
+            if interruptRequested {
+                handleInterruption()
+                return
+            }
+            let message = error.localizedDescription
+            recordNote(message)
+            DispatchQueue.main.async { self.onError?(message) }
+            finish(nil)
+        }
+    }
+
     // ── Codex turn ──────────────────────────────────────
 
     /// The persona preamble Codex gets on a thread's first turn; later turns
@@ -485,48 +696,91 @@ final class AgentSession {
     /// be retried through the API path instead (Codex failed and a key exists).
     private func runCodexTurn() async -> Bool {
         activity = .thinking
-        let turn = pendingCodexTurn ?? (text: "", images: [])
+        guard let turn = pendingCodexTurn else {
+            let message = "Codex turn was not prepared."
+            recordNote(message)
+            DispatchQueue.main.async { self.onError?(message) }
+            finish(nil)
+            return false
+        }
         pendingCodexTurn = nil
-        let persona = codexThreadId == nil ? codexPreamble + assistantPersonaBlock + "\n\n" : ""
-        let prompt = persona + codexAccessNote + assistantMemoryBlock + "\n\n" + turn.text
+        codexThreadId = turn.preparation.resumeExternalSessionID
+        let layers = AgentPromptComposer.layers(
+            assistant: activeAssistant,
+            priorMessages: turn.preparation.priorMessages,
+            task: turn.text,
+            includeHandoff: turn.preparation.requiresFreshSession,
+            includeSkillBodies: true)
+        let composed = AgentPromptComposer.compose(
+            layers, includeIdentity: turn.preparation.requiresFreshSession)
+        let prompt = (turn.preparation.requiresFreshSession ? codexPreamble + "\n\n" : "")
+            + codexAccessNote + "\n\n" + composed
         let sessionId = runningSessionId ?? currentSessionId
         let ticketsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/tickets").path
+        let turnID = runningTurnID ?? UUID()
+        let workingDirectory = activeAssistant?.directory
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        let request = AgentTurnRequest(
+            turnID: turnID,
+            conversationID: sessionId,
+            assistant: activeAssistant,
+            priorMessages: turn.preparation.priorMessages,
+            prompt: prompt,
+            screenshots: turn.images,
+            workingDirectory: workingDirectory,
+            extraWritableRoots: activeAssistant == nil ? [] : [ticketsDir],
+            trustProfile: foregroundTrustProfile,
+            model: nil)
+        let resumeBinding = turn.preparation.resumeExternalSessionID.map {
+            RuntimeBinding(
+                externalSessionID: $0,
+                syncedThroughMessageID: turn.preparation.priorContextMessageID,
+                state: .clean)
+        }
 
         do {
             var started = false
-            let result = try await codex.run(
-                prompt: prompt,
-                images: turn.images,
-                resumeThread: codexThreadId,
-                workingDirectory: activeAssistant?.directory,
-                extraWritableRoots: activeAssistant == nil ? [] : [ticketsDir],
-                onThreadStarted: { [weak self] id in
+            let result = try await codexRuntime.run(
+                request, binding: resumeBinding,
+                emit: { [weak self] event in
                     guard let self else { return }
-                    // Persist from the parser queue immediately. If Voice Flow
-                    // is restarted mid-turn, the next launch can still resume.
-                    self.history.setCodexThreadId(id, for: sessionId)
-                    self.notifyHistoryChanged()
-                },
-                onToolActivity: { [weak self] label in
-                    DispatchQueue.main.async { self?.onToolActivity?(label) }
-                },
-                onAgentText: { [weak self] piece in
-                    guard let self else { return }
-                    if !started {
-                        started = true
-                        self.activity = .responding
-                        DispatchQueue.main.async { self.onAssistantStart?() }
+                    switch event {
+                    case .started(let id):
+                        self.codexThreadId = id
+                        self.history.recordRuntimeStarted(
+                            sessionId: sessionId, runtime: .codex,
+                            externalSessionID: id, fresh: turn.preparation.requiresFreshSession)
+                        self.notifyHistoryChanged()
+                    case .activity(let label):
+                        DispatchQueue.main.async { self.onToolActivity?(label) }
+                    case .textDelta(_, let piece):
+                        if !started {
+                            started = true
+                            self.activity = .responding
+                            DispatchQueue.main.async { self.onAssistantStart?() }
+                        }
+                        DispatchQueue.main.async { self.onAssistantDelta?(piece) }
+                    case .permission, .usage, .completed, .failed, .interrupted:
+                        break
                     }
-                    DispatchQueue.main.async { self.onAssistantDelta?(piece) }
+                })
+            if !started && !result.text.isEmpty {
+                started = true
+                activity = .responding
+                DispatchQueue.main.async {
+                    self.onAssistantStart?()
+                    self.onAssistantDelta?(result.text)
                 }
-            )
-            codexThreadId = result.threadId ?? codexThreadId
-            if let threadId = codexThreadId {
-                history.setCodexThreadId(threadId, for: sessionId)
             }
+            codexThreadId = result.externalSessionID ?? codexThreadId
+            history.completeRuntimeTurn(
+                sessionId: sessionId, runtime: .codex,
+                text: result.text,
+                externalSessionID: codexThreadId,
+                runtimeVersion: result.runtimeVersion)
             messages.append(["role": "assistant", "content": result.text])
-            finish(result.text)
+            finish(result.text, finalAlreadyPersisted: true)
             return false
         } catch is CancellationError {
             handleInterruption()
@@ -539,6 +793,9 @@ final class AgentSession {
             if KeychainStore.shared.loadAgentAPIKey() != nil {
                 vflog("codex turn failed, falling back to API: \(error.localizedDescription)")
                 DispatchQueue.main.async { self.onToolActivity?("Codex unavailable — using the API key") }
+                // The canonical user message stays, but the Codex binding is
+                // intentionally dirty. A legacy API final must not clean it.
+                runningRuntimeKind = nil
                 return true
             }
             let message = error.localizedDescription
@@ -546,6 +803,112 @@ final class AgentSession {
             DispatchQueue.main.async { self.onError?(message) }
             finish(nil)
             return false
+        }
+    }
+
+    private func canonicalHandoff(_ messages: [AssistantHistoryMessage]) -> String {
+        AgentPromptComposer.canonicalHandoff(messages)
+    }
+
+    /// The same private Voice Flow tool bridge is reused by durable jobs.
+    /// It never enters the public MCP registry; authorization remains scoped
+    /// to the concrete OpenCode run by AgentToolSessionRegistry.
+    func embeddedToolEnvironment(conversationID: String) -> AgentToolEnvironment {
+        AgentToolEnvironment(
+            computer: { [weak self] arguments in
+                guard let self else { throw AgentToolError.unavailable("Assistant ended") }
+                return try await self.executeEmbeddedComputer(arguments)
+            },
+            context: { [weak self] arguments in
+                guard let self else { throw AgentToolError.unavailable("Assistant ended") }
+                return try await self.executeEmbeddedContext(arguments)
+            },
+            overlay: { [weak self] arguments in
+                guard let handler = self?.onEmbeddedOverlayTool else {
+                    throw AgentToolError.unavailable("overlay bridge is not connected")
+                }
+                return try await handler(arguments, conversationID)
+            },
+            user: { [weak self] arguments in
+                guard let handler = self?.onEmbeddedUserTool else {
+                    throw AgentToolError.unavailable("user bridge is not connected")
+                }
+                return try await handler(arguments, conversationID)
+            })
+    }
+
+    private func executeEmbeddedComputer(_ arguments: [String: Any]) async throws -> AgentToolOutput {
+        let action = try AgentToolDispatcher.requiredString("action", in: arguments)
+        if action == "screenshot" {
+            let display = await MainActor.run { DisplayTopology.underMouse ?? DisplayTopology.primary }
+            guard let display,
+                  let raw = try? await screenCapture.captureScreen(on: display),
+                  let shot = CaptureStore.saveShot(raw, on: display) else {
+                throw AgentToolError.unavailable("screen recording permission may be missing")
+            }
+            let cursor = await MainActor.run {
+                display.screenshotPoint(forGlobalPoint: NSEvent.mouseLocation)
+            }
+            return AgentToolOutput(data: [
+                "path": shot.path, "width": shot.width, "height": shot.height,
+                "display_id": Int(display.id),
+                "cursor": [Int(cursor.x.rounded()), Int(cursor.y.rounded())],
+                "message": "Read `path` with OpenCode's read tool to see the current screen.",
+            ])
+        }
+        var normalized = arguments
+        if normalized["scroll_direction"] == nil, let direction = arguments["direction"] {
+            normalized["scroll_direction"] = direction
+        }
+        if normalized["scroll_amount"] == nil, let amount = arguments["amount"] {
+            normalized["scroll_amount"] = amount
+        }
+        let data = try JSONSerialization.data(withJSONObject: normalized)
+        let call = ToolCall(
+            id: "embedded-\(UUID().uuidString)", name: "computer",
+            arguments: String(data: data, encoding: .utf8) ?? "{}")
+        let result = await executeTool(call)
+        return AgentToolOutput(data: ["message": result.0])
+    }
+
+    private func executeEmbeddedContext(_ arguments: [String: Any]) async throws -> AgentToolOutput {
+        let operation = try AgentToolDispatcher.requiredString("operation", in: arguments)
+        let limit = min(max((arguments["limit"] as? NSNumber)?.intValue ?? 10, 1), 40)
+        switch operation {
+        case "latest_capture":
+            guard let (directory, meta) = CaptureStore.latestBundle() else {
+                return AgentToolOutput(data: ["capture": NSNull(), "message": "No completed captures."])
+            }
+            return AgentToolOutput(data: ["capture": [
+                "id": meta.id, "directory": directory.path,
+                "recorded_at": meta.startedAt,
+                "duration_seconds": Int(meta.durationSeconds),
+                "transcript": String(meta.transcript.prefix(8_000)),
+                "frames": meta.frames.prefix(20).map {
+                    directory.appendingPathComponent($0.file).path
+                },
+            ]])
+        case "list_captures":
+            let captures = CaptureStore.listBundles(limit: limit).map { directory, meta in
+                ["id": meta.id, "directory": directory.path,
+                 "recorded_at": meta.startedAt,
+                 "duration_seconds": Int(meta.durationSeconds),
+                 "frame_count": meta.frames.count,
+                 "transcript_preview": String(meta.transcript.prefix(240))] as [String: Any]
+            }
+            return AgentToolOutput(data: ["captures": captures, "next_cursor": NSNull()])
+        case "recent_dictations":
+            let url = VoiceFlowPaths.shared.file("dictations.json")
+            let data = (try? Data(contentsOf: url)) ?? Data("[]".utf8)
+            let rows = (try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
+            let bounded = rows.prefix(limit).map { row in
+                ["text": String((row["text"] as? String ?? "").prefix(2_000)),
+                 "timestamp": row["timestamp"] as? String ?? row["time"] as? String ?? "",
+                 "destination": row["destination"] as? String ?? ""]
+            }
+            return AgentToolOutput(data: ["dictations": Array(bounded), "next_cursor": NSNull()])
+        default:
+            throw AgentToolError.invalidArguments("unsupported context operation")
         }
     }
 

@@ -38,13 +38,21 @@ enum CaptureClipboard {
     static func copy(text: String, attachmentPaths: [String],
                      to pasteboard: NSPasteboard = .general) -> Content {
         let content = makeContent(text: text, attachmentPaths: attachmentPaths)
+        let item = makePasteboardItem(content)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+        return content
+    }
+
+    /// Pure item construction is kept separate from the pasteboard server so
+    /// unit tests can verify the one-item/many-representations contract even
+    /// in a headless process. A signed-app E2E test owns the actual write.
+    static func makePasteboardItem(_ content: Content) -> NSPasteboardItem {
         let item = NSPasteboardItem()
         item.setString(content.plainText, forType: .string)
         if let html = content.html { item.setData(html, forType: .html) }
         if let rtfd = content.rtfd { item.setData(rtfd, forType: .rtfd) }
-        pasteboard.clearContents()
-        pasteboard.writeObjects([item])
-        return content
+        return item
     }
 
     private static func loadAttachment(_ path: String) -> ImageAttachment? {

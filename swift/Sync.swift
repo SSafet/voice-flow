@@ -14,7 +14,15 @@ import Foundation
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 final class SyncServer: NSObject {
-    static let port: UInt16 = 8793
+    static let port: UInt16 = {
+#if VOICE_FLOW_QA
+        if let raw = ProcessInfo.processInfo.environment["VOICE_FLOW_QA_SYNC_PORT"],
+           let value = UInt16(raw), value > 0 { return value }
+        return 18_793
+#else
+        return 8_793
+#endif
+    }()
 
     /// Hops to main and upserts entries into the dictation store
     /// (oldest-first order in, so the newest ends on top). `id` is the
@@ -43,8 +51,7 @@ final class SyncServer: NSObject {
     private var listenFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
 
-    private static let configDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/voice-flow")
+    private static let configDir = VoiceFlowPaths.shared.configRoot
     private static let tokenURL = configDir.appendingPathComponent("sync-token")
     private static let mobileChatURL = configDir.appendingPathComponent("mobile-chat.json")
 
@@ -71,7 +78,11 @@ final class SyncServer: NSObject {
         addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = in_port_t(Self.port).bigEndian
+#if VOICE_FLOW_QA
+        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr)
+#else
         addr.sin_addr.s_addr = INADDR_ANY   // Tailscale interface included
+#endif
 
         let bound = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
@@ -98,6 +109,7 @@ final class SyncServer: NSObject {
         // Advertise on the local network so the phone finds the Mac with
         // zero typing (NSD on Android). Tailscale reachability comes from
         // the host list handed over during pairing.
+#if !VOICE_FLOW_QA
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let service = NetService(domain: "local.", type: "_voiceflow-sync._tcp.",
@@ -105,6 +117,7 @@ final class SyncServer: NSObject {
             service.publish()
             self.bonjour = service
         }
+#endif
         onServerMessage?("Sync server ready on port \(Self.port).")
     }
 

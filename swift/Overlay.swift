@@ -675,8 +675,7 @@ private final class OverlayPanelWindow {
 
 final class OverlayManager {
     static let dir: URL = {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/voice-flow/overlays")
+        let url = VoiceFlowPaths.shared.directory("overlays")
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }()
@@ -689,6 +688,7 @@ final class OverlayManager {
     private var shapeWindows: [CGDirectDisplayID: ShapeOverlayWindow] = [:]
     private var pollTimer: Timer?
     private var lastSignature = ""
+    private var visibleDocIDs: Set<String> = []
     /// The user's active MCP session — session-owned overlays render only
     /// while their owner is active. Main thread.
     private var activeSession: String?
@@ -794,6 +794,13 @@ final class OverlayManager {
         }.sorted { $0.id < $1.id }
     }
 
+#if VOICE_FLOW_QA
+    var qaRenderedIDs: [String] { visibleDocIDs.sorted() }
+    var qaActiveSession: String { activeSession ?? "" }
+    var qaSignature: String { lastSignature }
+    func qaClose(id: String) { _ = remove(id: id) }
+#endif
+
     private func allDocsRaw() -> [(String, [String: Any])] {
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: Self.dir, includingPropertiesForKeys: nil) else { return [] }
@@ -840,6 +847,11 @@ final class OverlayManager {
             if let owner = doc.session, owner != activeSession { continue }
             docs[id] = doc
         }
+        visibleDocIDs = Set(docs.values.compactMap { doc in
+            guard doc.visible else { return nil }
+            if doc.kind == .annotations && doc.shapes.isEmpty { return nil }
+            return doc.id
+        })
 
         // Panels + guides
         for (id, doc) in docs where doc.kind != .annotations {

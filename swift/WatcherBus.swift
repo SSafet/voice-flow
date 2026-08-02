@@ -20,8 +20,7 @@ import Foundation
 final class DayBus {
 
     static let baseDir: URL = {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/voice-flow/watcher")
+        let dir = VoiceFlowPaths.shared.directory("watcher")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
@@ -38,6 +37,7 @@ final class DayBus {
 
     private let writeQueue = DispatchQueue(label: "voiceflow.watcher.bus", qos: .utility)
     private var currentDay = ""
+    var onAppend: ((String, [String: Any], Date) -> Void)?
 
     private static let dayFormatter: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
@@ -86,6 +86,7 @@ final class DayBus {
                 try? entry.write(to: url)
             }
         }
+        onAppend?(stream, line, date)
     }
 
     /// Write a timestamped artifact and return the filename the stream should

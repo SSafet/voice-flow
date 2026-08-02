@@ -26,6 +26,9 @@ final class SettingsStore: ObservableObject {
     @Published var ttsSpeed: Double { didSet { commit() } }
     @Published var agentModel: String { didSet { commit() } }
     @Published var agentBaseURL: String { didSet { commit() } }
+    @Published var agentDailyBudgetUSD: Double { didSet { commit() } }
+    @Published var agentMaxOutputTokens: Double { didSet { commit() } }
+    @Published var agentRequestTimeoutSeconds: Double { didSet { commit() } }
     @Published var agentBackend: String { didSet { commit() } }
     @Published var assistantWakeEnabled: Bool { didSet { commit() } }
     @Published var assistantWakeWord: String { didSet { commit() } }
@@ -68,6 +71,9 @@ final class SettingsStore: ObservableObject {
         ttsSpeed = s.ttsSpeed
         agentModel = s.agentModel
         agentBaseURL = s.agentBaseURL
+        agentDailyBudgetUSD = s.agentDailyBudgetUSD
+        agentMaxOutputTokens = Double(s.agentMaxOutputTokens)
+        agentRequestTimeoutSeconds = Double(s.agentRequestTimeoutSeconds)
         agentBackend = s.agentBackend
         assistantWakeEnabled = s.assistantWakeEnabled
         assistantWakeWord = s.assistantWakeWord
@@ -110,7 +116,11 @@ final class SettingsStore: ObservableObject {
         s.agentModel = model.isEmpty ? DefaultAgentModel : model
         let url = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         s.agentBaseURL = url.isEmpty ? DefaultAgentBaseURL : url
-        s.agentBackend = agentBackend == AgentBackendAPI ? AgentBackendAPI : AgentBackendCodex
+        s.agentDailyBudgetUSD = min(max(agentDailyBudgetUSD, 0.25), 500)
+        s.agentMaxOutputTokens = min(max(Int(agentMaxOutputTokens), 256), 128_000)
+        s.agentRequestTimeoutSeconds = min(max(Int(agentRequestTimeoutSeconds), 30), 3_600)
+        s.agentBackend = agentBackend == AgentBackendOpenCode
+            ? AgentBackendOpenCode : AgentBackendCodex
         s.assistantWakeEnabled = assistantWakeEnabled
         let wakeWord = assistantWakeWord.trimmingCharacters(in: .whitespacesAndNewlines)
         s.assistantWakeWord = wakeWord.isEmpty ? DefaultAssistantWakeWord : wakeWord
@@ -480,6 +490,7 @@ private struct VoiceSettingsView: View {
 
 private struct AssistantSettingsView: View {
     @ObservedObject var store: SettingsStore
+    @State private var openCodeStatus = "Starts on demand"
 
     private var codexStatus: String {
         guard CodexExecBackend.findBinary() != nil else { return "Not installed" }
@@ -496,7 +507,7 @@ private struct AssistantSettingsView: View {
             Section {
                 Picker(selection: $store.agentBackend) {
                     Text("ChatGPT subscription (Codex)").tag(AgentBackendCodex)
-                    Text("API key (OpenRouter)").tag(AgentBackendAPI)
+                    Text("OpenCode harness (OpenRouter)").tag(AgentBackendOpenCode)
                 } label: {
                     SettingRowLabel(title: "Backend",
                                     subtitle: "What powers the assistant's replies")
@@ -509,11 +520,25 @@ private struct AssistantSettingsView: View {
                         SettingRowLabel(title: "Codex CLI",
                                         subtitle: "Sign in once with “codex login” in Terminal — no API billing")
                     }
+                } else {
+                    LabeledContent {
+                        HStack(spacing: 8) {
+                            Text(openCodeStatus).foregroundStyle(.secondary)
+                            Button("Refresh") {
+                                Task { await refreshOpenCodeStatus() }
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Refresh OpenCode runtime health")
+                        }
+                    } label: {
+                        SettingRowLabel(title: "OpenCode",
+                                        subtitle: "Supervised by Voice Flow; model requests use your key below")
+                    }
                 }
             } header: {
                 Text("Backend")
             } footer: {
-                Text("The subscription backend answers through your ChatGPT plan's included Codex quota (weekly cap). When Codex is unavailable — quota exhausted, signed out, or not installed — the assistant falls back to the API key below for that turn.")
+                Text("This is the default for new conversations. Each Assistant conversation can switch between Codex and OpenCode from its own header.")
             }
 
             Section {
@@ -544,8 +569,39 @@ private struct AssistantSettingsView: View {
                     SettingRowLabel(title: "Model",
                                     subtitle: "Any OpenRouter model that supports images and tools")
                 }
+                LabeledContent {
+                    TextField("", value: $store.agentDailyBudgetUSD,
+                              format: .number.precision(.fractionLength(2)))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                        .multilineTextAlignment(.trailing)
+                        .accessibilityLabel("Agent daily budget in US dollars")
+                } label: {
+                    SettingRowLabel(title: "Daily budget",
+                                    subtitle: "Voice Flow stops new OpenCode requests at this total")
+                }
+                LabeledContent {
+                    TextField("", value: $store.agentMaxOutputTokens, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 100)
+                        .multilineTextAlignment(.trailing)
+                        .accessibilityLabel("Maximum output tokens per agent request")
+                } label: {
+                    SettingRowLabel(title: "Output limit")
+                }
+                LabeledContent {
+                    TextField("", value: $store.agentRequestTimeoutSeconds, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 100)
+                        .multilineTextAlignment(.trailing)
+                        .accessibilityLabel("Agent request timeout in seconds")
+                } label: {
+                    SettingRowLabel(title: "Request timeout")
+                }
             } header: {
                 Text("Intelligence")
+            } footer: {
+                Text("Budget accounting is conservative when a provider omits cost; changing these values affects new requests.")
             }
 
             Section {
@@ -594,6 +650,21 @@ private struct AssistantSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .task { await refreshOpenCodeStatus() }
+    }
+
+    @MainActor
+    private func refreshOpenCodeStatus() async {
+        let status = await OpenCodeAgentRuntime().status()
+        let version = status.version.map { " · v\($0)" } ?? ""
+        switch status.health {
+        case .healthy: openCodeStatus = "Healthy\(version)"
+        case .starting: openCodeStatus = "Starting\(version)"
+        case .degraded: openCodeStatus = "Degraded\(version)"
+        case .crashed: openCodeStatus = "Crashed\(version)"
+        case .versionMismatch: openCodeStatus = "Version mismatch\(version)"
+        case .stopped: openCodeStatus = "Ready · starts on demand"
+        }
     }
 }
 

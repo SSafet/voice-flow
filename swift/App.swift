@@ -112,8 +112,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Done pushes included — how much thread history a session keeps.
     private let maxKeptPushes = 40
 
-    private static let pushesURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/voice-flow/pushes.json")
+    private static let pushesURL = VoiceFlowPaths.shared.file("pushes.json")
 
     private static func savePushes(_ pushes: [String: [SessionPush]]) {
         if let data = try? JSONEncoder().encode(pushes) {
@@ -129,8 +128,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         didSet { Self.saveLabels(sessionLabels) }
     }
 
-    private static let labelsURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/voice-flow/session-names.json")
+    private static let labelsURL = VoiceFlowPaths.shared.file("session-names.json")
 
     private static func saveLabels(_ labels: [String: String]) {
         if let data = try? JSONEncoder().encode(labels) {
@@ -190,6 +188,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var captureScheduler: CaptureScheduler!
     var workflowWatcher: WorkflowWatcher!
     var agent: AgentSession!
+    private var agentJobStore: AgentJobStore?
+    private var agentSupervisor: AgentSupervisor?
+#if VOICE_FLOW_QA
+    private weak var activeAgentJobAlert: NSAlert?
+    private weak var activeAgentJobEditor: AgentJobEditorView?
+    private var activeAgentJobQAWindow: NSWindow?
+#endif
     private let assistantContinuityClassifier = AssistantContinuityClassifier()
     private struct PendingAssistantWakeTurn {
         let assistant: AssistantDefinition
@@ -267,6 +272,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ttsController?.shutdown()
         localAPIServer?.stop()
         syncServer?.stop()
+        // AppKit does not wait for unstructured Tasks launched from this
+        // callback. Join runtime teardown on a detached executor before the
+        // process exits so Codex/OpenCode and their tool children cannot be
+        // reparented as orphans.
+        let teardown = DispatchSemaphore(value: 0)
+        let foregroundAgent = agent
+        let backgroundSupervisor = agentSupervisor
+        Task.detached {
+            await foregroundAgent?.shutdown()
+            await backgroundSupervisor?.stop()
+            await AgentPermissionBroker.shared.rejectAll()
+            await OpenCodeSupervisor.shared.stopAll()
+            teardown.signal()
+        }
+        _ = teardown.wait(timeout: .now() + 8)
         if let escapeMonitor {
             NSEvent.removeMonitor(escapeMonitor)
         }
@@ -515,6 +535,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.chatPanel.restoreAssistantConversation(conversation, open: true)
             self.chatPanel.refreshAgents()
         }
+        chatPanel.onNewAgentJob = { [weak self] in self?.createAgentJob() }
         chatPanel.onOpenAssistantSession = { [weak self] id in
             guard let self else { return }
             guard let conversation = self.agent.activateConversation(id) else {
@@ -535,6 +556,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.chatPanel.showAgentsList()
             self.chatPanel.refreshAgents()
             self.replyBubble.showTransient("Assistant session deleted", seconds: 4)
+        }
+        chatPanel.onSelectAssistantRuntime = { [weak self] runtime in
+            guard let self else { return }
+            guard let conversation = self.agent.setPreferredRuntime(runtime) else {
+                self.chatPanel.setAssistantRuntime(self.agent.preferredRuntime, enabled: false)
+                self.replyBubble.showTransient("wait for the Assistant to finish first", seconds: 4)
+                return
+            }
+            self.chatPanel.setAssistantRuntime(runtime, enabled: true)
+            self.chatPanel.restoreAssistantConversation(conversation, open: true)
+            self.replyBubble.showTransient("Assistant will use \(runtime.label)", seconds: 3)
         }
         chatPanel.onSendText = { [weak self] text in self?.sendTypedMessage(text) }
         chatPanel.onEscape = { [weak self] in self?.handleVoiceFlowEscape() }
@@ -650,6 +682,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupCore() {
+        ModelGatewayCredentials.shared.configure { [weak self] in
+            let configured = UserSettings.shared.agentBaseURL
+            let baseURL = URL(string: configured) ?? URL(string: DefaultAgentBaseURL)!
+            let globalModel = UserSettings.shared.agentModel
+            var allowed = Set(OpenRouterModelCatalog.shared.cachedModels(
+                including: [globalModel]).map(\.id))
+            if let store = self?.agentJobStore,
+               let jobs = try? store.jobs(limit: 500) {
+                allowed.formUnion(jobs.compactMap(\.modelID))
+            }
+            return ModelGatewayCredentialSnapshot(
+                apiKey: KeychainStore.shared.loadAgentAPIKey(),
+                upstreamBaseURL: baseURL,
+                allowedModels: allowed,
+                maxOutputTokens: UserSettings.shared.agentMaxOutputTokens,
+                requestTimeout: TimeInterval(UserSettings.shared.agentRequestTimeoutSeconds),
+                dailyBudgetUSD: UserSettings.shared.agentDailyBudgetUSD)
+        }
+        AgentJobRuntimeConfiguration.shared.configure {
+            AgentModelSelection(
+                provider: "openrouter", model: UserSettings.shared.agentModel)
+        }
         recorder = AudioRecorder()
         paster = Paster()
         captureStore = CaptureStore()
@@ -747,7 +801,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.indicator.flashMessage("Pairing open — launch the phone app now", seconds: 6)
         }
         localAPIServer.onPairMode = { [weak self] in
-            DispatchQueue.main.async { self?.syncServer.openPairWindow() }
+            DispatchQueue.main.sync { self?.syncServer.openPairWindow() }
             return LocalAPIResponse.ok(["ok": true])
         }
         syncServer.onDictations = { [weak self] entries in
@@ -781,14 +835,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         agent = AgentSession(screenCapture: screenCapture)
         agent.setActiveAssistant(AssistantsStore.shared.base)
+        agent.onEmbeddedOverlayTool = { [weak self] arguments, conversationID in
+            guard let self else { throw AgentToolError.unavailable("Voice Flow ended") }
+            return try await self.handleEmbeddedOverlayTool(arguments, conversationID: conversationID)
+        }
+        agent.onEmbeddedUserTool = { [weak self] arguments, conversationID in
+            guard let self else { throw AgentToolError.unavailable("Voice Flow ended") }
+            return try await self.handleEmbeddedUserTool(arguments, conversationID: conversationID)
+        }
         chatPanel.restoreAssistantConversation(agent.currentConversation)
         agent.onHistoryChanged = { [weak self] in
             guard let self else { return }
             self.chatPanel.setAssistantTitle(self.agent.currentConversation.title)
+            self.chatPanel.setAssistantRuntime(
+                self.agent.preferredRuntime, enabled: !self.agent.isRunning)
             self.chatPanel.refreshAgents()
         }
         agent.onActivityChanged = { [weak self] activity in
             guard let self else { return }
+#if VOICE_FLOW_QA
+            QAEventRecorder.shared.append("agent_activity", ["activity": activity.rawValue])
+#endif
             self.indicator.setAgentActivity(activity)
             self.chatPanel.setActivity(activity)
             switch activity {
@@ -807,6 +874,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         agent.onAssistantStart = { [weak self] in
             guard let self else { return }
+#if VOICE_FLOW_QA
+            QAEventRecorder.shared.append("assistant_started")
+#endif
             self.chatPanel.beginAssistantMessage()
             if !self.chatPanel.isVisible && !self.assistantTurnUsesReceiptPresentation {
                 // The grown surface now shows a reply, not a push stack —
@@ -831,6 +901,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         agent.onAssistantDelta = { [weak self] delta in
             guard let self else { return }
+#if VOICE_FLOW_QA
+            QAEventRecorder.shared.append("assistant_delta", ["text": delta])
+#endif
             self.chatPanel.appendAssistantDelta(delta)
             if !self.assistantTurnUsesReceiptPresentation {
                 self.replyBubble.appendDelta(delta)
@@ -841,6 +914,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         agent.onAssistantDone = { [weak self] text in
             guard let self else { return }
+#if VOICE_FLOW_QA
+            QAEventRecorder.shared.append("assistant_completed", ["text": text])
+#endif
             self.chatPanel.finishAssistantMessage(text)
             let receiptPresentation = self.assistantTurnUsesReceiptPresentation
             if receiptPresentation {
@@ -867,11 +943,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         agent.onToolActivity = { [weak self] detail in
+#if VOICE_FLOW_QA
+            QAEventRecorder.shared.append("tool_activity", ["detail": detail])
+#endif
             self?.chatPanel.setToolDetail(detail)
             self?.replyBubble.setStatus(detail)
         }
         agent.onError = { [weak self] message in
             guard let self else { return }
+#if VOICE_FLOW_QA
+            QAEventRecorder.shared.append("agent_error", ["message": message])
+#endif
             self.chatPanel.addNote(message)
             self.replySpeaker.finish()
             if self.assistantTurnUsesReceiptPresentation {
@@ -888,11 +970,222 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        Task { [weak self] in
+            await AgentPermissionBroker.shared.setHandler { [weak self] prompt in
+                self?.presentAgentPermission(prompt)
+            }
+        }
+
+        do {
+            let store = try AgentJobStore()
+            let supervisor = AgentSupervisor(
+                store: store,
+                executor: AgentRuntimeJobExecutor(
+                    environmentProvider: { [weak agent] conversationID in
+                        agent?.embeddedToolEnvironment(conversationID: conversationID)
+                            ?? AgentToolEnvironment()
+                    }))
+            agentJobStore = store
+            agentSupervisor = supervisor
+            wireAgentJobTriggers()
+            Task { [weak self] in
+                await supervisor.setStatusHandler { [weak self] update in
+#if VOICE_FLOW_QA
+                    QAEventRecorder.shared.append("job_status", [
+                        "job_id": update.jobID,
+                        "run_id": update.runID ?? "",
+                        "state": update.state.rawValue,
+                        "message": update.message,
+                    ])
+#endif
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        self.chatPanel.addNote("Agent job · \(update.state.rawValue): \(update.message)")
+                        self.chatPanel.refreshAgents()
+                        if update.state == .completed || update.state == .failed || update.state == .blocked {
+                            self.indicator.flashMessage(
+                                "agent job · \(update.state.rawValue)", seconds: 6,
+                                isError: update.state == .failed || update.state == .blocked)
+                        }
+                    }
+                }
+                await supervisor.start()
+                _ = self
+            }
+        } catch {
+            vflog("agent jobs unavailable: \(error.localizedDescription)")
+        }
+
         // Escape remains the panic button while the agent acts outside Voice
         // Flow. Focused Voice Flow panels route Escape through KeyablePanel.
         escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.keyCode == 53, self.agent.activity == .acting else { return }
             self.handleVoiceFlowEscape()
+        }
+    }
+
+    /// Typed product events feed the durable queue with stable idempotency
+    /// keys. Watcher jobs wake on coalesced user actions, not every ambient
+    /// five-second frame, so enabling one cannot accidentally create a model
+    /// request loop.
+    private func wireAgentJobTriggers() {
+        inbox.onAdded = { [weak self] message in
+            let fallback = AgentDigest.sha256(
+                message.time + "\n" + message.text + "\n" + message.attachments.joined(separator: "\n"))
+            self?.enqueueAgentJobs(
+                trigger: .inbox, source: "inbox", eventID: message.id ?? fallback)
+        }
+        captureStore.onFinalized = { [weak self] summary in
+            self?.enqueueAgentJobs(
+                trigger: .capture, source: "capture", eventID: summary.id)
+        }
+        workflowWatcher.onEvent = { [weak self] stream, fields, date in
+            guard stream == "actions" else { return }
+            var event = fields
+            event["stream"] = stream
+            event["at"] = date.timeIntervalSince1970
+            guard let data = try? JSONSerialization.data(
+                withJSONObject: event, options: [.sortedKeys]) else { return }
+            self?.enqueueAgentJobs(
+                trigger: .watcher, source: "watcher",
+                eventID: AgentDigest.sha256(data))
+        }
+    }
+
+    private func enqueueAgentJobs(trigger: AgentJobTriggerKind,
+                                  source: String, eventID: String) {
+        guard let agentJobStore else { return }
+        do {
+            let count = try agentJobStore.enqueueTrigger(
+                trigger, source: source, eventID: eventID)
+            guard count > 0 else { return }
+            vflog("agent jobs: queued \(count) \(trigger.rawValue) trigger(s)")
+            Task { [weak self] in await self?.agentSupervisor?.wake() }
+            DispatchQueue.main.async { [weak self] in self?.chatPanel.refreshAgents() }
+        } catch {
+            vflog("agent jobs: trigger intake failed — \(error.localizedDescription)")
+        }
+    }
+
+    private func createAgentJob() {
+        guard agent.activeAssistant != nil, agentJobStore != nil else {
+            replyBubble.showTransient("Agent automations are unavailable", seconds: 5)
+            return
+        }
+        let configured = UserSettings.shared.agentBaseURL
+        let baseURL = URL(string: configured) ?? URL(string: DefaultAgentBaseURL)!
+        let defaultModel = UserSettings.shared.agentModel
+        var fallbackIDs: Set<String> = [defaultModel]
+        if let store = agentJobStore,
+           let jobs = try? store.jobs(limit: 500) {
+            fallbackIDs.formUnion(jobs.compactMap(\.modelID))
+        }
+        replyBubble.showTransient("refreshing OpenRouter models…", seconds: 3)
+        Task { [weak self] in
+            let result = await OpenRouterModelCatalog.shared.refresh(
+                baseURL: baseURL,
+                apiKey: KeychainStore.shared.loadAgentAPIKey(),
+                fallbackIDs: fallbackIDs)
+            await MainActor.run {
+                self?.presentAgentJobEditor(models: result, defaultModel: defaultModel)
+            }
+        }
+    }
+
+    private func presentAgentJobEditor(models: OpenRouterModelCatalogResult,
+                                       defaultModel: String) {
+        guard let assistant = agent.activeAssistant,
+              let agentJobStore else {
+            replyBubble.showTransient("Agent automations are unavailable", seconds: 5)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "New automation"
+        alert.informativeText = "Choose the runtime and pin the model this automation should keep using."
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+        let editor = AgentJobEditorView(
+            models: models, preferredRuntime: agent.preferredRuntime,
+            defaultModelID: defaultModel)
+        alert.accessoryView = editor
+#if VOICE_FLOW_QA
+        activeAgentJobAlert = alert
+        activeAgentJobEditor = editor
+        defer {
+            activeAgentJobAlert = nil
+            activeAgentJobEditor = nil
+        }
+#endif
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let task = editor.promptField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty else {
+            replyBubble.showTransient("An automation needs a prompt", seconds: 5)
+            return
+        }
+        let selectedRuntime = editor.selectedRuntime
+        let selectedModel = editor.selectedModelID
+        if selectedRuntime == .opencode, selectedModel == nil {
+            replyBubble.showTransient("Choose an OpenRouter model or type its exact provider/model ID", seconds: 7)
+            return
+        }
+        let triggerKinds: [AgentJobTriggerKind] = [.manual, .interval, .inbox, .capture, .watcher]
+        let selectedTrigger = triggerKinds[
+            min(max(editor.triggerPopUp.indexOfSelectedItem, 0), triggerKinds.count - 1)]
+        let minutes = min(max(editor.intervalField.doubleValue, 1), 43_200)
+        let dailyBudget = min(max(editor.budgetField.doubleValue, 0), 10_000)
+        let now = Date()
+        let nextRun: Date? = selectedTrigger == .interval
+            ? now.addingTimeInterval(minutes * 60) : nil
+        let job = AgentJob(
+            assistantSlug: assistant.slug,
+            conversationID: agent.currentSessionId,
+            runtime: selectedRuntime, trigger: selectedTrigger,
+            modelID: selectedModel,
+            prompt: task, trustProfile: .unattended,
+            state: selectedTrigger == .interval ? .queued : .completed,
+            nextRunAt: nextRun,
+            intervalSeconds: selectedTrigger == .interval ? minutes * 60 : nil,
+            dailyBudgetUSD: dailyBudget,
+            maxDurationSeconds: 900, maxAttempts: 3,
+            createdAt: now, updatedAt: now)
+        do {
+            try agentJobStore.put(job)
+            chatPanel.refreshAgents()
+            replyBubble.showTransient("automation created", seconds: 4)
+        } catch {
+            replyBubble.showTransient("automation failed: \(error.localizedDescription)", seconds: 7)
+        }
+    }
+
+    private func presentAgentPermission(_ prompt: AgentPermissionPrompt) {
+        precondition(Thread.isMainThread)
+#if VOICE_FLOW_QA
+        QAEventRecorder.shared.append("permission_requested", [
+            "id": prompt.id, "conversation_id": prompt.conversationID,
+            "run_id": prompt.runID.uuidString,
+            "title": prompt.title, "detail": prompt.detail,
+        ])
+        if ProcessInfo.processInfo.environment["VOICE_FLOW_QA_HEADLESS_APPROVAL"] == "1" {
+            return
+        }
+#endif
+        chatPanel.addNote("Permission requested · \(prompt.title)")
+        indicator.flashMessage("Assistant needs approval", seconds: 8)
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Allow once?"
+        alert.informativeText = "\(prompt.title)\n\n\(String(prompt.detail.prefix(2_048)))"
+        alert.addButton(withTitle: "Allow Once")
+        alert.addButton(withTitle: "Deny")
+        alert.buttons.first?.setAccessibilityLabel("Allow agent action once")
+        alert.buttons.dropFirst().first?.setAccessibilityLabel("Deny agent action")
+        NSApp.activate(ignoringOtherApps: true)
+        let response: AgentPermissionResponse = alert.runModal() == .alertFirstButtonReturn
+            ? .once : .reject
+        Task {
+            await AgentPermissionBroker.shared.resolve(id: prompt.id, response: response)
         }
     }
 
@@ -1097,10 +1390,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Ambient screenshots build quiet context while a session runs —
     /// deduped so an unchanged screen doesn't pile up frames.
     private func handleAmbientCapture(_ imageData: Data) {
-        if let previous = lastCaptureData {
-            let diff = ImageUtils.difference(previous, imageData)
-            if diff < diffThreshold { return }
-        }
+        guard CaptureFrameDeduplicator.shouldKeep(
+            previous: lastCaptureData, candidate: imageData,
+            threshold: diffThreshold) else { return }
         lastCaptureData = imageData
         appendSessionShot(imageData)
     }
@@ -1220,8 +1512,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // stacks keep their numbers across restarts.
     static let maxSessionSlots = 9
     private static var slotsURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/voice-flow/slots.json")
+        VoiceFlowPaths.shared.file("slots.json")
     }
     private var sessionSlots: [String: Int] = {
         guard let data = try? Data(contentsOf: AppDelegate.slotsURL),
@@ -1320,7 +1611,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             previousTargetSessionId = targetSessionId
         }
         targetSessionId = id
-        overlayManager.setActiveSession(isAssistantPickerSession(id) ? nil : id)
+        overlayManager.setActiveSession(id)
         refreshSessionIndicator()
         refreshUnreadIndicator()
         if announce {
@@ -1939,13 +2230,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let id = activeRunId, captureRuns[id]?.appendEntryId != nil {
                 stopCapture()
             } else {
+                chatPanel.setContinuationActive(entryId: nil)
                 replyBubble.showTransient("already recording", seconds: 4)
             }
             return
         }
         beginCapture(capability: .dictate, deliveryPolicy: .historyOnly,
                      handsFree: false, appendToEntryId: entryId)
-        replyBubble.showTransient("continuing dictation — Dictate key or Continue stops", seconds: 5)
+        if recorder.isRecording, let id = activeRunId,
+           captureRuns[id]?.appendEntryId == entryId {
+            chatPanel.setContinuationActive(entryId: entryId)
+            replyBubble.showTransient("continuing dictation — Dictate key or Stop ends it", seconds: 5)
+        } else {
+            chatPanel.setContinuationActive(entryId: nil)
+        }
     }
 
     private func beginCapture(capability: CaptureCapability,
@@ -2029,6 +2327,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
               let run = captureRuns[id],
               CaptureStopPolicy.permits(
                 active: run.capability, requestedBy: expectedCapability) else { return }
+        if run.appendEntryId != nil {
+            chatPanel.setContinuationActive(entryId: nil)
+        }
         partialTimer?.invalidate()
         partialTimer = nil
         transcriptPanel.hide()
@@ -2109,6 +2410,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         partialTimer = nil
         transcriptPanel.hide()
         recorder.cancel()
+        if captureRuns[id]?.appendEntryId != nil {
+            chatPanel.setContinuationActive(entryId: nil)
+        }
         captureRuns[id]?.phase = .failed
         captureRuns.removeValue(forKey: id)
         activeRunId = nil
@@ -2740,8 +3044,697 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                showSettingsOnMissingKey: true)
     }
 
+#if VOICE_FLOW_QA
+    private func qaObject(_ data: Data) -> [String: Any]? {
+        guard !data.isEmpty,
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return data.isEmpty ? [:] : nil
+        }
+        return value
+    }
+
+    private func handleQAControl(method: String, path: String,
+                                 body: Data) -> LocalAPIResponse {
+        guard let payload = qaObject(body) else {
+            return .error(400, "Request body must be a JSON object.")
+        }
+        switch (method, path) {
+        case ("GET", "/__qa/state"):
+            return .ok(qaState())
+        case ("GET", "/__qa/events"):
+            let after = (payload["after"] as? NSNumber)?.intValue ?? 0
+            return .ok(["events": QAEventRecorder.shared.snapshot(after: after)])
+        case ("POST", "/__qa/events/reset"):
+            QAEventRecorder.shared.reset()
+            return .ok(["ok": true])
+        case ("GET", "/__qa/capabilities"):
+            let candidates = [
+                Bundle.main.resourceURL?.appendingPathComponent("QA/capabilities.json"),
+                URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                    .appendingPathComponent("tests/capabilities.json"),
+            ].compactMap { $0 }
+            guard let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }),
+                  let data = try? Data(contentsOf: url),
+                  let catalog = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return .error(503, "QA capability catalog is not bundled.")
+            }
+            return .ok(catalog)
+        case ("POST", "/__qa/conversation/create"):
+            var response = LocalAPIResponse.error(409, "Assistant is running.")
+            DispatchQueue.main.sync {
+                guard !self.agent.isRunning else { return }
+                let conversation = self.agent.createConversation(
+                    force: payload["force"] as? Bool ?? false)
+                self.chatPanel.restoreAssistantConversation(conversation, open: true)
+                response = .ok(["conversation_id": conversation.id])
+            }
+            return response
+        case ("POST", "/__qa/conversation/select"):
+            guard let id = payload["conversation_id"] as? String else {
+                return .error(400, "conversation_id is required.")
+            }
+            var response = LocalAPIResponse.error(404, "Conversation not found or busy.")
+            DispatchQueue.main.sync {
+                if let conversation = self.agent.activateConversation(id) {
+                    self.chatPanel.restoreAssistantConversation(conversation, open: true)
+                    response = .ok(["conversation_id": id])
+                }
+            }
+            return response
+        case ("POST", "/__qa/runtime"):
+            guard let raw = payload["runtime"] as? String,
+                  let runtime = AgentRuntimeKind(rawValue: raw) else {
+                return .error(400, "runtime must be codex or opencode.")
+            }
+            let trust = (payload["trust_profile"] as? String)
+                .flatMap(AgentTrustProfile.init(rawValue:)) ?? .workspace
+            var response = LocalAPIResponse.error(409, "Assistant is running.")
+            DispatchQueue.main.sync {
+                self.agent.qaTrustProfile = trust
+                if self.agent.setPreferredRuntime(runtime) != nil {
+                    self.chatPanel.setAssistantRuntime(runtime, enabled: true)
+                    response = .ok(["runtime": runtime.rawValue, "trust_profile": trust.rawValue])
+                }
+            }
+            return response
+        case ("POST", "/__qa/runtime/default"):
+            guard let raw = payload["runtime"] as? String,
+                  let runtime = AgentRuntimeKind(rawValue: raw) else {
+                return .error(400, "runtime must be codex or opencode.")
+            }
+            UserSettings.shared.agentBackend = runtime.rawValue
+            UserSettings.shared.save()
+            return .ok(["runtime": runtime.rawValue])
+        case ("GET", "/__qa/runtime/health"):
+            let semaphore = DispatchSemaphore(value: 0)
+            var values: [[String: Any]] = []
+            Task {
+                for runtime in AgentRuntimeKind.allCases {
+                    let status: AgentRuntimeStatus
+                    switch runtime {
+                    case .codex: status = await CodexAgentRuntime().status()
+                    case .opencode: status = await OpenCodeAgentRuntime().status()
+                    }
+                    values.append([
+                        "runtime": runtime.rawValue,
+                        "health": status.health.rawValue,
+                        "version": status.version ?? "",
+                        "detail": status.detail ?? "",
+                    ])
+                }
+                semaphore.signal()
+            }
+            guard semaphore.wait(timeout: .now() + 5) == .success else {
+                return .error(504, "runtime health check timed out.")
+            }
+            return .ok(["runtimes": values])
+        case ("GET", "/__qa/assistant/tail"):
+            var response: [String: Any] = [:]
+            DispatchQueue.main.sync {
+                let conversation = self.agent.currentConversation
+                response = [
+                    "conversation_id": conversation.id,
+                    "message_count": conversation.messages.count,
+                    "messages": conversation.messages.suffix(8).map { message in
+                        [
+                            "role": message.role.rawValue,
+                            "text": String(AgentSecretPolicy.redacted(message.text).prefix(4_000)),
+                        ]
+                    },
+                    "running": self.agent.isRunning,
+                ]
+            }
+            return .ok(response)
+        case ("POST", "/__qa/provider"):
+            guard let base = payload["base_url"] as? String,
+                  let url = URL(string: base),
+                  url.host == "127.0.0.1" || url.host == "localhost",
+                  let model = payload["model"] as? String,
+                  !model.isEmpty else {
+                return .error(400, "QA provider must be a loopback base_url and non-empty model.")
+            }
+            UserSettings.shared.agentBaseURL = url.absoluteString
+            UserSettings.shared.agentModel = model
+            if let budget = (payload["daily_budget_usd"] as? NSNumber)?.doubleValue {
+                UserSettings.shared.agentDailyBudgetUSD = max(0, budget)
+            }
+            UserSettings.shared.save()
+            return .ok(["base_url": url.absoluteString, "model": model])
+        case ("POST", "/__qa/submit"):
+            let text = payload["text"] as? String
+            let paths = payload["screenshots"] as? [String] ?? []
+            var images: [Data] = []
+            for path in paths {
+                let url = URL(fileURLWithPath: path).standardizedFileURL
+                guard VoiceFlowPaths.shared.contains(url),
+                      let data = try? Data(contentsOf: url), data.count <= 20_000_000 else {
+                    return .error(403, "Every screenshot must be a bounded file inside the QA root.")
+                }
+                images.append(data)
+            }
+            var response = LocalAPIResponse.error(409, "Assistant is running.")
+            DispatchQueue.main.sync {
+                guard !self.agent.isRunning else { return }
+                self.agent.send(text: text, screenshots: images)
+                response = .accepted([
+                    "conversation_id": self.agent.currentSessionId,
+                    "runtime": self.agent.preferredRuntime.rawValue,
+                ])
+            }
+            return response
+        case ("POST", "/__qa/hotkey/post"):
+            guard let rawKeyCode = (payload["key_code"] as? NSNumber)?.intValue,
+                  (0...127).contains(rawKeyCode),
+                  let action = payload["action"] as? String,
+                  HotkeyManager.qaPost(keyCode: CGKeyCode(rawKeyCode), action: action) else {
+                return .error(400, "key_code 0...127 and action press|release|tap|double_tap are required.")
+            }
+            return .accepted(["key_code": rawKeyCode, "action": action])
+        case ("POST", "/__qa/interrupt"):
+            DispatchQueue.main.sync { self.agent.interrupt() }
+            return .accepted(["interrupt_requested": true])
+        case ("POST", "/__qa/permission"):
+            guard let id = payload["id"] as? String,
+                  let raw = payload["response"] as? String,
+                  let response = AgentPermissionResponse(rawValue: raw) else {
+                return .error(400, "id and response (once|reject) are required.")
+            }
+            Task { await AgentPermissionBroker.shared.resolve(id: id, response: response) }
+            return .accepted(["permission_id": id, "response": raw])
+        case ("POST", "/__qa/opencode/stop"):
+            let profile = (payload["trust_profile"] as? String)
+                .flatMap(AgentTrustProfile.init(rawValue:))
+            Task {
+                if let profile { await OpenCodeSupervisor.shared.stop(profile: profile) }
+                else { await OpenCodeSupervisor.shared.stopAll() }
+                QAEventRecorder.shared.append("opencode_stopped")
+            }
+            return .accepted(["stop_requested": true])
+        case ("POST", "/__qa/opencode/restart"):
+            let profile = (payload["trust_profile"] as? String)
+                .flatMap(AgentTrustProfile.init(rawValue:)) ?? .workspace
+            Task {
+                await OpenCodeSupervisor.shared.stop(profile: profile)
+                do {
+                    let connection = try await OpenCodeSupervisor.shared.connection(for: profile)
+                    QAEventRecorder.shared.append(
+                        "opencode_restarted", ["version": connection.version])
+                } catch {
+                    QAEventRecorder.shared.append(
+                        "opencode_restart_failed", ["error": error.localizedDescription])
+                }
+            }
+            return .accepted(["restart_requested": true, "trust_profile": profile.rawValue])
+        case ("GET", "/__qa/jobs"):
+            return .ok(["jobs": qaJobs()])
+        case ("POST", "/__qa/automation/editor"):
+            let action = payload["action"] as? String ?? "open"
+            if action == "open" {
+                let configured = UserSettings.shared.agentBaseURL
+                let baseURL = URL(string: configured) ?? URL(string: DefaultAgentBaseURL)!
+                let defaultModel = UserSettings.shared.agentModel
+                var fallbackIDs: Set<String> = [defaultModel]
+                if let store = agentJobStore, let jobs = try? store.jobs(limit: 500) {
+                    fallbackIDs.formUnion(jobs.compactMap(\.modelID))
+                }
+                Task {
+                    let models = await OpenRouterModelCatalog.shared.refresh(
+                        baseURL: baseURL,
+                        apiKey: KeychainStore.shared.loadAgentAPIKey(),
+                        fallbackIDs: fallbackIDs)
+                    await MainActor.run {
+                        let editor = AgentJobEditorView(
+                            models: models, preferredRuntime: self.agent.preferredRuntime,
+                            defaultModelID: defaultModel)
+                        let window = NSPanel(
+                            contentRect: NSRect(x: 0, y: 0, width: 500, height: 246),
+                            styleMask: [.titled, .closable], backing: .buffered,
+                            defer: false)
+                        window.title = "New automation"
+                        window.contentView = editor
+                        window.center()
+                        window.orderFrontRegardless()
+                        self.activeAgentJobQAWindow = window
+                        self.activeAgentJobEditor = editor
+                        QAEventRecorder.shared.append("automation_editor_presented")
+                    }
+                }
+                return .accepted(["opening": true])
+            }
+            if action == "close" {
+                DispatchQueue.main.async {
+                    if let window = self.activeAgentJobQAWindow {
+                        window.close()
+                        self.activeAgentJobQAWindow = nil
+                        self.activeAgentJobEditor = nil
+                    } else if let alert = self.activeAgentJobAlert {
+                        NSApp.abortModal()
+                        alert.window.orderOut(nil)
+                    }
+                }
+                return .accepted(["closing": true])
+            }
+            if action == "search", let query = payload["query"] as? String {
+                var accepted = false
+                DispatchQueue.main.sync {
+                    guard let editor = self.activeAgentJobEditor else { return }
+                    editor.modelCombo.stringValue = query
+                    editor.controlTextDidChange(Notification(
+                        name: NSControl.textDidChangeNotification,
+                        object: editor.modelCombo))
+                    accepted = true
+                }
+                return accepted ? .ok(["query": query])
+                    : .error(409, "Automation editor is not visible.")
+            }
+            if action == "select_model", let modelID = payload["model_id"] as? String {
+                var selected = false
+                DispatchQueue.main.sync {
+                    selected = self.activeAgentJobEditor?.qaSelectModel(id: modelID) ?? false
+                }
+                return selected ? .ok(["model_id": modelID])
+                    : .error(400, "model_id is not in the current picker catalog.")
+            }
+            return .error(400, "action must be open, search, select_model, or close.")
+        case ("POST", "/__qa/automation/editor_snapshot"):
+            var response = LocalAPIResponse.error(409, "Automation editor is not visible.")
+            DispatchQueue.main.sync {
+                guard let editor = self.activeAgentJobEditor else { return }
+                do {
+                    let shot = try editor.qaSnapshot()
+                    response = .ok([
+                        "path": shot.path, "width": shot.width, "height": shot.height,
+                    ])
+                } catch {
+                    response = .error(500, error.localizedDescription)
+                }
+            }
+            return response
+        case ("POST", "/__qa/jobs/create"):
+            guard let prompt = payload["prompt"] as? String,
+                  !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let assistant = agent.activeAssistant,
+                  let agentJobStore else {
+                return .error(400, "prompt, active assistant, and job store are required.")
+            }
+            let runtime = (payload["runtime"] as? String)
+                .flatMap(AgentRuntimeKind.init(rawValue:)) ?? agent.preferredRuntime
+            let trigger = (payload["trigger"] as? String)
+                .flatMap(AgentJobTriggerKind.init(rawValue:)) ?? .manual
+            let interval = (payload["interval_seconds"] as? NSNumber)?.doubleValue
+            let now = Date()
+            let job = AgentJob(
+                assistantSlug: assistant.slug,
+                conversationID: (payload["conversation_id"] as? String) ?? agent.currentSessionId,
+                runtime: runtime, trigger: trigger,
+                modelID: runtime == .opencode ? payload["model_id"] as? String : nil,
+                prompt: prompt,
+                trustProfile: (payload["trust_profile"] as? String)
+                    .flatMap(AgentTrustProfile.init(rawValue:)) ?? .unattended,
+                state: trigger == .interval ? .queued : .completed,
+                nextRunAt: trigger == .interval ? now.addingTimeInterval(max(1, interval ?? 60)) : nil,
+                intervalSeconds: trigger == .interval ? max(1, interval ?? 60) : nil,
+                concurrencyKey: payload["concurrency_key"] as? String,
+                dailyBudgetUSD: (payload["daily_budget_usd"] as? NSNumber)?.doubleValue ?? 1,
+                maxDurationSeconds: (payload["max_duration_seconds"] as? NSNumber)?.doubleValue ?? 900,
+                maxAttempts: (payload["max_attempts"] as? NSNumber)?.intValue ?? 3,
+                createdAt: now, updatedAt: now)
+            do {
+                try agentJobStore.put(job)
+                return .ok(["job_id": job.id])
+            } catch {
+                return .error(400, error.localizedDescription)
+            }
+        case ("POST", "/__qa/jobs/run"):
+            guard let id = payload["job_id"] as? String else {
+                return .error(400, "job_id is required.")
+            }
+            runAgentJob(id)
+            return .accepted(["job_id": id])
+        case ("POST", "/__qa/jobs/cancel"):
+            guard let id = payload["job_id"] as? String else {
+                return .error(400, "job_id is required.")
+            }
+            cancelAgentJob(id)
+            return .accepted(["job_id": id])
+        case ("POST", "/__qa/jobs/trigger"):
+            guard let raw = payload["trigger"] as? String,
+                  let trigger = AgentJobTriggerKind(rawValue: raw),
+                  trigger != .manual && trigger != .interval else {
+                return .error(400, "trigger must be inbox, capture, or watcher.")
+            }
+            let eventID = (payload["event_id"] as? String) ?? UUID().uuidString
+            enqueueAgentJobs(trigger: trigger, source: "qa-\(raw)", eventID: eventID)
+            return .accepted(["trigger": raw, "event_id": eventID])
+        case ("POST", "/__qa/inbox/add"):
+            guard let text = payload["text"] as? String, !text.isEmpty else {
+                return .error(400, "text is required.")
+            }
+            inbox.add(text: text, attachments: [], session: nil)
+            return .accepted(["queued": true])
+        case ("POST", "/__qa/capture/finalize"):
+            guard let transcript = payload["transcript"] as? String, !transcript.isEmpty else {
+                return .error(400, "transcript is required.")
+            }
+            var captureID = ""
+            DispatchQueue.main.sync {
+                self.captureStore.beginSession(runId: UUID())
+                captureID = self.captureStore.endSession(
+                    transcript: transcript, keepEmpty: true)?.id ?? ""
+            }
+            guard !captureID.isEmpty else { return .error(500, "capture did not finalize.") }
+            return .accepted(["capture_id": captureID])
+        case ("POST", "/__qa/capture/deliver"):
+            guard let rawCapability = payload["capability"] as? String,
+                  let capability = CaptureCapability(rawValue: rawCapability),
+                  let routeName = payload["route"] as? String,
+                  let transcript = payload["transcript"] as? String,
+                  !transcript.isEmpty else {
+                return .error(400, "capability, route, and transcript are required.")
+            }
+            let fixtureData: Data?
+            if let fixturePath = payload["fixture_path"] as? String {
+                let fixtureURL = URL(fileURLWithPath: fixturePath).standardizedFileURL
+                guard VoiceFlowPaths.shared.contains(fixtureURL),
+                      let data = try? Data(contentsOf: fixtureURL), data.count <= 20_000_000 else {
+                    return .error(403, "fixture_path must be a bounded file in the QA root.")
+                }
+                fixtureData = data
+            } else {
+                fixtureData = nil
+            }
+            var response = LocalAPIResponse.error(400, "unknown capture route.")
+            DispatchQueue.main.sync {
+                let route: CaptureRoute
+                switch routeName {
+                case "history": route = .historyOnly
+                case "assistant": route = .assistant
+                case "closed_paste":
+                    route = .paste(PasteTarget(
+                        processIdentifier: pid_t.max, name: "Closed QA target"))
+                default: return
+                }
+                let id = UUID()
+                var snapshot: SnapshotState = capability == .snapshot ? .unavailable : .notNeeded
+                if capability == .snapshot, let data = fixtureData,
+                   let shot = CaptureStore.saveShot(data) {
+                    snapshot = .captured(path: shot.path, data: data)
+                }
+                var run = CaptureRun(
+                    id: id, capability: capability, route: route, startedAt: Date(),
+                    display: DisplayTopology.primary, snapshot: snapshot)
+                run.transcript = transcript
+                run.phase = .ready
+                if capability == .continuous {
+                    self.captureStore.beginSession(runId: id)
+                    if let data = fixtureData {
+                        self.captureStore.addFrame(data)
+                        run.continuousScreenshots = [data]
+                    }
+                    run.continuousSummary = self.captureStore.endSession(
+                        transcript: nil, keepEmpty: true)
+                }
+                self.captureRuns[id] = run
+                self.maybeDeliverCapture(id)
+                response = .accepted([
+                    "run_id": id.uuidString,
+                    "capability": capability.rawValue,
+                    "route": routeName,
+                ])
+            }
+            return response
+        case ("POST", "/__qa/watcher/action"):
+            let eventID = (payload["event_id"] as? String) ?? UUID().uuidString
+            DispatchQueue.main.sync { self.workflowWatcher.emitQAAction(id: eventID) }
+            return .accepted(["event_id": eventID])
+        case ("POST", "/__qa/tts/action"):
+            guard let action = payload["action"] as? String else {
+                return .error(400, "action is required.")
+            }
+            var accepted = true
+            DispatchQueue.main.sync {
+                switch action {
+                case "pause": self.ttsController.pause()
+                case "resume":
+                    if self.ttsController.isPaused { self.ttsController.togglePause() }
+                case "seek":
+                    self.ttsController.seek(to: (payload["position"] as? NSNumber)?.doubleValue ?? 0)
+                case "stop": self.ttsController.stop()
+                case "voice_replies_on":
+                    UserSettings.shared.voiceRepliesEnabled = true
+                    UserSettings.shared.save()
+                    self.chatPanel.setVoiceReplies(true)
+                case "voice_replies_off":
+                    UserSettings.shared.voiceRepliesEnabled = false
+                    UserSettings.shared.save()
+                    self.chatPanel.setVoiceReplies(false)
+                case "live_begin": self.replySpeaker.begin()
+                case "live_feed":
+                    guard let text = payload["text"] as? String, !text.isEmpty else {
+                        accepted = false
+                        return
+                    }
+                    self.replySpeaker.append(text)
+                case "live_finish": self.replySpeaker.finish()
+                default: accepted = false
+                }
+            }
+            return accepted ? .accepted(["action": action]) : .error(400, "unknown TTS action.")
+        case ("POST", "/__qa/panel"):
+            let tab = payload["tab"] as? String
+            DispatchQueue.main.sync {
+                if tab == "hide" {
+                    self.chatPanel.hide()
+                } else {
+                    self.chatPanel.show(focusInput: false)
+                    if tab == "inbox" { self.chatPanel.selectTab(.inbox) }
+                    else if tab == "agents" { self.chatPanel.showAgentsList() }
+                }
+            }
+            return .ok(["shown": tab ?? "current"])
+        case ("POST", "/__qa/overlay/user_close"):
+            guard let id = payload["id"] as? String,
+                  let sanitized = OverlayManager.sanitize(id: id), sanitized == id else {
+                return .error(400, "a sanitized overlay id is required.")
+            }
+            DispatchQueue.main.sync { self.overlayManager.qaClose(id: id) }
+            return .accepted(["id": id])
+        case ("POST", "/__qa/mcp/select"):
+            guard let sessionID = payload["session_id"] as? String, !sessionID.isEmpty else {
+                return .error(400, "session_id is required.")
+            }
+            var selected = false
+            DispatchQueue.main.sync {
+                selected = self.pickerSessions().contains { $0.id == sessionID }
+                if selected { self.setTargetSession(sessionID, announce: true) }
+            }
+            return selected ? .ok(["selected": sessionID]) : .error(404, "session not selectable.")
+        case ("POST", "/__qa/pill/action"):
+            guard let action = payload["action"] as? String else {
+                return .error(400, "action is required.")
+            }
+            var accepted = true
+            DispatchQueue.main.sync {
+                switch action {
+                case "close": self.indicator.dismissGrown()
+                case "trash":
+                    self.replyBubble.onTrashed?()
+                    self.replyBubble.hide()
+                case "picker":
+                    let picker = self.pickerEntries()
+                    self.indicator.showPicker(entries: picker.entries, activeName: picker.activeName)
+                case "flash":
+                    self.indicator.flashMessage("QA receipt", seconds: 30)
+                case "collapse":
+                    if self.indicator.isGrownVisible { self.indicator.dismissGrown() }
+                    else { self.indicator.collapseNow() }
+                case "barge_in": self.stopSpeechPlayback()
+                case "escape": self.handleVoiceFlowEscape()
+                case "annotate_begin": self.annotationOverlay.beginEditing()
+                case "user_select":
+                    guard let sessionID = payload["session_id"] as? String,
+                          self.pickerSessions().contains(where: { $0.id == sessionID }) else {
+                        accepted = false
+                        return
+                    }
+                    self.userSelectSession(sessionID)
+                case "speaker":
+                    guard self.indicator.isGrownVisible else {
+                        accepted = false
+                        return
+                    }
+                    self.indicator.qaTapSpeaker()
+                default: accepted = false
+                }
+            }
+            return accepted ? .accepted(["action": action]) : .error(400, "unknown pill action.")
+        case ("POST", "/__qa/ui/snapshot"):
+            var response = LocalAPIResponse.error(500, "ChatPanel snapshot failed.")
+            DispatchQueue.main.sync {
+                do {
+                    let shot = try self.chatPanel.qaSnapshot()
+                    response = .ok([
+                        "path": shot.path, "width": shot.width, "height": shot.height,
+                    ])
+                } catch {
+                    response = .error(500, error.localizedDescription)
+                }
+            }
+            return response
+        case ("POST", "/__qa/ui/pill_snapshot"):
+            var response = LocalAPIResponse.error(500, "Indicator snapshot failed.")
+            DispatchQueue.main.sync {
+                do {
+                    let name = payload["name"] as? String ?? "state"
+                    let shot = try self.indicator.qaSnapshot(name: name)
+                    response = .ok([
+                        "path": shot.path, "width": shot.width, "height": shot.height,
+                    ])
+                } catch {
+                    response = .error(500, error.localizedDescription)
+                }
+            }
+            return response
+        case ("POST", "/__qa/app/terminate"):
+            QAEventRecorder.shared.append("app_terminate_requested")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                NSApp.terminate(nil)
+            }
+            return .accepted(["terminating": true])
+        default:
+            return .error(404, "Unknown QA action.")
+        }
+    }
+
+    private func qaJobs() -> [[String: Any]] {
+        ((try? agentJobStore?.jobs(limit: 100)) ?? []).map { job in
+            var result: [String: Any] = [
+                "id": job.id, "conversation_id": job.conversationID,
+                "runtime": job.runtime.rawValue, "trigger": job.trigger.rawValue,
+                "state": job.state.rawValue, "prompt": String(job.prompt.prefix(8_000)),
+                "updated_at": job.updatedAt.timeIntervalSince1970,
+            ]
+            if let modelID = job.modelID { result["model_id"] = modelID }
+            if let next = job.nextRunAt { result["next_run_at"] = next.timeIntervalSince1970 }
+            return result
+        }
+    }
+
+    private func qaState() -> [String: Any] {
+        var state: [String: Any] = [
+            "ok": true,
+            "config_root": VoiceFlowPaths.shared.configRoot.path,
+            "isolated": VoiceFlowPaths.shared.isIsolated,
+            "synthetic_input_only": HotkeyManager.qaSyntheticInputIsolationEnabled,
+            "jobs": qaJobs(),
+            "events": QAEventRecorder.shared.snapshot(after: 0),
+        ]
+        DispatchQueue.main.sync {
+            let conversation = self.agent.currentConversation
+            state["assistant"] = [
+                "conversation_id": conversation.id,
+                "runtime": self.agent.preferredRuntime.rawValue,
+                "trust_profile": self.agent.qaTrustProfile.rawValue,
+                "activity": self.agent.activity.rawValue,
+                "running": self.agent.isRunning,
+                "messages": conversation.messages.map { message in
+                    [
+                        "id": message.id.uuidString,
+                        "role": message.role.rawValue,
+                        "text": String(AgentSecretPolicy.redacted(message.text).prefix(16_000)),
+                    ]
+                },
+            ] as [String: Any]
+            state["ui"] = [
+                "panel_visible": self.chatPanel.isVisible,
+                "conversation_focus": String(describing: self.chatPanel.conversationFocus),
+                "agent_session_rows": self.agentSessionRows().count,
+                "job_rows": self.agentJobRows().count,
+                "controls": self.chatPanel.qaControlState,
+            ] as [String: Any]
+            state["default_runtime"] = UserSettings.shared.agentBackend
+            state["mcp"] = [
+                "target_session_id": self.targetSessionId ?? "",
+                "sessions": self.mcpServer.sessions.ordered().map { session in
+                    [
+                        "id": session.id,
+                        "number": session.number,
+                        "name": session.name ?? "",
+                        "engaged": session.engaged,
+                        "push_count": self.sessionPushes[session.id]?.count ?? 0,
+                        "unread_count": self.sessionPushes[session.id]?.filter { !$0.seen }.count ?? 0,
+                    ] as [String: Any]
+                },
+            ] as [String: Any]
+            var pill = self.indicator.qaState
+            pill["current_push_session_id"] = self.currentPushSessionId ?? ""
+            pill["slots"] = self.slottedSessions().map { session in
+                ["number": session.slot, "id": session.id, "label": session.label]
+                    as [String: Any]
+            }
+            pill["pushes"] = self.sessionPushes.map { sessionID, queue in
+                [
+                    "session_id": sessionID,
+                    "count": queue.count,
+                    "unread": queue.filter { !$0.seen }.count,
+                    "active": queue.filter { $0.done != true }.count,
+                ] as [String: Any]
+            }
+            state["pill"] = pill
+            let tts = self.ttsController.status
+            state["tts"] = [
+                "phase": tts.phase.rawValue,
+                "message": tts.message,
+                "position": tts.currentTime,
+                "duration": tts.duration,
+                "has_audio": tts.hasAudio,
+                "reply_speaker_active": self.replySpeaker.isActive,
+            ] as [String: Any]
+            state["annotation_editing"] = self.annotationOverlay.isEditing
+            state["automation_editor_visible"] = self.activeAgentJobEditor?.window?.isVisible ?? false
+            if let editor = self.activeAgentJobEditor {
+                state["automation_editor"] = [
+                    "model_accessibility_label": editor.modelCombo.accessibilityLabel() ?? "",
+                    "matching_model_ids": editor.qaFilteredModelIDs,
+                    "runtime_title": editor.runtimePopUp.stringValue,
+                    "trigger_title": editor.triggerPopUp.stringValue,
+                    "model_text": editor.modelCombo.stringValue,
+                ] as [String: Any]
+            }
+            state["capture"] = [
+                "state": self.state.rawValue,
+                "recording": self.recorder.isRecording,
+                "session_active": self.sessionActive,
+                "capability": self.activeRunId.flatMap {
+                    self.captureRuns[$0]?.capability.rawValue
+                } ?? "",
+            ] as [String: Any]
+            state["clipboard_text"] = String(
+                (NSPasteboard.general.string(forType: .string) ?? "").prefix(16_000))
+            state["overlays"] = [
+                "active_session": self.overlayManager.qaActiveSession,
+                "rendered_ids": self.overlayManager.qaRenderedIDs,
+                "file_ids": self.overlayManager.list().map(\.id),
+                "signature": self.overlayManager.qaSignature,
+            ] as [String: Any]
+        }
+        return state
+    }
+#endif
+
     private func setupLocalAPIServer() {
         localAPIServer = LocalAPIServer()
+#if VOICE_FLOW_QA
+        do {
+            localAPIServer.qaToken = try QAControlSecurity.installToken()
+            localAPIServer.onQA = { [weak self] method, path, body in
+                self?.handleQAControl(method: method, path: path, body: body)
+                    ?? LocalAPIResponse.error(503, "App not ready.")
+            }
+        } catch {
+            vflog("QA control disabled: \(error.localizedDescription)")
+        }
+#endif
         localAPIServer.onServerMessage = { [weak self] message in
             DispatchQueue.main.async {
                 self?.chatPanel.setTTSServerLabel(message)
@@ -3027,6 +4020,126 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // Embedded OpenCode tools use this private bridge rather than public MCP,
+    // so they never engage MCPSessionRegistry or create external picker state.
+    private func handleEmbeddedOverlayTool(
+        _ args: [String: Any], conversationID: String
+    ) async throws -> AgentToolOutput {
+        let operation = try AgentToolDispatcher.requiredString("operation", in: args)
+        let owner = assistantPickerSessionId ?? "assistant:\(conversationID)"
+        let rawID = OverlayManager.sanitize(id: args["id"] as? String) ?? "agent"
+        let id = "assistant-\(rawID)"
+        switch operation {
+        case "list":
+            let items = overlayManager.list().compactMap { item -> [String: Any]? in
+                guard overlayManager.read(id: item.id)?["session"] as? String == owner else { return nil }
+                return ["id": item.id, "type": item.type, "path": item.path, "visible": item.visible]
+            }
+            return AgentToolOutput(data: ["overlays": items])
+        case "remove":
+            guard overlayManager.read(id: id)?["session"] as? String == owner else {
+                throw AgentToolError.denied("overlay is not owned by this Assistant")
+            }
+            return AgentToolOutput(data: ["id": id, "removed": overlayManager.remove(id: id)])
+        case "update_guide":
+            guard var current = overlayManager.read(id: id),
+                  current["session"] as? String == owner else {
+                throw AgentToolError.denied("guide is not owned by this Assistant")
+            }
+            let payload = args["payload"] as? [String: Any] ?? [:]
+            for (key, value) in payload { current[key] = value }
+            current["type"] = "guide"
+            current["session"] = owner
+            guard let path = overlayManager.write(id: id, dict: current) else {
+                throw AgentToolError.unavailable("overlay file could not be written")
+            }
+            return AgentToolOutput(data: ["id": id, "path": path, "updated": true])
+        case "show_guide", "show_panel", "annotate":
+            var payload = args["payload"] as? [String: Any] ?? [:]
+            payload["type"] = operation == "show_guide" ? "guide"
+                : operation == "show_panel" ? "panel" : "annotations"
+            payload["session"] = owner
+            guard JSONSerialization.isValidJSONObject(payload),
+                  let encoded = try? JSONSerialization.data(withJSONObject: payload),
+                  encoded.count <= 64 * 1_024 else {
+                throw AgentToolError.invalidArguments("overlay payload is invalid or over 64 KiB")
+            }
+            guard let path = overlayManager.write(id: id, dict: payload) else {
+                throw AgentToolError.unavailable("overlay file could not be written")
+            }
+            return AgentToolOutput(data: ["id": id, "path": path, "owner": owner])
+        default:
+            throw AgentToolError.invalidArguments("unsupported overlay operation")
+        }
+    }
+
+    private func handleEmbeddedUserTool(
+        _ args: [String: Any], conversationID: String
+    ) async throws -> AgentToolOutput {
+        let operation = try AgentToolDispatcher.requiredString("operation", in: args)
+        let owner = assistantPickerSessionId ?? "assistant:\(conversationID)"
+        let summary = (args["summary"] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let details = (args["details"] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        switch operation {
+        case "report":
+            guard !summary.isEmpty else {
+                throw AgentToolError.invalidArguments("report needs a non-empty summary")
+            }
+            let text = details.isEmpty ? summary : "\(summary)\n\n\(details)"
+            await MainActor.run {
+                self.chatPanel.addNote("\(self.assistantPickerLabel): \(text)")
+                if !self.surfaceBusy {
+                    self.indicator.flashMessage("\(self.assistantPickerLabel) · update", seconds: 6)
+                }
+            }
+            return AgentToolOutput(data: ["delivered": true, "channel": "assistant"])
+        case "check":
+            let messages = inbox.drain(session: owner)
+            return AgentToolOutput(data: ["messages": messages.map {
+                ["time": $0.time, "text": $0.text, "screenshots": $0.attachments] as [String: Any]
+            }])
+        case "ask", "wait":
+            var prompt = (args["question"] as? String ?? summary)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if prompt.isEmpty { prompt = "The Assistant is waiting for your reply." }
+            let requested = (args["timeout_seconds"] as? NSNumber)?.doubleValue
+                ?? (operation == "ask" ? 1_800 : 600)
+            let timeout = min(max(requested, 5), 14_400)
+            var interaction: PendingInteraction?
+            await MainActor.run {
+                guard self.pendingInteraction == nil else { return }
+                let value = PendingInteraction(prompt: prompt, sessionId: owner)
+                self.pendingInteraction = value
+                interaction = value
+                self.replyBubble.showAsk(prompt: prompt, hint: self.askHint())
+                self.chatPanel.addNote("\(self.assistantPickerLabel) asks: \(prompt)")
+            }
+            guard let interaction else {
+                throw AgentToolError.unavailable("another user question is already pending")
+            }
+            _ = interaction.semaphore.wait(timeout: .now() + timeout)
+            return try await MainActor.run {
+                interaction.resolved = true
+                self.pendingInteraction = nil
+                self.replyBubble.hide()
+                if let response = interaction.responseText {
+                    return AgentToolOutput(data: [
+                        "response": response,
+                        "screenshots": interaction.attachments,
+                    ])
+                }
+                if interaction.cancelled {
+                    throw AgentToolError.unavailable("the user dismissed the question")
+                }
+                throw AgentToolError.unavailable("no user response arrived before timeout")
+            }
+        default:
+            throw AgentToolError.invalidArguments("unsupported user operation")
+        }
+    }
+
     private func mcpJSON(_ object: Any) -> String {
         guard JSONSerialization.isValidJSONObject(object),
               let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
@@ -3230,6 +4343,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func mcpTakeScreenshot(_ session: MCPSession?) -> MCPServer.ToolResult {
+#if VOICE_FLOW_QA
+        if let fixturePath = ProcessInfo.processInfo.environment["VOICE_FLOW_QA_SCREENSHOT_FIXTURE"],
+           let raw = try? Data(contentsOf: URL(fileURLWithPath: fixturePath)),
+           let shot = CaptureStore.saveShot(raw, on: DisplayTopology.primary) {
+            let display = DisplayTopology.primary
+            if let session, let display { lastMCPDisplay[session.id] = display.id }
+            let cursor = display?.screenshotPoint(forGlobalPoint: NSEvent.mouseLocation) ?? .zero
+            return .ok(mcpJSON([
+                "path": shot.path,
+                "width": shot.width,
+                "height": shot.height,
+                "display_id": Int(display?.id ?? 0),
+                "cursor": [Int(cursor.x.rounded()), Int(cursor.y.rounded())],
+                "note": "QA fixture captured through the same bounded screenshot store.",
+            ]))
+        }
+#endif
         let semaphore = DispatchSemaphore(value: 0)
         var outcome = MCPServer.ToolResult.fail("Screenshot failed — screen recording permission may be missing.")
         Task { @MainActor in
@@ -3557,6 +4687,54 @@ extension AppDelegate: AgentsDataSource {
         formatter.dateFormat = "HH:mm"
         return formatter
     }()
+
+    func agentJobRows() -> [AgentJobRow] {
+        let jobs = (try? agentJobStore?.jobs(limit: 100)) ?? []
+        return jobs.map { job in
+            let firstLine = job.prompt
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = firstLine.count > 48 ? String(firstLine.prefix(48)) + "…" : firstLine
+            var preview = "\(job.state.rawValue) · \(job.runtime.label) · \(job.trigger.rawValue)"
+            if let modelID = job.modelID { preview += " · \(modelID)" }
+            if let next = job.nextRunAt, job.state == .queued {
+                preview += " · " + Self.pushTimeFormatter.string(from: next)
+            }
+            return AgentJobRow(
+                id: job.id, name: title.isEmpty ? "automation" : title,
+                preview: preview,
+                time: Self.pushTimeFormatter.string(from: job.updatedAt),
+                state: job.state, runtime: job.runtime,
+                trigger: job.trigger, modelID: job.modelID, prompt: job.prompt)
+        }
+    }
+
+    func runAgentJob(_ jobId: String) {
+        guard let agentJobStore else { return }
+        do {
+            try agentJobStore.runNow(jobID: jobId)
+            Task { [weak self] in await self?.agentSupervisor?.wake() }
+            chatPanel.refreshAgents()
+        } catch {
+            replyBubble.showTransient("could not run automation", seconds: 5)
+        }
+    }
+
+    func cancelAgentJob(_ jobId: String) {
+        Task { [weak self] in await self?.agentSupervisor?.cancel(jobID: jobId) }
+        chatPanel.refreshAgents()
+    }
+
+    func setAgentJob(_ jobId: String, enabled: Bool) {
+        guard let agentJobStore else { return }
+        do {
+            try agentJobStore.setEnabled(jobID: jobId, enabled: enabled)
+            if enabled { Task { [weak self] in await self?.agentSupervisor?.wake() } }
+            chatPanel.refreshAgents()
+        } catch {
+            replyBubble.showTransient("could not update automation", seconds: 5)
+        }
+    }
 
     func agentSessionRows() -> [AgentSessionRow] {
         let activeAssistantConversationId = agent?.currentSessionId
