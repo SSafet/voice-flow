@@ -3320,7 +3320,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.sync {
                     guard let editor = self.activeAgentJobEditor,
                           let kind = AgentRuntimeKind(rawValue: runtime) else { return }
-                    editor.qaSetVisibleRuntime(kind.label)
+                    editor.qaSelectRuntime(kind)
                     selected = true
                 }
                 return selected ? .ok(["runtime": runtime])
@@ -3762,8 +3762,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 state["automation_editor"] = [
                     "model_accessibility_label": editor.modelCombo.accessibilityLabel() ?? "",
                     "matching_model_ids": editor.qaFilteredModelIDs,
-                    "runtime_title": editor.runtimePopUp.stringValue,
-                    "trigger_title": editor.triggerPopUp.stringValue,
+                    "runtime_title": editor.runtimePopUp.titleOfSelectedItem ?? "",
+                    "trigger_title": editor.triggerPopUp.titleOfSelectedItem ?? "",
                     "selected_runtime": editor.selectedRuntime.rawValue,
                     "selected_trigger": editor.selectedTrigger.rawValue,
                     "model_enabled": editor.qaModelEnabled,

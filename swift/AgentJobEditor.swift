@@ -13,8 +13,8 @@ final class AgentJobEditorView: NSView {
     ]
 
     let promptField = NSTextField(string: "")
-    let runtimePopUp = NSComboBox()
-    let triggerPopUp = NSComboBox()
+    let runtimePopUp = NSPopUpButton()
+    let triggerPopUp = NSPopUpButton()
     let intervalField = NSTextField(string: "60")
     let budgetField = NSTextField(string: "1.00")
     let modelCombo = OpenRouterModelComboBox()
@@ -34,21 +34,24 @@ final class AgentJobEditorView: NSView {
 
         promptField.placeholderString = "What should the assistant do?"
         promptField.setAccessibilityLabel("Automation prompt")
-        runtimePopUp.addItems(withObjectValues: AgentRuntimeKind.allCases.map(\.label))
+        runtimePopUp.addItems(withTitles: AgentRuntimeKind.allCases.map(\.label))
         runtimePopUp.selectItem(
             at: AgentRuntimeKind.allCases.firstIndex(of: preferredRuntime) ?? 0)
-        runtimePopUp.isEditable = false
         runtimePopUp.setAccessibilityLabel("Automation runtime")
         runtimePopUp.target = self
-        runtimePopUp.action = #selector(runtimeSelectionChanged)
-        triggerPopUp.addItems(withObjectValues: Self.triggerChoices.map(\.label))
+        runtimePopUp.action = #selector(runtimeChanged)
+        triggerPopUp.addItems(withTitles: Self.triggerChoices.map(\.label))
         triggerPopUp.selectItem(at: 0)
-        triggerPopUp.isEditable = false
         triggerPopUp.setAccessibilityLabel("Automation trigger")
-        runtimePopUp.numberOfVisibleItems = AgentRuntimeKind.allCases.count
-        triggerPopUp.numberOfVisibleItems = 5
-        runtimePopUp.font = .systemFont(ofSize: 12)
-        triggerPopUp.font = .systemFont(ofSize: 12)
+        for popUp in [runtimePopUp, triggerPopUp] {
+            popUp.font = .systemFont(ofSize: 12)
+            popUp.isBordered = false
+            popUp.alignment = .left
+            popUp.contentTintColor = Theme.text
+            popUp.wantsLayer = true
+            popUp.layer?.backgroundColor = Theme.cardHover.cgColor
+            popUp.layer?.cornerRadius = 6
+        }
         intervalField.setAccessibilityLabel("Automation interval in minutes")
         budgetField.setAccessibilityLabel("Automation daily budget in US dollars")
 
@@ -109,7 +112,7 @@ final class AgentJobEditorView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     var selectedRuntime: AgentRuntimeKind {
-        let visibleValue = runtimePopUp.stringValue
+        let visibleValue = (runtimePopUp.titleOfSelectedItem ?? runtimePopUp.title)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let runtime = AgentRuntimeKind.allCases.first(where: {
             $0.label.caseInsensitiveCompare(visibleValue) == .orderedSame
@@ -122,7 +125,7 @@ final class AgentJobEditorView: NSView {
     }
 
     var selectedTrigger: AgentJobTriggerKind {
-        let visibleValue = triggerPopUp.stringValue
+        let visibleValue = (triggerPopUp.titleOfSelectedItem ?? triggerPopUp.title)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let choice = Self.triggerChoices.first(where: {
             $0.label.caseInsensitiveCompare(visibleValue) == .orderedSame
@@ -139,14 +142,7 @@ final class AgentJobEditorView: NSView {
         return modelCombo.selectedModelID
     }
 
-    @objc private func runtimeSelectionChanged() {
-        // NSComboBox can dispatch its action before indexOfSelectedItem has
-        // caught up with the title displayed to the user. Resolve by title on
-        // the next main-loop turn so the visible selection is authoritative.
-        DispatchQueue.main.async { [weak self] in self?.runtimeChanged() }
-    }
-
-    private func runtimeChanged() {
+    @objc private func runtimeChanged() {
         let enabled = selectedRuntime == .opencode
         modelCombo.isEnabled = enabled
         modelDetail.isEnabled = enabled
@@ -163,13 +159,14 @@ final class AgentJobEditorView: NSView {
     var qaModelEnabled: Bool { modelCombo.isEnabled }
     var qaModelStatus: String { modelStatus.stringValue }
 
-    func qaSetVisibleRuntime(_ label: String) {
-        runtimePopUp.stringValue = label
-        runtimeChanged()
+    func qaSelectRuntime(_ runtime: AgentRuntimeKind) {
+        runtimePopUp.selectItem(
+            at: AgentRuntimeKind.allCases.firstIndex(of: runtime) ?? 0)
+        runtimePopUp.sendAction(runtimePopUp.action, to: runtimePopUp.target)
     }
 
     func qaSetVisibleTrigger(_ label: String) {
-        triggerPopUp.stringValue = label
+        triggerPopUp.selectItem(withTitle: label)
     }
 
     func qaSelectModel(id: String) -> Bool {
