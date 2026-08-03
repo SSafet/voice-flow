@@ -32,6 +32,7 @@ final class SettingsStore: ObservableObject {
     @Published var assistantWakeWord: String { didSet { commit() } }
     @Published var doubleSelectSpeak: Bool { didSet { commit() } }
     @Published var queueEnabled: Bool { didSet { commit() } }
+    @Published var assistantComputerUse: Bool { didSet { commit() } }
     @Published var workflowWatcherEnabled: Bool { didSet { commit() } }
     @Published var watcherInterval: Double { didSet { commit() } }
     @Published var watcherIdlePause: Double { didSet { commit() } }
@@ -76,6 +77,7 @@ final class SettingsStore: ObservableObject {
         assistantWakeWord = s.assistantWakeWord
         doubleSelectSpeak = s.doubleSelectSpeak
         queueEnabled = s.queueEnabled
+        assistantComputerUse = s.assistantComputerUse
         workflowWatcherEnabled = s.workflowWatcherEnabled
         watcherInterval = Double(s.watcherIntervalSeconds)
         watcherIdlePause = Double(s.watcherIdlePauseSeconds)
@@ -133,6 +135,7 @@ final class SettingsStore: ObservableObject {
         s.assistantWakeWord = wakeWord.isEmpty ? DefaultAssistantWakeWord : wakeWord
         s.doubleSelectSpeak = doubleSelectSpeak
         s.queueEnabled = queueEnabled
+        s.assistantComputerUse = assistantComputerUse
         s.workflowWatcherEnabled = workflowWatcherEnabled
         s.watcherIntervalSeconds = Int(watcherInterval)
         s.watcherIdlePauseSeconds = Int(watcherIdlePause)
@@ -666,6 +669,15 @@ private struct AssistantSettingsView: View {
             }
 
             Section {
+                Toggle(isOn: $store.assistantComputerUse) {
+                    SettingRowLabel(title: "Let the Assistant control this Mac",
+                                    subtitle: "FLORA can move the mouse, click, and type during her turns — without per-action confirmation. Off keeps her to screenshots only.")
+                }
+            } header: {
+                Text("Computer use")
+            }
+
+            Section {
                 ClaudeConnectionRow()
                 Toggle(isOn: $store.doubleSelectSpeak) {
                     SettingRowLabel(title: "Re-select a session to hear its messages",
@@ -959,7 +971,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
                view: DictationSettingsView(store: store))
         addTab("Voice", symbol: "speaker.wave.2.fill", height: 300,
                view: VoiceSettingsView(store: store))
-        addTab("Assistant", symbol: "sparkles", height: 700,
+        addTab("Assistant", symbol: "sparkles", height: 780,
                view: AssistantSettingsView(store: store))
         addTab("Watcher", symbol: "eye.fill", height: 560,
                view: WatcherSettingsView(store: store))

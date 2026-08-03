@@ -191,6 +191,8 @@ class UserSettings {
     var workflowWatcherEnabled: Bool = false
     // Next queue: the small on-screen "what's next" list (swift/Queue.swift).
     var queueEnabled: Bool = true
+    // Assistant computer control (voiceflow_computer beyond screenshots).
+    var assistantComputerUse: Bool = false
     var watcherIntervalSeconds: Int = 5
     var watcherIdlePauseSeconds: Int = 90
     var watcherKeepDays: Int = 30
@@ -283,6 +285,7 @@ class UserSettings {
         if let v = dict["double_select_speak"] as? Bool { doubleSelectSpeak = v }
         if let v = dict["workflow_watcher_enabled"] as? Bool { workflowWatcherEnabled = v }
         if let v = dict["queue_enabled"] as? Bool { queueEnabled = v }
+        if let v = dict["assistant_computer_use"] as? Bool { assistantComputerUse = v }
         if let v = dict["watcher_interval_seconds"] as? Int { watcherIntervalSeconds = max(2, v) }
         if let v = dict["watcher_idle_pause_seconds"] as? Int { watcherIdlePauseSeconds = max(30, v) }
         if let v = dict["watcher_keep_days"] as? Int { watcherKeepDays = max(3, v) }
@@ -328,6 +331,7 @@ class UserSettings {
             "double_select_speak": doubleSelectSpeak,
             "workflow_watcher_enabled": workflowWatcherEnabled,
             "queue_enabled": queueEnabled,
+            "assistant_computer_use": assistantComputerUse,
             "watcher_interval_seconds": watcherIntervalSeconds,
             "watcher_idle_pause_seconds": watcherIdlePauseSeconds,
             "watcher_keep_days": watcherKeepDays,

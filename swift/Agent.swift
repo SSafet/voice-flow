@@ -43,7 +43,8 @@ final class AgentSession {
     var onEmbeddedUserTool: (([String: Any], String) async throws -> AgentToolOutput)?
 
     /// When false, the computer tool only allows screenshots.
-    var allowControl = false
+    /// Settings → Assistant → "Computer use".
+    var allowControl: Bool { UserSettings.shared.assistantComputerUse }
 
     private(set) var isRunning = false
     private var messages: [[String: Any]] = []
@@ -1175,7 +1176,7 @@ final class AgentSession {
             "left_click_drag", "type", "key", "scroll", "mouse_move",
         ]
         if controlActions.contains(action) && !allowControl {
-            return ("Computer control is disabled. The user can enable it with the hand toggle in the Voice Flow panel.", nil)
+            return ("Computer control is disabled. The user can enable it in Voice Flow Settings → Assistant → Computer use.", nil)
         }
 
         switch action {

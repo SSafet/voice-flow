@@ -869,7 +869,7 @@ final class ChatPanel {
 
         panel.contentView = root
         setVoiceReplies(false)
-        setControlAllowed(false)
+        setControlAllowed(UserSettings.shared.assistantComputerUse)
         setSessionActive(false)
         selectTab(.agents)
     }

@@ -591,8 +591,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             UserSettings.shared.voiceRepliesEnabled = on
             UserSettings.shared.save()
         }
-        chatPanel.onToggleControl = { [weak self] on in
-            self?.agent.allowControl = on
+        chatPanel.onToggleControl = { on in
+            // Same switch as Settings → Assistant → Computer use; the agent
+            // reads the setting live (AgentSession.allowControl).
+            UserSettings.shared.assistantComputerUse = on
+            UserSettings.shared.save()
         }
         chatPanel.onStop = { [weak self] in
             self?.agent.interrupt()
@@ -623,6 +626,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.onSettingsChanged = { [weak self] in
             self?.syncWorkflowWatcher()
             self?.nextQueue?.applySettings()
+            self?.chatPanel?.setControlAllowed(UserSettings.shared.assistantComputerUse)
         }
         settingsWindow.onHotkeyChanged = { [weak self] spec in
             self?.hotkeyManager.updateSpec(spec)
