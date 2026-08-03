@@ -72,6 +72,24 @@ enum AgentsThreadGroup: Int, CaseIterable {
     }
 }
 
+enum AgentsThreadFilter: Int, CaseIterable {
+    case open
+    case needs
+    case unread
+    case live
+    case done
+
+    var label: String {
+        switch self {
+        case .open: return "Open"
+        case .needs: return "Needs"
+        case .unread: return "Unread"
+        case .live: return "Live"
+        case .done: return "Done"
+        }
+    }
+}
+
 struct AgentsThreadProjectionInput: Equatable {
     let id: AgentsThreadID
     let title: String
@@ -109,6 +127,69 @@ enum AgentsThreadProjection {
             }
         }
         return result
+    }
+
+    /// The destination badge counts thread-shaped obligations, not messages:
+    /// one open thread contributes at most one even when it both needs an
+    /// answer and contains unread output. Neutral live/recent work is not an
+    /// interruption and completed history never contributes.
+    static func attentionCount(_ threads: [AgentsThreadProjectionInput]) -> Int {
+        Set(threads.lazy.filter {
+            !$0.archived && ($0.pendingAsk || $0.unread)
+        }.map(\.id)).count
+    }
+
+    static func filtered(_ threads: [AgentsThreadProjectionInput],
+                         by filter: AgentsThreadFilter)
+        -> [AgentsThreadProjectionInput] {
+        let matching = threads.filter { thread in
+            switch filter {
+            case .open: return !thread.archived
+            case .needs: return !thread.archived && thread.pendingAsk
+            case .unread: return !thread.archived && thread.unread
+            case .live: return !thread.archived && thread.live
+            case .done: return thread.archived
+            }
+        }
+        return matching.sorted(by: destinationOrder)
+    }
+
+    /// Open uses mutually-exclusive precedence sections. Dedicated filters
+    /// intentionally overlap by state dimension, but are returned as a
+    /// single deterministic list.
+    static func sections(_ threads: [AgentsThreadProjectionInput],
+                         for filter: AgentsThreadFilter)
+        -> [(group: AgentsThreadGroup, rows: [AgentsThreadProjectionInput])] {
+        if filter == .open {
+            let groups = grouped(threads)
+            return [AgentsThreadGroup.needsYou, .unread, .live, .recent].compactMap { group in
+                guard let rows = groups[group], !rows.isEmpty else { return nil }
+                return (group, rows)
+            }
+        }
+        let rows = filtered(threads, by: filter)
+        guard !rows.isEmpty else { return [] }
+        let group: AgentsThreadGroup
+        switch filter {
+        case .needs: group = .needsYou
+        case .unread: group = .unread
+        case .live: group = .live
+        case .done: group = .done
+        case .open: group = .recent
+        }
+        return [(group, rows)]
+    }
+
+    private static func destinationOrder(_ lhs: AgentsThreadProjectionInput,
+                                         _ rhs: AgentsThreadProjectionInput) -> Bool {
+        if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+        if lhs.title != rhs.title {
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+        if lhs.id.source != rhs.id.source {
+            return lhs.id.source.rawValue < rhs.id.source.rawValue
+        }
+        return lhs.id.value < rhs.id.value
     }
 }
 
