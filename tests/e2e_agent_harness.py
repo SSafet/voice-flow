@@ -1035,8 +1035,25 @@ class SignedAppGate:
             wait_for("regrown MCP push stack", lambda: (lambda value:
                 value if value["mode"] == "grown" else None
             )(self.state()["pill"]), timeout=5)
-        self.qa("POST", "/__qa/pill/action", {"action": "speaker"},
-                expect_status=202)
+        # The grown preview has an intentional timeout. It can collapse in
+        # the narrow gap between the state poll above and this click on a
+        # busy CI machine, so bind the precondition to the action and retry
+        # once instead of misclassifying a correct 400 as a product failure.
+        speaker_tapped = False
+        for _ in range(2):
+            if self.state()["pill"]["mode"] != "grown":
+                self.qa("POST", "/__qa/mcp/select", {"session_id": session_a})
+                wait_for("regrown MCP speaker target", lambda: (lambda value:
+                    value if value["mode"] == "grown" else None
+                )(self.state()["pill"]), timeout=5)
+            try:
+                self.qa("POST", "/__qa/pill/action", {"action": "speaker"},
+                        expect_status=202)
+                speaker_tapped = True
+                break
+            except GateFailure:
+                continue
+        expect(speaker_tapped, "grown speaker target collapsed twice before click")
         wait_for("grown speaker read aloud", lambda: (lambda value:
             value if value["phase"] in ("generating", "playing") else None
         )(self.state()["tts"]), timeout=12)
