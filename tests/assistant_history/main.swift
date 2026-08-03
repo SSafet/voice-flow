@@ -125,6 +125,9 @@ let imported = AssistantHistoryStore(
     legacySessionsRoot: directory.appendingPathComponent("legacy"))
 expect(imported.conversations().count == 1, "import should replace scaffolding with one real legacy session")
 let legacy = imported.activeConversation()
+expect(legacy.id == AssistantThreadIdentity.legacyConversationID(
+    codexThreadID: "legacy-thread"),
+       "legacy rollout did not receive a deterministic local identity")
 expect(legacy.codexThreadId == "legacy-thread", "legacy resume pointer should import")
 expect(legacy.messages.map(\.role) == [.user, .assistant], "legacy roles should reconstruct")
 expect(legacy.messages[0].text == "Recover this conversation", "Voice Flow preamble should not appear in history")
@@ -134,6 +137,49 @@ let importedAgain = AssistantHistoryStore(
     url: legacyURL,
     legacySessionsRoot: directory.appendingPathComponent("legacy"))
 expect(importedAgain.conversations().count == 1, "legacy import must run only once")
+
+// Restoring a pre-import history must preserve protected empty automation
+// sessions and reconnect rollback metadata to the deterministically reimported
+// rollout, even if the prior sidecar used an old random local identity.
+importedAgain.assignMissingOwners(assistantSlug: "flora", assistantName: "FLORA")
+let priorImportedID = importedAgain.activeSessionId
+let priorImportedCompletion = Date()
+_ = importedAgain.completeConversation(priorImportedID, at: priorImportedCompletion)
+let legacyMetadataRoot = directory.appendingPathComponent("legacy-store-thread-metadata")
+let legacyMetadataStore = AssistantThreadMetadataStore(rootURL: legacyMetadataRoot)
+let priorImportMetadata = legacyMetadataStore.metadata(for: priorImportedID)!
+legacyMetadataStore.remove(priorImportedID)
+try! legacyMetadataStore.write(priorImportMetadata.remapped(to: "old-random-import-id"))
+
+let protectedImportConversation = AssistantConversation(
+    assistantSlug: "flora", assistantNameSnapshot: "FLORA",
+    automationJobID: "legacy-import-job")
+let protectedImportJSON = try! JSONSerialization.jsonObject(
+    with: JSONEncoder().encode(protectedImportConversation))
+let preImportEnvelope: [String: Any] = [
+    "version": 1,
+    "activeSessionId": protectedImportConversation.id,
+    "sessions": [protectedImportJSON],
+    "legacyImportCompleted": false,
+]
+try! JSONSerialization.data(withJSONObject: preImportEnvelope)
+    .write(to: legacyURL, options: .atomic)
+
+let reimportedAfterRollback = AssistantHistoryStore(
+    url: legacyURL,
+    legacySessionsRoot: directory.appendingPathComponent("legacy"))
+let deterministicImportID = AssistantThreadIdentity.legacyConversationID(
+    codexThreadID: "legacy-thread")
+expect(reimportedAfterRollback.conversation(protectedImportConversation.id)?.automationJobID
+       == "legacy-import-job",
+       "legacy import removed a protected empty automation conversation")
+let reimportedConversation = reimportedAfterRollback.conversation(deterministicImportID)
+expect(reimportedConversation?.assistantSlug == "flora",
+       "reimport did not reconnect owner metadata by external identity")
+expect(reimportedConversation?.completedAt == priorImportedCompletion,
+       "reimport did not reconnect archive metadata by content revision")
+expect(legacyMetadataStore.metadata(for: "old-random-import-id") == nil,
+       "reimport left the old random-identity sidecar orphaned")
 
 // Runtime synchronization is transactional: resume only through the exact
 // canonical context cursor, dirty before I/O, clean only after one final.
@@ -223,7 +269,8 @@ expect(archived.messages.count == 2 && archived.runtimeBinding(.codex) != nil,
 expect(!archived.hasUnseenAssistantReply,
        "complete should consume existing assistant replies")
 
-func rewriteAsOlderHistory(_ file: URL, advanceActivityBy seconds: TimeInterval = 0) {
+func rewriteAsOlderHistory(_ file: URL, advanceActivityBy seconds: TimeInterval = 0,
+                           appendContextMessage: Bool = false) {
     let data = try! Data(contentsOf: file)
     var root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
     var sessions = root["sessions"] as! [[String: Any]]
@@ -233,8 +280,19 @@ func rewriteAsOlderHistory(_ file: URL, advanceActivityBy seconds: TimeInterval 
         sessions[index].removeValue(forKey: "assistantOwnerWasInferred")
         sessions[index].removeValue(forKey: "completedAt")
         sessions[index].removeValue(forKey: "automationJobID")
-        if seconds > 0, let timestamp = sessions[index]["updatedAt"] as? NSNumber {
+        if seconds != 0, let timestamp = sessions[index]["updatedAt"] as? NSNumber {
             sessions[index]["updatedAt"] = timestamp.doubleValue + seconds
+        }
+        if appendContextMessage {
+            let olderActivity = AssistantHistoryMessage(
+                at: Date(timeIntervalSinceReferenceDate:
+                    (sessions[index]["updatedAt"] as? NSNumber)?.doubleValue ?? 0),
+                role: .user, text: "Downgraded-build activity")
+            let messageData = try! JSONEncoder().encode(olderActivity)
+            let messageJSON = try! JSONSerialization.jsonObject(with: messageData)
+            var messages = sessions[index]["messages"] as! [Any]
+            messages.append(messageJSON)
+            sessions[index]["messages"] = messages
         }
     }
     root["sessions"] = sessions
@@ -253,9 +311,17 @@ expect(restoredArchived.assistantOwnerWasInferred == true,
 expect(restoredArchived.completedAt == archivedAt,
        "untouched archived conversation did not remain Done after downgrade")
 
-// A downgraded build that appends activity cannot leave fresh work hidden in
-// Done when the upgraded build returns.
+// An unrelated old-build timestamp rewrite must not change lifecycle state.
 rewriteAsOlderHistory(metadataURL, advanceActivityBy: 60)
+let unchangedAfterTimestampRewrite = AssistantHistoryStore(
+    url: metadataURL, legacySessionsRoot: nil, metadataRoot: metadataRoot)
+expect(unchangedAfterTimestampRewrite.conversation(owned.id)?.completedAt == archivedAt,
+       "updatedAt-only rewrite falsely reopened an archived conversation")
+
+// A downgraded build that appends activity cannot leave fresh work hidden in
+// Done, even when its wall clock moved backwards.
+rewriteAsOlderHistory(
+    metadataURL, advanceActivityBy: -120, appendContextMessage: true)
 let reopenedAfterDowngrade = AssistantHistoryStore(
     url: metadataURL, legacySessionsRoot: nil, metadataRoot: metadataRoot)
 expect(reopenedAfterDowngrade.conversation(owned.id)?.assistantSlug == "flora",
@@ -290,6 +356,38 @@ expect(moved.messages.map(\.id) == messageIDsBeforeMove,
        "moving a conversation mutated canonical history")
 expect(moved.runtimeBindings?.values.allSatisfy { $0.state == .dirty } == true,
        "moving a conversation did not dirty every runtime binding")
+
+// Crash window: the authoritative sidecar can commit a new owner before the
+// embedded history mirror. Reconciliation must dirty old persona sessions.
+let moveCrashURL = directory.appendingPathComponent("move-crash-history.json")
+let moveCrashMetadataRoot = directory.appendingPathComponent("move-crash-sidecars")
+let moveCrashHistory = AssistantHistoryStore(
+    url: moveCrashURL, legacySessionsRoot: nil, metadataRoot: moveCrashMetadataRoot)
+let moveCrashConversation = moveCrashHistory.activeConversation()
+moveCrashHistory.assignMissingOwners(assistantSlug: "flora", assistantName: "FLORA")
+_ = moveCrashHistory.beginRuntimeTurn(
+    sessionId: moveCrashConversation.id, runtime: .opencode, text: "Prime persona")
+moveCrashHistory.recordRuntimeStarted(
+    sessionId: moveCrashConversation.id, runtime: .opencode,
+    externalSessionID: "old-persona", fresh: true)
+_ = moveCrashHistory.completeRuntimeTurn(
+    sessionId: moveCrashConversation.id, runtime: .opencode, text: "Primed")
+expect(moveCrashHistory.conversation(moveCrashConversation.id)?
+    .runtimeBinding(.opencode)?.state == .clean, "move crash fixture was not clean")
+let moveCrashMetadata = AssistantThreadMetadataStore(rootURL: moveCrashMetadataRoot)
+var sidecarOnlyMove = moveCrashMetadata.metadata(for: moveCrashConversation.id)!
+sidecarOnlyMove.assistantSlug = "research"
+sidecarOnlyMove.assistantNameSnapshot = "Research"
+sidecarOnlyMove.assistantOwnerWasInferred = false
+sidecarOnlyMove.metadataUpdatedAt = Date()
+try! moveCrashMetadata.write(sidecarOnlyMove)
+let repairedMove = AssistantHistoryStore(
+    url: moveCrashURL, legacySessionsRoot: nil, metadataRoot: moveCrashMetadataRoot)
+expect(repairedMove.conversation(moveCrashConversation.id)?.assistantSlug == "research",
+       "sidecar-only move did not restore the new owner")
+expect(repairedMove.conversation(moveCrashConversation.id)?
+    .runtimeBinding(.opencode)?.state == .dirty,
+       "sidecar-only owner repair left an old-persona runtime resumable")
 
 // Automation ownership survives downgrade rewrites, blocks destructive
 // conversation deletion, and keeps the canonical transcript out of pruning.

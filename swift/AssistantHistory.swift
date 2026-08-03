@@ -112,6 +112,25 @@ struct AssistantConversation: Codable, Equatable {
     var lastContextMessageID: UUID? {
         messages.last { $0.role == .user || $0.role == .assistant }?.id
     }
+
+    var contextMessageCount: Int {
+        messages.reduce(into: 0) { count, message in
+            if message.role == .user || message.role == .assistant { count += 1 }
+        }
+    }
+
+    var contextContentRevision: String {
+        let components = messages.compactMap { message -> String? in
+            guard message.role == .user || message.role == .assistant else { return nil }
+            return [
+                message.role.rawValue,
+                String(format: "%.6f", message.at.timeIntervalSinceReferenceDate),
+                message.text,
+                message.attachmentNote ?? "",
+            ].joined(separator: "\u{1f}")
+        }
+        return AssistantThreadIdentity.contentRevision(components)
+    }
 }
 
 struct AssistantTurnPreparation {
@@ -184,7 +203,8 @@ final class AssistantHistoryStore {
             if migrateRuntimeBindingsLocked() { persistLocked() }
             repairActiveSessionLocked()
             recoverInterruptedTurnsLocked()
-            if reconcileThreadMetadataLocked(pruneOrphans: true) { persistLocked() }
+            if reconcileThreadMetadataLocked(
+                pruneOrphans: loaded.legacyImportCompleted == true) { persistLocked() }
         } else {
             let fresh = AssistantConversation()
             envelope = AssistantHistoryEnvelope(
@@ -412,6 +432,7 @@ final class AssistantHistoryStore {
             bindings[runtime.rawValue] = binding
             envelope.sessions[index].runtimeBindings = bindings
             if runtime == .codex { envelope.sessions[index].codexThreadId = externalSessionID }
+            writeMetadataLocked(for: envelope.sessions[index])
             persistLocked()
         }
     }
@@ -435,6 +456,7 @@ final class AssistantHistoryStore {
             envelope.sessions[index].runtimeBindings = bindings
             if runtime == .codex { envelope.sessions[index].codexThreadId = binding.externalSessionID }
             envelope.sessions[index].turnState = .idle
+            writeMetadataLocked(for: envelope.sessions[index])
             persistLocked()
             return message
         }
@@ -494,6 +516,7 @@ final class AssistantHistoryStore {
             guard let index = envelope.sessions.firstIndex(where: { $0.id == id }) else { return }
             body(&envelope.sessions[index])
             envelope.sessions[index].updatedAt = Date()
+            writeMetadataLocked(for: envelope.sessions[index])
             persistLocked()
         }
     }
@@ -589,7 +612,10 @@ final class AssistantHistoryStore {
         // Empty drafts are implementation scaffolding, not history. The
         // imported conversation becomes the active session the user sees.
         envelope.sessions.removeAll {
-            $0.messages.isEmpty && $0.codexThreadId == nil && $0.turnState == .idle
+            $0.messages.isEmpty
+                && $0.codexThreadId == nil
+                && $0.turnState == .idle
+                && $0.automationJobID == nil
         }
         envelope.sessions.append(contentsOf: additions)
         envelope.activeSessionId = additions.max { $0.updatedAt < $1.updatedAt }!.id
@@ -621,26 +647,62 @@ final class AssistantHistoryStore {
     private func reconcileThreadMetadataLocked(pruneOrphans: Bool) -> Bool {
         var historyChanged = false
         let conversationIDs = Set(envelope.sessions.map(\.id))
+        let allMetadata = metadataStore.all()
+        let metadataByCodexThread = Dictionary(
+            grouping: allMetadata.compactMap { metadata -> (String, AssistantThreadMetadata)? in
+                metadata.codexThreadIDSnapshot.map { ($0, metadata) }
+            }, by: { $0.0 })
 
         for index in envelope.sessions.indices {
             var conversation = envelope.sessions[index]
-            if var metadata = metadataStore.metadata(for: conversation.id) {
+            var resolvedMetadata = metadataStore.metadata(for: conversation.id)
+            if resolvedMetadata == nil, let threadID = conversation.codexThreadId,
+               let candidates = metadataByCodexThread[threadID], candidates.count == 1 {
+                let source = candidates[0].1
+                let remapped = source.remapped(to: conversation.id)
+                do {
+                    try metadataStore.write(remapped)
+                    metadataStore.remove(source.conversationID)
+                    resolvedMetadata = remapped
+                } catch {
+                    vflog("assistant metadata: identity remap failed for \(conversation.id): \(error.localizedDescription)")
+                }
+            }
+            if var metadata = resolvedMetadata {
                 var resolvedCompletion = metadata.completedAt
-                if resolvedCompletion != nil,
-                   conversation.updatedAt > metadata.historyUpdatedAtAtWrite {
+                let contentChanged: Bool
+                if let archivedRevision = metadata.contextRevisionAtWrite {
+                    contentChanged = conversation.contextContentRevision != archivedRevision
+                } else if let archivedCount = metadata.contextMessageCountAtWrite {
+                    contentChanged = conversation.contextMessageCount != archivedCount
+                        || conversation.lastContextMessageID
+                            != metadata.lastContextMessageIDAtWrite
+                } else {
+                    // Compatibility only for the earliest sidecar revision.
+                    contentChanged = conversation.updatedAt > metadata.historyUpdatedAtAtWrite
+                }
+                if resolvedCompletion != nil, contentChanged {
                     resolvedCompletion = nil
                     metadata.completedAt = nil
                     metadata.metadataUpdatedAt = Date()
                     metadata.historyUpdatedAtAtWrite = conversation.updatedAt
+                    metadata.contextMessageCountAtWrite = conversation.contextMessageCount
+                    metadata.lastContextMessageIDAtWrite = conversation.lastContextMessageID
+                    metadata.contextRevisionAtWrite = conversation.contextContentRevision
                     do {
                         try metadataStore.write(metadata)
                     } catch {
                         vflog("assistant metadata: reopen save failed for \(conversation.id): \(error.localizedDescription)")
                     }
                 }
-                if conversation.assistantSlug != metadata.assistantSlug {
+                let ownerChanged = conversation.assistantSlug != metadata.assistantSlug
+                if ownerChanged {
                     conversation.assistantSlug = metadata.assistantSlug
                     historyChanged = true
+                    if var bindings = conversation.runtimeBindings {
+                        for key in bindings.keys { bindings[key]?.state = .dirty }
+                        conversation.runtimeBindings = bindings
+                    }
                 }
                 if conversation.assistantNameSnapshot != metadata.assistantNameSnapshot {
                     conversation.assistantNameSnapshot = metadata.assistantNameSnapshot
@@ -657,6 +719,14 @@ final class AssistantHistoryStore {
                 if conversation.completedAt != resolvedCompletion {
                     conversation.completedAt = resolvedCompletion
                     historyChanged = true
+                }
+                if resolvedCompletion != nil {
+                    for messageIndex in conversation.messages.indices
+                        where conversation.messages[messageIndex].role == .assistant
+                            && conversation.messages[messageIndex].seen == false {
+                        conversation.messages[messageIndex].seen = true
+                        historyChanged = true
+                    }
                 }
                 envelope.sessions[index] = conversation
             } else if conversation.assistantSlug != nil
@@ -683,8 +753,12 @@ final class AssistantHistoryStore {
             assistantNameSnapshot: conversation.assistantNameSnapshot,
             assistantOwnerWasInferred: conversation.assistantOwnerWasInferred,
             automationJobID: conversation.automationJobID,
+            codexThreadIDSnapshot: conversation.codexThreadId,
             completedAt: conversation.completedAt,
-            historyUpdatedAtAtWrite: conversation.updatedAt)
+            historyUpdatedAtAtWrite: conversation.updatedAt,
+            contextMessageCountAtWrite: conversation.contextMessageCount,
+            lastContextMessageIDAtWrite: conversation.lastContextMessageID,
+            contextRevisionAtWrite: conversation.contextContentRevision)
         do {
             try metadataStore.write(document)
         } catch {
@@ -793,6 +867,7 @@ private enum LegacyAssistantConversationImporter {
         let updatedAt = messages.last?.at ?? createdAt
         let firstUser = messages.first(where: { $0.role == .user })?.text ?? "Recovered assistant"
         return AssistantConversation(
+            id: AssistantThreadIdentity.legacyConversationID(codexThreadID: threadId),
             codexThreadId: threadId,
             createdAt: createdAt,
             updatedAt: updatedAt,

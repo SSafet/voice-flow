@@ -1,6 +1,22 @@
 import CryptoKit
 import Foundation
 
+enum AssistantThreadIdentity {
+    /// A restored pre-import history must recreate the same local identity for
+    /// the same Codex rollout instead of orphaning its owner/archive sidecar.
+    static func legacyConversationID(codexThreadID: String) -> String {
+        let digest = SHA256.hash(data: Data(codexThreadID.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        return "legacy-codex-\(digest.prefix(32))"
+    }
+
+    static func contentRevision(_ components: [String]) -> String {
+        let payload = components.joined(separator: "\u{1e}")
+        return SHA256.hash(data: Data(payload.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 struct AssistantThreadMetadata: Codable, Equatable {
     let version: Int
     let conversationID: String
@@ -11,24 +27,55 @@ struct AssistantThreadMetadata: Codable, Equatable {
     /// job database remains authoritative; this prevents an older app build
     /// from making an automation conversation eligible for history pruning.
     var automationJobID: String?
+    var codexThreadIDSnapshot: String?
     var completedAt: Date?
     var metadataUpdatedAt: Date
     var historyUpdatedAtAtWrite: Date
+    /// Content cursor used instead of wall-clock last-writer-wins. Counts and
+    /// the terminal canonical message identity survive clock rollback and do
+    /// not change when an older build merely rewrites unrelated settings.
+    var contextMessageCountAtWrite: Int?
+    var lastContextMessageIDAtWrite: UUID?
+    var contextRevisionAtWrite: String?
 
     init(conversationID: String, assistantSlug: String?,
          assistantNameSnapshot: String?, assistantOwnerWasInferred: Bool? = nil,
          automationJobID: String? = nil,
+         codexThreadIDSnapshot: String? = nil,
          completedAt: Date?,
-         metadataUpdatedAt: Date = Date(), historyUpdatedAtAtWrite: Date) {
+         metadataUpdatedAt: Date = Date(), historyUpdatedAtAtWrite: Date,
+         contextMessageCountAtWrite: Int? = nil,
+         lastContextMessageIDAtWrite: UUID? = nil,
+         contextRevisionAtWrite: String? = nil) {
         self.version = 1
         self.conversationID = conversationID
         self.assistantSlug = assistantSlug
         self.assistantNameSnapshot = assistantNameSnapshot
         self.assistantOwnerWasInferred = assistantOwnerWasInferred
         self.automationJobID = automationJobID
+        self.codexThreadIDSnapshot = codexThreadIDSnapshot
         self.completedAt = completedAt
         self.metadataUpdatedAt = metadataUpdatedAt
         self.historyUpdatedAtAtWrite = historyUpdatedAtAtWrite
+        self.contextMessageCountAtWrite = contextMessageCountAtWrite
+        self.lastContextMessageIDAtWrite = lastContextMessageIDAtWrite
+        self.contextRevisionAtWrite = contextRevisionAtWrite
+    }
+
+    func remapped(to conversationID: String) -> AssistantThreadMetadata {
+        AssistantThreadMetadata(
+            conversationID: conversationID,
+            assistantSlug: assistantSlug,
+            assistantNameSnapshot: assistantNameSnapshot,
+            assistantOwnerWasInferred: assistantOwnerWasInferred,
+            automationJobID: automationJobID,
+            codexThreadIDSnapshot: codexThreadIDSnapshot,
+            completedAt: completedAt,
+            metadataUpdatedAt: metadataUpdatedAt,
+            historyUpdatedAtAtWrite: historyUpdatedAtAtWrite,
+            contextMessageCountAtWrite: contextMessageCountAtWrite,
+            lastContextMessageIDAtWrite: lastContextMessageIDAtWrite,
+            contextRevisionAtWrite: contextRevisionAtWrite)
     }
 }
 
