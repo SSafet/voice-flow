@@ -24,11 +24,12 @@ func health(_ connection: OpenCodeConnection, authenticated: Bool) async -> Int?
 }
 
 let supervisor = OpenCodeSupervisor()
+let fallbackModelID = "voice-flow/fallback-limit-fixture"
 ModelGatewayCredentials.shared.configure {
     ModelGatewayCredentialSnapshot(
         apiKey: "provider-secret",
         upstreamBaseURL: URL(string: "http://127.0.0.1:1/v1")!,
-        allowedModels: ["test/model"])
+        allowedModels: [fallbackModelID])
 }
 let done = DispatchSemaphore(value: 0)
 var failure: Error?
@@ -65,7 +66,7 @@ Task {
         let provider = config["provider"] as! [String: Any]
         let openRouter = provider["openrouter"] as! [String: Any]
         let models = openRouter["models"] as! [String: Any]
-        let configuredModel = models["test/model"] as! [String: Any]
+        let configuredModel = models[fallbackModelID] as! [String: Any]
         let limit = configuredModel["limit"] as! [String: Any]
         expect((limit["context"] as? Int) == 128_000
                && (limit["output"] as? Int) == 32_000,
