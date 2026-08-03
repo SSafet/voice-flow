@@ -1,0 +1,287 @@
+<meta charset="utf-8">
+<title>Assistant containment — design</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1d212a; --ink: #e6e9ef;
+    --dim: #9aa3b2; --line: #2a303c; --amber: #e0a44a; --green: #5fb37a;
+    --red: #d9646b; --blue: #6b9fd4; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#faf9f7; --panel:#fff; --panel2:#f2f1ee; --ink:#1a1d23;
+            --dim:#5c6472; --line:#dcdad5; }
+  }
+  :root[data-theme="dark"] { --bg:#0f1115; --panel:#171a21; --panel2:#1d212a;
+    --ink:#e6e9ef; --dim:#9aa3b2; --line:#2a303c; }
+  :root[data-theme="light"] { --bg:#faf9f7; --panel:#fff; --panel2:#f2f1ee;
+    --ink:#1a1d23; --dim:#5c6472; --line:#dcdad5; }
+
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); line-height:1.55;
+    font-family: ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+    font-size: 15px; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 48px 28px 100px; }
+  h1 { font-size: 30px; letter-spacing:-.02em; margin:0 0 6px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing:.13em;
+       color: var(--dim); margin: 52px 0 16px; font-weight: 600;
+       border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+  h3 { font-size: 16px; margin: 28px 0 10px; }
+  p { margin: 12px 0; }
+  .sub { color: var(--dim); margin-bottom: 32px; }
+  code, .m { font-family: var(--mono); font-size: 12.5px;
+    background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+  a { color: var(--blue); }
+
+  .verdict { background: var(--panel); border:1px solid var(--line);
+    border-left: 3px solid var(--green); border-radius: 8px; padding: 18px 22px; }
+  .verdict.warn { border-left-color: var(--amber); }
+
+  table { width:100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--dim); padding: 8px 10px; border-bottom:1px solid var(--line); font-weight:600;}
+  td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { white-space: nowrap; }
+  .scroll { overflow-x: auto; }
+
+  .tag { font-family: var(--mono); font-size: 10.5px; padding: 2px 6px;
+    border-radius: 4px; letter-spacing:.04em; white-space: nowrap; }
+  .ok  { background: rgba(95,179,122,.15); color: var(--green); }
+  .no  { background: rgba(217,100,107,.15); color: var(--red); }
+  .new { background: rgba(107,159,212,.15); color: var(--blue); }
+  .asm { background: rgba(224,164,74,.15); color: var(--amber); }
+
+  /* diagram */
+  .diagram { background: var(--panel); border:1px solid var(--line);
+    border-radius: 10px; padding: 24px; margin: 20px 0; }
+  .dtitle { font-size:11px; text-transform:uppercase; letter-spacing:.1em;
+    color:var(--dim); margin-bottom:18px; font-weight:600; }
+  .ring { border:1.5px solid var(--line); border-radius:10px; padding:16px;
+    position:relative; margin-top:14px; }
+  .ring > .label { position:absolute; top:-9px; left:14px; background:var(--panel);
+    padding:0 8px; font-size:11px; color:var(--dim); font-family:var(--mono); }
+  .ring.kernel { border-color: var(--green); border-style: solid; }
+  .ring.kernel > .label { color: var(--green); }
+  .ring.leak { border-color: var(--red); border-style: dashed; }
+  .ring.leak > .label { color: var(--red); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  .box { background:var(--panel2); border:1px solid var(--line); border-radius:7px;
+    padding:9px 12px; font-size:13px; flex:1; min-width:130px; }
+  .box .k { font-size:11px; color:var(--dim); display:block; margin-top:2px; }
+  .arrow { text-align:center; color:var(--dim); font-size:16px; margin:8px 0; }
+  .esc { color: var(--red); font-size:12.5px; margin-top:12px; font-family:var(--mono); }
+  .blk { color: var(--green); font-size:12.5px; margin-top:12px; font-family:var(--mono); }
+
+  pre { background: var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding: 14px 16px; overflow-x:auto; font-family:var(--mono); font-size:12.5px;
+    line-height:1.5; margin: 14px 0; }
+  .cmp { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:16px 0; }
+  @media (max-width: 720px) { .cmp { grid-template-columns:1fr; } }
+  .cmp > div { background:var(--panel); border:1px solid var(--line);
+    border-radius:8px; padding:14px 16px; }
+  .cmp h4 { margin:0 0 10px; font-size:11px; text-transform:uppercase;
+    letter-spacing:.09em; color:var(--dim); }
+  .cmp.before > div:first-child { border-left:2px solid var(--red); }
+  .cmp.before > div:last-child { border-left:2px solid var(--green); }
+  ul { padding-left: 20px; } li { margin: 5px 0; }
+  .ev { font-size:12.5px; color:var(--dim); font-family:var(--mono); }
+</style>
+
+<div class="wrap">
+
+<h1>Assistant containment</h1>
+<p class="sub">Replacing the three trust presets with an OS-enforced boundary — design for review, nothing built yet.</p>
+
+<div class="verdict">
+  <strong>The load-bearing claim, tested rather than assumed.</strong>
+  <p style="margin-bottom:6px">Agent-framework permissions cannot contain a shell: once bash runs, <code>rm</code> becomes a Python script and rules on command text are theatre. So containment moves below the agent, into the macOS Seatbelt sandbox, which is <em>inherited by every descendant process</em>.</p>
+  <p style="margin:6px 0 0">I ran the escape attempts against a real profile on this machine (macOS 26.2) before writing this. Direct writes, <code>rm -rf</code>, a model-written Python script, a nested shell, a detached background daemon, an SSH-key read, and a raw exfiltration socket — all blocked at the syscall. <strong>One rule I wrote was wrong and let traffic out; it's fixed and re-verified below.</strong></p>
+</div>
+
+<h2>Goal</h2>
+<p>The assistant can do anything you'd expect a capable helper to do — read anything, run anything, reach the network, use Notion — <strong>without any prompt</strong>, except one: when it wants to work in a folder it hasn't been granted. Meanwhile the four things you named as actually dangerous become <em>impossible</em>, not "asked about".</p>
+<p>Failure condition, so this is measurable: if after the change any of the six escape tests below succeeds, or if a routine ask from your history still needs a prompt, the design failed.</p>
+
+<h2>Threat model → what actually stops it</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>Your concern</th><th>Mechanism</th><th>Status</th></tr></thead>
+<tbody>
+<tr>
+  <td>Deleting files outside<br>the workspace</td>
+  <td><code>(deny file-write*)</code> globally, re-allowed only for the granted workspace root. A rogue script gets <code>EPERM</code> from the kernel — there is no prompt to talk its way past.</td>
+  <td><span class="tag ok">VERIFIED T1–T5</span></td>
+</tr>
+<tr>
+  <td>Silent system<br>modification</td>
+  <td>Same rule. <code>~/Library</code>, <code>LaunchAgents</code>, <code>/etc</code>, <code>defaults</code> domains are simply not writable. Not gated — unreachable.</td>
+  <td><span class="tag ok">VERIFIED T2</span></td>
+</tr>
+<tr>
+  <td>Reading secrets from<br>environment variables</td>
+  <td><strong>Already solved and shipping.</strong> The subprocess env is allowlisted to 11 harmless vars — <code>PATH</code>, <code>TZ</code>, locale, proxy. No key was ever in reach.</td>
+  <td><span class="tag ok">VERIFIED<br>Supervisor:589</span></td>
+</tr>
+<tr>
+  <td>Reading <code>.env</code> / keys<br>inside a granted repo</td>
+  <td><code>(deny file-read* (regex …))</code> on secret shapes — applies <em>even inside</em> the workspace, so granting a repo doesn't grant its credentials.</td>
+  <td><span class="tag ok">VERIFIED T4b[2]</span></td>
+</tr>
+<tr>
+  <td>Exfiltration after<br>prompt injection</td>
+  <td>Kernel denies all non-localhost network. Egress goes through a Voice Flow proxy via <code>HTTPS_PROXY</code>, which sees the destination host, allowlists it, and logs it. Anything bypassing the proxy fails at the socket.</td>
+  <td><span class="tag ok">VERIFIED T7–T10</span><br><span class="tag asm">residual below</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<h3>The residual risk, stated plainly</h3>
+<p>Host-level control stops exfiltration to an attacker's server. It does <em>not</em> stop exfiltration through a host you've already allowed — a compromised agent could write secrets into a Notion page. Nothing short of cutting network entirely closes that, and the cheap mitigation is the row above it: if secrets are unreadable, there is nothing worth sending. I'm accepting this rather than hiding it.</p>
+
+<h2>Current vs target boundary</h2>
+
+<div class="diagram">
+  <div class="dtitle">Current — the boundary is a config file the shell ignores</div>
+  <div class="ring leak">
+    <span class="label">OpenCode permission rules — advisory</span>
+    <div class="row">
+      <div class="box">opencode serve<span class="k">--pure, private XDG home</span></div>
+      <div class="box">bash: "ask"<span class="k">prompt says only "Permission requested"</span></div>
+      <div class="box">edit / read<span class="k">external_directory: captures only</span></div>
+    </div>
+    <div class="arrow">↓ spawns</div>
+    <div class="row">
+      <div class="box">python / sh / any script<span class="k">no rule applies to what it does</span></div>
+    </div>
+    <div class="esc">→ full filesystem write · full network · reads ~/.ssh, .env · outlives the turn</div>
+  </div>
+</div>
+
+<div class="diagram">
+  <div class="dtitle">Target — the boundary is the kernel; rules become UX, not security</div>
+  <div class="ring kernel">
+    <span class="label">Seatbelt profile — inherited by all descendants</span>
+    <div class="row">
+      <div class="box">opencode serve<span class="k">same launch, wrapped</span></div>
+      <div class="box">python / sh / MCP servers<span class="k">inherit the profile, cannot drop it</span></div>
+    </div>
+    <div class="arrow">↓ every syscall</div>
+    <div class="row">
+      <div class="box">write → granted workspace only<span class="k">elsewhere: EPERM</span></div>
+      <div class="box">read → all but secret shapes<span class="k">.env .pem id_* .ssh .aws</span></div>
+      <div class="box">network → 127.0.0.1 only<span class="k">direct egress: EPERM</span></div>
+    </div>
+    <div class="blk">✓ T1–T10: write, rm -rf, python, nested sh, background daemon, raw socket — all contained</div>
+  </div>
+  <div class="arrow">↓ localhost only</div>
+  <div class="row">
+    <div class="box">Model gateway<span class="k">exists today — unchanged</span></div>
+    <div class="box">Voice Flow tool server<span class="k">exists today — unchanged</span></div>
+    <div class="box"><strong>Egress proxy</strong><span class="k">NET-NEW · host allowlist + log</span></div>
+  </div>
+</div>
+
+<h2>What changes, per part</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>Part</th><th>Disposition</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td><code>OpenCodeSupervisor</code><br><span class="ev">:395 launch</span></td><td><span class="tag new">extend</span></td>
+  <td>Launch becomes <code>/usr/bin/sandbox-exec -f &lt;profile&gt; opencode …</code>. Profile is generated per run from (workspace root + capability dial) and written next to the existing generated config. <strong>Process keying changes</strong>: <code>instances</code> is keyed by <code>AgentTrustProfile</code> today; it must key on <em>(workspace root, capability set)</em>, since two workspaces need two sandboxes.</td></tr>
+<tr><td><code>AgentPermissionPolicy</code><br><span class="ev">:110 openCodeConfiguration</span></td><td><span class="tag no">replace</span></td>
+  <td>Trust presets die. The generated OpenCode permission map becomes near-uniform <code>allow</code> — it is now a UX layer, not a boundary. <code>external_directory</code> is derived from the granted workspace instead of the hardcoded captures path.</td></tr>
+<tr><td>Capability dial<br><span class="ev">Settings → Assistant</span></td><td><span class="tag new">net-new</span></td>
+  <td>Three independent switches — <em>run commands</em>, <em>reach the network</em>, <em>control the screen</em> — replacing the bundled presets. Each maps to a clause in the sandbox profile, so turning one off is enforced by the kernel, not by asking the model nicely. This is your restriction dial for weaker models.</td></tr>
+<tr><td>Egress proxy<br><span class="ev">modeled on ModelGateway</span></td><td><span class="tag new">net-new</span></td>
+  <td>Localhost <code>CONNECT</code> proxy. Reads the target host from the CONNECT line, checks the allowlist, logs it, then streams bytes. <strong>Not</strong> a clone of ModelGateway's contract: it needs its own error path (deny → <code>403</code> before tunnelling), its own concurrency (one thread per tunnel, capped), and no budget ledger.</td></tr>
+<tr><td>Permission event parsing<br><span class="ev">OpenCodeHTTPClient:120</span></td><td><span class="tag no">replace</span></td>
+  <td>Reads <code>properties["permission"]</code> and <code>properties["patterns"]</code>. Neither exists in OpenCode 1.17 — the real fields are <code>title</code> and <code>pattern</code>. Also handles <code>"permission.asked"</code>, which is not an event this version emits. <strong>This is why every prompt you've seen says "Permission requested" with no detail.</strong></td></tr>
+<tr><td><code>AgentJobStore</code><br><span class="ev">:1026, :1258</span></td><td><span class="tag new">extend</span></td>
+  <td>Persists <code>trustProfile</code> as a SQLite column. Stored automations must keep loading after the enum is replaced — decode maps legacy values onto the new capability set.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>The workspace grant — your one accepted prompt</h3>
+<p>Today the runtime's working directory is silently <code>assistant.directory</code> <span class="ev">(Agent.swift:647)</span>. Under this design the workspace is explicit and is what the sandbox is built from, so changing it is the one moment the security boundary actually moves — which is exactly the prompt you said you're fine with.</p>
+<div class="cmp before">
+  <div><h4>Before</h4>
+    <p style="margin:0;font-size:14px">Every bash command → a modal that says "Permission requested". You approve blind, dozens of times, and learn to click through.</p></div>
+  <div><h4>After</h4>
+    <p style="margin:0;font-size:14px">"FLORA wants to work in <code>~/repos/pantria</code>." Approve once. Everything inside is then silent — edits, deletes, commands, network. Grants persist per assistant.</p></div>
+</div>
+
+<h2>Feasibility — what I tried to break</h2>
+<p>Each row is an attempt to <em>falsify</em> the design, run on this Mac against a real profile, not reasoned about.</p>
+<div class="scroll">
+<table>
+<thead><tr><th>#</th><th>Attack</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>T1</td><td>Write inside the granted workspace</td><td><span class="tag ok">wrote OK</span> — containment doesn't break normal work</td></tr>
+<tr><td>T2</td><td><code>echo &gt; ~/Desktop/…</code></td><td><span class="tag ok">Operation not permitted</span></td></tr>
+<tr><td>T3</td><td><code>rm -rf ~/Desktop/victim/</code></td><td><span class="tag ok">blocked; victim survived</span></td></tr>
+<tr><td>T4b</td><td>Model-written Python: write out, read <code>~/.ssh/id_ed25519</code>, spawn helper, open raw socket</td><td><span class="tag ok">[1][2][3] PermissionError</span> · <span class="tag no">[4] socket connected</span></td></tr>
+<tr><td>T5</td><td>Nested <code>sh -c "sh -c …"</code></td><td><span class="tag ok">blocked at depth 3</span></td></tr>
+<tr><td>T6</td><td>Detached <code>nohup</code> daemon writing after the turn ends</td><td><span class="tag ok">contained</span></td></tr>
+<tr><td>T7</td><td>Re-test after fixing the network rule</td><td><span class="tag ok">all four contained</span></td></tr>
+<tr><td>T8</td><td>Reach localhost model gateway from inside</td><td><span class="tag ok">200 — gateway works</span></td></tr>
+<tr><td>T9</td><td><code>curl https://example.com</code> direct</td><td><span class="tag ok">000 — blocked</span></td></tr>
+<tr><td>T10</td><td><code>curl</code> with <code>HTTPS_PROXY</code> set</td><td><span class="tag ok">proxy received <code>CONNECT api.notion.com:443</code></span></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="verdict warn" style="margin-top:20px">
+  <strong>The bug worth dwelling on.</strong>
+  <p style="margin:6px 0 0">My first profile used <code>(allow network* (local ip) (remote ip "localhost:*"))</code>. That reads as "localhost only" and is wrong — <code>(local ip)</code> matches outbound connections too, re-opening everything. T4b[4] connected to <code>1.1.1.1:443</code>. The correct form is below. This is the difference between a design that <em>claims</em> containment and one that has it; the same class of mistake is why the validation contract exists.</p>
+</div>
+<pre>; wrong — silently allows all egress
+(deny network*)
+(allow network* (local ip) (remote ip "localhost:*"))
+
+; correct — verified T7
+(deny network*)
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-bind    (local ip  "localhost:*"))
+(allow network-outbound (remote unix-socket))</pre>
+
+<h2>Why nothing you use today breaks</h2>
+<p>The network posture sounds restrictive and isn't, because the runtime environment already passes <code>HTTPS_PROXY</code> and <code>HTTP_PROXY</code> through <span class="ev">(Supervisor:589 allowlist)</span>. Point them at the local proxy and every well-behaved client follows: OpenCode's webfetch, MCP's HTTP client, <code>curl</code>, <code>git</code>, <code>pip</code>. No per-tool brokering. Tools that <em>ignore</em> the proxy — which is what injected code would do — hit the kernel denial.</p>
+
+<h2>Validation contract</h2>
+<p>Assertions the finished build is diffed against. Each has a different result before and after, and is executable as written.</p>
+<div class="scroll">
+<table>
+<thead><tr><th>#</th><th>Assertion</th><th>Pre</th><th>Post</th></tr></thead>
+<tbody>
+<tr><td>V1</td><td>Sandboxed <code>rm -rf ~/Desktop/&lt;probe&gt;</code> from an agent bash call</td><td>deletes</td><td><code>EPERM</code>, probe intact</td></tr>
+<tr><td>V2</td><td>Agent-written Python reading <code>~/.ssh/id_ed25519</code></td><td>returns bytes</td><td><code>PermissionError</code></td></tr>
+<tr><td>V3</td><td>Agent-written Python <code>socket.create_connection(('1.1.1.1',443))</code></td><td>connects</td><td><code>PermissionError</code></td></tr>
+<tr><td>V4</td><td>Reading <code>.env</code> in a <em>granted</em> workspace</td><td>returns contents</td><td>denied — grant ≠ credentials</td></tr>
+<tr><td>V5</td><td><code>curl https://api.notion.com</code> with proxy set</td><td>direct connection</td><td>succeeds <em>and</em> appears in the egress log</td></tr>
+<tr><td>V6</td><td>Permission prompt payload for a bash ask</td><td>"Permission requested", empty detail</td><td>the actual command string</td></tr>
+<tr><td>V7</td><td><strong>Goal check.</strong> Replay 24 asks from <code>assistant-sessions.json</code></td><td>8 work, 14 blocked</td><td>every one runs; only a workspace change prompts</td></tr>
+<tr><td>V8</td><td>Dial: network off → agent HTTP call</td><td>n/a</td><td><code>EPERM</code> at kernel, not a refusal by the model</td></tr>
+<tr><td>V9</td><td>Stored automations load after the enum change</td><td>load</td><td>still load, mapped to capability set</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Open questions</h2>
+<ul>
+<li><strong>Default workspace grants.</strong> I'd seed <code>~/repos</code>, <code>~/Desktop</code>, <code>~/Downloads</code>, <code>~/.config/voice-flow</code> so today's blocked asks work immediately. Say if you'd rather start empty and grant on demand.</li>
+<li><strong>Egress allowlist default.</strong> Log-and-allow by default (you see everything, nothing blocked) versus allowlist-and-deny. Log-and-allow is friendlier; deny is safer. My lean is log-and-allow, since secrets being unreadable is the real control.</li>
+<li><strong>Codex backend.</strong> It has its own sandbox (<code>workspace-write</code>, <span class="ev">Codex.swift:92</span>) with <code>network_access=true</code>. Do we bring it under the same profile, or let the two backends differ? Leaving it means the weaker posture stays reachable from the conversation header.</li>
+</ul>
+
+<h2>Assumptions</h2>
+<ul>
+<li><span class="tag asm">ASSUMED</span> OpenCode's internal webfetch honours <code>HTTPS_PROXY</code>. <code>curl</code> does (T10) and the underlying runtime normally does, but I haven't run OpenCode's own fetch through the proxy. If it doesn't, that one path needs a Voice Flow tool — nothing else changes.</li>
+<li><span class="tag asm">ASSUMED</span> The bash permission event carries the command in <code>title</code>. The type is verified (<code>title: string</code> in the 1.17 SDK); that it holds the command specifically is inferred from how the TUI renders it. One live run confirms.</li>
+<li><span class="tag asm">ASSUMED</span> Seatbelt stays available. <code>sandbox-exec</code> is deprecated-but-working on macOS 26.2 and is what Codex depends on today, so this risk is already one you carry.</li>
+<li><span class="tag ok">VERIFIED</span> everything in the Feasibility table, run on this machine, output quoted in the session.</li>
+</ul>
+
+<h2>Reverting</h2>
+<p>Every piece is additive and independently switchable. Dropping the <code>sandbox-exec</code> prefix from the launch line restores today's behaviour exactly; the profile file becomes inert. The proxy is off when the env vars aren't set. Nothing here migrates data destructively — the only stored-state change is the job store's trust-profile column, which is read-mapped rather than rewritten.</p>
+
+</div>
