@@ -520,6 +520,15 @@ final class ChatPanel {
         applyTab(.agents)
     }
 
+#if VOICE_FLOW_QA
+    @discardableResult
+    func qaShowAgents(destination: String, automationAction: String?, jobID: String?) -> Bool {
+        showAgentsList()
+        return agentsView.qaNavigate(
+            destination: destination, automationAction: automationAction, jobID: jobID)
+    }
+#endif
+
     private func openAssistant() {
         assistantOpen = true
         applyTab(.agents)

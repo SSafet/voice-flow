@@ -3593,7 +3593,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     self.chatPanel.show(focusInput: false)
                     if tab == "inbox" { self.chatPanel.selectTab(.inbox) }
-                    else if tab == "agents" { self.chatPanel.showAgentsList() }
+                    else if tab == "agents" {
+                        let destination = payload["agents_destination"] as? String ?? "now"
+                        _ = self.chatPanel.qaShowAgents(
+                            destination: destination,
+                            automationAction: payload["automation_action"] as? String,
+                            jobID: payload["job_id"] as? String)
+                    }
                 }
             }
             return .ok(["shown": tab ?? "current"])

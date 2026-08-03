@@ -350,6 +350,30 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         rebuild()
     }
 
+#if VOICE_FLOW_QA
+    func qaNavigate(destination: String, automationAction: String?, jobID: String?) -> Bool {
+        if destination == "automations" {
+            currentDestination = .automations
+            if automationAction == "new" {
+                mode = .automationCreate
+            } else if automationAction == "edit", let jobID {
+                mode = .automationEdit(jobID)
+            } else if let jobID {
+                mode = .job(jobID)
+            } else {
+                mode = .destination(.automations)
+            }
+            rebuild()
+            return true
+        }
+        guard let target = AgentsDestination(rawValue: destination) else { return false }
+        currentDestination = target
+        mode = .destination(target)
+        rebuild()
+        return true
+    }
+#endif
+
     func openThread(_ sessionId: String) {
         currentDestination = .threads
         mode = .thread(sessionId)
@@ -627,6 +651,24 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             let rows = snapshot.needsYou.count + snapshot.running.count
             let sections = (snapshot.needsYou.isEmpty ? 0 : 1) + (snapshot.running.isEmpty ? 0 : 1)
             preferredHeight = rows == 0 ? 126 : min(420, 64 + CGFloat(rows * 48 + sections * 28))
+        } else if case .destination(.automations) = mode {
+            let all = dataSource?.agentJobRows() ?? []
+            let visible = all.filter { automationMatches($0) }
+            let sections = Set(visible.map { job -> AgentsAutomationGroup in
+                if !job.isEnabled { return .disabled }
+                switch job.state {
+                case .blocked, .failed: return .needsAttention
+                case .running, .queued: return .activeUpcoming
+                case .completed: return .ready
+                case .cancelled, .disabled: return .disabled
+                }
+            }).count
+            if all.isEmpty { preferredHeight = 190 }
+            else if visible.isEmpty { preferredHeight = 220 }
+            else {
+                preferredHeight = min(
+                    420, 100 + CGFloat(visible.count * 48 + sections * 28))
+            }
         } else {
             preferredHeight = 420
         }
@@ -1524,8 +1566,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             column.spacing = 5
             column.addArrangedSubview(formLabel(label))
             control.translatesAutoresizingMaskIntoConstraints = false
-            control.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
             column.addArrangedSubview(control)
+            control.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
             row.addArrangedSubview(column)
         }
         return row
