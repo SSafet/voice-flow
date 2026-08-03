@@ -1165,6 +1165,94 @@ class SignedAppGate:
         expect(slot_a_after["number"] == slot_a["number"]
                and slot_b["number"] != slot_a["number"],
                f"MCP sessions did not retain distinct sticky slots: {slots}")
+
+        # Threads uses a typed route and recoverable lifecycle over the same
+        # canonical push stack. A third session keeps this contract isolated
+        # from the pill trash/ghost scenarios below.
+        _, headers_c = request("initialize", {
+            "protocolVersion": "2025-06-18",
+            "clientInfo": {"name": "voice-flow-qa-c", "version": "1"},
+            "capabilities": {},
+        })
+        session_c = headers_c.get("Mcp-Session-Id") or headers_c.get("Mcp-Session-ID")
+        expect(session_c and session_c not in (session_a, session_b),
+               "third MCP session was not isolated")
+        call("set_session_name", {"name": "Threads lifecycle C"}, session=session_c)
+        call("report_to_user", {
+            "summary": "Threads lifecycle report",
+            "details": "retained content for Complete, Reopen, and Delete",
+        }, session=session_c)
+        retained_before = next(
+            row for row in self.state()["threads"]
+            if row["source"] == "mcp" and row["id"] == session_c
+        )["retained_messages"]
+        expect(retained_before >= 1, "Threads fixture has no retained message")
+        target_before_thread_open = self.state()["mcp"]["target_session_id"]
+        self.qa("POST", "/__qa/panel", {
+            "tab": "agents", "agents_destination": "threads",
+            "thread_source": "mcp", "thread_id": session_c,
+        })
+        opened_thread = wait_for(
+            "typed Threads detail", lambda: (lambda value: value
+                if value["ui"]["agents_navigation"]["mode"] == "thread"
+                and value["ui"]["agents_navigation"]["thread_source"] == "mcp"
+                and value["ui"]["agents_navigation"]["thread_id"] == session_c
+                and value["ui"]["conversation_focus"] == f"session(\"{session_c}\")"
+                else None)(self.state()),
+        )
+        expect(opened_thread["mcp"]["target_session_id"] == target_before_thread_open,
+               "opening historical Threads detail stole the pill voice target")
+        thread_snapshot = self.qa("POST", "/__qa/ui/snapshot", {})
+        thread_source = Path(thread_snapshot["path"])
+        thread_image = self.artifacts / "threads-external-detail.png"
+        shutil.copyfile(thread_source, thread_image)
+        expect(thread_snapshot["width"] >= 390
+               and thread_image.stat().st_size > 10_000
+               and png_channel_range(thread_image) >= 24,
+               "Threads detail snapshot was blank or malformed")
+
+        self.qa("POST", "/__qa/thread/action", {
+            "source": "mcp", "id": session_c, "action": "complete",
+        }, expect_status=202)
+        completed_c = wait_for(
+            "retained completed Thread", lambda: (lambda rows: next((row for row in rows
+                if row["source"] == "mcp" and row["id"] == session_c
+                and row["archived"] is True
+                and row["retained_messages"] == retained_before), None)
+            )(self.state()["threads"]),
+        )
+        expect(completed_c["group"] == "done",
+               f"Complete did not move retained Thread to Done: {completed_c}")
+        completed_state = self.state()
+        expect(all(item["id"] != session_c for item in completed_state["mcp"]["sessions"])
+               and completed_state["ui"]["conversation_focus"] == "none",
+               "Complete left the external session live or capture-focused")
+
+        self.qa("POST", "/__qa/thread/action", {
+            "source": "mcp", "id": session_c, "action": "reopen",
+        }, expect_status=202)
+        reopened_c = wait_for(
+            "reopened Thread", lambda: next((row for row in self.state()["threads"]
+                if row["source"] == "mcp" and row["id"] == session_c
+                and row["archived"] is False), None),
+        )
+        expect(reopened_c["group"] == "recent"
+               and reopened_c["retained_messages"] == retained_before,
+               f"Reopen lost content or fabricated liveness: {reopened_c}")
+
+        self.qa("POST", "/__qa/thread/action", {
+            "source": "mcp", "id": session_c, "action": "delete",
+        }, expect_status=202)
+        deleted_c = self.state()
+        expect(all(not (row["source"] == "mcp" and row["id"] == session_c)
+                   for row in deleted_c["threads"])
+               and all(item["session_id"] != session_c
+                       for item in deleted_c["pill"]["pushes"]),
+               "Delete retained the exact external Thread or its stack")
+        expect(any(row["id"] == session_a for row in deleted_c["threads"])
+               and any(row["id"] == session_b for row in deleted_c["threads"]),
+               "exact Thread delete damaged another session")
+
         self.qa("POST", "/__qa/mcp/select", {"session_id": session_b})
         wait_for("session overlay swap", lambda: (lambda ids:
             ids if "direct-b" in ids and "direct-a" not in ids else None
@@ -1198,7 +1286,7 @@ class SignedAppGate:
         expect(pending_a["unread"] == unread_before_ghost + 1,
                "final MCP A push was not retained unread before disconnect")
 
-        for session in [session_b, session_a]:
+        for session in [session_c, session_b, session_a]:
             status, _, _ = mcp_json(self.base, None, session, method="DELETE")
             expect(status == 200, f"MCP session DELETE failed for {session}")
         wait_for("MCP sessions to close", lambda: self.state()["mcp"]["sessions"] == [])

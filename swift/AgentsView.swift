@@ -403,7 +403,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
 #if VOICE_FLOW_QA
-    func qaNavigate(destination: String, automationAction: String?, jobID: String?) -> Bool {
+    func qaNavigate(destination: String, automationAction: String?, jobID: String?,
+                    threadSource: String?, threadID: String?,
+                    threadFilter: String?) -> Bool {
         if destination == "automations" {
             currentDestination = .automations
             if automationAction == "new" {
@@ -418,11 +420,49 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             rebuild()
             return true
         }
+        if destination == "threads" {
+            currentDestination = .threads
+            if let threadFilter,
+               let index = AgentsThreadFilter.allCases.firstIndex(where: {
+                   $0.label.lowercased() == threadFilter.lowercased()
+               }) {
+                self.threadFilter = AgentsThreadFilter(rawValue: index) ?? .open
+            }
+            if let threadID, let rawSource = threadSource,
+               let source = AgentsThreadSource(rawValue: rawSource) {
+                openThread(AgentsThreadID(source: source, value: threadID))
+            } else {
+                mode = .destination(.threads)
+                rebuild()
+            }
+            return true
+        }
         guard let target = AgentsDestination(rawValue: destination) else { return false }
         currentDestination = target
         mode = .destination(target)
         rebuild()
         return true
+    }
+
+    var qaNavigationState: [String: Any] {
+        var state: [String: Any] = [
+            "destination": currentDestination.rawValue,
+            "thread_filter": threadFilter.label.lowercased(),
+        ]
+        switch mode {
+        case .thread(let id):
+            state["mode"] = "thread"
+            state["thread_source"] = id.source.rawValue
+            state["thread_id"] = id.value
+        case .search: state["mode"] = "search"
+        case .destination: state["mode"] = "destination"
+        case .job: state["mode"] = "automation_detail"
+        case .automationCreate: state["mode"] = "automation_create"
+        case .automationEdit: state["mode"] = "automation_edit"
+        case .assistantWorkspace: state["mode"] = "assistant_workspace"
+        case .assistantCreate: state["mode"] = "assistant_create"
+        }
+        return state
     }
 #endif
 

@@ -3620,11 +3620,45 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         _ = self.chatPanel.qaShowAgents(
                             destination: destination,
                             automationAction: payload["automation_action"] as? String,
-                            jobID: payload["job_id"] as? String)
+                            jobID: payload["job_id"] as? String,
+                            threadSource: payload["thread_source"] as? String,
+                            threadID: payload["thread_id"] as? String,
+                            threadFilter: payload["thread_filter"] as? String)
                     }
                 }
             }
             return .ok(["shown": tab ?? "current"])
+        case ("POST", "/__qa/thread/action"):
+            guard let sourceRaw = payload["source"] as? String,
+                  let source = AgentsThreadSource(rawValue: sourceRaw),
+                  let idValue = payload["id"] as? String, !idValue.isEmpty,
+                  let action = payload["action"] as? String else {
+                return .error(400, "source, id, and action are required.")
+            }
+            let id = AgentsThreadID(source: source, value: idValue)
+            var response = LocalAPIResponse.error(400, "unknown thread action.")
+            DispatchQueue.main.sync {
+                do {
+                    switch action {
+                    case "complete": try self.completeThread(id)
+                    case "reopen": try self.reopenThread(id)
+                    case "delete": try self.deleteThread(id)
+                    case "send":
+                        guard let text = payload["text"] as? String, !text.isEmpty else {
+                            response = .error(400, "send requires text.")
+                            return
+                        }
+                        try self.sendMessage(toThread: id, text: text)
+                    default: return
+                    }
+                    response = .accepted([
+                        "source": source.rawValue, "id": idValue, "action": action,
+                    ])
+                } catch {
+                    response = .error(409, error.localizedDescription)
+                }
+            }
+            return response
         case ("POST", "/__qa/overlay/user_close"):
             guard let id = payload["id"] as? String,
                   let sanitized = OverlayManager.sanitize(id: id), sanitized == id else {
@@ -3764,7 +3798,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 "agent_session_rows": self.agentSessionRows().count,
                 "job_rows": self.agentJobRows().count,
                 "controls": self.chatPanel.qaControlState,
+                "agents_navigation": self.chatPanel.qaAgentsNavigationState,
             ] as [String: Any]
+            state["threads"] = self.agentSessionRows().map { row in
+                let id = AgentsThreadID(
+                    source: row.kind == .assistant ? .assistant : .mcp,
+                    value: row.id)
+                return [
+                    "source": id.source.rawValue,
+                    "id": id.value,
+                    "title": row.name,
+                    "group": AgentsThreadProjection.group(for: AgentsThreadProjectionInput(
+                        id: id, title: row.name, owner: row.owner,
+                        preview: row.preview, updatedAt: row.updatedAt,
+                        unread: row.unread, pendingAsk: row.pendingAsk,
+                        live: row.live, archived: row.archived)).label.lowercased(),
+                    "unread": row.unread,
+                    "pending": row.pendingAsk,
+                    "live": row.live,
+                    "archived": row.archived,
+                    "retained_messages": self.agentThreadDetail(for: id)?.messages.count ?? 0,
+                ] as [String: Any]
+            }
             state["default_runtime"] = UserSettings.shared.agentBackend
             state["mcp"] = [
                 "target_session_id": self.targetSessionId ?? "",

@@ -542,11 +542,17 @@ final class ChatPanel {
 
 #if VOICE_FLOW_QA
     @discardableResult
-    func qaShowAgents(destination: String, automationAction: String?, jobID: String?) -> Bool {
+    func qaShowAgents(destination: String, automationAction: String?, jobID: String?,
+                      threadSource: String?, threadID: String?,
+                      threadFilter: String?) -> Bool {
         showAgentsList()
         return agentsView.qaNavigate(
-            destination: destination, automationAction: automationAction, jobID: jobID)
+            destination: destination, automationAction: automationAction, jobID: jobID,
+            threadSource: threadSource, threadID: threadID,
+            threadFilter: threadFilter)
     }
+
+    var qaAgentsNavigationState: [String: Any] { agentsView.qaNavigationState }
 #endif
 
     private func openAssistant() {
