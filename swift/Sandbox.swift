@@ -44,6 +44,17 @@ struct AgentSandboxPolicy: Equatable {
         #"/\.git-credentials"#,
     ]
 
+    /// Public certificate authorities, re-allowed after the secret denial.
+    static let trustStoreRoots = [
+        "/etc/ssl",
+        "/private/etc/ssl",
+        "/usr/share/ca-certificates",
+        "/opt/homebrew/etc/ca-certificates",
+        "/opt/homebrew/etc/openssl@3",
+        "/usr/local/etc/openssl@3",
+        "/System/Library/Keychains",
+    ]
+
     /// Renders the profile in Seatbelt Profile Language.
     ///
     /// Shape matters: `(allow default)` first keeps the thousand uninteresting
@@ -81,6 +92,15 @@ struct AgentSandboxPolicy: Equatable {
             lines.append("  (regex #\"\(expression)\")")
         }
         lines.append(")")
+        // The system trust store is public root certificates, and its paths
+        // collide with the secret shapes above — /etc/ssl/cert.pem ends in
+        // .pem, SystemRootCertificates ends in .keychain. Denying them breaks
+        // every TLS handshake in the sandbox with a certificate error that
+        // points nowhere near the real cause. The user's own login keychain in
+        // ~/Library/Keychains stays denied.
+        lines.append(contentsOf: [
+            "(allow file-read*",
+        ] + Self.trustStoreRoots.map { "  (subpath \(Self.quote($0)))" } + [")"])
 
         lines.append(contentsOf: [
             "",
@@ -92,6 +112,11 @@ struct AgentSandboxPolicy: Equatable {
             "(deny network*)",
             #"(allow network-outbound (remote ip "localhost:*"))"#,
             #"(allow network-bind (local ip "localhost:*"))"#,
+            // The runtime is itself an HTTP server that Voice Flow drives, so
+            // it must ACCEPT on loopback as well as bind. Without this it
+            // starts, binds, and then dies with a bare "ServeError" — every
+            // agent turn fails and the message names nothing useful.
+            #"(allow network-inbound (local ip "localhost:*"))"#,
             "(allow network-outbound (remote unix-socket))",
         ])
 

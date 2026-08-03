@@ -176,6 +176,62 @@ expect(direct.output.trimmingCharacters(in: .whitespacesAndNewlines) == "000",
        "a direct external request bypassed the proxy: \(direct.output)")
 listener.terminate()
 
+// 6b. A server must be able to BIND AND ACCEPT on loopback inside the sandbox.
+//     The agent runtime is itself an HTTP server Voice Flow drives, so a
+//     profile that permits outbound loopback but not inbound lets it start,
+//     bind, then die with a bare "ServeError" — every turn failing with a
+//     message that names nothing. Outbound-only checks do not catch this.
+let servePort = freeLoopbackPort()
+let serveScript = """
+import http.server, socketserver, threading, time
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(s):
+        s.send_response(200); s.send_header('Content-Length','5'); s.end_headers(); s.wfile.write(b'serve')
+    def log_message(*a): pass
+srv = socketserver.TCPServer(('127.0.0.1', \(servePort)), H)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+time.sleep(6)
+"""
+let serveURL = workspace.appendingPathComponent("serve.py")
+try Data(serveScript.utf8).write(to: serveURL)
+let server = Process()
+server.executableURL = URL(fileURLWithPath: prefix[0])
+server.arguments = Array(prefix.dropFirst()) + ["/usr/bin/python3", serveURL.path]
+let serverPipe = Pipe()
+server.standardOutput = serverPipe
+server.standardError = serverPipe
+try? server.run()
+Thread.sleep(forTimeInterval: 2.0)
+let served = sandboxed("/usr/bin/curl -s --max-time 4 http://127.0.0.1:\(servePort)/")
+expect(served.output.contains("serve"),
+       "a server inside the sandbox could not accept a loopback connection — "
+       + "the agent runtime would fail to serve at all")
+server.terminate()
+
+// 6c. TLS must still work inside the sandbox.
+//     The secret-shape denials collide with the system trust store — the CA
+//     bundle at /etc/ssl/cert.pem ends in ".pem", SystemRootCertificates ends
+//     in ".keychain". Denying those breaks every HTTPS request the agent makes,
+//     and curl reports it as a certificate-verify-location error that points
+//     nowhere near the sandbox. Assert the trust store stays readable.
+for trustFile in ["/etc/ssl/cert.pem",
+                  "/System/Library/Keychains/SystemRootCertificates.keychain"]
+where FileManager.default.fileExists(atPath: trustFile) {
+    let read = sandboxed("head -c 1 \(trustFile) >/dev/null 2>&1 && echo READABLE")
+    expect(read.output.contains("READABLE"),
+           "the system trust store at \(trustFile) is unreadable, so every TLS "
+           + "handshake inside the sandbox would fail")
+}
+// And the user's own keychain must NOT be readable.
+let loginKeychain = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent("Library/Keychains").path
+if FileManager.default.fileExists(atPath: loginKeychain) {
+    let peek = sandboxed("ls \(loginKeychain)/*.keychain-db >/dev/null 2>&1 "
+                         + "&& head -c 1 \(loginKeychain)/*.keychain-db >/dev/null 2>&1 && echo LEAKED")
+    expect(!peek.output.contains("LEAKED"),
+           "the user's login keychain is readable inside the sandbox")
+}
+
 // 7. The dial must be enforced by the kernel, not by asking the model.
 AgentSandboxSettings.shared.configure {
     AgentSandboxSnapshot(
