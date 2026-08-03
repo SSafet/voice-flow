@@ -255,8 +255,47 @@ if let closed = try AgentSandbox.launchPrefix(
            "the dial closed commands but a program still executed: \(text)")
 }
 
+// 8. Does the SUPERVISOR actually apply the profile to the process it starts?
+//
+// `ps` cannot answer this: sandbox-exec applies the profile and then execs,
+// replacing itself, so the runtime always shows up as plain `opencode` whether
+// or not it is contained. Grepping for "sandbox-exec" also finds the enclosing
+// shell command and passes falsely.
+//
+// So falsify instead. Under a dial with commands off the profile carries
+// `(deny process-exec*)`, which makes exec of the runtime binary impossible. If
+// the launch still succeeds, the profile is decorative and every other
+// assertion in this file is theatre.
+let launchSemaphore = DispatchSemaphore(value: 0)
+var launchVerdict = "the launch was never attempted"
+var launchContained = false
+AgentSandboxSettings.shared.configure {
+    AgentSandboxSnapshot(
+        workspaceRoots: [workspace.path],
+        dial: AgentCapabilityDial(runCommands: false, reachNetwork: true, controlScreen: false))
+}
+Task {
+    defer { launchSemaphore.signal() }
+    do {
+        let live = try await OpenCodeSupervisor.shared.connection(for: .observe)
+        launchVerdict = "the runtime started at \(live.baseURL) under a no-exec profile, "
+            + "so the supervisor is not applying the sandbox at all"
+        await OpenCodeSupervisor.shared.stopAll()
+    } catch {
+        launchContained = true
+        launchVerdict = error.localizedDescription
+    }
+}
+launchSemaphore.wait()
+expect(launchContained, launchVerdict)
+// And it must fail for the RIGHT reason — a missing binary or a bad port would
+// also throw, and would let a decorative sandbox pass this test.
+expect(!launchContained || launchVerdict.contains("not permitted"),
+       "the launch failed, but not because the sandbox refused exec: \(launchVerdict)")
+
 if failures == 0 {
-    print("sandbox containment tests passed (7 escape classes blocked, loopback intact)")
+    print("sandbox containment tests passed "
+          + "(7 escape classes blocked, loopback intact, supervisor launch verified)")
 } else {
     FileHandle.standardError.write(Data("\(failures) containment failure(s)\n".utf8))
     exit(1)
