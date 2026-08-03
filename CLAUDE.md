@@ -248,6 +248,17 @@ deployed copies are build outputs.
   every mutation so unread messages survive app restarts as ghost entries.
 - `inbox.json` — queued contextual-capture messages for Claude (`MessageInbox`).
 - `overlays/*.json` — live on-screen elements (`OverlayManager`); `_schema.md` documents the format.
+- `queue/queue.json` — the **next queue** (`NextQueue`, `swift/Queue.swift`): the
+  user's small "what's next" list, rendered as a `system`-flagged overlay panel
+  that resurfaces briefly at transition moments (app-switch burst, idle-return,
+  content change, slow clock; positions rotate top-right/center/left) and stays
+  up when empty during active hours. The file is the API — FLORA (codex: direct
+  edit via writable root; OpenCode: `voiceflow_queue` tool), Claude sessions,
+  and the user edit it directly; `queue/_schema.md` documents it, and
+  `queue/config.json` overrides the surfacing tunables. Never auto-populate it:
+  the user plans it himself. Settings → Assistant toggle (`queue_enabled`);
+  ✕ dismissal backs off 10–30 min. The whole feature is a side-attachment —
+  delete `swift/Queue.swift` plus ~20 wiring lines to remove it.
 - `watcher/` — ambient workflow log (`WorkflowWatcher`): per-day `activity.jsonl` + deduped frames, plus `ANALYZE.md` / `ledger.md` / `reviews/` for the nightly review.
 - `app.log` — `vflog` output.
 - OpenAI / agent API keys live in the **Keychain** (`KeychainStore`), not on disk.
@@ -267,6 +278,7 @@ deployed copies are build outputs.
 | `ReplyBubble.swift` | `ReplyBubble` | Facade over the pill's grown surface (no window of its own) — forwards messages/asks/streaming to `FloatingIndicator`. |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
 | `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of contextual-capture messages for Claude (check/wait semantics). |
+| `Queue.swift` | `NextQueue`, `QueueItem` | The next queue: file-backed what's-next list, its overlay projection, and the transition-moment resurfacing policy. |
 | `Watcher.swift` | `WorkflowWatcher` | Ambient 5 s screen/app log feeding the nightly workflow review. |
 | `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
 | `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Claude Code. |
