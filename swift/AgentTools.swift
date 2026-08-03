@@ -47,6 +47,7 @@ struct AgentToolEnvironment {
     var context: (([String: Any]) async throws -> AgentToolOutput)?
     var overlay: (([String: Any]) async throws -> AgentToolOutput)?
     var user: (([String: Any]) async throws -> AgentToolOutput)?
+    var queue: (([String: Any]) async throws -> AgentToolOutput)? = nil
 }
 
 struct AgentToolSession {
@@ -218,7 +219,10 @@ enum AgentToolDispatcher {
             let action: AgentCapabilityAction = operation == "list" ? .memoryRead : .memoryWrite
             try await require(session.policy.decision(for: action), action: action,
                               arguments: arguments, session: session)
-            return try await NextQueue.toolExecute(operation: operation, arguments: arguments)
+            guard let handler = session.environment.queue else {
+                throw AgentToolError.unavailable("queue bridge is not connected")
+            }
+            return try await handler(arguments)
         default:
             throw AgentToolError.unknownTool(tool)
         }

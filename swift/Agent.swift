@@ -931,6 +931,9 @@ final class AgentSession {
                     throw AgentToolError.unavailable("user bridge is not connected")
                 }
                 return try await handler(arguments, conversationID)
+            },
+            queue: { arguments in
+                try await NextQueue.toolExecute(arguments)
             })
     }
 

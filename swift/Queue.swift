@@ -322,11 +322,13 @@ final class NextQueue {
 
     // ── voiceflow_queue tool (OpenCode runtime; codex edits the file) ──
 
-    static func toolExecute(operation: String, arguments: [String: Any]) async throws -> AgentToolOutput {
+    /// The dispatcher validates `operation` and permissions before this runs.
+    static func toolExecute(_ arguments: [String: Any]) async throws -> AgentToolOutput {
         try await MainActor.run {
             guard let queue = NextQueue.shared, UserSettings.shared.queueEnabled else {
                 throw AgentToolError.unavailable("the next queue is disabled in Voice Flow settings")
             }
+            let operation = arguments["operation"] as? String ?? ""
             return try queue.execute(operation: operation, arguments: arguments)
         }
     }
