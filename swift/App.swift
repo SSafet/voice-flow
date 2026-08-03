@@ -894,6 +894,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             QAEventRecorder.shared.append("assistant_started")
 #endif
             self.chatPanel.beginAssistantMessage()
+            self.chatPanel.beginAssistantThreadStream(
+                conversationID: self.agent.currentSessionId)
             if !self.chatPanel.isVisible && !self.assistantTurnUsesReceiptPresentation {
                 // The grown surface now shows a reply, not a push stack —
                 // trash/double-select must not hit a stale session.
@@ -921,6 +923,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             QAEventRecorder.shared.append("assistant_delta", ["text": delta])
 #endif
             self.chatPanel.appendAssistantDelta(delta)
+            self.chatPanel.appendAssistantThreadDelta(
+                delta, conversationID: self.agent.currentSessionId)
             if !self.assistantTurnUsesReceiptPresentation {
                 self.replyBubble.appendDelta(delta)
             }
@@ -934,6 +938,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             QAEventRecorder.shared.append("assistant_completed", ["text": text])
 #endif
             self.chatPanel.finishAssistantMessage(text)
+            self.chatPanel.finishAssistantThreadStream(
+                conversationID: self.agent.currentSessionId)
             let receiptPresentation = self.assistantTurnUsesReceiptPresentation
             if receiptPresentation {
                 if self.chatPanel.conversationFocus == .assistant {
@@ -971,6 +977,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             QAEventRecorder.shared.append("agent_error", ["message": message])
 #endif
             self.chatPanel.addNote(message)
+            self.chatPanel.finishAssistantThreadStream(
+                conversationID: self.agent.currentSessionId)
             self.replySpeaker.finish()
             if self.assistantTurnUsesReceiptPresentation {
                 self.assistantTurnUsesReceiptPresentation = false
@@ -5263,7 +5271,8 @@ extension AppDelegate: AgentsDataSource {
                 canComplete: conversation.turnState != .running,
                 canDelete: conversation.turnState != .running && jobs.isEmpty,
                 claimsContextualFocus: ownerAvailable
-                    && conversation.id == agent.currentSessionId,
+                    && conversation.id == agent.currentSessionId
+                    && conversation.completedAt == nil,
                 readOnlyReason: readOnlyReason,
                 linkedAutomationCount: jobs.count)
         case .mcp:
@@ -5297,7 +5306,7 @@ extension AppDelegate: AgentsDataSource {
                 live: listening || connected,
                 canReply: !row.archived, canSpeak: !queue.isEmpty,
                 canComplete: true, canDelete: true,
-                claimsContextualFocus: true,
+                claimsContextualFocus: !row.archived,
                 readOnlyReason: nil, linkedAutomationCount: 0)
         }
     }

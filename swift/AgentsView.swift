@@ -235,7 +235,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var threadFilter: AgentsThreadFilter = .open
 
     var openSessionId: String? {
-        if case .thread(let id) = mode, id.source == .mcp { return id.value }
+        if case .thread(let id) = mode, id.source == .mcp,
+           dataSource?.agentThreadDetail(for: id)?.claimsContextualFocus == true {
+            return id.value
+        }
         return nil
     }
 
@@ -283,6 +286,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var threadDeleteConfirmationID: AgentsThreadID?
     private var threadDrafts: [AgentsThreadID: String] = [:]
     private var threadInlineError: String?
+    private var pushedOrigin: Mode?
+    private var assistantThreadStreams: [String: String] = [:]
+    private weak var assistantThreadStreamingLabel: NSTextField?
     private var inlineError: String?
     private var scrollObserver: NSObjectProtocol?
 
@@ -425,6 +431,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     func openThread(_ id: AgentsThreadID) {
+        if case .thread = mode {} else { pushedOrigin = mode }
         currentDestination = .threads
         if id.source == .assistant { _ = dataSource?.activateThread(id) }
         mode = .thread(id)
@@ -437,6 +444,26 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                   case .thread(let visible) = self.mode, visible == id else { return }
             self.dataSource?.markThreadSeen(id)
             self.styleNavigation()
+        }
+    }
+
+    func beginAssistantThreadStream(conversationID: String) {
+        assistantThreadStreams[conversationID] = ""
+        if openThreadID == AgentsThreadID(source: .assistant, value: conversationID) {
+            refresh()
+        }
+    }
+
+    func appendAssistantThreadDelta(_ delta: String, conversationID: String) {
+        assistantThreadStreams[conversationID, default: ""] += delta
+        guard openThreadID == AgentsThreadID(source: .assistant, value: conversationID) else { return }
+        assistantThreadStreamingLabel?.stringValue = assistantThreadStreams[conversationID] ?? ""
+    }
+
+    func finishAssistantThreadStream(conversationID: String) {
+        assistantThreadStreams.removeValue(forKey: conversationID)
+        if openThreadID == AgentsThreadID(source: .assistant, value: conversationID) {
+            refresh()
         }
     }
 
@@ -1757,7 +1784,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         let leading: NSView
         switch item.objectID {
         case .thread(let id):
-            if let row = dataSource?.agentSessionRows().first(where: { $0.id == id.value }) {
+            if let row = dataSource?.agentSessionRows().first(where: {
+                $0.id == id.value
+                    && ($0.kind == .assistant) == (id.source == .assistant)
+            }) {
                 leading = leadingIcon(for: row)
             } else {
                 leading = symbolIcon("text.bubble", description: "thread")
@@ -1812,7 +1842,6 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         field.layer?.cornerRadius = 8
         field.delegate = self
         field.setAccessibilityLabel("Search assistants, automations, and threads")
-        field.heightAnchor.constraint(equalToConstant: 30).isActive = true
         searchField = field
         place(field, below: &top, gap: 8)
 
@@ -1865,12 +1894,16 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 updatedAt: job.updatedAt))
         }
         for row in dataSource?.agentSessionRows() ?? [] {
+            let id = AgentsThreadID(
+                source: row.kind == .assistant ? .assistant : .mcp,
+                value: row.id)
+            let messageText = dataSource?.agentThreadDetail(for: id)?.messages
+                .map { [$0.text, $0.hint].compactMap { $0 }.joined(separator: " ") }
+                .joined(separator: " ") ?? ""
             documents.append(AgentsSearchDocument(
-                objectID: .thread(AgentsThreadID(
-                    source: row.kind == .assistant ? .assistant : .mcp,
-                    value: row.id)),
+                objectID: .thread(id),
                 primaryText: row.name, secondaryText: row.owner,
-                indexText: row.preview, updatedAt: row.updatedAt))
+                indexText: "\(row.preview) \(messageText)", updatedAt: row.updatedAt))
         }
         return documents
     }
@@ -2012,6 +2045,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     private func open(_ objectID: AgentsObjectID) {
+        pushedOrigin = mode
         switch objectID {
         case .assistant(let slug):
             currentDestination = .assistants
@@ -2178,7 +2212,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             place(errorLabel(error), below: &top, gap: 8)
         }
 
-        for (index, message) in detail.messages.enumerated() {
+        var renderedMessages = detail.messages
+        if id.source == .assistant,
+           let streaming = assistantThreadStreams[id.value] {
+            renderedMessages.append(AgentThreadMessage(
+                id: "stream:\(id.value)", at: Date(), role: .assistant,
+                text: streaming, hint: nil))
+        }
+        for (index, message) in renderedMessages.enumerated() {
             let block = NSView()
             let role = NSTextField(labelWithString: {
                 switch message.role {
@@ -2193,11 +2234,13 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
                 .joined(separator: "\n")
-            let body = NSTextField(wrappingLabelWithString: bodyText)
+            let body = NSTextField(wrappingLabelWithString:
+                bodyText.isEmpty && message.id.hasPrefix("stream:") ? "…" : bodyText)
             body.font = .systemFont(ofSize: 12.5)
             body.textColor = message.role == .note ? Theme.text3 : Theme.text2
             body.maximumNumberOfLines = 0
             body.isSelectable = true
+            if message.id.hasPrefix("stream:") { assistantThreadStreamingLabel = body }
             let divider = NSView()
             divider.wantsLayer = true
             divider.layer?.backgroundColor = Theme.border.cgColor
@@ -2215,7 +2258,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 divider.leadingAnchor.constraint(equalTo: block.leadingAnchor),
                 divider.trailingAnchor.constraint(equalTo: block.trailingAnchor),
                 divider.bottomAnchor.constraint(equalTo: block.bottomAnchor),
-                divider.heightAnchor.constraint(equalToConstant: index == detail.messages.count - 1 ? 0 : 1),
+                divider.heightAnchor.constraint(equalToConstant: index == renderedMessages.count - 1 ? 0 : 1),
             ])
             place(block, below: &top, gap: 0)
         }
@@ -2308,6 +2351,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         automationDeleteConfirmationID = nil
         threadDeleteConfirmationID = nil
         threadInlineError = nil
+        pushedOrigin = nil
         rebuild()
     }
 
@@ -2426,10 +2470,17 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func backTapped() {
-        mode = .destination(currentDestination)
+        if let origin = pushedOrigin {
+            mode = origin
+            pushedOrigin = nil
+        } else {
+            mode = .destination(currentDestination)
+        }
         inlineError = nil
         assistantDeleteConfirmationSlug = nil
         automationDeleteConfirmationID = nil
+        threadDeleteConfirmationID = nil
+        threadInlineError = nil
         rebuild()
     }
 
@@ -2608,6 +2659,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             threadDeleteConfirmationID = nil
             threadFilter = detail.archived ? .open : .done
             mode = .destination(.threads)
+            pushedOrigin = nil
             rebuild()
         } catch {
             threadInlineError = error.localizedDescription
@@ -2637,6 +2689,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             threadInlineError = nil
             threadDrafts.removeValue(forKey: id)
             mode = .destination(.threads)
+            pushedOrigin = nil
             rebuild()
         } catch {
             threadInlineError = error.localizedDescription

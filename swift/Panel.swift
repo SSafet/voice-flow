@@ -521,6 +521,18 @@ final class ChatPanel {
         agentsView.openThread(id)
     }
 
+    func beginAssistantThreadStream(conversationID: String) {
+        agentsView.beginAssistantThreadStream(conversationID: conversationID)
+    }
+
+    func appendAssistantThreadDelta(_ delta: String, conversationID: String) {
+        agentsView.appendAssistantThreadDelta(delta, conversationID: conversationID)
+    }
+
+    func finishAssistantThreadStream(conversationID: String) {
+        agentsView.finishAssistantThreadStream(conversationID: conversationID)
+    }
+
     func showAgentsList() {
         assistantOpen = false
         speechOpen = false
