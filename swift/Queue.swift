@@ -216,7 +216,9 @@ final class NextQueue {
 
     private func showBrief(open: [QueueItem], reason: String) {
         let now = Date()
-        anchorIndex = (anchorIndex + 1) % 3
+        // Random top-of-screen spot, never the same one twice in a row —
+        // unpredictable enough that the panel can't become wallpaper.
+        anchorIndex = (anchorIndex + Int.random(in: 1...2)) % 3
         writeOverlay(open: open, empty: false)
         surface = .brief(until: now.addingTimeInterval(showSeconds))
         lastTriggerShow = now

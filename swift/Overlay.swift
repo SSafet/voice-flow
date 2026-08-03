@@ -646,6 +646,11 @@ private final class OverlayPanelWindow {
             backing: .buffered, defer: false
         )
         newPanel.level = .floating + 1
+        // Never grab keyboard focus on appear: without this, ordering the
+        // panel front makes it key (NSPanel default) and — being a
+        // nonactivating panel — it silently swallows the user's typing in
+        // whatever app they're in. Clicking inside still works.
+        newPanel.becomesKeyOnlyIfNeeded = true
         newPanel.isOpaque = false
         newPanel.backgroundColor = .clear
         newPanel.hasShadow = true
