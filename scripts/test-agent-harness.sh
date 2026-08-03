@@ -92,6 +92,7 @@ if ! strings -a "$BUILD_DIR/voice-flow-qa" | grep -F 'QA capability required' >/
 fi
 
 compile_and_run voice_flow_paths swift/VoiceFlowPaths.swift tests/voice_flow_paths/main.swift
+compile_and_run inbox swift/VoiceFlowPaths.swift swift/Inbox.swift tests/inbox/main.swift
 compile_and_run assistant_wake swift/AssistantWake.swift tests/assistant_wake/main.swift
 compile_and_run capture_routing swift/CaptureRouting.swift tests/capture_routing/main.swift
 compile_and_run display_context swift/DisplayContext.swift tests/display_context/main.swift -framework Cocoa -framework CoreGraphics

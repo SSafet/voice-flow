@@ -21,43 +21,49 @@ struct InboxMessage: Codable {
 }
 
 final class MessageInbox {
-    private static let url = VoiceFlowPaths.shared.file("inbox.json")
     private static let maxQueued = 100
 
+    private let storageURL: URL
     private let queue = DispatchQueue(label: "voiceflow.inbox")
     private var messages: [InboxMessage] = []
     private var waiters: [(session: String?, semaphore: DispatchSemaphore)] = []
-    /// Session ids the user dismissed (pill trash / remove / panel ✓).
-    /// Recorded, but deliberately NOT used to end a parked listener: waking an
-    /// agent to tell it "nothing happened" costs a whole turn it can only
-    /// spend saying so. A dismissed session simply keeps listening — if the
-    /// user comes back to it, a real message wakes the agent for a real
-    /// reason; if they never do, the listener expires on its own timeout,
-    /// long after the turn ended.
-    private var userClosed: Set<String> = []
+    /// Exact sessions the user closed. This closes the registration race too:
+    /// a wait that arrives just after deletion is terminated instead of
+    /// parking. A fresh user-facing push clears the tombstone.
+    private var closedSessions: Set<String> = []
     /// Waiters released because a newer wait() for the same session replaced
     /// them: a session keeps exactly one live listener — the latest — so
     /// stale background `vf listen` tasks finish instead of accumulating.
     private var superseded: Set<ObjectIdentifier> = []
+    /// Waiters explicitly ended by exact-session deletion. Checked before a
+    /// woken waiter drains so a later message cannot resurrect that session.
+    private var terminated: Set<ObjectIdentifier> = []
     var onAdded: ((InboxMessage) -> Void)?
 
-    init() {
-        if let data = try? Data(contentsOf: Self.url),
+    init(storageURL: URL = VoiceFlowPaths.shared.file("inbox.json")) {
+        self.storageURL = storageURL
+        if let data = try? Data(contentsOf: storageURL),
            let stored = try? JSONDecoder().decode([InboxMessage].self, from: data) {
             messages = stored
         }
     }
 
-    /// A message for `session` matches a waiter/drainer of `candidate` when
-    /// either side is unscoped (nil) or the ids agree.
-    private static func matches(_ session: String?, _ candidate: String?) -> Bool {
-        session == nil || candidate == nil || session == candidate
+    /// Visibility is directional: an unscoped message may be claimed by any
+    /// consumer, but an unscoped consumer may not claim a targeted message.
+    private static func isVisible(messageSession: String?, to consumerSession: String?) -> Bool {
+        guard let consumerSession else { return messageSession == nil }
+        return messageSession == nil || messageSession == consumerSession
     }
 
-    /// True while an MCP wait_for_message call that would receive a message
-    /// for `session` is parked — it will be delivered instantly, not queued.
+    /// Compatibility lookup. Concrete session ids are exact; nil finds only
+    /// an unscoped waiter and never aliases a targeted one.
     func hasWaiter(for session: String?) -> Bool {
-        queue.sync { waiters.contains { Self.matches(session, $0.session) } }
+        queue.sync { waiters.contains { $0.session == session } }
+    }
+
+    /// True only while this exact session has a parked waiter.
+    func hasWaiter(exactSession session: String) -> Bool {
+        queue.sync { waiters.contains { $0.session == session } }
     }
 
     var pendingCount: Int {
@@ -66,7 +72,7 @@ final class MessageInbox {
 
     /// How many messages a given session would receive right now.
     func pendingCount(for session: String?) -> Int {
-        queue.sync { messages.filter { Self.matches($0.session, session) }.count }
+        queue.sync { messages.filter { Self.isVisible(messageSession: $0.session, to: session) }.count }
     }
 
     func add(text: String, attachments: [String], session: String? = nil) {
@@ -83,10 +89,12 @@ final class MessageInbox {
                 messages.removeFirst(messages.count - Self.maxQueued)
             }
             persistLocked()
-            for waiter in waiters where Self.matches(session, waiter.session) {
+            for waiter in waiters where Self.isVisible(messageSession: session, to: waiter.session) {
                 waiter.semaphore.signal()
             }
-            waiters.removeAll { Self.matches(session, $0.session) }
+            // Keep signalled waiters registered until they actually return.
+            // Exact-session deletion can then still mark an in-flight waiter
+            // terminated before it reaches drainLocked().
         }
         onAdded?(message)
         vflog("inbox: queued message (\(text.prefix(60))…)")
@@ -98,29 +106,63 @@ final class MessageInbox {
         queue.sync { drainLocked(session: session) }
     }
 
-    /// The user closed `session` (trash / remove / ✓). Remembered so the app
-    /// can tell a dismissed session from a live one, but parked listeners are
-    /// left alone on purpose — see `userClosed`.
-    func cancelWait(for session: String) {
-        queue.sync { userClosed.insert(session) }
+    /// Remove only messages targeted to this exact session. Unscoped and
+    /// other sessions' messages remain available to their consumers.
+    @discardableResult
+    func removeQueued(exactSession session: String) -> Int {
+        queue.sync {
+            let previousCount = messages.count
+            messages.removeAll { $0.session == session }
+            let removedCount = previousCount - messages.count
+            if removedCount > 0 { persistLocked() }
+            return removedCount
+        }
     }
 
-    /// The session re-engaged the user (a fresh push) — a closure recorded
-    /// before that is stale and must not end its next listen.
+    /// End every waiter parked on this exact session. The termination marker
+    /// prevents an awakened waiter from draining a message queued after the
+    /// deletion raced with it.
+    @discardableResult
+    func terminateWait(exactSession session: String) -> Int {
+        queue.sync {
+            closedSessions.insert(session)
+            let matching = waiters.filter { $0.session == session }
+            for waiter in matching {
+                terminated.insert(ObjectIdentifier(waiter.semaphore))
+                waiter.semaphore.signal()
+            }
+            waiters.removeAll { $0.session == session }
+            return matching.count
+        }
+    }
+
+    /// Backward-compatible name used by current session deletion call sites.
+    func cancelWait(for session: String) {
+        terminateWait(exactSession: session)
+    }
+
+    /// A new user-facing push is a deliberate re-engagement and allows the
+    /// session to listen again.
     func clearUserClosed(_ session: String) {
-        queue.sync { _ = userClosed.remove(session) }
+        queue.sync { closedSessions.remove(session) }
     }
 
     /// Block until a message for `session` exists (or the timeout passes),
-    /// then drain. Returns ([], false) on timeout. superseded is true when a
+    /// then drain. Returns empty messages with both flags false on timeout.
+    /// superseded is true when a
     /// newer wait() for the same session replaced this one — the caller must
     /// tell the agent this listener is obsolete (the newer one holds the
-    /// session). A user-dismissed session does NOT end the wait: see
-    /// `userClosed`.
-    func wait(timeout: TimeInterval, session: String?) -> (messages: [InboxMessage], superseded: Bool) {
-        enum Immediate { case messages([InboxMessage]), parked }
+    /// session). terminated is true when exact-session deletion ended it.
+    func wait(
+        timeout: TimeInterval,
+        session: String?
+    ) -> (messages: [InboxMessage], superseded: Bool, terminated: Bool) {
+        enum Immediate { case messages([InboxMessage]), terminated, parked }
         let semaphore = DispatchSemaphore(value: 0)
         let immediate: Immediate = queue.sync {
+            if let session, closedSessions.contains(session) {
+                return .terminated
+            }
             let drained = drainLocked(session: session)
             if drained.isEmpty {
                 // One live listener per session: release any older waiter
@@ -138,7 +180,8 @@ final class MessageInbox {
             return .messages(drained)
         }
         switch immediate {
-        case .messages(let drained): return (drained, false)
+        case .messages(let drained): return (drained, false, false)
+        case .terminated: return ([], false, true)
         case .parked: break
         }
         _ = semaphore.wait(timeout: .now() + timeout)
@@ -146,16 +189,19 @@ final class MessageInbox {
             waiters.removeAll { $0.semaphore === semaphore }
             // Checked before draining: a superseded waiter must not steal
             // messages that now belong to its replacement.
-            if superseded.remove(ObjectIdentifier(semaphore)) != nil { return ([], true) }
-            return (drainLocked(session: session), false)
+            if superseded.remove(ObjectIdentifier(semaphore)) != nil { return ([], true, false) }
+            // A deleted session must not steal a message that raced with the
+            // deletion and was queued after its waiter had been released.
+            if terminated.remove(ObjectIdentifier(semaphore)) != nil { return ([], false, true) }
+            return (drainLocked(session: session), false, false)
         }
     }
 
     /// Must be called on `queue`.
     private func drainLocked(session: String?) -> [InboxMessage] {
-        let drained = messages.filter { Self.matches($0.session, session) }
+        let drained = messages.filter { Self.isVisible(messageSession: $0.session, to: session) }
         guard !drained.isEmpty else { return [] }
-        messages.removeAll { Self.matches($0.session, session) }
+        messages.removeAll { Self.isVisible(messageSession: $0.session, to: session) }
         persistLocked()
         return drained
     }
@@ -163,7 +209,7 @@ final class MessageInbox {
     /// Must be called on `queue`.
     private func persistLocked() {
         if let data = try? JSONEncoder().encode(messages) {
-            try? data.write(to: Self.url, options: .atomic)
+            try? data.write(to: storageURL, options: .atomic)
         }
     }
 }

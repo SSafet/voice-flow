@@ -4511,9 +4511,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func mcpWaitForMessage(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 600
         timeout = min(max(timeout, 5), 3600)
-        let (messages, superseded) = inbox.wait(timeout: timeout, session: session?.id)
+        let (messages, superseded, terminated) = inbox.wait(timeout: timeout, session: session?.id)
         if superseded {
             return .ok("A newer listener took over this session. Nothing to do: say nothing, end your turn, do not restart this task.")
+        }
+        if terminated {
+            return .ok("The user closed this session's listener. Nothing to do: say nothing, end your turn, do not restart this task.")
         }
         guard !messages.isEmpty else {
             return .ok("No message arrived within \(Int(timeout))s. That's normal — call wait_for_message again to keep listening, or move on.")
