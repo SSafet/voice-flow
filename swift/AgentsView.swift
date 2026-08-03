@@ -402,6 +402,54 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         rebuild()
     }
 
+    @discardableResult
+    func handleMissionControlCommand(_ key: String) -> Bool {
+        if let index = Int(key), (1...4).contains(index) {
+            let destination = AgentsDestination.allCases[index - 1]
+            currentDestination = destination
+            mode = .destination(destination)
+            pushedOrigin = nil
+            threadInlineError = nil
+            inlineError = nil
+            rebuild()
+            return true
+        }
+        if key.lowercased() == "k" {
+            if case .search = mode {
+                searchField?.window?.makeFirstResponder(searchField)
+            } else {
+                mode = .search
+                rebuild()
+            }
+            return true
+        }
+        if key == "[" {
+            return handleMissionControlEscape()
+        }
+        return false
+    }
+
+    /// Search/detail consumes Escape before the panel's ordinary dismissal.
+    /// Root destinations deliberately return false so the global safety path
+    /// can close the panel exactly as before.
+    @discardableResult
+    func handleMissionControlEscape() -> Bool {
+        if threadDeleteConfirmationID != nil {
+            threadDeleteConfirmationID = nil
+            threadInlineError = nil
+            rebuild()
+            return true
+        }
+        switch mode {
+        case .destination:
+            return false
+        case .search, .thread, .job, .automationCreate, .automationEdit,
+             .assistantWorkspace, .assistantCreate:
+            backTapped()
+            return true
+        }
+    }
+
 #if VOICE_FLOW_QA
     func qaNavigate(destination: String, automationAction: String?, jobID: String?,
                     threadSource: String?, threadID: String?,

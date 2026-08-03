@@ -540,6 +540,22 @@ final class ChatPanel {
         applyTab(.agents)
     }
 
+    @discardableResult
+    func handleMissionControlEscape() -> Bool {
+        guard isVisible, currentTab == .agents else { return false }
+        if speechOpen {
+            speechOpen = false
+            applyTab(.agents)
+            return true
+        }
+        if assistantOpen {
+            assistantOpen = false
+            applyTab(.agents)
+            return true
+        }
+        return agentsView.handleMissionControlEscape()
+    }
+
 #if VOICE_FLOW_QA
     @discardableResult
     func qaShowAgents(destination: String, automationAction: String?, jobID: String?,
@@ -809,6 +825,14 @@ final class ChatPanel {
         agentsView.onPreferredHeightChanged = { [weak self] contentHeight in
             self?.setPreferredAgentsContentHeight(contentHeight)
         }
+        panel.onCommand = { [weak self] key in
+            guard let self,
+                  self.agentsView.handleMissionControlCommand(key) else { return false }
+            self.assistantOpen = false
+            self.speechOpen = false
+            self.applyTab(.agents)
+            return true
+        }
         ttsView = TTSView()
         ttsView.isHidden = true
         ttsView.setContentHuggingPriority(.defaultLow, for: .vertical)
@@ -1075,6 +1099,7 @@ final class ChatPanel {
 
 final class KeyablePanel: NSPanel {
     var onEscape: (() -> Void)?
+    var onCommand: ((String) -> Bool)?
     override var canBecomeKey: Bool { true }
 
     override func keyDown(with event: NSEvent) {
@@ -1083,6 +1108,16 @@ final class KeyablePanel: NSPanel {
             return
         }
         super.keyDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags == .command,
+           let key = event.charactersIgnoringModifiers,
+           onCommand?(key) == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
     override func cancelOperation(_ sender: Any?) {

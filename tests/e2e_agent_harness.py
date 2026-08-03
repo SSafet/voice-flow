@@ -1432,9 +1432,25 @@ class SignedAppGate:
         self.wait_job_event(cancellable, "running", after, timeout=10)
         cancel_after = max((event["sequence"] for event in self.events()), default=0)
         self.qa("POST", "/__qa/jobs/cancel", {"job_id": cancellable}, expect_status=202)
-        self.wait_job_event(cancellable, "cancelled", cancel_after, timeout=15)
-        wait_for("cancelled durable job", lambda: self.job(cancellable)["state"] == "cancelled")
-        self.record("signed_job_budget_and_cancel")
+        self.wait_job_event(cancellable, "completed", cancel_after, timeout=15)
+        stopped = wait_for("stopped durable job", lambda: (lambda job: job
+            if job["state"] == "completed" and job["enabled"] is True else None
+        )(self.job(cancellable)))
+        expect(stopped["trigger"] == "manual",
+               "Stop changed the automation trigger while returning it to Ready")
+
+        # Stop is execution control, not Disable. Prove the same automation
+        # remains eligible for a fresh run, then settle that run through the
+        # same joined Stop path so the E2E does not wait out its five seconds.
+        retry_after = max((event["sequence"] for event in self.events()), default=0)
+        self.run_job(cancellable)
+        self.wait_job_event(cancellable, "running", retry_after, timeout=10)
+        second_stop_after = max((event["sequence"] for event in self.events()), default=0)
+        self.qa("POST", "/__qa/jobs/cancel", {"job_id": cancellable}, expect_status=202)
+        self.wait_job_event(cancellable, "completed", second_stop_after, timeout=15)
+        expect(self.job(cancellable)["enabled"] is True,
+               "second Stop accidentally disabled the automation")
+        self.record("signed_job_budget_and_stop_retrigger")
 
     def verify_stale_session_reseed(self) -> None:
         # Force-created conversations intentionally inherit the product

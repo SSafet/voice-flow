@@ -1976,6 +1976,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             stopSpeechPlayback()
             chatPanel.addNote("Stopped by Escape")
         }
+        if chatPanel?.handleMissionControlEscape() == true { return }
         if chatPanel?.isVisible == true { chatPanel.hide() }
         if indicator?.isGrownVisible == true {
             // Esc de-escalates, never stops audio (ticket VF-48): the
@@ -3759,6 +3760,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 "id": job.id, "conversation_id": job.conversationID,
                 "runtime": job.runtime.rawValue, "trigger": job.trigger.rawValue,
                 "state": job.state.rawValue, "prompt": String(job.prompt.prefix(8_000)),
+                "enabled": job.isEnabled,
                 "updated_at": job.updatedAt.timeIntervalSince1970,
             ]
             if let modelID = job.modelID { result["model_id"] = modelID }
