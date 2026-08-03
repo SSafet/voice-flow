@@ -153,9 +153,11 @@ try lifecycleStore.updateConfiguration(
 let editedLifecycle = try lifecycleStore.job(id: lifecycleJob.id)
 expect(editedLifecycle?.name == "Weekly operating review"
        && editedLifecycle?.runtime == .opencode
-       && editedLifecycle?.state == .completed
+       && editedLifecycle?.state == .queued
+       && editedLifecycle?.nextRunAt == now.addingTimeInterval(3 + 3_600)
+       && editedLifecycle?.generation == lifecycleJob.generation + 1
        && editedLifecycle?.createdAt == now,
-       "automation configuration edit replaced durable lifecycle fields")
+       "automation configuration edit did not preserve identity and reschedule safely")
 try lifecycleStore.delete(jobID: lifecycleJob.id)
 let deletedLifecycleJob = try lifecycleStore.job(id: lifecycleJob.id)
 let deletedLifecycleRuns = try lifecycleStore.runs(jobID: lifecycleJob.id)

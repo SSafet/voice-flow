@@ -45,6 +45,10 @@ for (state, expected) in expectedJobGroups {
     expect(AgentsAutomationProjection.group(for: input) == expected,
            "wrong group for \(state.rawValue)")
 }
+expect(AgentsAutomationProjection.group(for: AgentsAutomationProjectionInput(
+    id: "off-failure", name: "Off failure", assistantName: "FLORA",
+    updatedAt: now, state: .failed, isEnabled: false)) == .disabled,
+       "explicit Disable must outrank a retained failure diagnostic")
 
 let automations = [
     AgentsAutomationProjectionInput(id: "blocked", name: "Blocked", assistantName: "FLORA", updatedAt: now, state: .blocked),

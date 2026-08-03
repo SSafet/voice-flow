@@ -28,7 +28,6 @@ final class ChatPanel {
     var onStop: (() -> Void)?
     var onClear: (() -> Void)?
     var onNewAssistant: (() -> Void)?
-    var onNewAgentJob: (() -> Void)?
     var onOpenAssistantSession: ((String) -> Void)?
     var onDeleteAssistant: (() -> Void)?
     var onSelectAssistantRuntime: ((AgentRuntimeKind) -> Void)?
@@ -770,7 +769,6 @@ final class ChatPanel {
         agentsView.isHidden = true
         agentsView.setContentHuggingPriority(.defaultLow, for: .vertical)
         agentsView.onNewAssistant = { [weak self] in self?.onNewAssistant?() }
-        agentsView.onNewAgentJob = { [weak self] in self?.onNewAgentJob?() }
         agentsView.onOpenAssistantSession = { [weak self] id in self?.onOpenAssistantSession?(id) }
         agentsView.onOpenSession = { [weak self] id in self?.onOpenSession?(id) }
         agentsView.onPreferredHeightChanged = { [weak self] contentHeight in

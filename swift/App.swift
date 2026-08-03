@@ -536,7 +536,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.chatPanel.restoreAssistantConversation(conversation, open: true)
             self.chatPanel.refreshAgents()
         }
-        chatPanel.onNewAgentJob = { [weak self] in self?.createAgentJob() }
         chatPanel.onOpenAssistantSession = { [weak self] id in
             guard let self else { return }
             guard let conversation = self.agent.activateConversation(id) else {
@@ -4840,6 +4839,12 @@ extension AppDelegate: AgentsDataSource {
         var fallback = Set(jobs.compactMap(\.modelID))
         fallback.insert(UserSettings.shared.agentModel)
         return OpenRouterModelCatalog.shared.cachedModels(including: fallback)
+    }
+
+    func agentAutomationDefaults() -> AgentAutomationDefaults {
+        AgentAutomationDefaults(
+            runtime: agent.preferredRuntime,
+            modelID: UserSettings.shared.agentModel)
     }
 
     func createAgentAutomation(_ draft: AgentAutomationDraft) throws -> String {

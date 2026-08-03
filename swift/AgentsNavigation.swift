@@ -149,10 +149,23 @@ struct AgentsAutomationProjectionInput: Equatable {
     let assistantName: String
     let updatedAt: Date
     let state: AgentsAutomationState
+    let isEnabled: Bool
+
+    init(id: String, name: String, assistantName: String,
+         updatedAt: Date, state: AgentsAutomationState,
+         isEnabled: Bool = true) {
+        self.id = id
+        self.name = name
+        self.assistantName = assistantName
+        self.updatedAt = updatedAt
+        self.state = state
+        self.isEnabled = isEnabled
+    }
 }
 
 enum AgentsAutomationProjection {
     static func group(for automation: AgentsAutomationProjectionInput) -> AgentsAutomationGroup {
+        if !automation.isEnabled { return .disabled }
         switch automation.state {
         case .blocked, .failed:
             return .needsAttention
@@ -252,7 +265,7 @@ enum AgentsNowProjection {
             }
         }
 
-        for automation in automations {
+        for automation in automations where automation.isEnabled {
             let objectID = AgentsObjectID.automation(jobID: automation.id)
             switch automation.state {
             case .blocked:

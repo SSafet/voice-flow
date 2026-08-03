@@ -88,6 +88,11 @@ struct AgentAutomationDraft {
     let enabled: Bool
 }
 
+struct AgentAutomationDefaults {
+    let runtime: AgentRuntimeKind
+    let modelID: String?
+}
+
 struct AgentAssistantRow {
     let slug: String
     let name: String
@@ -116,6 +121,7 @@ protocol AgentsDataSource: AnyObject {
     func agentAssistantRows() -> [AgentAssistantRow]
     func agentJobRows() -> [AgentJobRow]
     func agentAutomationModels() -> [OpenRouterModel]
+    func agentAutomationDefaults() -> AgentAutomationDefaults
     func createAgentAutomation(_ draft: AgentAutomationDraft) throws -> String
     func updateAgentAutomation(id: String, draft: AgentAutomationDraft) throws
     func duplicateAgentAutomation(id: String) throws -> String
@@ -139,7 +145,6 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// Local Assistant sessions share this list but keep their native chat
     /// lifecycle instead of being forced through MCP push semantics.
     var onNewAssistant: (() -> Void)?
-    var onNewAgentJob: (() -> Void)?
     var onOpenAssistantSession: ((String) -> Void)?
     /// Preferred Agents content height. ChatPanel adds its shared chrome and
     /// clamps the whole panel to its 520pt maximum.
@@ -153,8 +158,39 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case search
         case thread(String)
         case job(String)
+        case automationCreate
+        case automationEdit(String)
         case assistantWorkspace(String, AssistantWorkspaceTab)
         case assistantCreate
+    }
+    private enum AutomationFilter: Int, CaseIterable {
+        case all
+        case attention
+        case active
+        case ready
+        case disabled
+
+        var label: String {
+            switch self {
+            case .all: return "All"
+            case .attention: return "Needs"
+            case .active: return "Active"
+            case .ready: return "Ready"
+            case .disabled: return "Off"
+            }
+        }
+    }
+    private struct AutomationFormValues {
+        let name: String
+        let instructions: String
+        let assistantSlug: String?
+        let runtime: String?
+        let trigger: String?
+        let model: String
+        let interval: String
+        let budget: String
+        let duration: String
+        let attempts: String
     }
     private enum AssistantWorkspaceTab: String, CaseIterable {
         case overview = "Overview"
@@ -177,7 +213,21 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var searchButton: NSButton!
     private var searchField: NSTextField?
     private var searchQuery = ""
+    private var automationSearchField: NSTextField?
+    private var automationSearchQuery = ""
+    private var automationFilter: AutomationFilter = .all
     private var composerField: NSTextField?
+    private var automationNameField: NSTextField?
+    private var automationInstructionsView: NSTextView?
+    private var automationAssistantPopUp: NSPopUpButton?
+    private var automationRuntimePopUp: NSPopUpButton?
+    private var automationTriggerPopUp: NSPopUpButton?
+    private var automationModelCombo: OpenRouterModelComboBox?
+    private var automationIntervalField: NSTextField?
+    private var automationBudgetField: NSTextField?
+    private var automationDurationField: NSTextField?
+    private var automationAttemptsField: NSTextField?
+    private var automationDeleteConfirmationID: String?
     private var assistantNameField: NSTextField?
     private var assistantDescriptionField: NSTextField?
     private var assistantVoiceField: NSTextField?
@@ -321,6 +371,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         } else if case .job(let id) = mode,
                   dataSource?.agentJobRows().contains(where: { $0.id == id }) != true {
             mode = .destination(currentDestination)
+        } else if case .automationEdit(let id) = mode,
+                  dataSource?.agentJobRows().contains(where: { $0.id == id }) != true {
+            mode = .destination(.automations)
         } else if case .assistantWorkspace(let slug, _) = mode,
                   (try? dataSource?.assistantWorkspace(slug: slug)) == nil {
             mode = .destination(.assistants)
@@ -332,6 +385,12 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             assistantVoiceField?.stringValue,
             assistantInstructionsView?.string,
             assistantMemoryView?.string)
+        let automationDraft: AutomationFormValues? = {
+            switch mode {
+            case .automationCreate, .automationEdit: return currentAutomationFormValues()
+            default: return nil
+            }
+        }()
         let hadFocus = composerField.map { field in
             (field.window?.firstResponder as? NSText)?.delegate === field
         } ?? false
@@ -345,6 +404,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         if let value = assistantDraft.2 { assistantVoiceField?.stringValue = value }
         if let value = assistantDraft.3 { assistantInstructionsView?.string = value }
         if let value = assistantDraft.4 { assistantMemoryView?.string = value }
+        if let automationDraft { restoreAutomationForm(automationDraft) }
     }
 
     private func buildJob(_ jobId: String) {
@@ -357,82 +417,171 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         var top = contentStack.topAnchor
 
         let header = NSView()
-        let back = NSButton(title: "‹", target: self, action: #selector(backTapped))
+        let back = NSButton(title: "‹ Automations", target: self, action: #selector(backTapped))
         back.isBordered = false
-        back.font = .systemFont(ofSize: 16, weight: .medium)
+        back.font = .systemFont(ofSize: 11.5, weight: .medium)
         back.contentTintColor = Theme.text2
-        back.setAccessibilityLabel("Back to agents")
+        back.setAccessibilityLabel("Back to automations")
         let title = NSTextField(labelWithString: job.name)
-        title.font = .systemFont(ofSize: 12, weight: .semibold)
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = Theme.text
         title.lineBreakMode = .byTruncatingTail
-        title.alignment = .center
+        let edit = NSButton(title: "Edit", target: self,
+                            action: #selector(editAutomationTapped(_:)))
+        edit.isBordered = false
+        edit.font = .systemFont(ofSize: 11, weight: .medium)
+        edit.contentTintColor = Theme.accent
+        edit.identifier = NSUserInterfaceItemIdentifier(job.id)
+        edit.isEnabled = job.state != .running
         let line = NSView()
         line.wantsLayer = true
         line.layer?.backgroundColor = Theme.border.cgColor
-        for view in [back, title, line] {
+        for view in [back, title, edit, line] {
             view.translatesAutoresizingMaskIntoConstraints = false
             header.addSubview(view)
         }
         NSLayoutConstraint.activate([
             back.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 2),
-            back.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -4),
-            title.centerXAnchor.constraint(equalTo: header.centerXAnchor),
-            title.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -4),
-            title.leadingAnchor.constraint(greaterThanOrEqualTo: back.trailingAnchor, constant: 8),
-            title.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -28),
+            back.topAnchor.constraint(equalTo: header.topAnchor, constant: 1),
+            title.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 2),
+            title.topAnchor.constraint(equalTo: back.bottomAnchor, constant: 5),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: edit.leadingAnchor, constant: -8),
+            edit.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -2),
+            edit.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             line.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             line.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            line.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
             line.bottomAnchor.constraint(equalTo: header.bottomAnchor),
             line.heightAnchor.constraint(equalToConstant: 1),
-            header.heightAnchor.constraint(equalToConstant: 34),
         ])
         place(header, below: &top, gap: 0)
 
-        var metaText = "\(job.state.rawValue)  ·  \(job.runtime.label)  ·  \(job.trigger.rawValue)"
-        if let modelID = job.modelID { metaText += "  ·  \(modelID)" }
-        let meta = NSTextField(labelWithString: metaText)
-        meta.font = .monospacedSystemFont(ofSize: 10.5, weight: .medium)
-        meta.textColor = job.state == .blocked || job.state == .failed ? Theme.accent : Theme.text3
-        meta.setAccessibilityLabel(
-            "Automation state \(job.state.rawValue), runtime \(job.runtime.label), trigger \(job.trigger.rawValue)"
-                + (job.modelID.map { ", model \($0)" } ?? ""))
-        place(meta, below: &top, gap: 14)
+        let status = NSTextField(wrappingLabelWithString: job.preview)
+        status.font = .systemFont(ofSize: 12, weight: .semibold)
+        status.textColor = job.state == .blocked || job.state == .failed ? Theme.accent : Theme.text
+        place(status, below: &top, gap: 13)
 
+        var metaText = "\(job.trigger.rawValue) · \(job.runtime.label)"
+        if let modelID = job.modelID { metaText += " · \(modelID)" }
+        if job.hasPendingTrigger { metaText += " · one follow-up waiting" }
+        let meta = NSTextField(wrappingLabelWithString: metaText)
+        meta.font = .systemFont(ofSize: 10.5)
+        meta.textColor = job.state == .blocked || job.state == .failed ? Theme.accent : Theme.text3
+        place(meta, below: &top, gap: 4)
+
+        let budget = NSTextField(labelWithString: String(
+            format: "$%.2f / $%.2f today · %.0f min max · %d attempts",
+            job.spentTodayUSD, job.dailyBudgetUSD,
+            job.maxDurationSeconds / 60, job.maxAttempts))
+        budget.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        budget.textColor = Theme.text3
+        place(budget, below: &top, gap: 5)
+
+        place(sectionHeader("TASK", count: nil), below: &top, gap: 15)
         let prompt = NSTextField(wrappingLabelWithString: job.prompt)
         prompt.font = .systemFont(ofSize: 12.5)
         prompt.textColor = Theme.text2
         prompt.maximumNumberOfLines = 0
         prompt.isSelectable = true
-        place(prompt, below: &top, gap: 10)
+        place(prompt, below: &top, gap: 7)
 
         let actions = NSStackView()
         actions.orientation = .horizontal
         actions.spacing = 8
         actions.distribution = .fillEqually
-        let run = NSButton(title: "Run now", target: self, action: #selector(runJobTapped(_:)))
-        run.identifier = NSUserInterfaceItemIdentifier(job.id)
-        run.isEnabled = job.state != .running
-        run.setAccessibilityLabel("Run automation now")
-        let secondary: NSButton
         if job.state == .running {
-            secondary = NSButton(title: "Cancel", target: self, action: #selector(cancelJobTapped(_:)))
-            secondary.setAccessibilityLabel("Cancel running automation")
+            let stop = NSButton(title: "Stop", target: self,
+                                action: #selector(cancelJobTapped(_:)))
+            stop.identifier = NSUserInterfaceItemIdentifier(job.id)
+            stop.setAccessibilityLabel("Stop current automation run")
+            actions.addArrangedSubview(stop)
+            let disable = NSButton(title: "Disable", target: self,
+                                   action: #selector(toggleJobTapped(_:)))
+            disable.identifier = NSUserInterfaceItemIdentifier(job.id)
+            disable.tag = 0
+            disable.setAccessibilityLabel("Disable automation and stop its current run")
+            actions.addArrangedSubview(disable)
+        } else if !job.isEnabled {
+            let enable = NSButton(title: "Enable", target: self,
+                                  action: #selector(toggleJobTapped(_:)))
+            enable.identifier = NSUserInterfaceItemIdentifier(job.id)
+            enable.tag = 1
+            enable.setAccessibilityLabel("Enable automation")
+            actions.addArrangedSubview(enable)
         } else {
-            let enable = job.state == .disabled || job.state == .cancelled
-            secondary = NSButton(
-                title: enable ? "Enable" : "Disable",
-                target: self, action: #selector(toggleJobTapped(_:)))
-            secondary.tag = enable ? 1 : 0
-            secondary.setAccessibilityLabel(enable ? "Enable automation" : "Disable automation")
+            let runTitle = job.state == .failed || job.state == .blocked ? "Retry now" : "Run now"
+            let run = NSButton(title: runTitle, target: self,
+                               action: #selector(runJobTapped(_:)))
+            run.identifier = NSUserInterfaceItemIdentifier(job.id)
+            run.setAccessibilityLabel(runTitle)
+            actions.addArrangedSubview(run)
+            let disable = NSButton(title: "Disable", target: self,
+                                   action: #selector(toggleJobTapped(_:)))
+            disable.identifier = NSUserInterfaceItemIdentifier(job.id)
+            disable.tag = 0
+            disable.setAccessibilityLabel("Disable automation")
+            actions.addArrangedSubview(disable)
         }
-        secondary.identifier = NSUserInterfaceItemIdentifier(job.id)
-        for button in [run, secondary] {
+        for button in actions.arrangedSubviews.compactMap({ $0 as? NSButton }) {
             button.bezelStyle = .rounded
             button.controlSize = .small
-            actions.addArrangedSubview(button)
         }
-        place(actions, below: &top, gap: 18)
+        place(actions, below: &top, gap: 15)
+
+        place(sectionHeader("RUN HISTORY", count: job.runs.count), below: &top, gap: 18)
+        for run in job.runs.prefix(6) {
+            let elapsed = run.finishedAt.map { max(0, $0.timeIntervalSince(run.startedAt)) }
+            var detail = "Attempt \(run.attempt)"
+            if let elapsed { detail += String(format: " · %.0fs", elapsed) }
+            if run.costUSD > 0 { detail += String(format: " · $%.3f", run.costUSD) }
+            if let error = run.error, !error.isEmpty { detail += " · \(error)" }
+            let row = makeRow(
+                leading: runStateIcon(run.state),
+                name: run.state.rawValue.capitalized,
+                unread: run.state == .failed || run.state == .interrupted,
+                preview: detail,
+                time: DateFormatter.localizedString(
+                    from: run.startedAt, dateStyle: .none, timeStyle: .short))
+            place(row, below: &top, gap: 0)
+        }
+        if job.runs.isEmpty { place(emptyLabel("No runs yet"), below: &top, gap: 10) }
+
+        let duplicate = NSButton(title: "Duplicate as disabled", target: self,
+                                 action: #selector(duplicateAutomationTapped(_:)))
+        duplicate.identifier = NSUserInterfaceItemIdentifier(job.id)
+        duplicate.isBordered = false
+        duplicate.contentTintColor = Theme.text2
+        duplicate.font = .systemFont(ofSize: 11)
+        duplicate.isEnabled = job.state != .running
+        place(duplicate, below: &top, gap: 18)
+
+        if automationDeleteConfirmationID == job.id {
+            place(errorLabel("Delete this automation and its run history? Its conversation is kept in Threads."),
+                  below: &top, gap: 10)
+            let confirm = NSStackView()
+            confirm.orientation = .horizontal
+            confirm.spacing = 8
+            let delete = NSButton(title: "Delete", target: self,
+                                  action: #selector(confirmDeleteAutomationTapped(_:)))
+            delete.identifier = NSUserInterfaceItemIdentifier(job.id)
+            let cancel = NSButton(title: "Keep", target: self,
+                                  action: #selector(cancelDeleteAutomationTapped))
+            for button in [delete, cancel] {
+                button.bezelStyle = .rounded
+                button.controlSize = .small
+                confirm.addArrangedSubview(button)
+            }
+            place(confirm, below: &top, gap: 7)
+        } else {
+            let delete = NSButton(title: "Delete automation…", target: self,
+                                  action: #selector(deleteAutomationTapped(_:)))
+            delete.identifier = NSUserInterfaceItemIdentifier(job.id)
+            delete.isBordered = false
+            delete.contentTintColor = Theme.accent
+            delete.font = .systemFont(ofSize: 11)
+            delete.isEnabled = job.state != .running
+            place(delete, below: &top, gap: 7)
+        }
 
         let bottom = top.constraint(equalTo: contentStack.bottomAnchor, constant: -12)
         bottom.priority = .defaultLow
@@ -444,6 +593,17 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func rebuild() {
         contentStack.subviews.forEach { $0.removeFromSuperview() }
         composerField = nil
+        automationSearchField = nil
+        automationNameField = nil
+        automationInstructionsView = nil
+        automationAssistantPopUp = nil
+        automationRuntimePopUp = nil
+        automationTriggerPopUp = nil
+        automationModelCombo = nil
+        automationIntervalField = nil
+        automationBudgetField = nil
+        automationDurationField = nil
+        automationAttemptsField = nil
         assistantNameField = nil
         assistantDescriptionField = nil
         assistantVoiceField = nil
@@ -455,6 +615,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .search: buildSearch()
         case .thread(let sid): buildThread(sid)
         case .job(let id): buildJob(id)
+        case .automationCreate: buildAutomationForm(jobID: nil)
+        case .automationEdit(let id): buildAutomationForm(jobID: id)
         case .assistantWorkspace(let slug, let tab): buildAssistantWorkspace(slug: slug, tab: tab)
         case .assistantCreate: buildAssistantCreate()
         }
@@ -557,7 +719,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             guard let state = AgentsAutomationState(rawValue: row.state.rawValue) else { return nil }
             return AgentsAutomationProjectionInput(
                 id: row.id, name: row.name, assistantName: row.assistantName,
-                updatedAt: row.updatedAt, state: state)
+                updatedAt: row.updatedAt, state: state,
+                isEnabled: row.isEnabled)
         }
     }
 
@@ -989,32 +1152,412 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         for (name, state) in skillStates { assistantSkillButtons[name]?.state = state }
     }
 
+    private func currentAutomationFormValues() -> AutomationFormValues {
+        AutomationFormValues(
+            name: automationNameField?.stringValue ?? "",
+            instructions: automationInstructionsView?.string ?? "",
+            assistantSlug: automationAssistantPopUp?.selectedItem?.representedObject as? String,
+            runtime: automationRuntimePopUp?.selectedItem?.representedObject as? String,
+            trigger: automationTriggerPopUp?.selectedItem?.representedObject as? String,
+            model: automationModelCombo?.stringValue ?? "",
+            interval: automationIntervalField?.stringValue ?? "",
+            budget: automationBudgetField?.stringValue ?? "",
+            duration: automationDurationField?.stringValue ?? "",
+            attempts: automationAttemptsField?.stringValue ?? "")
+    }
+
+    private func automationDraft(from values: AutomationFormValues) -> AgentAutomationDraft? {
+        let name = values.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = values.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            inlineError = "Name cannot be empty."
+            return nil
+        }
+        guard !prompt.isEmpty else {
+            inlineError = "Instructions cannot be empty."
+            return nil
+        }
+        guard let assistantSlug = values.assistantSlug, !assistantSlug.isEmpty else {
+            inlineError = "Choose an Assistant."
+            return nil
+        }
+        guard let runtimeRaw = values.runtime,
+              let runtime = AgentRuntimeKind(rawValue: runtimeRaw),
+              let triggerRaw = values.trigger,
+              let trigger = AgentJobTriggerKind(rawValue: triggerRaw) else {
+            inlineError = "Runtime or trigger is unavailable."
+            return nil
+        }
+        let intervalMinutes = Double(values.interval) ?? 0
+        if trigger == .interval && intervalMinutes < 1 {
+            inlineError = "Interval must be at least one minute."
+            return nil
+        }
+        let budget = Double(values.budget) ?? -1
+        let durationMinutes = Double(values.duration) ?? 0
+        let attempts = Int(values.attempts) ?? 0
+        guard budget >= 0 else {
+            inlineError = "Daily budget cannot be negative."
+            return nil
+        }
+        guard durationMinutes >= 0.5 else {
+            inlineError = "Maximum runtime must be at least 0.5 minutes."
+            return nil
+        }
+        guard attempts >= 1 else {
+            inlineError = "Attempts must be at least one."
+            return nil
+        }
+        let model = automationModelCombo?.selectedModelID
+        if runtime == .opencode && model == nil {
+            inlineError = "Choose a catalog model or enter an exact provider/model ID."
+            return nil
+        }
+        let enabled: Bool = {
+            if case .automationEdit(let id) = mode {
+                return dataSource?.agentJobRows().first(where: { $0.id == id })?.isEnabled ?? true
+            }
+            return true
+        }()
+        return AgentAutomationDraft(
+            name: name, assistantSlug: assistantSlug,
+            runtime: runtime, modelID: runtime == .opencode ? model : nil,
+            trigger: trigger, prompt: prompt,
+            intervalSeconds: trigger == .interval ? intervalMinutes * 60 : nil,
+            dailyBudgetUSD: budget,
+            maxDurationSeconds: durationMinutes * 60,
+            maxAttempts: attempts, enabled: enabled)
+    }
+
+    private func rebuildPreservingAutomationForm(_ values: AutomationFormValues) {
+        rebuild()
+        restoreAutomationForm(values)
+    }
+
+    private func restoreAutomationForm(_ values: AutomationFormValues) {
+        automationNameField?.stringValue = values.name
+        automationInstructionsView?.string = values.instructions
+        select(popUp: automationAssistantPopUp, representedObject: values.assistantSlug)
+        select(popUp: automationRuntimePopUp, representedObject: values.runtime)
+        select(popUp: automationTriggerPopUp, representedObject: values.trigger)
+        automationModelCombo?.stringValue = values.model
+        automationIntervalField?.stringValue = values.interval
+        automationBudgetField?.stringValue = values.budget
+        automationDurationField?.stringValue = values.duration
+        automationAttemptsField?.stringValue = values.attempts
+        updateAutomationFormAvailability()
+    }
+
+    private func select(popUp: NSPopUpButton?, representedObject: String?) {
+        guard let representedObject,
+              let index = popUp?.itemArray.firstIndex(where: {
+                  ($0.representedObject as? String) == representedObject
+              }) else { return }
+        popUp?.selectItem(at: index)
+    }
+
     private func buildAutomations() {
         var top = contentStack.topAnchor
-        let create = makeRow(
-            leading: symbolIcon("plus", description: "new automation"),
-            name: "New automation", unread: false,
-            preview: "Run an assistant manually, on a schedule, or from an event", time: "")
-        create.rowAction = .newJob
-        place(create, below: &top, gap: 2)
+        let tools = NSView()
+        let search = formField(placeholder: "Search automations")
+        search.stringValue = automationSearchQuery
+        search.delegate = self
+        search.setAccessibilityLabel("Search automations")
+        automationSearchField = search
+        let create = NSButton(title: "+ New", target: self,
+                              action: #selector(newAutomationTapped))
+        create.bezelStyle = .rounded
+        create.controlSize = .small
+        create.setAccessibilityLabel("New automation")
+        for view in [search, create] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            tools.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            search.leadingAnchor.constraint(equalTo: tools.leadingAnchor),
+            search.topAnchor.constraint(equalTo: tools.topAnchor),
+            search.bottomAnchor.constraint(equalTo: tools.bottomAnchor),
+            create.leadingAnchor.constraint(equalTo: search.trailingAnchor, constant: 8),
+            create.trailingAnchor.constraint(equalTo: tools.trailingAnchor),
+            create.centerYAnchor.constraint(equalTo: search.centerYAnchor),
+            create.widthAnchor.constraint(equalToConstant: 58),
+        ])
+        place(tools, below: &top, gap: 6)
 
-        let jobs = dataSource?.agentJobRows() ?? []
-        let grouped = AgentsAutomationProjection.grouped(automationProjectionInputs())
+        let filter = NSSegmentedControl(
+            labels: AutomationFilter.allCases.map(\.label),
+            trackingMode: .selectOne, target: self,
+            action: #selector(automationFilterChanged(_:)))
+        filter.selectedSegment = automationFilter.rawValue
+        filter.segmentStyle = .texturedRounded
+        filter.controlSize = .small
+        filter.setAccessibilityLabel("Filter automations")
+        place(filter, below: &top, gap: 8)
+
+        let allJobs = dataSource?.agentJobRows() ?? []
+        let jobs = allJobs.filter { automationMatches($0) }
+        let projections = jobs.compactMap { row -> AgentsAutomationProjectionInput? in
+            guard let state = AgentsAutomationState(rawValue: row.state.rawValue) else { return nil }
+            return AgentsAutomationProjectionInput(
+                id: row.id, name: row.name, assistantName: row.assistantName,
+                updatedAt: row.updatedAt, state: state, isEnabled: row.isEnabled)
+        }
+        let grouped = AgentsAutomationProjection.grouped(projections)
+        let jobsByID = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0) })
         for group in AgentsAutomationGroup.allCases {
-            let ids = Set((grouped[group] ?? []).map(\.id))
-            let members = jobs.filter { ids.contains($0.id) }
+            let members = (grouped[group] ?? []).compactMap { jobsByID[$0.id] }
             guard !members.isEmpty else { continue }
             place(sectionHeader(group.label.uppercased(), count: members.count), below: &top, gap: 12)
             for job in members {
                 let view = makeRow(
-                    leading: jobStateIcon(job.state), name: job.name,
+                    leading: job.isEnabled
+                        ? jobStateIcon(job.state)
+                        : symbolIcon("pause.circle", description: "automation disabled"),
+                    name: job.name,
                     unread: job.state == .blocked || job.state == .failed,
                     preview: "\(job.assistantName) · \(job.preview)", time: job.time)
                 view.rowAction = .job(job.id)
                 place(view, below: &top, gap: 0)
             }
         }
+        if jobs.isEmpty {
+            let message = allJobs.isEmpty
+                ? "No automations yet" : "No automations match this view"
+            place(emptyLabel(message), below: &top, gap: 30)
+        }
         finishContent(top)
+    }
+
+    private func automationMatches(_ job: AgentJobRow) -> Bool {
+        let group: AgentsAutomationGroup = {
+            if !job.isEnabled { return .disabled }
+            switch job.state {
+            case .blocked, .failed: return .needsAttention
+            case .running, .queued: return .activeUpcoming
+            case .completed: return .ready
+            case .cancelled, .disabled: return .disabled
+            }
+        }()
+        let filterMatches: Bool
+        switch automationFilter {
+        case .all: filterMatches = true
+        case .attention: filterMatches = group == .needsAttention
+        case .active: filterMatches = group == .activeUpcoming
+        case .ready: filterMatches = group == .ready
+        case .disabled: filterMatches = group == .disabled
+        }
+        guard filterMatches else { return false }
+        let tokens = automationSearchQuery
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased().split(whereSeparator: { $0.isWhitespace })
+        guard !tokens.isEmpty else { return true }
+        let haystack = [
+            job.name, job.assistantName, job.prompt, job.preview,
+            job.runtime.label, job.trigger.rawValue, job.modelID ?? "",
+        ].joined(separator: " ")
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        return tokens.allSatisfy { haystack.contains($0) }
+    }
+
+    private func buildAutomationForm(jobID: String?) {
+        guard let dataSource else { return }
+        let existing = jobID.flatMap { id in
+            dataSource.agentJobRows().first { $0.id == id }
+        }
+        if jobID != nil, existing == nil {
+            mode = .destination(.automations)
+            buildAutomations()
+            return
+        }
+        let defaults = dataSource.agentAutomationDefaults()
+        let assistants = dataSource.agentAssistantRows()
+        let runtime = existing?.runtime ?? defaults.runtime
+        let selectedAssistant = existing?.assistantSlug
+            ?? assistants.first(where: \.isDefault)?.slug
+            ?? assistants.first?.slug
+            ?? ""
+
+        var top = contentStack.topAnchor
+        place(automationFormHeader(title: existing == nil ? "New automation" : "Edit automation"),
+              below: &top, gap: 0)
+
+        place(formLabel("NAME"), below: &top, gap: 13)
+        let name = formField(placeholder: "Morning operating brief")
+        name.stringValue = existing?.name ?? ""
+        automationNameField = name
+        place(name, below: &top, gap: 5)
+
+        let assistant = formPopUp()
+        for row in assistants {
+            assistant.addItem(withTitle: row.name)
+            assistant.lastItem?.representedObject = row.slug
+        }
+        if let index = assistant.itemArray.firstIndex(where: {
+            ($0.representedObject as? String) == selectedAssistant
+        }) { assistant.selectItem(at: index) }
+        assistant.setAccessibilityLabel("Automation Assistant")
+        automationAssistantPopUp = assistant
+
+        let runtimePopUp = formPopUp()
+        for kind in AgentRuntimeKind.allCases {
+            runtimePopUp.addItem(withTitle: kind.label)
+            runtimePopUp.lastItem?.representedObject = kind.rawValue
+        }
+        if let index = runtimePopUp.itemArray.firstIndex(where: {
+            ($0.representedObject as? String) == runtime.rawValue
+        }) { runtimePopUp.selectItem(at: index) }
+        runtimePopUp.target = self
+        runtimePopUp.action = #selector(automationFormControlChanged)
+        runtimePopUp.setAccessibilityLabel("Automation runtime")
+        automationRuntimePopUp = runtimePopUp
+        place(automationFormRow([
+            ("ASSISTANT", assistant), ("RUNTIME", runtimePopUp),
+        ]), below: &top, gap: 12)
+
+        place(formLabel("INSTRUCTIONS"), below: &top, gap: 12)
+        let instructions = makeTextEditor(text: existing?.prompt ?? "", height: 96)
+        automationInstructionsView = instructions.textView
+        place(instructions.view, below: &top, gap: 5)
+
+        let trigger = formPopUp()
+        for kind in AgentJobTriggerKind.allCases {
+            trigger.addItem(withTitle: automationTriggerLabel(kind))
+            trigger.lastItem?.representedObject = kind.rawValue
+        }
+        let selectedTrigger = existing?.trigger ?? .manual
+        if let index = trigger.itemArray.firstIndex(where: {
+            ($0.representedObject as? String) == selectedTrigger.rawValue
+        }) { trigger.selectItem(at: index) }
+        trigger.target = self
+        trigger.action = #selector(automationFormControlChanged)
+        trigger.setAccessibilityLabel("Automation trigger")
+        automationTriggerPopUp = trigger
+
+        let interval = formField(placeholder: "60")
+        interval.stringValue = String(format: "%.0f", (existing?.intervalSeconds ?? 3_600) / 60)
+        interval.setAccessibilityLabel("Automation interval in minutes")
+        automationIntervalField = interval
+        place(automationFormRow([
+            ("TRIGGER", trigger), ("EVERY (MIN)", interval),
+        ]), below: &top, gap: 12)
+
+        place(formLabel("OPENCODE MODEL"), below: &top, gap: 12)
+        let model = OpenRouterModelComboBox()
+        model.configure(
+            models: dataSource.agentAutomationModels(),
+            selectedID: existing?.modelID ?? defaults.modelID ?? "")
+        model.setAccessibilityLabel("OpenRouter model")
+        model.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        automationModelCombo = model
+        place(model, below: &top, gap: 5)
+
+        let budget = formField(placeholder: "1.00")
+        budget.stringValue = String(format: "%.2f", existing?.dailyBudgetUSD ?? 1)
+        budget.setAccessibilityLabel("Daily budget in dollars")
+        automationBudgetField = budget
+        let duration = formField(placeholder: "15")
+        duration.stringValue = String(format: "%.0f", (existing?.maxDurationSeconds ?? 900) / 60)
+        duration.setAccessibilityLabel("Maximum runtime in minutes")
+        automationDurationField = duration
+        let attempts = formField(placeholder: "3")
+        attempts.stringValue = String(existing?.maxAttempts ?? 3)
+        attempts.setAccessibilityLabel("Maximum attempts")
+        automationAttemptsField = attempts
+        place(automationFormRow([
+            ("BUDGET / DAY", budget), ("MAX MIN", duration), ("ATTEMPTS", attempts),
+        ]), below: &top, gap: 12)
+
+        if let inlineError { place(errorLabel(inlineError), below: &top, gap: 10) }
+        let save = NSButton(
+            title: existing == nil ? "Create automation" : "Save changes",
+            target: self, action: #selector(saveAutomationTapped(_:)))
+        save.identifier = jobID.map { NSUserInterfaceItemIdentifier($0) }
+        save.bezelStyle = .rounded
+        save.controlSize = .small
+        save.setAccessibilityLabel(save.title)
+        place(save, below: &top, gap: 16)
+        finishContent(top)
+        updateAutomationFormAvailability()
+    }
+
+    private func automationFormHeader(title: String) -> NSView {
+        let header = NSView()
+        let back = NSButton(title: "‹ Automations", target: self, action: #selector(backTapped))
+        back.isBordered = false
+        back.font = .systemFont(ofSize: 11.5, weight: .medium)
+        back.contentTintColor = Theme.text2
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = Theme.text
+        let line = NSView()
+        line.wantsLayer = true
+        line.layer?.backgroundColor = Theme.border.cgColor
+        for view in [back, label, line] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            back.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            back.topAnchor.constraint(equalTo: header.topAnchor, constant: 1),
+            label.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 2),
+            label.topAnchor.constraint(equalTo: back.bottomAnchor, constant: 5),
+            line.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            line.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            line.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 8),
+            line.heightAnchor.constraint(equalToConstant: 1),
+            line.bottomAnchor.constraint(equalTo: header.bottomAnchor),
+        ])
+        return header
+    }
+
+    private func automationFormRow(_ fields: [(String, NSView)]) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.distribution = .fillEqually
+        row.spacing = 8
+        for (label, control) in fields {
+            let column = NSStackView()
+            column.orientation = .vertical
+            column.alignment = .leading
+            column.spacing = 5
+            column.addArrangedSubview(formLabel(label))
+            control.translatesAutoresizingMaskIntoConstraints = false
+            control.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+            column.addArrangedSubview(control)
+            row.addArrangedSubview(column)
+        }
+        return row
+    }
+
+    private func formPopUp() -> NSPopUpButton {
+        let popUp = NSPopUpButton()
+        popUp.font = .systemFont(ofSize: 11.5)
+        popUp.isBordered = false
+        popUp.contentTintColor = Theme.text
+        popUp.wantsLayer = true
+        popUp.layer?.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10).cgColor
+        popUp.layer?.cornerRadius = 7
+        popUp.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        return popUp
+    }
+
+    private func automationTriggerLabel(_ trigger: AgentJobTriggerKind) -> String {
+        switch trigger {
+        case .manual: return "Manual"
+        case .interval: return "Interval"
+        case .inbox: return "Inbox message"
+        case .capture: return "Capture completed"
+        case .watcher: return "Watcher action"
+        }
+    }
+
+    private func updateAutomationFormAvailability() {
+        let runtime = automationRuntimePopUp?.selectedItem?.representedObject as? String
+        automationModelCombo?.isEnabled = runtime == AgentRuntimeKind.opencode.rawValue
+        let trigger = automationTriggerPopUp?.selectedItem?.representedObject as? String
+        automationIntervalField?.isEnabled = trigger == AgentJobTriggerKind.interval.rawValue
     }
 
     private func buildThreads() {
@@ -1071,11 +1614,12 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         return view
     }
 
-    private func sectionHeader(_ title: String, count: Int) -> NSView {
-        let text = NSTextField(labelWithString: "\(title)  \(count)")
+    private func sectionHeader(_ title: String, count: Int?) -> NSView {
+        let value = count.map { "\(title)  \($0)" } ?? title
+        let text = NSTextField(labelWithString: value)
         text.font = .systemFont(ofSize: 10.5, weight: .semibold)
         text.textColor = Theme.text3
-        text.setAccessibilityLabel("\(title), \(count)")
+        text.setAccessibilityLabel(count.map { "\(title), \($0)" } ?? title)
         return text
     }
 
@@ -1269,7 +1813,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 rebuild()
             }
         case .newJob:
-            onNewAgentJob?()
+            currentDestination = .automations
+            mode = .automationCreate
+            inlineError = nil
+            rebuild()
         case .assistant(let id):
             onOpenAssistantSession?(id)
         case .mcp(let id):
@@ -1329,6 +1876,21 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
         let view = symbolIcon(symbol, description: "automation \(state.rawValue)")
         (view as? NSImageView)?.contentTintColor = state == .blocked || state == .failed
+            ? Theme.accent : Theme.text3
+        return view
+    }
+
+    private func runStateIcon(_ state: AgentRunState) -> NSView {
+        let symbol: String
+        switch state {
+        case .running: symbol = "bolt.circle.fill"
+        case .completed: symbol = "checkmark.circle"
+        case .failed: symbol = "exclamationmark.circle.fill"
+        case .interrupted: symbol = "exclamationmark.arrow.circlepath"
+        case .cancelled: symbol = "stop.circle"
+        }
+        let view = symbolIcon(symbol, description: "run \(state.rawValue)")
+        (view as? NSImageView)?.contentTintColor = state == .failed || state == .interrupted
             ? Theme.accent : Theme.text3
         return view
     }
@@ -1553,7 +2115,96 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         mode = .destination(destination)
         inlineError = nil
         assistantDeleteConfirmationSlug = nil
+        automationDeleteConfirmationID = nil
         rebuild()
+    }
+
+    @objc private func newAutomationTapped() {
+        currentDestination = .automations
+        mode = .automationCreate
+        inlineError = nil
+        automationDeleteConfirmationID = nil
+        rebuild()
+    }
+
+    @objc private func automationFilterChanged(_ sender: NSSegmentedControl) {
+        automationFilter = AutomationFilter(rawValue: sender.selectedSegment) ?? .all
+        rebuild()
+    }
+
+    @objc private func automationFormControlChanged() {
+        updateAutomationFormAvailability()
+    }
+
+    @objc private func editAutomationTapped(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        mode = .automationEdit(id)
+        inlineError = nil
+        automationDeleteConfirmationID = nil
+        rebuild()
+    }
+
+    @objc private func saveAutomationTapped(_ sender: NSButton) {
+        guard let dataSource else { return }
+        let values = currentAutomationFormValues()
+        guard let draft = automationDraft(from: values) else {
+            rebuildPreservingAutomationForm(values)
+            return
+        }
+        do {
+            if let id = sender.identifier?.rawValue {
+                try dataSource.updateAgentAutomation(id: id, draft: draft)
+                mode = .job(id)
+            } else {
+                let id = try dataSource.createAgentAutomation(draft)
+                mode = .job(id)
+            }
+            inlineError = nil
+            rebuild()
+        } catch {
+            inlineError = error.localizedDescription
+            rebuildPreservingAutomationForm(values)
+        }
+    }
+
+    @objc private func duplicateAutomationTapped(_ sender: NSButton) {
+        guard let dataSource, let id = sender.identifier?.rawValue else { return }
+        do {
+            let duplicate = try dataSource.duplicateAgentAutomation(id: id)
+            inlineError = nil
+            mode = .job(duplicate)
+            rebuild()
+        } catch {
+            inlineError = error.localizedDescription
+            rebuild()
+        }
+    }
+
+    @objc private func deleteAutomationTapped(_ sender: NSButton) {
+        automationDeleteConfirmationID = sender.identifier?.rawValue
+        inlineError = nil
+        rebuild()
+    }
+
+    @objc private func cancelDeleteAutomationTapped() {
+        automationDeleteConfirmationID = nil
+        inlineError = nil
+        rebuild()
+    }
+
+    @objc private func confirmDeleteAutomationTapped(_ sender: NSButton) {
+        guard let dataSource, let id = sender.identifier?.rawValue,
+              automationDeleteConfirmationID == id else { return }
+        do {
+            try dataSource.deleteAgentAutomation(id: id)
+            automationDeleteConfirmationID = nil
+            inlineError = nil
+            mode = .destination(.automations)
+            rebuild()
+        } catch {
+            inlineError = error.localizedDescription
+            rebuild()
+        }
     }
 
     @objc private func searchTapped() {
@@ -1565,6 +2216,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         mode = .destination(currentDestination)
         inlineError = nil
         assistantDeleteConfirmationSlug = nil
+        automationDeleteConfirmationID = nil
         rebuild()
     }
 
@@ -1757,13 +2409,25 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     func controlTextDidChange(_ obj: Notification) {
-        guard let field = obj.object as? NSTextField, field === searchField else { return }
-        let value = field.stringValue
-        guard value != searchQuery else { return }
-        searchQuery = value
-        DispatchQueue.main.async { [weak self] in
-            guard let self, case .search = self.mode else { return }
-            self.rebuild()
+        guard let field = obj.object as? NSTextField else { return }
+        if field === searchField {
+            let value = field.stringValue
+            guard value != searchQuery else { return }
+            searchQuery = value
+            DispatchQueue.main.async { [weak self] in
+                guard let self, case .search = self.mode else { return }
+                self.rebuild()
+            }
+        } else if field === automationSearchField {
+            let value = field.stringValue
+            guard value != automationSearchQuery else { return }
+            automationSearchQuery = value
+            DispatchQueue.main.async { [weak self] in
+                guard let self, case .destination(.automations) = self.mode else { return }
+                self.rebuild()
+                self.automationSearchField?.window?.makeFirstResponder(
+                    self.automationSearchField)
+            }
         }
     }
 
