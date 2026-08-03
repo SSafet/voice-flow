@@ -189,6 +189,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var workflowWatcher: WorkflowWatcher!
     var agent: AgentSession!
     private var agentJobStore: AgentJobStore?
+    private var assistantWorkspaceCoordinator: AssistantWorkspaceCoordinator!
     private var agentSupervisor: AgentSupervisor?
 #if VOICE_FLOW_QA
     private weak var activeAgentJobAlert: NSAlert?
@@ -836,6 +837,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         agent = AgentSession(screenCapture: screenCapture)
         agent.setActiveAssistant(AssistantsStore.shared.base)
+        assistantWorkspaceCoordinator = AssistantWorkspaceCoordinator(
+            agent: agent,
+            jobStore: { [weak self] in self?.agentJobStore })
         agent.onEmbeddedOverlayTool = { [weak self] arguments, conversationID in
             guard let self else { throw AgentToolError.unavailable("Voice Flow ended") }
             return try await self.handleEmbeddedOverlayTool(arguments, conversationID: conversationID)
@@ -4865,6 +4869,47 @@ extension AppDelegate: AgentsDataSource {
         } catch {
             replyBubble.showTransient("could not update automation", seconds: 5)
         }
+    }
+
+    func assistantWorkspace(slug: String) throws -> AssistantWorkspaceSnapshot {
+        try assistantWorkspaceCoordinator.snapshot(slug: slug)
+    }
+
+    func createAgentAssistant(_ draft: AssistantDraft) throws -> String {
+        let slug = try assistantWorkspaceCoordinator.createAssistant(draft)
+        chatPanel.refreshAgents()
+        return slug
+    }
+
+    func duplicateAgentAssistant(slug: String, name: String) throws -> String {
+        let duplicate = try assistantWorkspaceCoordinator.duplicateAssistant(
+            slug: slug, name: name)
+        chatPanel.refreshAgents()
+        return duplicate
+    }
+
+    func updateAgentAssistant(slug: String, draft: AssistantDraft,
+                              expectedRevision: String) throws {
+        try assistantWorkspaceCoordinator.updateAssistant(
+            slug: slug, draft: draft, expectedRevision: expectedRevision)
+        replySpeaker.voiceOverride = agent.activeAssistant?.voice
+        chatPanel.refreshAgents()
+    }
+
+    func updateAgentAssistantMemory(slug: String, kind: String, content: String,
+                                    expectedRevision: String) throws -> AgentMemoryDocument {
+        let document = try assistantWorkspaceCoordinator.updateMemory(
+            slug: slug, kind: kind, content: content,
+            expectedRevision: expectedRevision)
+        chatPanel.refreshAgents()
+        return document
+    }
+
+    func createAgentAssistantConversation(slug: String) throws -> String {
+        let id = try assistantWorkspaceCoordinator.createConversation(
+            assistantSlug: slug)
+        chatPanel.refreshAgents()
+        return id
     }
 
     func agentSessionRows() -> [AgentSessionRow] {

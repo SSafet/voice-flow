@@ -84,6 +84,14 @@ protocol AgentsDataSource: AnyObject {
     func runAgentJob(_ jobId: String)
     func cancelAgentJob(_ jobId: String)
     func setAgentJob(_ jobId: String, enabled: Bool)
+    func assistantWorkspace(slug: String) throws -> AssistantWorkspaceSnapshot
+    func createAgentAssistant(_ draft: AssistantDraft) throws -> String
+    func duplicateAgentAssistant(slug: String, name: String) throws -> String
+    func updateAgentAssistant(slug: String, draft: AssistantDraft,
+                              expectedRevision: String) throws
+    func updateAgentAssistantMemory(slug: String, kind: String, content: String,
+                                    expectedRevision: String) throws -> AgentMemoryDocument
+    func createAgentAssistantConversation(slug: String) throws -> String
 }
 
 final class AgentsView: NSView, NSTextFieldDelegate {
@@ -105,6 +113,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case search
         case thread(String)
         case job(String)
+        case assistantWorkspace(String, AssistantWorkspaceTab)
+        case assistantCreate
+    }
+    private enum AssistantWorkspaceTab: String, CaseIterable {
+        case overview = "Overview"
+        case conversations = "Conversations"
+        case memory = "Memory & Skills"
+        case settings = "Settings"
     }
     private var mode: Mode = .destination(.now)
     private var currentDestination: AgentsDestination = .now
@@ -122,6 +138,15 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var searchField: NSTextField?
     private var searchQuery = ""
     private var composerField: NSTextField?
+    private var assistantNameField: NSTextField?
+    private var assistantDescriptionField: NSTextField?
+    private var assistantVoiceField: NSTextField?
+    private var assistantInstructionsView: NSTextView?
+    private var assistantMemoryView: NSTextView?
+    private var assistantMemoryKind = "core"
+    private var assistantMemoryRevision: String?
+    private var assistantSkillButtons: [String: NSButton] = [:]
+    private var inlineError: String?
     private var scrollObserver: NSObjectProtocol?
 
     override init(frame frameRect: NSRect) {
@@ -255,8 +280,17 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         } else if case .job(let id) = mode,
                   dataSource?.agentJobRows().contains(where: { $0.id == id }) != true {
             mode = .destination(currentDestination)
+        } else if case .assistantWorkspace(let slug, _) = mode,
+                  (try? dataSource?.assistantWorkspace(slug: slug)) == nil {
+            mode = .destination(.assistants)
         }
         let draft = composerField?.stringValue ?? ""
+        let assistantDraft = (
+            assistantNameField?.stringValue,
+            assistantDescriptionField?.stringValue,
+            assistantVoiceField?.stringValue,
+            assistantInstructionsView?.string,
+            assistantMemoryView?.string)
         let hadFocus = composerField.map { field in
             (field.window?.firstResponder as? NSText)?.delegate === field
         } ?? false
@@ -265,6 +299,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             if !draft.isEmpty { field.stringValue = draft }
             if hadFocus { field.window?.makeFirstResponder(field) }
         }
+        if let value = assistantDraft.0 { assistantNameField?.stringValue = value }
+        if let value = assistantDraft.1 { assistantDescriptionField?.stringValue = value }
+        if let value = assistantDraft.2 { assistantVoiceField?.stringValue = value }
+        if let value = assistantDraft.3 { assistantInstructionsView?.string = value }
+        if let value = assistantDraft.4 { assistantMemoryView?.string = value }
     }
 
     private func buildJob(_ jobId: String) {
@@ -364,11 +403,19 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func rebuild() {
         contentStack.subviews.forEach { $0.removeFromSuperview() }
         composerField = nil
+        assistantNameField = nil
+        assistantDescriptionField = nil
+        assistantVoiceField = nil
+        assistantInstructionsView = nil
+        assistantMemoryView = nil
+        assistantSkillButtons = [:]
         switch mode {
         case .destination(let destination): buildDestination(destination)
         case .search: buildSearch()
         case .thread(let sid): buildThread(sid)
         case .job(let id): buildJob(id)
+        case .assistantWorkspace(let slug, let tab): buildAssistantWorkspace(slug: slug, tab: tab)
+        case .assistantCreate: buildAssistantCreate()
         }
         styleNavigation()
         let preferredHeight: CGFloat
@@ -503,6 +550,12 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func buildAssistants() {
         var top = contentStack.topAnchor
         let rows = dataSource?.agentAssistantRows() ?? []
+        let create = makeRow(
+            leading: symbolIcon("plus", description: "new assistant"),
+            name: "New assistant", unread: false,
+            preview: "Create a persistent identity, memory, skills, and workspace", time: "")
+        create.rowAction = .newAssistantIdentity
+        place(create, below: &top, gap: 2)
         place(sectionHeader("ASSISTANTS", count: rows.count), below: &top, gap: 8)
         for assistant in rows {
             let inventory = "\(assistant.conversationCount) conversations · \(assistant.automationCount) automations · \(assistant.skillCount) skills"
@@ -516,10 +569,355 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 unread: assistant.attentionCount > 0,
                 preview: assistant.description.isEmpty ? inventory : "\(assistant.description) · \(inventory)",
                 time: state)
+            view.rowAction = .assistantWorkspace(assistant.slug)
             place(view, below: &top, gap: 0)
         }
         if rows.isEmpty { place(emptyLabel("No assistants available"), below: &top, gap: 28) }
         finishContent(top)
+    }
+
+    private func buildAssistantCreate() {
+        var top = contentStack.topAnchor
+        place(assistantHeader(title: "New assistant"), below: &top, gap: 0)
+        place(formLabel("NAME"), below: &top, gap: 14)
+        let name = formField(placeholder: "Research Helper")
+        assistantNameField = name
+        place(name, below: &top, gap: 5)
+
+        place(formLabel("DESCRIPTION"), below: &top, gap: 12)
+        let description = formField(placeholder: "What this Assistant is for")
+        assistantDescriptionField = description
+        place(description, below: &top, gap: 5)
+
+        place(formLabel("INSTRUCTIONS"), below: &top, gap: 12)
+        let editor = makeTextEditor(text: "", height: 126)
+        assistantInstructionsView = editor.textView
+        place(editor.view, below: &top, gap: 5)
+
+        if let inlineError { place(errorLabel(inlineError), below: &top, gap: 10) }
+        let create = NSButton(title: "Create assistant", target: self,
+                              action: #selector(createAssistantTapped))
+        create.bezelStyle = .rounded
+        create.controlSize = .small
+        create.setAccessibilityLabel("Create assistant")
+        place(create, below: &top, gap: 16)
+        finishContent(top)
+    }
+
+    private func buildAssistantWorkspace(slug: String, tab: AssistantWorkspaceTab) {
+        guard let dataSource else { return }
+        let snapshot: AssistantWorkspaceSnapshot
+        do { snapshot = try dataSource.assistantWorkspace(slug: slug) }
+        catch {
+            var top = contentStack.topAnchor
+            place(assistantHeader(title: "Assistant unavailable"), below: &top, gap: 0)
+            place(errorLabel(error.localizedDescription), below: &top, gap: 18)
+            finishContent(top)
+            return
+        }
+
+        var top = contentStack.topAnchor
+        place(assistantHeader(title: snapshot.document.definition.name), below: &top, gap: 0)
+        place(assistantTabs(selected: tab), below: &top, gap: 8)
+        if let inlineError { place(errorLabel(inlineError), below: &top, gap: 8) }
+
+        switch tab {
+        case .overview:
+            buildAssistantOverview(snapshot, top: &top)
+        case .conversations:
+            buildAssistantConversations(snapshot, top: &top)
+        case .memory:
+            buildAssistantMemory(snapshot, top: &top)
+        case .settings:
+            buildAssistantSettings(snapshot, top: &top)
+        }
+        finishContent(top)
+    }
+
+    private func buildAssistantOverview(_ snapshot: AssistantWorkspaceSnapshot,
+                                        top: inout NSLayoutYAxisAnchor) {
+        let assistant = snapshot.document.definition
+        let runningConversation = snapshot.conversations.first { $0.turnState == .running }
+        let attentionJobs = snapshot.jobs.filter { $0.state == .blocked || $0.state == .failed }
+        place(sectionHeader("CURRENT WORK", count: (runningConversation == nil ? 0 : 1) + attentionJobs.count),
+              below: &top, gap: 14)
+        if let runningConversation {
+            let row = makeRow(
+                leading: WaveformIconView(), name: runningConversation.title,
+                unread: false, preview: "Working now", time: "")
+            row.rowAction = .assistant(runningConversation.id)
+            place(row, below: &top, gap: 0)
+        }
+        for job in attentionJobs.prefix(2) {
+            let title = job.prompt.components(separatedBy: .newlines).first ?? "Automation"
+            let row = makeRow(
+                leading: jobStateIcon(job.state), name: title,
+                unread: true, preview: job.state.rawValue, time: "")
+            row.rowAction = .job(job.id)
+            place(row, below: &top, gap: 0)
+        }
+        if runningConversation == nil && attentionJobs.isEmpty {
+            place(emptyLabel("Nothing active"), below: &top, gap: 12)
+        }
+
+        let recent = snapshot.conversations.filter { !$0.messages.isEmpty }.prefix(3)
+        place(sectionHeader("CONTINUE", count: snapshot.conversations.filter { !$0.messages.isEmpty }.count),
+              below: &top, gap: 18)
+        for conversation in recent {
+            let row = makeAssistantConversationRow(conversation)
+            place(row, below: &top, gap: 0)
+        }
+        if recent.isEmpty { place(emptyLabel("No conversations yet"), below: &top, gap: 10) }
+
+        let summary = NSTextField(wrappingLabelWithString:
+            "\(snapshot.jobs.count) automations  ·  \(assistant.selectedSkills.count) skills  ·  \(snapshot.coreMemory.content.count) / \(AgentMemoryStore.coreLimit) core memory")
+        summary.font = .systemFont(ofSize: 11.5)
+        summary.textColor = Theme.text3
+        place(summary, below: &top, gap: 18)
+    }
+
+    private func buildAssistantConversations(_ snapshot: AssistantWorkspaceSnapshot,
+                                             top: inout NSLayoutYAxisAnchor) {
+        let create = makeRow(
+            leading: symbolIcon("plus", description: "new conversation"),
+            name: "New conversation", unread: false,
+            preview: "Start a clean thread with \(snapshot.document.definition.name)", time: "")
+        create.rowAction = .newAssistantConversation(snapshot.document.definition.slug)
+        place(create, below: &top, gap: 12)
+        place(sectionHeader("CONVERSATIONS", count: snapshot.conversations.count),
+              below: &top, gap: 12)
+        for conversation in snapshot.conversations {
+            place(makeAssistantConversationRow(conversation), below: &top, gap: 0)
+        }
+        if snapshot.conversations.isEmpty {
+            place(emptyLabel("No conversations yet"), below: &top, gap: 20)
+        }
+    }
+
+    private func buildAssistantMemory(_ snapshot: AssistantWorkspaceSnapshot,
+                                      top: inout NSLayoutYAxisAnchor) {
+        let selector = NSStackView()
+        selector.orientation = .horizontal
+        selector.spacing = 8
+        for kind in ["core", "ledger"] {
+            let button = NSButton(title: kind.capitalized, target: self,
+                                  action: #selector(assistantMemoryKindTapped(_:)))
+            button.identifier = NSUserInterfaceItemIdentifier(kind)
+            button.bezelStyle = .rounded
+            button.controlSize = .small
+            button.state = assistantMemoryKind == kind ? .on : .off
+            selector.addArrangedSubview(button)
+        }
+        place(selector, below: &top, gap: 14)
+
+        let document = assistantMemoryKind == "ledger" ? snapshot.ledger : snapshot.coreMemory
+        assistantMemoryRevision = document.revision
+        let limit = assistantMemoryKind == "ledger"
+            ? AgentMemoryStore.ledgerLimit : AgentMemoryStore.coreLimit
+        let counter = NSTextField(labelWithString: "\(document.content.count) / \(limit)")
+        counter.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
+        counter.textColor = document.clipped ? Theme.accent : Theme.text3
+        place(counter, below: &top, gap: 8)
+
+        let editor = makeTextEditor(text: document.content, height: 180)
+        editor.textView.isEditable = !document.clipped
+        assistantMemoryView = editor.textView
+        place(editor.view, below: &top, gap: 6)
+        if document.clipped {
+            place(errorLabel("Memory is over the visible cap. Open the file in an editor to reduce it."),
+                  below: &top, gap: 8)
+        } else {
+            let save = NSButton(title: "Save memory", target: self,
+                                action: #selector(saveAssistantMemoryTapped))
+            save.bezelStyle = .rounded
+            save.controlSize = .small
+            place(save, below: &top, gap: 10)
+        }
+
+        place(sectionHeader("SKILLS", count: snapshot.skills.count), below: &top, gap: 20)
+        for skill in snapshot.skills {
+            let button = NSButton(checkboxWithTitle: skill.name, target: nil, action: nil)
+            button.state = skill.selected ? .on : .off
+            button.isEnabled = skill.error == nil
+            button.toolTip = skill.error ?? skill.description
+            assistantSkillButtons[skill.name] = button
+            place(button, below: &top, gap: 5)
+            if let error = skill.error { place(errorLabel(error), below: &top, gap: 2) }
+        }
+        if !snapshot.skills.isEmpty {
+            let saveSkills = NSButton(title: "Save skills", target: self,
+                                      action: #selector(saveAssistantSkillsTapped))
+            saveSkills.bezelStyle = .rounded
+            saveSkills.controlSize = .small
+            place(saveSkills, below: &top, gap: 10)
+        }
+    }
+
+    private func buildAssistantSettings(_ snapshot: AssistantWorkspaceSnapshot,
+                                        top: inout NSLayoutYAxisAnchor) {
+        let definition = snapshot.document.definition
+        place(formLabel("NAME"), below: &top, gap: 14)
+        let name = formField(placeholder: "Assistant name")
+        name.stringValue = definition.name
+        assistantNameField = name
+        place(name, below: &top, gap: 5)
+
+        place(formLabel("DESCRIPTION"), below: &top, gap: 12)
+        let description = formField(placeholder: "What this Assistant is for")
+        description.stringValue = definition.description
+        assistantDescriptionField = description
+        place(description, below: &top, gap: 5)
+
+        place(formLabel("REPLY VOICE"), below: &top, gap: 12)
+        let voice = formField(placeholder: "Use global voice")
+        voice.stringValue = definition.voice ?? ""
+        assistantVoiceField = voice
+        place(voice, below: &top, gap: 5)
+
+        place(formLabel("INSTRUCTIONS"), below: &top, gap: 12)
+        let editor = makeTextEditor(text: definition.instructions, height: 170)
+        assistantInstructionsView = editor.textView
+        place(editor.view, below: &top, gap: 5)
+
+        let save = NSButton(title: "Save settings", target: self,
+                            action: #selector(saveAssistantSettingsTapped))
+        save.identifier = NSUserInterfaceItemIdentifier(snapshot.document.revision)
+        save.bezelStyle = .rounded
+        save.controlSize = .small
+        place(save, below: &top, gap: 12)
+
+        let duplicate = NSButton(title: "Duplicate as template", target: self,
+                                 action: #selector(duplicateAssistantTapped))
+        duplicate.bezelStyle = .inline
+        duplicate.controlSize = .small
+        place(duplicate, below: &top, gap: 10)
+    }
+
+    private func makeAssistantConversationRow(_ conversation: AssistantConversation) -> AgentListRowView {
+        var state = ""
+        if conversation.turnState == .running { state = "working" }
+        else if conversation.turnState == .interrupted { state = "interrupted" }
+        else if conversation.completedAt != nil { state = "done" }
+        else if conversation.hasUnseenAssistantReply { state = "reply" }
+        let row = makeRow(
+            leading: WaveformIconView(), name: conversation.title,
+            unread: conversation.hasUnseenAssistantReply,
+            preview: conversation.preview, time: state)
+        row.rowAction = .assistant(conversation.id)
+        return row
+    }
+
+    private func assistantHeader(title: String) -> NSView {
+        let header = NSView()
+        let back = NSButton(title: "‹ Assistants", target: self, action: #selector(backTapped))
+        back.isBordered = false
+        back.font = .systemFont(ofSize: 11.5, weight: .medium)
+        back.contentTintColor = Theme.text2
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = Theme.text
+        label.lineBreakMode = .byTruncatingTail
+        let line = NSView()
+        line.wantsLayer = true
+        line.layer?.backgroundColor = Theme.border.cgColor
+        for view in [back, label, line] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            back.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            back.topAnchor.constraint(equalTo: header.topAnchor, constant: 2),
+            label.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 2),
+            label.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -2),
+            label.topAnchor.constraint(equalTo: back.bottomAnchor, constant: 5),
+            line.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            line.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            line.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 8),
+            line.heightAnchor.constraint(equalToConstant: 1),
+            line.bottomAnchor.constraint(equalTo: header.bottomAnchor),
+        ])
+        return header
+    }
+
+    private func assistantTabs(selected: AssistantWorkspaceTab) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.spacing = 2
+        stack.distribution = .fillEqually
+        for tab in AssistantWorkspaceTab.allCases {
+            let button = NSButton(title: tab.rawValue, target: self,
+                                  action: #selector(assistantTabTapped(_:)))
+            button.identifier = NSUserInterfaceItemIdentifier(tab.rawValue)
+            button.isBordered = false
+            button.font = .systemFont(ofSize: 9.5, weight: tab == selected ? .semibold : .regular)
+            button.contentTintColor = tab == selected ? Theme.accent : Theme.text3
+            stack.addArrangedSubview(button)
+        }
+        return stack
+    }
+
+    private func formLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 10, weight: .semibold)
+        label.textColor = Theme.text3
+        return label
+    }
+
+    private func formField(placeholder: String) -> NSTextField {
+        let field = NSTextField()
+        field.placeholderString = placeholder
+        field.font = .systemFont(ofSize: 12)
+        field.textColor = Theme.text
+        field.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10)
+        field.isBezeled = false
+        field.focusRingType = .none
+        field.wantsLayer = true
+        field.layer?.cornerRadius = 7
+        field.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        return field
+    }
+
+    private func makeTextEditor(text: String, height: CGFloat) -> (view: NSScrollView, textView: NSTextView) {
+        let editor = NSTextView()
+        editor.string = text
+        editor.font = .systemFont(ofSize: 12)
+        editor.textColor = Theme.text
+        editor.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10)
+        editor.isRichText = false
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.textContainerInset = NSSize(width: 8, height: 7)
+        let scroll = NSScrollView()
+        scroll.documentView = editor
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.wantsLayer = true
+        scroll.layer?.cornerRadius = 7
+        scroll.heightAnchor.constraint(equalToConstant: height).isActive = true
+        return (scroll, editor)
+    }
+
+    private func errorLabel(_ value: String) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: value)
+        label.font = .systemFont(ofSize: 10.5)
+        label.textColor = Theme.accent
+        label.maximumNumberOfLines = 0
+        return label
+    }
+
+    private func rebuildPreservingAssistantDraft() {
+        let name = assistantNameField?.stringValue
+        let description = assistantDescriptionField?.stringValue
+        let voice = assistantVoiceField?.stringValue
+        let instructions = assistantInstructionsView?.string
+        let memory = assistantMemoryView?.string
+        let skillStates = assistantSkillButtons.mapValues(\.state)
+        rebuild()
+        if let name { assistantNameField?.stringValue = name }
+        if let description { assistantDescriptionField?.stringValue = description }
+        if let voice { assistantVoiceField?.stringValue = voice }
+        if let instructions { assistantInstructionsView?.string = instructions }
+        if let memory { assistantMemoryView?.string = memory }
+        for (name, state) in skillStates { assistantSkillButtons[name]?.state = state }
     }
 
     private func buildAutomations() {
@@ -785,8 +1183,22 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         guard let row = gesture.view as? AgentListRowView,
               let action = row.rowAction else { return }
         switch action {
+        case .newAssistantIdentity:
+            currentDestination = .assistants
+            mode = .assistantCreate
+            inlineError = nil
+            rebuild()
         case .newAssistant:
             onNewAssistant?()
+        case .newAssistantConversation(let slug):
+            do {
+                let id = try dataSource?.createAgentAssistantConversation(slug: slug)
+                inlineError = nil
+                if let id { onOpenAssistantSession?(id) }
+            } catch {
+                inlineError = error.localizedDescription
+                rebuild()
+            }
         case .newJob:
             onNewAgentJob?()
         case .assistant(let id):
@@ -798,6 +1210,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             currentDestination = .automations
             mode = .job(id)
             rebuild()
+        case .assistantWorkspace(let slug):
+            currentDestination = .assistants
+            mode = .assistantWorkspace(slug, .overview)
+            inlineError = nil
+            rebuild()
         case .object(let objectID):
             open(objectID)
         }
@@ -805,9 +1222,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     private func open(_ objectID: AgentsObjectID) {
         switch objectID {
-        case .assistant:
+        case .assistant(let slug):
             currentDestination = .assistants
-            mode = .destination(.assistants)
+            mode = .assistantWorkspace(slug, .overview)
             rebuild()
         case .automation(let id):
             currentDestination = .automations
@@ -1065,6 +1482,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
               let destination = AgentsDestination(rawValue: raw) else { return }
         currentDestination = destination
         mode = .destination(destination)
+        inlineError = nil
         rebuild()
     }
 
@@ -1075,7 +1493,121 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     @objc private func backTapped() {
         mode = .destination(currentDestination)
+        inlineError = nil
         rebuild()
+    }
+
+    @objc private func assistantTabTapped(_ sender: NSButton) {
+        guard case .assistantWorkspace(let slug, _) = mode,
+              let raw = sender.identifier?.rawValue,
+              let tab = AssistantWorkspaceTab(rawValue: raw) else { return }
+        inlineError = nil
+        mode = .assistantWorkspace(slug, tab)
+        rebuild()
+    }
+
+    @objc private func assistantMemoryKindTapped(_ sender: NSButton) {
+        guard let kind = sender.identifier?.rawValue,
+              kind == "core" || kind == "ledger" else { return }
+        assistantMemoryKind = kind
+        inlineError = nil
+        rebuild()
+    }
+
+    @objc private func createAssistantTapped() {
+        guard let dataSource, let name = assistantNameField?.stringValue else { return }
+        let draft = AssistantDraft(
+            name: name,
+            description: assistantDescriptionField?.stringValue ?? "",
+            instructions: assistantInstructionsView?.string ?? "")
+        do {
+            let slug = try dataSource.createAgentAssistant(draft)
+            inlineError = nil
+            mode = .assistantWorkspace(slug, .overview)
+            rebuild()
+        } catch {
+            inlineError = error.localizedDescription
+            rebuildPreservingAssistantDraft()
+        }
+    }
+
+    @objc private func saveAssistantSettingsTapped(_ sender: NSButton) {
+        guard let dataSource,
+              case .assistantWorkspace(let slug, _) = mode,
+              let revision = sender.identifier?.rawValue,
+              let snapshot = try? dataSource.assistantWorkspace(slug: slug) else { return }
+        let draft = AssistantDraft(
+            name: assistantNameField?.stringValue ?? snapshot.document.definition.name,
+            description: assistantDescriptionField?.stringValue ?? snapshot.document.definition.description,
+            voice: assistantVoiceField?.stringValue,
+            instructions: assistantInstructionsView?.string ?? snapshot.document.definition.instructions,
+            selectedSkills: snapshot.document.definition.selectedSkills)
+        do {
+            try dataSource.updateAgentAssistant(
+                slug: slug, draft: draft, expectedRevision: revision)
+            inlineError = nil
+            rebuild()
+        } catch {
+            inlineError = error.localizedDescription
+            rebuildPreservingAssistantDraft()
+        }
+    }
+
+    @objc private func saveAssistantMemoryTapped() {
+        guard let dataSource,
+              case .assistantWorkspace(let slug, _) = mode,
+              let revision = assistantMemoryRevision,
+              let content = assistantMemoryView?.string else { return }
+        do {
+            _ = try dataSource.updateAgentAssistantMemory(
+                slug: slug, kind: assistantMemoryKind,
+                content: content, expectedRevision: revision)
+            inlineError = nil
+            rebuild()
+        } catch {
+            inlineError = error.localizedDescription
+            rebuildPreservingAssistantDraft()
+        }
+    }
+
+    @objc private func saveAssistantSkillsTapped() {
+        guard let dataSource,
+              case .assistantWorkspace(let slug, _) = mode,
+              let snapshot = try? dataSource.assistantWorkspace(slug: slug) else { return }
+        let selected = assistantSkillButtons
+            .filter { $0.value.state == .on }
+            .map(\.key).sorted()
+        let definition = snapshot.document.definition
+        let draft = AssistantDraft(
+            name: definition.name, description: definition.description,
+            voice: definition.voice, instructions: definition.instructions,
+            selectedSkills: selected)
+        do {
+            try dataSource.updateAgentAssistant(
+                slug: slug, draft: draft,
+                expectedRevision: snapshot.document.revision)
+            inlineError = nil
+            rebuild()
+        } catch {
+            inlineError = error.localizedDescription
+            rebuildPreservingAssistantDraft()
+        }
+    }
+
+    @objc private func duplicateAssistantTapped() {
+        guard let dataSource,
+              case .assistantWorkspace(let slug, _) = mode,
+              let snapshot = try? dataSource.assistantWorkspace(slug: slug) else { return }
+        do {
+            let duplicate = try dataSource.duplicateAgentAssistant(
+                slug: slug, name: snapshot.document.definition.name + " Copy")
+            inlineError = nil
+            mode = .assistantWorkspace(duplicate, .overview)
+            rebuild()
+        } catch {
+            inlineError = error.localizedDescription
+            rebuild()
+        }
     }
 
     @objc private func runJobTapped(_ sender: NSButton) {
@@ -1150,11 +1682,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 }
 
 private enum AgentListRowAction {
+    case newAssistantIdentity
     case newAssistant
+    case newAssistantConversation(String)
     case newJob
     case assistant(String)
     case mcp(String)
     case job(String)
+    case assistantWorkspace(String)
     case object(AgentsObjectID)
 }
 

@@ -153,6 +153,12 @@ final class AgentSession {
         createConversation()
     }
 
+    func refreshAssistantDefinition(_ assistant: AssistantDefinition) {
+        guard activeAssistant?.slug == assistant.slug else { return }
+        activeAssistant = assistant
+        notifyHistoryChanged()
+    }
+
     /// First-turn identity. Tool and file mechanics deliberately live in the
     /// corresponding tool definitions, not in this persona layer.
     private var assistantPersonaBlock: String {
@@ -182,6 +188,12 @@ final class AgentSession {
         loadRuntime(from: conversation)
         notifyHistoryChanged()
         return conversation
+    }
+
+    @discardableResult
+    func createConversation(for assistant: AssistantDefinition) -> AssistantConversation {
+        activeAssistant = assistant
+        return createConversation(force: true)
     }
 
     @discardableResult
@@ -222,6 +234,22 @@ final class AgentSession {
         loadRuntime(from: conversation)
         notifyHistoryChanged()
         return conversation
+    }
+
+    @discardableResult
+    func moveConversation(_ id: String,
+                          to assistant: AssistantDefinition) -> AssistantConversation? {
+        guard !isRunning,
+              let moved = history.moveConversation(
+                id, assistantSlug: assistant.slug, assistantName: assistant.name) else {
+            return nil
+        }
+        if currentSessionId == id {
+            activeAssistant = assistant
+            loadRuntime(from: moved)
+        }
+        notifyHistoryChanged()
+        return moved
     }
 
     @discardableResult
