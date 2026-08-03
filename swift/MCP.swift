@@ -353,7 +353,7 @@ final class MCPServer {
 
     private static let positionProperty: [String: Any] = [
         "type": "string",
-        "enum": ["top-left", "top-right", "bottom-left", "bottom-right", "center-left", "center-right", "center"],
+        "enum": ["top-left", "top-center", "top-right", "bottom-left", "bottom-right", "center-left", "center-right", "center"],
         "description": "Screen edge/corner to place it at. Pick the side away from where the user is working. (Overlay files also accept an explicit [x, y] position in screenshot pixels.)",
     ]
 

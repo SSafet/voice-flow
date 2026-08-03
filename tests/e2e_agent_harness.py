@@ -125,6 +125,9 @@ def scaffold_assistant(root: Path) -> None:
         "continuous_capture_hotkey": {"key_code": 62, "modifiers": 0, "label": "Right Ctrl"},
         "snapshot_hotkey": {"key_code": 56, "modifiers": 0, "label": "Left Shift"},
         "annotate_hotkey": {"key_code": 60, "modifiers": 0, "label": "Right Shift"},
+        # The next-queue panel would race the overlay QA's empty-state
+        # assertions on an attended machine; the gate tests it disabled.
+        "queue_enabled": False,
     }))
 
 

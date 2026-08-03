@@ -31,6 +31,7 @@ final class SettingsStore: ObservableObject {
     @Published var assistantWakeEnabled: Bool { didSet { commit() } }
     @Published var assistantWakeWord: String { didSet { commit() } }
     @Published var doubleSelectSpeak: Bool { didSet { commit() } }
+    @Published var queueEnabled: Bool { didSet { commit() } }
     @Published var workflowWatcherEnabled: Bool { didSet { commit() } }
     @Published var watcherInterval: Double { didSet { commit() } }
     @Published var watcherIdlePause: Double { didSet { commit() } }
@@ -74,6 +75,7 @@ final class SettingsStore: ObservableObject {
         assistantWakeEnabled = s.assistantWakeEnabled
         assistantWakeWord = s.assistantWakeWord
         doubleSelectSpeak = s.doubleSelectSpeak
+        queueEnabled = s.queueEnabled
         workflowWatcherEnabled = s.workflowWatcherEnabled
         watcherInterval = Double(s.watcherIntervalSeconds)
         watcherIdlePause = Double(s.watcherIdlePauseSeconds)
@@ -130,6 +132,7 @@ final class SettingsStore: ObservableObject {
         let wakeWord = assistantWakeWord.trimmingCharacters(in: .whitespacesAndNewlines)
         s.assistantWakeWord = wakeWord.isEmpty ? DefaultAssistantWakeWord : wakeWord
         s.doubleSelectSpeak = doubleSelectSpeak
+        s.queueEnabled = queueEnabled
         s.workflowWatcherEnabled = workflowWatcherEnabled
         s.watcherIntervalSeconds = Int(watcherInterval)
         s.watcherIdlePauseSeconds = Int(watcherIdlePause)
@@ -652,6 +655,17 @@ private struct AssistantSettingsView: View {
             }
 
             Section {
+                Toggle(isOn: $store.queueEnabled) {
+                    SettingRowLabel(title: "Show the next queue",
+                                    subtitle: "A small on-screen list of what you planned next. It resurfaces briefly at transition moments; when it's empty during active hours it stays up until you fill it.")
+                }
+            } header: {
+                Text("Next queue")
+            } footer: {
+                Text("Tell your Assistant what to queue (“FLORA, add … to my queue”), or edit ~/.config/voice-flow/queue/queue.json directly — the file is the queue.")
+            }
+
+            Section {
                 ClaudeConnectionRow()
                 Toggle(isOn: $store.doubleSelectSpeak) {
                     SettingRowLabel(title: "Re-select a session to hear its messages",
@@ -945,7 +959,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
                view: DictationSettingsView(store: store))
         addTab("Voice", symbol: "speaker.wave.2.fill", height: 300,
                view: VoiceSettingsView(store: store))
-        addTab("Assistant", symbol: "sparkles", height: 620,
+        addTab("Assistant", symbol: "sparkles", height: 700,
                view: AssistantSettingsView(store: store))
         addTab("Watcher", symbol: "eye.fill", height: 560,
                view: WatcherSettingsView(store: store))

@@ -51,6 +51,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var replySpeaker: AgentReplySpeaker!
     var captureStore: CaptureStore!
     var overlayManager: OverlayManager!
+    var nextQueue: NextQueue!
     var inbox: MessageInbox!
     var mcpServer: MCPServer!
     /// Set while a report_to_user `question` is blocking on the human. Main thread only.
@@ -619,7 +620,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         transcriptPanel = FloatingTranscriptPanel()
 
         settingsWindow = SettingsWindowController()
-        settingsWindow.onSettingsChanged = { [weak self] in self?.syncWorkflowWatcher() }
+        settingsWindow.onSettingsChanged = { [weak self] in
+            self?.syncWorkflowWatcher()
+            self?.nextQueue?.applySettings()
+        }
         settingsWindow.onHotkeyChanged = { [weak self] spec in
             self?.hotkeyManager.updateSpec(spec)
         }
@@ -834,6 +838,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             workflowWatcher.start()
         }
         indicator.setWatcherActive(workflowWatcher.isRunning)
+        nextQueue = NextQueue(isBusy: { [weak self] in self?.surfaceBusy ?? false })
+        nextQueue.applySettings()
         captureScheduler = CaptureScheduler(
             screenCapture: screenCapture,
             interval: TimeInterval(UserSettings.shared.captureIntervalSeconds)

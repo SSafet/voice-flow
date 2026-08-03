@@ -814,6 +814,7 @@ final class AgentSession {
         let sessionId = runningSessionId ?? currentSessionId
         let ticketsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/tickets").path
+        let queueDir = VoiceFlowPaths.shared.directory("queue").path
         let turnID = runningTurnID ?? UUID()
         let workingDirectory = activeAssistant?.directory
             ?? FileManager.default.homeDirectoryForCurrentUser
@@ -825,7 +826,7 @@ final class AgentSession {
             prompt: prompt,
             screenshots: turn.images,
             workingDirectory: workingDirectory,
-            extraWritableRoots: activeAssistant == nil ? [] : [ticketsDir],
+            extraWritableRoots: activeAssistant == nil ? [] : [ticketsDir, queueDir],
             trustProfile: foregroundTrustProfile,
             model: nil)
         let resumeBinding = turn.preparation.resumeExternalSessionID.map {

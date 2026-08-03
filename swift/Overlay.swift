@@ -615,13 +615,13 @@ private final class OverlayPanelWindow {
         switch anchor {
         case "top-left", "bottom-left", "center-left":
             x = visible.minX + margin
-        case "center":
+        case "center", "top-center":
             x = visible.midX - width / 2
         default:
             x = visible.maxX - width - margin
         }
         switch anchor {
-        case "top-left", "top-right":
+        case "top-left", "top-right", "top-center":
             y = visible.maxY - height - margin
         case "bottom-left", "bottom-right":
             y = visible.minY + margin
@@ -780,6 +780,9 @@ final class OverlayManager {
     func removeAll(annotationsOnly: Bool) -> Int {
         var removed = 0
         for (id, dict) in allDocsRaw() {
+            // System elements (Voice Flow's own, e.g. the next queue) survive
+            // bulk clears; they go away via their owner or an explicit ✕/id.
+            if (dict["system"] as? Bool) == true { continue }
             if annotationsOnly && (dict["type"] as? String) != "annotations" { continue }
             try? FileManager.default.removeItem(at: fileURL(id: id))
             removed += 1
@@ -915,7 +918,9 @@ final class OverlayManager {
       user's active one; omit it for elements that should always show.
     - `display_id`: integer, optional — the display returned by `take_screenshot`;
       annotation coordinates are interpreted in that display's image space.
-    - `position` (guide/panel): anchor string — `top-left`, `top-right`,
+    - `system`: bool, optional — marks Voice Flow's own elements (e.g. the
+      next queue); bulk `remove_overlay("all")` skips them.
+    - `position` (guide/panel): anchor string — `top-left`, `top-center`, `top-right`,
       `bottom-left`, `bottom-right`, `center-left`, `center-right`, `center` —
       or `[x, y]` (top-left corner of the panel, y measured from the top).
     - `width` (guide/panel): px, optional.

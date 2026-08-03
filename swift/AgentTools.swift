@@ -112,7 +112,7 @@ final class AgentToolSessionRegistry {
 enum AgentToolDispatcher {
     static let names = [
         "voiceflow_computer", "voiceflow_context", "voiceflow_overlay",
-        "voiceflow_user", "voiceflow_memory",
+        "voiceflow_user", "voiceflow_memory", "voiceflow_queue",
     ]
 
     static func execute(tool: String, arguments: [String: Any],
@@ -212,6 +212,13 @@ enum AgentToolDispatcher {
                 "characters": document.content.count,
                 "message": "Memory updated atomically.",
             ])
+        case "voiceflow_queue":
+            let operation = try requiredEnum(
+                "operation", in: arguments, allowed: ["list", "add", "done", "remove"])
+            let action: AgentCapabilityAction = operation == "list" ? .memoryRead : .memoryWrite
+            try await require(session.policy.decision(for: action), action: action,
+                              arguments: arguments, session: session)
+            return try await NextQueue.toolExecute(operation: operation, arguments: arguments)
         default:
             throw AgentToolError.unknownTool(tool)
         }
@@ -314,6 +321,8 @@ struct AgentToolProjection {
              "operation: tool.schema.enum(['report','ask','check','wait']), summary: tool.schema.string().max(500).optional(), details: tool.schema.string().max(8000).optional(), question: tool.schema.string().max(2000).optional(), timeout_seconds: tool.schema.number().int().min(5).max(14400).optional()"),
             ("voiceflow_memory", "Read or atomically update the current assistant's bounded core memory or ledger. Update requires the exact revision returned by read; secrets are rejected.",
              "operation: tool.schema.enum(['read','update']), kind: tool.schema.enum(['core','ledger']), content: tool.schema.string().optional(), expected_revision: tool.schema.string().optional()"),
+            ("voiceflow_queue", "Read or update the user's small on-screen next-task queue. Only add items the user explicitly asked to queue — never populate it on your own. done/remove need an id from list.",
+             "operation: tool.schema.enum(['list','add','done','remove']), texts: tool.schema.array(tool.schema.string().max(200)).max(10).optional(), text: tool.schema.string().max(200).optional(), id: tool.schema.string().optional()"),
         ]
         return schemas.map { name, description, arguments in
             (name, source(name: name, description: description, arguments: arguments))
