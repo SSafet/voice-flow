@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VoiceFlow — pill bloom (chips → anchored cards)</title>
+<style>
+  :root {
+    --bg: #131110;
+    --stage: #1b1917;
+    --shape: #211e1b;
+    --border: #45403a;
+    --pill-ring: rgba(255, 170, 60, .55);
+    --dot: #d8cfc0;
+    --dot-dim: #6f675c;
+    --accent: #ffc24b;
+    --red: #ff6060;
+    --green: #6ed782;
+    --text: #d6cec0;
+    --text2: #a89e8d;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, "SF Pro Text", sans-serif;
+    padding: 40px 48px 120px;
+  }
+  h1 { font-size: 20px; margin-bottom: 6px; }
+  .sub { color: var(--text2); margin-bottom: 36px; max-width: 780px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .12em; color: var(--accent); margin: 44px 0 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+
+  .stage {
+    width: 320px;
+    background: var(--stage);
+    border: 1px solid #2a2724;
+    border-radius: 10px;
+    padding-top: 10px;
+    overflow: hidden;
+  }
+  .stage.wide { width: 560px; }
+  .stage .label { font-size: 11px; color: var(--text2); padding: 0 12px 6px; }
+  .stage .label b { color: var(--text); font-weight: 600; }
+  .screen {
+    position: relative;
+    height: 150px;
+    background: linear-gradient(#161413, #171514 80%, #1d1a18);
+    border-top: 1px solid #262320;
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  .screen.tall { height: 230px; }
+  .screen.taller { height: 300px; }
+
+  /* ───────── the ONE shape ───────── */
+  .shape {
+    position: relative;
+    margin-bottom: 5px;
+    background: var(--shape);
+    border: 1px solid var(--pill-ring);
+    display: flex; flex-direction: column; justify-content: flex-end;
+    box-shadow: 0 4px 18px rgba(0,0,0,.45);
+  }
+  .shape.pill { width: 52px; height: 18px; border-radius: 9px; }
+  .shape.strip { height: 24px; border-radius: 12px; padding: 0 12px;
+                 display: flex; flex-direction: row; align-items: center; gap: 8px; }
+  .shape.grown { border-radius: 14px; padding: 10px 14px 0; min-width: 240px; }
+
+  .dots { display: flex; gap: 5px; align-items: center; justify-content: center; height: 18px; flex: none; }
+  .dot { width: 6px; height: 6px; border-radius: 3px; background: var(--dot); }
+  .shape.grown .dots { height: 24px; }
+
+  .dot.num {
+    width: 12px; height: 12px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 700; color: #17150f; background: var(--accent);
+  }
+  .dot.numoff {
+    width: 12px; height: 12px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 700;
+    background: transparent; border: 1px solid var(--dot-dim); color: var(--text2);
+  }
+
+  /* ── strip chips ── */
+  .strip .sep { width: 1px; height: 12px; background: #3a352f; }
+  .chip {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 10.5px; font-weight: 600; color: var(--text2);
+    padding: 1px 7px; border-radius: 8px; cursor: pointer; white-space: nowrap;
+  }
+  .chip.lit { background: rgba(255,194,75,.14); color: var(--accent); }
+  .chip .cnt {
+    font-size: 8px; font-weight: 700; color: #17150f; background: var(--accent);
+    border-radius: 5px; padding: 0 3.5px; line-height: 10px;
+  }
+  .chip .ring { width: 7px; height: 7px; border-radius: 4px; border: 1.5px solid var(--accent); opacity: .8; }
+
+  /* ── bloom card internals ── */
+  .card-title { font-size: 11.5px; font-weight: 600; color: var(--accent); margin-bottom: 6px; padding-right: 22px; }
+  .qitem { font-size: 12.5px; color: var(--text); margin-bottom: 4px; }
+  .qitem .arrow { color: var(--accent); margin-right: 6px; }
+  .qitem.done { color: var(--dot-dim); text-decoration: line-through; }
+  .hint { font-size: 10.5px; color: var(--text2); margin-top: 6px; }
+
+  .x {
+    position: absolute; top: 8px; right: 10px;
+    width: 16px; height: 16px; border-radius: 8px;
+    background: #383430; color: #c9c0b2; font-size: 10px; line-height: 16px; text-align: center;
+  }
+
+  /* speech bloom */
+  .np { font-size: 12.5px; color: var(--text); margin-bottom: 6px; padding-right: 22px; }
+  .np b { font-weight: 600; }
+  .scrub { position: relative; height: 3px; border-radius: 2px; background: #3a352f; margin: 8px 0 3px; }
+  .scrub .fill { position: absolute; inset: 0 auto 0 0; width: 38%; border-radius: 2px; background: var(--accent); }
+  .scrub .knob { position: absolute; top: -3.5px; left: calc(38% - 5px); width: 10px; height: 10px; border-radius: 5px; background: var(--dot); }
+  .times { display: flex; justify-content: space-between; font-size: 9.5px; color: var(--text2); }
+  .controls { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 6px; }
+  .controls .c { font-size: 13px; color: var(--text); cursor: pointer; }
+  .controls .c.play { font-size: 16px; color: var(--accent); }
+  .speeds { display: flex; gap: 6px; justify-content: center; margin-top: 7px; }
+  .speed { font-size: 9.5px; font-weight: 600; color: var(--text2); border: 1px solid #3a352f; border-radius: 6px; padding: 1px 7px; }
+  .speed.on { color: #17150f; background: var(--accent); border-color: var(--accent); }
+
+  /* session bloom (existing grown, unchanged) */
+  .content { padding-bottom: 4px; }
+  .content .status { font-size: 11.5px; font-weight: 600; color: var(--accent); margin-bottom: 4px; padding-right: 20px; }
+  .content .msg { font-size: 12.5px; color: var(--text2); }
+  .content .msg.bright { color: var(--text); }
+
+  /* the board */
+  .board { display: flex; gap: 18px; padding-bottom: 6px; }
+  .board .col { min-width: 0; }
+  .board .col.sessions { flex: 1.2; }
+  .board .col.side { flex: 1; }
+  .bh { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--text2); margin-bottom: 6px; }
+  .srow { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; font-size: 12px; }
+  .srow .nm { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .srow .st { color: var(--text2); font-size: 10.5px; white-space: nowrap; }
+  .srow .unread { width: 6px; height: 6px; border-radius: 3px; background: var(--accent); flex: none; }
+  .mini { font-size: 11.5px; color: var(--text2); margin-bottom: 4px; }
+  .mini .arrow { color: var(--accent); margin-right: 5px; }
+  .mini b { color: var(--text); font-weight: 600; }
+  .bdiv { height: 1px; background: #2a2724; margin: 10px 0; }
+
+  .rules { max-width: 780px; color: var(--text2); }
+  .rules li { margin: 0 0 10px 18px; }
+  .rules b { color: var(--text); }
+</style>
+</head>
+<body>
+
+<h1>Pill bloom — chips that grow anchored cards</h1>
+<p class="sub">
+  Translation of the Hyprland-rice video (thin bar of live chips; clicking a chip blooms a rich
+  transient card anchored to it) onto the pill. The pill stays the ONE shape: it stretches into a
+  <b>strip</b> of chips, and a selected chip <b>blooms</b> the same shape into that subsystem's card.
+  Nothing new floats; nothing persists. Esc / click-away always returns to the collapsed pill.
+</p>
+
+<h2>1 · Strip — the pill fans out into chips</h2>
+<div class="row">
+  <div class="stage">
+    <div class="label"><b>Resting</b> — unchanged. 52×18, middle dot carries active session.</div>
+    <div class="screen">
+      <div class="shape pill"><div class="dots">
+        <span class="dot" style="opacity:.5"></span><span class="dot num">2</span><span class="dot" style="opacity:.5"></span>
+      </div></div>
+    </div>
+  </div>
+  <div class="stage wide">
+    <div class="label"><b>Strip</b> — hover-hold or ⌃⌥Space. Sessions keep their dots; every other live subsystem is one chip. Amber = has something for you.</div>
+    <div class="screen">
+      <div class="shape strip">
+        <span class="dot numoff">1</span><span class="dot num">2</span><span class="dot numoff">3</span>
+        <span class="sep"></span>
+        <span class="chip lit">♪ reading reply</span>
+        <span class="chip lit">→ next <span class="cnt">3</span></span>
+        <span class="chip">✉ <span class="cnt" style="background:#6f675c;color:#17150f">1</span></span>
+        <span class="chip"><span class="ring"></span> watch</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>2 · Bloom — a chip grows its card, anchored to the pill</h2>
+<div class="row">
+  <div class="stage">
+    <div class="label"><b>Next-queue bloom</b> — the overlay card moves home: same list, now on demand at the pill, editable in place.</div>
+    <div class="screen tall">
+      <div class="shape grown" style="width:260px">
+        <div class="x">✕</div>
+        <div class="content">
+          <div class="card-title">Next queue</div>
+          <div class="qitem"><span class="arrow">→</span>Test the queue capabilities</div>
+          <div class="qitem"><span class="arrow">→</span>Pantrella: cohort invite draft</div>
+          <div class="qitem done"><span class="arrow">→</span>Reply to Wave organizers</div>
+          <div class="hint">enter marks done · type to add · esc closes</div>
+        </div>
+        <div class="dots"><span class="dot" style="opacity:.5"></span><span class="dot num">2</span><span class="dot" style="opacity:.5"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="label"><b>Speech bloom</b> — the music-player card from the video, as the TTS surface. Scrubber lives INSIDE the card — no strike-through across the pill.</div>
+    <div class="screen tall">
+      <div class="shape grown" style="width:260px">
+        <div class="x">✕</div>
+        <div class="content">
+          <div class="card-title">Speaking — flora</div>
+          <div class="np">"…the retention fix is ready to ship, two files changed…"</div>
+          <div class="scrub"><div class="fill"></div><div class="knob"></div></div>
+          <div class="times"><span>0:12</span><span>0:31</span></div>
+          <div class="controls"><span class="c">⏮</span><span class="c play">⏸</span><span class="c">⏭</span></div>
+          <div class="speeds"><span class="speed">0.9×</span><span class="speed on">1.0×</span><span class="speed">1.1×</span></div>
+        </div>
+        <div class="dots"><span class="dot" style="opacity:.5"></span><span class="dot num">2</span><span class="dot" style="opacity:.5"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="label"><b>Session bloom</b> — today's grown push stack, unchanged. It was already a bloom; now it's one of four, same grammar.</div>
+    <div class="screen tall">
+      <div class="shape grown" style="width:260px">
+        <div class="x">✕</div>
+        <div class="content">
+          <div class="status">voice-flow — session routing</div>
+          <div class="msg" style="opacity:.55">Tests green, pushed.</div>
+          <div class="msg bright">Ship the retention fix now, or wait for the cohort branch?</div>
+          <div class="hint">⌃⌥ hold to answer by voice</div>
+        </div>
+        <div class="dots"><span class="dot" style="opacity:.5"></span><span class="dot num">2</span><span class="dot" style="opacity:.5"></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>3 · Board — everything at once, when you ask for it</h2>
+<div class="row">
+  <div class="stage wide">
+    <div class="label"><b>The board</b> — the video's clock-dashboard equivalent: long-hold ⌃⌥Space (or double-tap). One transient card with all of it; release/Esc and it's gone. This is the "more space to control everything" surface — it visits, it doesn't reside.</div>
+    <div class="screen taller">
+      <div class="shape grown" style="width:520px">
+        <div class="x">✕</div>
+        <div class="board">
+          <div class="col sessions">
+            <div class="bh">Sessions</div>
+            <div class="srow"><span class="dot numoff">1</span><span class="nm">pantrella — cohort</span><span class="st">working…</span></div>
+            <div class="srow"><span class="dot num">2</span><span class="nm">voice-flow — routing</span><span class="st">asking</span><span class="unread"></span></div>
+            <div class="srow"><span class="dot numoff">3</span><span class="nm">flora</span><span class="st">2 unread</span><span class="unread"></span></div>
+            <div class="bdiv"></div>
+            <div class="mini">♪ <b>reading reply</b> · 0:12 / 0:31 · ⏸</div>
+            <div class="mini"><span class="ring" style="display:inline-block;width:7px;height:7px;border-radius:4px;border:1.5px solid var(--accent)"></span> watcher recording · review 21:37</div>
+          </div>
+          <div class="col side">
+            <div class="bh">Next</div>
+            <div class="mini"><span class="arrow">→</span>Test the queue capabilities</div>
+            <div class="mini"><span class="arrow">→</span>Pantrella: cohort invite draft</div>
+            <div class="mini" style="opacity:.45;text-decoration:line-through"><span class="arrow">→</span>Reply to Wave organizers</div>
+            <div class="bdiv"></div>
+            <div class="bh">Inbox</div>
+            <div class="mini">✉ 1 queued for <b>pantrella</b></div>
+          </div>
+        </div>
+        <div class="dots"><span class="dot" style="opacity:.5"></span><span class="dot num">2</span><span class="dot" style="opacity:.5"></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>Rules stolen from the video</h2>
+<ul class="rules">
+  <li><b>Anchored, never floating.</b> Every card grows out of the pill and collapses back into it — the video's cards bloom from their bar chip. No second window, ever.</li>
+  <li><b>One bloom at a time.</b> Opening a chip's card closes the previous one, like the rice closes the music card when the battery card opens.</li>
+  <li><b>Transient by contract.</b> Esc / click-away / picking another chip always returns to the pill. "More space" is something you summon, not something you keep.</li>
+  <li><b>The dots never move.</b> Strip and every bloom keep the session dots in the bottom band of the one shape — same invariant as today.</li>
+  <li><b>Hero fact, quiet rest.</b> Each card leads with its one number or line big (the rice's 100% / 9.3° / 11:56) — the question being asked, the queue count, the playback position.</li>
+  <li><b>Chips only when alive.</b> A subsystem with nothing going on shows no chip — the strip is a status readout, not a menu.</li>
+</ul>
+
+</body>
+</html>
