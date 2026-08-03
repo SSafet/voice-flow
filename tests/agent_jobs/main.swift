@@ -9,6 +9,19 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
 
 let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+expect(AgentExecutionOwnershipIssue.resolve(
+    jobAssistantSlug: "flora", conversationAssistantSlug: "flora",
+    assistantAvailable: true) == nil,
+       "matching automation ownership was rejected")
+expect(AgentExecutionOwnershipIssue.resolve(
+    jobAssistantSlug: "flora", conversationAssistantSlug: "flora",
+    assistantAvailable: false) == .missingAssistant,
+       "missing Assistant did not fail closed")
+expect(AgentExecutionOwnershipIssue.resolve(
+    jobAssistantSlug: "flora", conversationAssistantSlug: "research",
+    assistantAvailable: true) == .conversationOwnerMismatch,
+       "cross-Assistant conversation mismatch was accepted")
+
 // A pre-model-picker database must migrate additively and preserve a null
 // model so the legacy global default remains the execution fallback.
 let legacyURL = VoiceFlowPaths.shared.file("jobs-legacy-model.sqlite")
@@ -77,6 +90,12 @@ let jobB = AgentJob(
 try store.put(jobA)
 try store.put(jobConflict)
 try store.put(jobB)
+let initialReferences = try store.jobReferencesByConversation()
+expect(initialReferences["conversation-a"] == Set(["job-a", "job-conflict"]),
+       "authoritative job references collapsed a shared conversation")
+let sharedConversationJobs = try store.jobs(conversationID: "conversation-a")
+expect(sharedConversationJobs.map(\.id) == ["job-a", "job-conflict"],
+       "conversation lookup did not include every referencing job")
 let storedModelJob = try store.job(id: "job-a")
 expect(storedModelJob?.modelID == "test/model-fast",
        "per-job model ID did not round-trip")

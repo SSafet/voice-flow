@@ -58,6 +58,9 @@ struct AssistantConversation: Codable, Equatable {
     var completedAt: Date?
     /// A durable automation may own/protect this canonical conversation.
     var automationJobID: String?
+    /// Authoritative-reference mirror supports upgraded databases where more
+    /// than one legacy automation points at the same conversation.
+    var automationJobIDs: [String]?
 
     init(id: String = UUID().uuidString, codexThreadId: String? = nil,
          preferredRuntime: AgentRuntimeKind? = nil,
@@ -67,7 +70,8 @@ struct AssistantConversation: Codable, Equatable {
          messages: [AssistantHistoryMessage] = [],
          assistantSlug: String? = nil, assistantNameSnapshot: String? = nil,
          assistantOwnerWasInferred: Bool? = nil,
-         completedAt: Date? = nil, automationJobID: String? = nil) {
+         completedAt: Date? = nil, automationJobID: String? = nil,
+         automationJobIDs: [String]? = nil) {
         self.id = id
         self.codexThreadId = codexThreadId
         self.preferredRuntime = preferredRuntime
@@ -82,6 +86,7 @@ struct AssistantConversation: Codable, Equatable {
         self.assistantOwnerWasInferred = assistantOwnerWasInferred
         self.completedAt = completedAt
         self.automationJobID = automationJobID
+        self.automationJobIDs = automationJobIDs
     }
 
     var preview: String {
@@ -130,6 +135,12 @@ struct AssistantConversation: Codable, Equatable {
             ].joined(separator: "\u{1f}")
         }
         return AssistantThreadIdentity.contentRevision(components)
+    }
+
+    var automationReferenceIDs: Set<String> {
+        var result = Set(automationJobIDs ?? [])
+        if let automationJobID { result.insert(automationJobID) }
+        return result
     }
 }
 
@@ -257,14 +268,15 @@ final class AssistantHistoryStore {
                current.messages.isEmpty, current.codexThreadId == nil,
                current.turnState == .idle,
                current.assistantSlug == assistantSlug,
-               current.automationJobID == nil {
+               current.automationReferenceIDs.isEmpty {
                 return current
             }
             let conversation = AssistantConversation(
                 assistantSlug: assistantSlug,
                 assistantNameSnapshot: assistantName,
                 assistantOwnerWasInferred: assistantSlug == nil ? nil : false,
-                automationJobID: automationJobID)
+                automationJobID: automationJobID,
+                automationJobIDs: automationJobID.map { [$0] })
             envelope.sessions.append(conversation)
             if activate { envelope.activeSessionId = conversation.id }
             pruneLocked()
@@ -292,7 +304,7 @@ final class AssistantHistoryStore {
         lock.withLock {
             guard let target = conversationLocked(id),
                   target.turnState != .running,
-                  target.automationJobID == nil else { return nil }
+                  target.automationReferenceIDs.isEmpty else { return nil }
             envelope.sessions.removeAll { $0.id == id }
             if envelope.sessions.isEmpty {
                 let fresh = AssistantConversation(
@@ -325,6 +337,32 @@ final class AssistantHistoryStore {
                 changed = true
             }
             if changed { persistLocked() }
+        }
+    }
+
+    /// Join the rollback mirror to SQLite's authoritative many-to-one job
+    /// references. The return value identifies database references whose
+    /// canonical conversation is missing so callers can surface repair work.
+    @discardableResult
+    func reconcileAutomationReferences(
+        _ references: [String: Set<String>]
+    ) -> [String: Set<String>] {
+        lock.withLock {
+            var changed = false
+            let knownIDs = Set(envelope.sessions.map(\.id))
+            for index in envelope.sessions.indices {
+                let ids = (references[envelope.sessions[index].id] ?? []).sorted()
+                let primary = ids.first
+                if envelope.sessions[index].automationJobID != primary
+                    || envelope.sessions[index].automationJobIDs != ids {
+                    envelope.sessions[index].automationJobID = primary
+                    envelope.sessions[index].automationJobIDs = ids
+                    writeMetadataLocked(for: envelope.sessions[index])
+                    changed = true
+                }
+            }
+            if changed { persistLocked() }
+            return references.filter { !knownIDs.contains($0.key) }
         }
     }
 
@@ -615,7 +653,7 @@ final class AssistantHistoryStore {
             $0.messages.isEmpty
                 && $0.codexThreadId == nil
                 && $0.turnState == .idle
-                && $0.automationJobID == nil
+                && $0.automationReferenceIDs.isEmpty
         }
         envelope.sessions.append(contentsOf: additions)
         envelope.activeSessionId = additions.max { $0.updatedAt < $1.updatedAt }!.id
@@ -629,7 +667,7 @@ final class AssistantHistoryStore {
         let removable = envelope.sessions
             .filter {
                 $0.id != active
-                    && $0.automationJobID == nil
+                    && $0.automationReferenceIDs.isEmpty
                     && $0.turnState != .running
             }
             .sorted { $0.updatedAt < $1.updatedAt }
@@ -716,6 +754,10 @@ final class AssistantHistoryStore {
                     conversation.automationJobID = metadata.automationJobID
                     historyChanged = true
                 }
+                if conversation.automationJobIDs != metadata.automationJobIDs {
+                    conversation.automationJobIDs = metadata.automationJobIDs
+                    historyChanged = true
+                }
                 if conversation.completedAt != resolvedCompletion {
                     conversation.completedAt = resolvedCompletion
                     historyChanged = true
@@ -732,6 +774,7 @@ final class AssistantHistoryStore {
             } else if conversation.assistantSlug != nil
                         || conversation.assistantNameSnapshot != nil
                         || conversation.automationJobID != nil
+                        || conversation.automationJobIDs?.isEmpty == false
                         || conversation.completedAt != nil {
                 writeMetadataLocked(for: conversation)
             }
@@ -753,6 +796,7 @@ final class AssistantHistoryStore {
             assistantNameSnapshot: conversation.assistantNameSnapshot,
             assistantOwnerWasInferred: conversation.assistantOwnerWasInferred,
             automationJobID: conversation.automationJobID,
+            automationJobIDs: conversation.automationJobIDs,
             codexThreadIDSnapshot: conversation.codexThreadId,
             completedAt: conversation.completedAt,
             historyUpdatedAtAtWrite: conversation.updatedAt,

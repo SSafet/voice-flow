@@ -847,6 +847,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         chatPanel.restoreAssistantConversation(agent.currentConversation)
         agent.onHistoryChanged = { [weak self] in
             guard let self else { return }
+            self.replySpeaker.voiceOverride = self.agent.activeAssistant?.voice
             self.chatPanel.setAssistantTitle(self.agent.currentConversation.title)
             self.chatPanel.setAssistantRuntime(
                 self.agent.preferredRuntime, enabled: !self.agent.isRunning)
@@ -988,6 +989,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     }))
             agentJobStore = store
             agentSupervisor = supervisor
+            let missingJobConversations = agent.reconcileAutomationReferences(
+                try store.jobReferencesByConversation())
+            if !missingJobConversations.isEmpty {
+                vflog("agent jobs: \(missingJobConversations.values.reduce(0) { $0 + $1.count }) job reference(s) have missing conversations")
+            }
             wireAgentJobTriggers()
             Task { [weak self] in
                 await supervisor.setStatusHandler { [weak self] update in
@@ -1069,7 +1075,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func createAgentJob() {
-        guard agent.activeAssistant != nil, agentJobStore != nil else {
+        guard agent.activeAssistant != nil, agentJobStore != nil, !agent.isRunning else {
             replyBubble.showTransient("Agent automations are unavailable", seconds: 5)
             return
         }
@@ -1136,9 +1142,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let now = Date()
         let nextRun: Date? = selectedTrigger == .interval
             ? now.addingTimeInterval(minutes * 60) : nil
+        let jobID = UUID().uuidString
+        let conversation = agent.createAutomationConversation(
+            jobID: jobID, assistant: assistant)
         let job = AgentJob(
+            id: jobID,
             assistantSlug: assistant.slug,
-            conversationID: agent.currentSessionId,
+            conversationID: conversation.id,
             runtime: selectedRuntime, trigger: selectedTrigger,
             modelID: selectedModel,
             prompt: task, trustProfile: .unattended,
@@ -1150,9 +1160,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             createdAt: now, updatedAt: now)
         do {
             try agentJobStore.put(job)
+            _ = agent.reconcileAutomationReferences(
+                try agentJobStore.jobReferencesByConversation())
             chatPanel.refreshAgents()
             replyBubble.showTransient("automation created", seconds: 4)
         } catch {
+            if let references = try? agentJobStore.jobReferencesByConversation() {
+                _ = agent.reconcileAutomationReferences(references)
+                _ = agent.deleteConversation(conversation.id)
+            }
             replyBubble.showTransient("automation failed: \(error.localizedDescription)", seconds: 7)
         }
     }
@@ -4793,10 +4809,10 @@ extension AppDelegate: AgentsDataSource {
         let baseSlug = AssistantsStore.shared.base?.slug
         return definitions.map { assistant in
             let ownedJobs = jobs.filter { $0.assistantSlug == assistant.slug }
-            // Conversations do not carry assistant ownership yet. Until the
-            // ownership migration lands, the deterministic legacy projection
-            // assigns them to the configured base Assistant only.
-            let ownedConversations = assistant.slug == baseSlug ? conversations : []
+            let ownedConversations = conversations.filter {
+                $0.assistantSlug == assistant.slug
+                    || ($0.assistantSlug == nil && assistant.slug == baseSlug)
+            }
             let latestConversation = ownedConversations.map(\.updatedAt).max()
             let latestJob = ownedJobs.map(\.updatedAt).max()
             let updatedAt = [latestConversation, latestJob].compactMap { $0 }.max()
@@ -4809,7 +4825,9 @@ extension AppDelegate: AgentsDataSource {
                 }.count,
                 automationCount: ownedJobs.count,
                 skillCount: assistant.selectedSkills.count,
-                attentionCount: ownedJobs.filter { $0.state == .blocked || $0.state == .failed }.count,
+                attentionCount: ownedJobs.filter {
+                    $0.state == .blocked || $0.state == .failed
+                }.count + ownedConversations.filter(\.hasUnseenAssistantReply).count,
                 running: ownedJobs.contains { $0.state == .running }
                     || ownedConversations.contains { $0.turnState == .running },
                 updatedAt: updatedAt)
@@ -4868,12 +4886,14 @@ extension AppDelegate: AgentsDataSource {
                 preview: preview,
                 time: Self.pushTimeFormatter.string(from: conversation.updatedAt),
                 updatedAt: conversation.updatedAt,
-                owner: agent?.activeAssistant?.name ?? DefaultAssistantWakeWord,
+                owner: conversation.assistantNameSnapshot
+                    ?? conversation.assistantSlug
+                    ?? DefaultAssistantWakeWord,
                 unread: conversation.hasUnseenAssistantReply,
                 pendingAsk: false,
                 live: conversation.turnState == .running,
-                archived: false,
-                completed: false,
+                archived: conversation.completedAt != nil,
+                completed: conversation.completedAt != nil,
                 ghost: false)
         }
         // Numbers stay ≡ the pill picker (⌃⌥N identity); the LIST order is

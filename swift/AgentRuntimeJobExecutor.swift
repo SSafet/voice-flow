@@ -22,10 +22,28 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
 
     func execute(job: AgentJob, run: AgentRun,
                  progress: @escaping (String) -> Void) async throws -> AgentJobExecutionResult {
-        guard history.conversation(job.conversationID) != nil else {
+        guard let conversation = history.conversation(job.conversationID) else {
             throw AgentSupervisorError.missingConversation
         }
         let assistant = AssistantsStore.shared.assistant(slug: job.assistantSlug)
+        switch AgentExecutionOwnershipIssue.resolve(
+            jobAssistantSlug: job.assistantSlug,
+            conversationAssistantSlug: conversation.assistantSlug,
+            assistantAvailable: assistant != nil) {
+        case .missingAssistant:
+            throw AgentRuntimeFailure(
+                code: "missing_assistant",
+                message: "The automation's Assistant is unavailable.",
+                retryable: false)
+        case .conversationOwnerMismatch:
+            throw AgentRuntimeFailure(
+                code: "assistant_owner_mismatch",
+                message: "The automation conversation belongs to a different Assistant.",
+                retryable: false)
+        case nil:
+            break
+        }
+        guard let assistant else { preconditionFailure("ownership preflight lost Assistant") }
         guard let preparation = history.beginRuntimeTurn(
             sessionId: job.conversationID, runtime: job.runtime, text: job.prompt) else {
             if history.conversation(job.conversationID) != nil {
@@ -47,8 +65,7 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
             prompt: AgentPromptComposer.compose(
                 layers, includeIdentity: preparation.requiresFreshSession),
             screenshots: [],
-            workingDirectory: assistant?.directory
-                ?? VoiceFlowPaths.shared.directory("assistants/default"),
+            workingDirectory: assistant.directory,
             extraWritableRoots: [], trustProfile: job.trustProfile,
             model: job.runtime == .opencode
                 ? AgentModelSelection(

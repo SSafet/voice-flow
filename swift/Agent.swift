@@ -185,6 +185,28 @@ final class AgentSession {
     }
 
     @discardableResult
+    func createAutomationConversation(jobID: String,
+                                      assistant: AssistantDefinition) -> AssistantConversation {
+        let conversation = history.createConversation(
+            force: true,
+            assistantSlug: assistant.slug,
+            assistantName: assistant.name,
+            automationJobID: jobID,
+            activate: false)
+        notifyHistoryChanged()
+        return conversation
+    }
+
+    @discardableResult
+    func reconcileAutomationReferences(
+        _ references: [String: Set<String>]
+    ) -> [String: Set<String>] {
+        let missing = history.reconcileAutomationReferences(references)
+        notifyHistoryChanged()
+        return missing
+    }
+
+    @discardableResult
     func activateConversation(_ id: String) -> AssistantConversation? {
         guard !isRunning, let snapshot = history.conversation(id) else { return nil }
         let owner: AssistantDefinition?

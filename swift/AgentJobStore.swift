@@ -184,6 +184,34 @@ final class AgentJobStore {
         }
     }
 
+    func jobs(conversationID: String) throws -> [AgentJob] {
+        try lock.withLock {
+            try withStatement(
+                "SELECT * FROM agent_jobs WHERE conversation_id=? ORDER BY created_at,id") { statement in
+                bindText(conversationID, at: 1, to: statement)
+                var result: [AgentJob] = []
+                while sqlite3_step(statement) == SQLITE_ROW { result.append(decodeJob(statement)) }
+                return result
+            }
+        }
+    }
+
+    /// Complete authoritative reference set, including disabled, completed,
+    /// cancelled, failed, and blocked jobs. History retention/deletion must
+    /// never infer this from only runnable rows.
+    func jobReferencesByConversation() throws -> [String: Set<String>] {
+        try lock.withLock {
+            try withStatement(
+                "SELECT conversation_id,id FROM agent_jobs ORDER BY conversation_id,id") { statement in
+                var result: [String: Set<String>] = [:]
+                while sqlite3_step(statement) == SQLITE_ROW {
+                    result[text(statement, 0), default: []].insert(text(statement, 1))
+                }
+                return result
+            }
+        }
+    }
+
     /// Exactly-once trigger intake. A duplicate source/event pair makes no
     /// state change even across app restarts.
     @discardableResult
@@ -657,6 +685,8 @@ final class AgentJobStore {
         )
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_jobs_due ON agent_jobs(state,next_run_at,updated_at)")
+        try exec("CREATE INDEX IF NOT EXISTS idx_jobs_conversation ON agent_jobs(conversation_id,state)")
+        try exec("CREATE INDEX IF NOT EXISTS idx_jobs_assistant ON agent_jobs(assistant_slug,state)")
         try exec("CREATE INDEX IF NOT EXISTS idx_runs_active ON agent_runs(state,runtime,lease_expires_at)")
         try? exec("ALTER TABLE agent_jobs ADD COLUMN pending_trigger_at REAL")
         try? exec("ALTER TABLE agent_jobs ADD COLUMN model_id TEXT")

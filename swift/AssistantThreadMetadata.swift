@@ -27,6 +27,7 @@ struct AssistantThreadMetadata: Codable, Equatable {
     /// job database remains authoritative; this prevents an older app build
     /// from making an automation conversation eligible for history pruning.
     var automationJobID: String?
+    var automationJobIDs: [String]?
     var codexThreadIDSnapshot: String?
     var completedAt: Date?
     var metadataUpdatedAt: Date
@@ -41,6 +42,7 @@ struct AssistantThreadMetadata: Codable, Equatable {
     init(conversationID: String, assistantSlug: String?,
          assistantNameSnapshot: String?, assistantOwnerWasInferred: Bool? = nil,
          automationJobID: String? = nil,
+         automationJobIDs: [String]? = nil,
          codexThreadIDSnapshot: String? = nil,
          completedAt: Date?,
          metadataUpdatedAt: Date = Date(), historyUpdatedAtAtWrite: Date,
@@ -53,6 +55,7 @@ struct AssistantThreadMetadata: Codable, Equatable {
         self.assistantNameSnapshot = assistantNameSnapshot
         self.assistantOwnerWasInferred = assistantOwnerWasInferred
         self.automationJobID = automationJobID
+        self.automationJobIDs = automationJobIDs
         self.codexThreadIDSnapshot = codexThreadIDSnapshot
         self.completedAt = completedAt
         self.metadataUpdatedAt = metadataUpdatedAt
@@ -69,6 +72,7 @@ struct AssistantThreadMetadata: Codable, Equatable {
             assistantNameSnapshot: assistantNameSnapshot,
             assistantOwnerWasInferred: assistantOwnerWasInferred,
             automationJobID: automationJobID,
+            automationJobIDs: automationJobIDs,
             codexThreadIDSnapshot: codexThreadIDSnapshot,
             completedAt: completedAt,
             metadataUpdatedAt: metadataUpdatedAt,

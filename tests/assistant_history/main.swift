@@ -280,6 +280,7 @@ func rewriteAsOlderHistory(_ file: URL, advanceActivityBy seconds: TimeInterval 
         sessions[index].removeValue(forKey: "assistantOwnerWasInferred")
         sessions[index].removeValue(forKey: "completedAt")
         sessions[index].removeValue(forKey: "automationJobID")
+        sessions[index].removeValue(forKey: "automationJobIDs")
         if seconds != 0, let timestamp = sessions[index]["updatedAt"] as? NSNumber {
             sessions[index]["updatedAt"] = timestamp.doubleValue + seconds
         }
@@ -405,6 +406,17 @@ expect(restoredAutomationHistory.conversation(automationConversation.id)?.automa
        == "job-protected", "downgrade rewrite erased automation retention ownership")
 expect(restoredAutomationHistory.delete(automationConversation.id) == nil,
        "destructive delete accepted an automation-owned conversation")
+_ = restoredAutomationHistory.reconcileAutomationReferences([
+    automationConversation.id: ["job-protected", "job-second"],
+])
+expect(restoredAutomationHistory.conversation(automationConversation.id)?
+    .automationReferenceIDs == Set(["job-protected", "job-second"]),
+       "history did not mirror multiple authoritative job references")
+_ = restoredAutomationHistory.reconcileAutomationReferences([
+    automationConversation.id: ["job-second"],
+])
+expect(restoredAutomationHistory.delete(automationConversation.id) == nil,
+       "removing one of two jobs made a still-referenced conversation deletable")
 for index in 0..<(AssistantHistoryStore.maxSessions + 8) {
     let conversation = restoredAutomationHistory.createConversation(force: true)
     restoredAutomationHistory.appendMessage(

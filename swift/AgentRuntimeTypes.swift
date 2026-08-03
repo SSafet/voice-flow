@@ -57,6 +57,21 @@ enum AgentPermissionResponse: String, Codable, Equatable {
     case reject
 }
 
+enum AgentExecutionOwnershipIssue: Equatable {
+    case missingAssistant
+    case conversationOwnerMismatch
+
+    static func resolve(jobAssistantSlug: String,
+                        conversationAssistantSlug: String?,
+                        assistantAvailable: Bool) -> AgentExecutionOwnershipIssue? {
+        guard assistantAvailable else { return .missingAssistant }
+        guard conversationAssistantSlug == jobAssistantSlug else {
+            return .conversationOwnerMismatch
+        }
+        return nil
+    }
+}
+
 /// Provider-neutral accounting returned by foreground turns and durable jobs.
 /// This lives with the shared runtime value types so the loopback model
 /// gateway can report usage without importing the higher-level runtime loop.
