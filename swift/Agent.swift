@@ -135,7 +135,13 @@ final class AgentSession {
     }
 
     func setActiveAssistant(_ assistant: AssistantDefinition?) {
-        activeAssistant = assistant
+        if let assistant {
+            history.assignMissingOwners(
+                assistantSlug: assistant.slug, assistantName: assistant.name)
+        }
+        let owner = history.activeConversation().assistantSlug
+            .flatMap { AssistantsStore.shared.assistant(slug: $0) }
+        activeAssistant = owner ?? assistant
     }
 
     /// Route to a different folder assistant: a fresh conversation, so the
@@ -168,7 +174,10 @@ final class AgentSession {
 
     @discardableResult
     func createConversation(force: Bool = false) -> AssistantConversation {
-        let conversation = history.createConversation(force: force)
+        let conversation = history.createConversation(
+            force: force,
+            assistantSlug: activeAssistant?.slug,
+            assistantName: activeAssistant?.name)
         currentSessionId = conversation.id
         loadRuntime(from: conversation)
         notifyHistoryChanged()
@@ -177,7 +186,16 @@ final class AgentSession {
 
     @discardableResult
     func activateConversation(_ id: String) -> AssistantConversation? {
-        guard !isRunning, let conversation = history.activate(id) else { return nil }
+        guard !isRunning, let snapshot = history.conversation(id) else { return nil }
+        let owner: AssistantDefinition?
+        if let slug = snapshot.assistantSlug {
+            guard let resolved = AssistantsStore.shared.assistant(slug: slug) else { return nil }
+            owner = resolved
+        } else {
+            owner = activeAssistant
+        }
+        guard let conversation = history.activate(id) else { return nil }
+        activeAssistant = owner
         currentSessionId = conversation.id
         loadRuntime(from: conversation)
         notifyHistoryChanged()
@@ -187,7 +205,13 @@ final class AgentSession {
     @discardableResult
     func deleteConversation(_ id: String) -> AssistantConversation? {
         guard !isRunning else { return nil }
-        let active = history.delete(id)
+        guard let active = history.delete(
+            id,
+            replacementAssistantSlug: activeAssistant?.slug,
+            replacementAssistantName: activeAssistant?.name) else { return nil }
+        if let ownerSlug = active.assistantSlug {
+            activeAssistant = AssistantsStore.shared.assistant(slug: ownerSlug)
+        }
         currentSessionId = active.id
         loadRuntime(from: active)
         notifyHistoryChanged()

@@ -114,7 +114,7 @@ compile_and_run assistants swift/VoiceFlowPaths.swift swift/AssistantWake.swift 
 compile_and_run agent_capabilities swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentCapabilities.swift tests/agent_capabilities/main.swift
 compile_and_run agent_prompt swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
-    swift/AgentRuntimeTypes.swift swift/AssistantHistory.swift swift/AgentCapabilities.swift \
+    swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentCapabilities.swift \
     swift/AgentPromptComposer.swift tests/agent_prompt/main.swift
 compile_and_run agent_permissions swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
@@ -135,23 +135,23 @@ compile_and_run openrouter_model_picker swift/VoiceFlowPaths.swift swift/OpenRou
     swift/OpenRouterModelPicker.swift swift/AgentJobEditor.swift \
     tests/openrouter_model_picker/main.swift -framework Cocoa
 compile_and_run agent_supervisor swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
-    swift/AgentRuntimeTypes.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
+    swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
     swift/AgentCapabilities.swift swift/AgentJobStore.swift swift/AgentSupervisor.swift \
     tests/agent_supervisor/main.swift -lsqlite3
 compile_and_run assistant_history swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
-    swift/AssistantHistory.swift tests/assistant_history/main.swift
-compile_and_run assistant_continuity swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift swift/AssistantHistory.swift \
+    swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift tests/assistant_history/main.swift
+compile_and_run assistant_continuity swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift \
     swift/AssistantContinuity.swift tests/assistant_continuity/main.swift
 compile_and_run codex_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
-    swift/AgentRuntimeTypes.swift swift/AssistantHistory.swift swift/AgentRuntime.swift swift/Codex.swift \
+    swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift swift/Codex.swift \
     swift/CodexAgentRuntime.swift tests/codex_runtime/main.swift
 compile_and_run opencode_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
-    swift/AgentRuntimeTypes.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
+    swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
     swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
     swift/ModelGateway.swift swift/OpenRouterModels.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
     tests/opencode_runtime/main.swift -framework Security
 compile_and_run opencode_http swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
-    swift/AgentRuntimeTypes.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
+    swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
     swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift \
     swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift swift/OpenCodeSupervisor.swift \
     swift/OpenCodeHTTPClient.swift tests/opencode_http/main.swift -framework Security
@@ -192,7 +192,7 @@ case "$MODE" in
         [ -s "$PORT_FILE" ] || { echo "OpenCode fake provider did not start" >&2; exit 1; }
         UPSTREAM_PORT="$(<"$PORT_FILE")"
         compile_only opencode_live_turn swift/VoiceFlowPaths.swift swift/AssistantWake.swift \
-            swift/Assistants.swift swift/AgentRuntimeTypes.swift swift/AssistantHistory.swift \
+            swift/Assistants.swift swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift \
             swift/AgentRuntime.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
             swift/AgentPromptComposer.swift swift/AgentTools.swift swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift \
             swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
@@ -203,7 +203,7 @@ case "$MODE" in
         kill "$UPSTREAM_PID" 2>/dev/null || true
         UPSTREAM_PID=""
         compile_and_run opencode_supervisor swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
-            swift/AssistantHistory.swift swift/AgentRuntime.swift \
+            swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
             swift/AssistantWake.swift swift/Assistants.swift swift/AgentCapabilities.swift \
             swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
             swift/ModelGateway.swift swift/OpenRouterModels.swift swift/OpenCodeSupervisor.swift tests/opencode_supervisor/main.swift -framework Security

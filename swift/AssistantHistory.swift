@@ -47,13 +47,27 @@ struct AssistantConversation: Codable, Equatable {
     var title: String
     var turnState: AssistantTurnState
     var messages: [AssistantHistoryMessage]
+    /// Folder identity is mirrored in AssistantThreadMetadataStore so it
+    /// survives an older build rewriting this Codable value.
+    var assistantSlug: String?
+    var assistantNameSnapshot: String?
+    /// True only when a legacy/unowned conversation was assigned to the
+    /// configured default Assistant during migration.
+    var assistantOwnerWasInferred: Bool?
+    /// Recoverable Threads archive state; nil means Open.
+    var completedAt: Date?
+    /// A durable automation may own/protect this canonical conversation.
+    var automationJobID: String?
 
     init(id: String = UUID().uuidString, codexThreadId: String? = nil,
          preferredRuntime: AgentRuntimeKind? = nil,
          runtimeBindings: [String: RuntimeBinding]? = nil,
          createdAt: Date = Date(), updatedAt: Date = Date(),
          title: String = "New assistant", turnState: AssistantTurnState = .idle,
-         messages: [AssistantHistoryMessage] = []) {
+         messages: [AssistantHistoryMessage] = [],
+         assistantSlug: String? = nil, assistantNameSnapshot: String? = nil,
+         assistantOwnerWasInferred: Bool? = nil,
+         completedAt: Date? = nil, automationJobID: String? = nil) {
         self.id = id
         self.codexThreadId = codexThreadId
         self.preferredRuntime = preferredRuntime
@@ -63,6 +77,11 @@ struct AssistantConversation: Codable, Equatable {
         self.title = title
         self.turnState = turnState
         self.messages = messages
+        self.assistantSlug = assistantSlug
+        self.assistantNameSnapshot = assistantNameSnapshot
+        self.assistantOwnerWasInferred = assistantOwnerWasInferred
+        self.completedAt = completedAt
+        self.automationJobID = automationJobID
     }
 
     var preview: String {
@@ -120,6 +139,7 @@ final class AssistantHistoryStore {
     static let maxMessagesPerSession = 200
 
     private let url: URL
+    private let metadataStore: AssistantThreadMetadataStore
     private let lock = NSLock()
     private var envelope: AssistantHistoryEnvelope
 
@@ -133,8 +153,16 @@ final class AssistantHistoryStore {
     }
 
     init(url: URL = AssistantHistoryStore.defaultURL,
-         legacySessionsRoot: URL? = nil) {
+         legacySessionsRoot: URL? = nil,
+         metadataRoot: URL? = nil) {
         self.url = url
+        let historyStem = url.deletingPathExtension().lastPathComponent
+        let defaultMetadataDirectory = historyStem == "assistant-sessions"
+            ? "assistant-thread-metadata"
+            : "\(historyStem)-thread-metadata"
+        self.metadataStore = AssistantThreadMetadataStore(
+            rootURL: metadataRoot ?? url.deletingLastPathComponent()
+                .appendingPathComponent(defaultMetadataDirectory, isDirectory: true))
         // A redirected root is a hard privacy boundary: never auto-import
         // production Codex rollouts into QA/test history. Unit migrations may
         // still pass an explicit fixture root.
@@ -156,6 +184,7 @@ final class AssistantHistoryStore {
             if migrateRuntimeBindingsLocked() { persistLocked() }
             repairActiveSessionLocked()
             recoverInterruptedTurnsLocked()
+            if reconcileThreadMetadataLocked(pruneOrphans: true) { persistLocked() }
         } else {
             let fresh = AssistantConversation()
             envelope = AssistantHistoryEnvelope(
@@ -170,6 +199,7 @@ final class AssistantHistoryStore {
         if canPersist, envelope.legacyImportCompleted != true {
             importLegacyConversationsLocked(from: resolvedLegacyRoot)
             envelope.legacyImportCompleted = true
+            _ = reconcileThreadMetadataLocked(pruneOrphans: true)
             persistLocked()
         } else if canPersist, !fileExisted {
             persistLocked()
@@ -195,19 +225,30 @@ final class AssistantHistoryStore {
     }
 
     @discardableResult
-    func createConversation(force: Bool = false) -> AssistantConversation {
+    func createConversation(force: Bool = false,
+                            assistantSlug: String? = nil,
+                            assistantName: String? = nil,
+                            automationJobID: String? = nil,
+                            activate: Bool = true) -> AssistantConversation {
         lock.withLock {
             // Repeated presses on "new assistant" must not manufacture empty
-            // history. Reuse the active blank draft until the user writes.
-            if !force, let current = conversationLocked(envelope.activeSessionId),
+            // history. Reuse only a blank draft owned by the same Assistant.
+            if activate, !force, let current = conversationLocked(envelope.activeSessionId),
                current.messages.isEmpty, current.codexThreadId == nil,
-               current.turnState == .idle {
+               current.turnState == .idle,
+               current.assistantSlug == assistantSlug,
+               current.automationJobID == nil {
                 return current
             }
-            let conversation = AssistantConversation()
+            let conversation = AssistantConversation(
+                assistantSlug: assistantSlug,
+                assistantNameSnapshot: assistantName,
+                assistantOwnerWasInferred: assistantSlug == nil ? nil : false,
+                automationJobID: automationJobID)
             envelope.sessions.append(conversation)
-            envelope.activeSessionId = conversation.id
+            if activate { envelope.activeSessionId = conversation.id }
             pruneLocked()
+            writeMetadataLocked(for: conversation)
             persistLocked()
             return conversation
         }
@@ -226,18 +267,90 @@ final class AssistantHistoryStore {
     /// Removes one conversation. The Assistant always retains one valid empty
     /// target, so deleting the final row creates a fresh replacement.
     @discardableResult
-    func delete(_ id: String) -> AssistantConversation {
+    func delete(_ id: String, replacementAssistantSlug: String? = nil,
+                replacementAssistantName: String? = nil) -> AssistantConversation? {
         lock.withLock {
+            guard let target = conversationLocked(id),
+                  target.turnState != .running,
+                  target.automationJobID == nil else { return nil }
             envelope.sessions.removeAll { $0.id == id }
             if envelope.sessions.isEmpty {
-                let fresh = AssistantConversation()
+                let fresh = AssistantConversation(
+                    assistantSlug: replacementAssistantSlug,
+                    assistantNameSnapshot: replacementAssistantName,
+                    assistantOwnerWasInferred: replacementAssistantSlug == nil ? nil : false)
                 envelope.sessions = [fresh]
                 envelope.activeSessionId = fresh.id
+                writeMetadataLocked(for: fresh)
             } else if envelope.activeSessionId == id {
                 envelope.activeSessionId = envelope.sessions.max { $0.updatedAt < $1.updatedAt }!.id
             }
             persistLocked()
-            return conversationLocked(envelope.activeSessionId)!
+            metadataStore.remove(id)
+            return conversationLocked(envelope.activeSessionId)
+        }
+    }
+
+    /// One-time deterministic migration after AssistantsStore has loaded.
+    /// Embedded mirrors and sidecars are written together; history ordering is
+    /// unchanged because ownership is metadata, not activity.
+    func assignMissingOwners(assistantSlug: String, assistantName: String) {
+        lock.withLock {
+            var changed = false
+            for index in envelope.sessions.indices where envelope.sessions[index].assistantSlug == nil {
+                envelope.sessions[index].assistantSlug = assistantSlug
+                envelope.sessions[index].assistantNameSnapshot = assistantName
+                envelope.sessions[index].assistantOwnerWasInferred = true
+                writeMetadataLocked(for: envelope.sessions[index])
+                changed = true
+            }
+            if changed { persistLocked() }
+        }
+    }
+
+    @discardableResult
+    func completeConversation(_ id: String, at: Date = Date()) -> AssistantConversation? {
+        lock.withLock {
+            guard let index = envelope.sessions.firstIndex(where: { $0.id == id }),
+                  envelope.sessions[index].turnState != .running else { return nil }
+            envelope.sessions[index].completedAt = at
+            for messageIndex in envelope.sessions[index].messages.indices
+                where envelope.sessions[index].messages[messageIndex].role == .assistant {
+                envelope.sessions[index].messages[messageIndex].seen = true
+            }
+            writeMetadataLocked(for: envelope.sessions[index])
+            persistLocked()
+            return envelope.sessions[index]
+        }
+    }
+
+    @discardableResult
+    func reopenConversation(_ id: String) -> AssistantConversation? {
+        lock.withLock {
+            guard let index = envelope.sessions.firstIndex(where: { $0.id == id }) else { return nil }
+            envelope.sessions[index].completedAt = nil
+            writeMetadataLocked(for: envelope.sessions[index])
+            persistLocked()
+            return envelope.sessions[index]
+        }
+    }
+
+    @discardableResult
+    func moveConversation(_ id: String, assistantSlug: String,
+                          assistantName: String) -> AssistantConversation? {
+        lock.withLock {
+            guard let index = envelope.sessions.firstIndex(where: { $0.id == id }),
+                  envelope.sessions[index].turnState != .running else { return nil }
+            envelope.sessions[index].assistantSlug = assistantSlug
+            envelope.sessions[index].assistantNameSnapshot = assistantName
+            envelope.sessions[index].assistantOwnerWasInferred = false
+            if var bindings = envelope.sessions[index].runtimeBindings {
+                for key in bindings.keys { bindings[key]?.state = .dirty }
+                envelope.sessions[index].runtimeBindings = bindings
+            }
+            writeMetadataLocked(for: envelope.sessions[index])
+            persistLocked()
+            return envelope.sessions[index]
         }
     }
 
@@ -407,6 +520,10 @@ final class AssistantHistoryStore {
             envelope.sessions[index].title = Self.title(from: trimmed, attachmentNote: attachmentNote)
         }
         envelope.sessions[index].updatedAt = now
+        if role == .user || role == .assistant {
+            envelope.sessions[index].completedAt = nil
+            writeMetadataLocked(for: envelope.sessions[index])
+        }
         return message
     }
 
@@ -484,11 +601,98 @@ final class AssistantHistoryStore {
         guard envelope.sessions.count > Self.maxSessions else { return }
         let active = envelope.activeSessionId
         let removable = envelope.sessions
-            .filter { $0.id != active }
+            .filter {
+                $0.id != active
+                    && $0.automationJobID == nil
+                    && $0.turnState != .running
+            }
             .sorted { $0.updatedAt < $1.updatedAt }
         let count = envelope.sessions.count - Self.maxSessions
         let ids = Set(removable.prefix(count).map(\.id))
         envelope.sessions.removeAll { ids.contains($0.id) }
+        for id in ids { metadataStore.remove(id) }
+    }
+
+    /// Restore rollback-surviving metadata after an older build has decoded
+    /// and rewritten the version-1 history without the new optional keys.
+    /// Newer activity wins only over archive state; an old build cannot make
+    /// an informed ownership change, so sidecar ownership remains canonical.
+    @discardableResult
+    private func reconcileThreadMetadataLocked(pruneOrphans: Bool) -> Bool {
+        var historyChanged = false
+        let conversationIDs = Set(envelope.sessions.map(\.id))
+
+        for index in envelope.sessions.indices {
+            var conversation = envelope.sessions[index]
+            if var metadata = metadataStore.metadata(for: conversation.id) {
+                var resolvedCompletion = metadata.completedAt
+                if resolvedCompletion != nil,
+                   conversation.updatedAt > metadata.historyUpdatedAtAtWrite {
+                    resolvedCompletion = nil
+                    metadata.completedAt = nil
+                    metadata.metadataUpdatedAt = Date()
+                    metadata.historyUpdatedAtAtWrite = conversation.updatedAt
+                    do {
+                        try metadataStore.write(metadata)
+                    } catch {
+                        vflog("assistant metadata: reopen save failed for \(conversation.id): \(error.localizedDescription)")
+                    }
+                }
+                if conversation.assistantSlug != metadata.assistantSlug {
+                    conversation.assistantSlug = metadata.assistantSlug
+                    historyChanged = true
+                }
+                if conversation.assistantNameSnapshot != metadata.assistantNameSnapshot {
+                    conversation.assistantNameSnapshot = metadata.assistantNameSnapshot
+                    historyChanged = true
+                }
+                if conversation.assistantOwnerWasInferred != metadata.assistantOwnerWasInferred {
+                    conversation.assistantOwnerWasInferred = metadata.assistantOwnerWasInferred
+                    historyChanged = true
+                }
+                if conversation.automationJobID != metadata.automationJobID {
+                    conversation.automationJobID = metadata.automationJobID
+                    historyChanged = true
+                }
+                if conversation.completedAt != resolvedCompletion {
+                    conversation.completedAt = resolvedCompletion
+                    historyChanged = true
+                }
+                envelope.sessions[index] = conversation
+            } else if conversation.assistantSlug != nil
+                        || conversation.assistantNameSnapshot != nil
+                        || conversation.automationJobID != nil
+                        || conversation.completedAt != nil {
+                writeMetadataLocked(for: conversation)
+            }
+        }
+
+        if pruneOrphans {
+            for metadata in metadataStore.all()
+                where !conversationIDs.contains(metadata.conversationID) {
+                metadataStore.remove(metadata.conversationID)
+            }
+        }
+        return historyChanged
+    }
+
+    private func writeMetadataLocked(for conversation: AssistantConversation) {
+        let document = AssistantThreadMetadata(
+            conversationID: conversation.id,
+            assistantSlug: conversation.assistantSlug,
+            assistantNameSnapshot: conversation.assistantNameSnapshot,
+            assistantOwnerWasInferred: conversation.assistantOwnerWasInferred,
+            automationJobID: conversation.automationJobID,
+            completedAt: conversation.completedAt,
+            historyUpdatedAtAtWrite: conversation.updatedAt)
+        do {
+            try metadataStore.write(document)
+        } catch {
+            // The embedded mirror remains usable in this build. Ordinary
+            // mutations retry the sidecar, and newer activity is never hidden
+            // in Done because reconciliation compares history timestamps.
+            vflog("assistant metadata: save failed for \(conversation.id): \(error.localizedDescription)")
+        }
     }
 
     private func persistLocked() {
