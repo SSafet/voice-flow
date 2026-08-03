@@ -384,6 +384,10 @@ private final class OverlayPanelWindow {
         header.orientation = .horizontal
         header.alignment = .top
         header.spacing = 8
+        // Default gravity distribution packs both views leading; fill lets
+        // the title stretch so the ✕ pins to the panel's top-right corner.
+        header.distribution = .fill
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         column.addArrangedSubview(header)
         header.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
 

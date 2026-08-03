@@ -348,6 +348,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.userSelectSession(id)
         }
         menuBar.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
+        menuBar.onShowQueue = { [weak self] in self?.showNextQueueNow() }
         menuBar.onShowChat = { [weak self] in self?.chatPanel.show() }
         menuBar.onQuit = { NSApp.terminate(nil) }
 
@@ -363,6 +364,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.onToggleSession = { [weak self] in self?.toggleSession() }
         indicator.onToggleWatcher = { [weak self] in self?.toggleWorkflowWatcher() }
         indicator.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
+        indicator.onShowQueue = { [weak self] in self?.showNextQueueNow() }
         indicator.onSessionRemovals = { [weak self] in
             self?.pickerSessions() ?? []
         }
@@ -1357,6 +1359,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         replyBubble.showTransient(workflowWatcher.isRunning
             ? "Watching your workflow — activity log + deduped screenshots every 5s, reviewed by Claude nightly."
             : "Stopped watching your workflow.", seconds: 6)
+    }
+
+    /// Menu bar / pill context menu: surface the next queue on demand.
+    private func showNextQueueNow() {
+        if UserSettings.shared.queueEnabled {
+            nextQueue?.showNow()
+        } else {
+            replyBubble.showTransient("The next queue is off — enable it in Settings → Assistant.", seconds: 6)
+        }
     }
 
     /// Kick the nightly-review LaunchAgent by hand — same run as 21:37.

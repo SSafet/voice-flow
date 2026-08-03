@@ -200,6 +200,20 @@ final class NextQueue {
 
     // ── Surfacing actions ──
 
+    /// Explicit "show me the queue now" (menu bar / pill context menu).
+    /// Bypasses the dismiss cooldown — a direct request always wins.
+    func showNow() {
+        guard timer != nil else { return }   // feature disabled in settings
+        reloadIfChanged()
+        dismissCooldownUntil = .distantPast
+        let open = items.filter { !$0.done }
+        if open.isEmpty {
+            showPersistentEmpty()
+        } else {
+            showBrief(open: open, reason: "manual")
+        }
+    }
+
     private func showBrief(open: [QueueItem], reason: String) {
         let now = Date()
         anchorIndex = (anchorIndex + 1) % 3
