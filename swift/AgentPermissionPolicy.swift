@@ -73,12 +73,38 @@ enum AgentCapabilityAction: String, Codable, CaseIterable {
     case subagent
 }
 
+/// The restriction dial (ticket VF-59), replacing the bundled trust presets as
+/// the thing the user actually turns.
+///
+/// Each switch is enforced by the sandbox rather than by asking the model to
+/// behave: "run commands" off becomes `(deny process-exec*)`, "reach network"
+/// off means the egress proxy is never wired up and the kernel has no route
+/// out. Useful when driving a weaker model that can't be trusted to stay
+/// inside an instruction.
+/// Deliberately free of any dependency on the settings store: the permission
+/// contract is compiled standalone by the unit gate, so the live accessor lives
+/// beside `UserSettings` in Core.swift instead.
+/// Defaults are all-permitted on purpose: this type only ever *removes*
+/// capability, so its identity value must restrict nothing. The live dial comes
+/// from `UserSettings.agentCapabilityDial`, where screen control is off until
+/// the user turns it on.
+struct AgentCapabilityDial: Equatable {
+    var runCommands: Bool = true
+    var reachNetwork: Bool = true
+    var controlScreen: Bool = true
+}
+
 struct AgentPermissionPolicy: Equatable {
     let profile: AgentTrustProfile
     var overrides: [AgentCapabilityAction: AgentPermissionDecision] = [:]
+    var dial: AgentCapabilityDial = AgentCapabilityDial()
 
     func decision(for action: AgentCapabilityAction) -> AgentPermissionDecision {
         if let override = overrides[action] { return override }
+        // The dial outranks the profile in the restrictive direction only — it
+        // can take a capability away, never hand one back.
+        if action == .computerControl, !dial.controlScreen { return .deny }
+        if action == .shell, !dial.runCommands { return .deny }
         switch profile {
         case .observe:
             switch action {
@@ -104,39 +130,34 @@ struct AgentPermissionPolicy: Equatable {
         }
     }
 
-    /// Pinned OpenCode v1 permissions. The broad deny comes first because the
-    /// last matching rule wins. Voice Flow tools are individually admitted by
-    /// the private endpoint after this coarse runtime gate.
+    /// Pinned OpenCode v1 permissions.
+    ///
+    /// These stopped being the security boundary in VF-59 — the Seatbelt
+    /// profile is, because a rule keyed on a tool name cannot survive the model
+    /// writing a script instead of running a command. What is left here is UX:
+    /// it decides which actions produce a prompt, not which are possible. So it
+    /// is deliberately permissive, and the dial is the only thing that closes
+    /// anything (matched by a kernel rule that makes the same denial real).
+    ///
+    /// `readableExternalRoots` no longer gates reads — the sandbox permits
+    /// reading everything except secret shapes, and blanket-denying here would
+    /// only re-break the ordinary asks this ticket exists to unblock.
     func openCodeConfiguration(selectedSkills: [String],
                                readableExternalRoots: [URL]) -> [String: Any] {
-        var skillRules: [String: String] = ["*": "deny"]
-        for name in selectedSkills { skillRules[name] = "allow" }
-        var externalRules: [String: String] = ["*": "deny"]
-        for root in readableExternalRoots {
-            externalRules[root.standardizedFileURL.path + "/**"] = "allow"
-        }
         var result: [String: Any] = [
-            "*": "deny",
+            "*": "allow",
             "voiceflow_*": "allow",
             "read": "allow",
-            "skill": skillRules,
-            "external_directory": externalRules,
+            "edit": "allow",
+            "skill": "allow",
+            "external_directory": "allow",
+            "task": "allow",
+            "todowrite": "allow",
+            "question": "allow",
         ]
-        switch profile {
-        case .observe:
-            result["edit"] = "deny"
-            result["bash"] = "deny"
-        case .workspace:
-            result["edit"] = "allow"
-            result["bash"] = "ask"
-        case .unattended:
-            result["edit"] = "ask"
-            result["bash"] = "deny"
-        }
-        result["task"] = "deny"
-        result["question"] = "deny"
-        result["webfetch"] = "deny"
-        result["websearch"] = "deny"
+        result["bash"] = dial.runCommands ? "allow" : "deny"
+        result["webfetch"] = dial.reachNetwork ? "allow" : "deny"
+        result["websearch"] = dial.reachNetwork ? "allow" : "deny"
         return result
     }
 }

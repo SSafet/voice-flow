@@ -1,167 +1,1525 @@
 {
   "version": 1,
   "capabilities": [
-    {"id":"BLD-01","area":"build","name":"Compile every Swift source with the selected Xcode SDK","kind":"existing","risk":"high","tests":["scripts/test-agent-harness.sh:compile_app"]},
-    {"id":"BLD-02","area":"build","name":"Install and sign the native app with a stable identity","kind":"existing","risk":"high","tests":["e2e:install_signature"]},
-    {"id":"BLD-03","area":"build","name":"Launch, quit, and relaunch without corrupting state","kind":"existing","risk":"high","tests":["e2e:launch_relaunch"]},
-    {"id":"BLD-04","area":"build","name":"Redirect every writable store to an isolated absolute QA root","kind":"new","risk":"critical","tests":["tests/voice_flow_paths/main.swift"]},
-
-    {"id":"DIC-01","area":"capture","name":"Hold Dictate transcribes and contextually delivers or pastes","kind":"existing","risk":"critical","tests":["e2e:dictate_hold"]},
-    {"id":"DIC-02","area":"capture","name":"Double-press Dictate keeps the result in Inbox","kind":"existing","risk":"high","tests":["e2e:dictate_inbox"]},
-    {"id":"DIC-03","area":"capture","name":"Dictate plus snapshot freezes one release-time screenshot","kind":"existing","risk":"critical","tests":["e2e:dictate_snapshot"]},
-    {"id":"DIC-04","area":"capture","name":"Continuous capture stores narration and deduped ordered frames","kind":"existing","risk":"critical","tests":["e2e:continuous_capture"]},
-    {"id":"DIC-05","area":"capture","name":"Annotation commits on Escape and Escape remains panic stop","kind":"existing","risk":"high","tests":["e2e:annotation_escape"]},
-    {"id":"DIC-06","area":"capture","name":"Overlapping hotkeys apply longest-match precedence","kind":"existing","risk":"critical","tests":["tests/hotkey_precedence/main.swift"]},
-    {"id":"DIC-07","area":"capture","name":"CaptureRun freezes capability, route, display, paste target, and interaction","kind":"existing","risk":"critical","tests":["tests/capture_routing/main.swift"]},
-    {"id":"DIC-08","area":"capture","name":"Asynchronous transcription and screenshots correlate by run UUID","kind":"existing","risk":"critical","tests":["tests/capture_routing/main.swift"]},
-    {"id":"DIC-09","area":"capture","name":"No visible conversation falls back to the frozen paste target","kind":"existing","risk":"high","tests":["e2e:paste_fallback"]},
-
-    {"id":"AST-01","area":"assistant","name":"Create, select, and delete Assistant conversations","kind":"existing","risk":"high","tests":["tests/assistant_history/main.swift"]},
-    {"id":"AST-02","area":"assistant","name":"Restore transcript, active conversation, and unread cursor after restart","kind":"existing","risk":"critical","tests":["tests/assistant_history/main.swift"]},
-    {"id":"AST-03","area":"assistant","name":"FLORA wake matching strips the configured wake name","kind":"existing","risk":"high","tests":["tests/assistant_wake/main.swift"]},
-    {"id":"AST-04","area":"assistant","name":"FLORA continuity chooses only current or new and fails safely","kind":"existing","risk":"high","tests":["tests/assistant_continuity/main.swift"]},
-    {"id":"AST-05","area":"assistant","name":"Assistant folder loads persona, memory, ledger, and workspace","kind":"existing","risk":"high","tests":["tests/assistants/main.swift"]},
-    {"id":"AST-06","area":"assistant","name":"Assistant image turn preserves attachment and coordinate geometry","kind":"existing","risk":"high","tests":["e2e:assistant_image"]},
-    {"id":"AST-07","area":"assistant","name":"Stop interrupts a running turn and leaves durable interrupted state","kind":"existing","risk":"critical","tests":["e2e:assistant_interrupt"]},
-    {"id":"AST-08","area":"assistant","name":"Runtime errors become visible durable notes without blank finals","kind":"existing","risk":"high","tests":["contract:runtime_failure_note"]},
-    {"id":"AST-09","area":"assistant","name":"Assistant replies drive existing panel, pill, and TTS callbacks exactly once","kind":"existing","risk":"critical","tests":["e2e:assistant_callback_reduction"]},
-
-    {"id":"RUN-01","area":"runtime","name":"Discover and authenticate Codex CLI","kind":"existing","risk":"high","tests":["live:codex_discovery_auth"]},
-    {"id":"RUN-02","area":"runtime","name":"Codex starts and resumes JSONL sessions","kind":"existing","risk":"critical","tests":["tests/test_backend_protocol.py","tests/codex_runtime/main.swift","live:codex_new_resume"]},
-    {"id":"RUN-03","area":"runtime","name":"Codex accepts image attachments and interrupts its process group","kind":"existing","risk":"high","tests":["live:codex_image_interrupt"]},
-    {"id":"RUN-04","area":"runtime","name":"Discover, pin, authenticate, and health-check OpenCode","kind":"new","risk":"critical","tests":["tests/opencode_supervisor/main.swift"]},
-    {"id":"RUN-05","area":"runtime","name":"OpenCode creates directory-scoped sessions and streams normalized events","kind":"new","risk":"critical","tests":["tests/opencode_runtime/main.swift","live:opencode_session_stream"]},
-    {"id":"RUN-06","area":"runtime","name":"OpenCode sends images and reads fresh Voice Flow screenshots","kind":"new","risk":"critical","tests":["live:opencode_image_read"]},
-    {"id":"RUN-07","area":"runtime","name":"OpenCode aborts turns and leaves uncertain bindings dirty","kind":"new","risk":"critical","tests":["tests/opencode_runtime/main.swift"]},
-    {"id":"RUN-08","area":"runtime","name":"OpenCode supervisor restarts crashed servers without orphan children","kind":"new","risk":"critical","tests":["failure:opencode_restart"]},
-    {"id":"RUN-09","area":"runtime","name":"Choose Codex or OpenCode per conversation and persist preference","kind":"new","risk":"critical","tests":["e2e:runtime_selector"]},
-    {"id":"RUN-10","area":"runtime","name":"Switching runtimes reseeds stale sessions from canonical history","kind":"new","risk":"critical","tests":["contract:runtime_binding_switch"]},
-    {"id":"RUN-11","area":"runtime","name":"Dirty turns never append duplicate user or final messages","kind":"new","risk":"critical","tests":["contract:dirty_turn_recovery"]},
-    {"id":"RUN-12","area":"runtime","name":"Legacy Codex thread IDs migrate and remain rollback-readable","kind":"new","risk":"critical","tests":["tests/assistant_history/main.swift"]},
-
-    {"id":"MEM-01","area":"memory","name":"Compose the system role, assistant persona, memory, handoff, and task in distinct layers","kind":"new","risk":"high","tests":["contract:prompt_layers"]},
-    {"id":"MEM-02","area":"memory","name":"Bound core memory injection and preserve superseded facts","kind":"existing","risk":"high","tests":["tests/assistants/main.swift"]},
-    {"id":"MEM-03","area":"memory","name":"Apply core memory updates atomically with a revision precondition","kind":"new","risk":"critical","tests":["contract:memory_revision"]},
-    {"id":"MEM-04","area":"memory","name":"Read and update the assistant ledger within its folder","kind":"new","risk":"high","tests":["contract:memory_ledger"]},
-    {"id":"MEM-05","area":"memory","name":"Reject secret-looking or oversized memory writes","kind":"new","risk":"critical","tests":["security:memory_boundaries"]},
-
-    {"id":"SKL-01","area":"skills","name":"Validate canonical assistant SKILL.md packages","kind":"new","risk":"high","tests":["contract:skill_validation"]},
-    {"id":"SKL-02","area":"skills","name":"Project only the selected skill allowlist atomically","kind":"new","risk":"critical","tests":["contract:skill_projection"]},
-    {"id":"SKL-03","area":"skills","name":"Record source digests and refresh changed skills","kind":"new","risk":"high","tests":["contract:skill_manifest"]},
-    {"id":"SKL-04","area":"skills","name":"Expose equivalent selected skill content to Codex and OpenCode","kind":"new","risk":"high","tests":["live:skill_runtime_parity"]},
-    {"id":"SKL-05","area":"skills","name":"Deny unselected global or project skills","kind":"new","risk":"critical","tests":["security:skill_isolation"]},
-
-    {"id":"TOL-01","area":"tools","name":"Computer screenshot returns bounded path, dimensions, and cursor coordinates","kind":"new","risk":"critical","tests":["tool:computer_screenshot"]},
-    {"id":"TOL-02","area":"tools","name":"Computer control enforces action enum and trust-profile permission","kind":"new","risk":"critical","tests":["tool:computer_control"]},
-    {"id":"TOL-03","area":"tools","name":"Context returns bounded captures and recent dictations with pagination","kind":"new","risk":"high","tests":["tool:context"]},
-    {"id":"TOL-04","area":"tools","name":"Overlay creates, updates, removes, and lists session-scoped elements","kind":"new","risk":"high","tests":["tool:overlay"]},
-    {"id":"TOL-05","area":"tools","name":"User tool reports, checks, and waits within one Assistant run","kind":"new","risk":"critical","tests":["tool:user_interaction"]},
-    {"id":"TOL-06","area":"tools","name":"Memory tool applies bounded atomic reads and writes","kind":"new","risk":"critical","tests":["tool:memory"]},
-    {"id":"TOL-07","area":"tools","name":"Tool schemas reject malformed and ambiguous arguments","kind":"new","risk":"high","tests":["contract:tool_schemas"]},
-    {"id":"TOL-08","area":"tools","name":"Tool calls cannot cross runtime session, conversation, assistant, or path boundaries","kind":"new","risk":"critical","tests":["security:tool_session_isolation"]},
-    {"id":"TOL-09","area":"tools","name":"Tool results are bounded, semantic, and steer after truncation or error","kind":"new","risk":"high","tests":["contract:tool_results"]},
-    {"id":"TOL-10","area":"tools","name":"Capability tokens expire, rotate, and reject replay","kind":"new","risk":"critical","tests":["security:tool_token_replay"]},
-
-    {"id":"MCP-01","area":"mcp","name":"Set external session name","kind":"existing","risk":"medium","surface":"mcp:set_session_name","tests":["contract:mcp_set_session_name"]},
-    {"id":"MCP-02","area":"mcp","name":"Report or ask the user","kind":"existing","risk":"critical","surface":"mcp:report_to_user","tests":["contract:mcp_report_to_user"]},
-    {"id":"MCP-03","area":"mcp","name":"Check queued messages","kind":"existing","risk":"high","surface":"mcp:check_messages","tests":["contract:mcp_check_messages"]},
-    {"id":"MCP-04","area":"mcp","name":"Wait for a live user message","kind":"existing","risk":"high","surface":"mcp:wait_for_message","tests":["contract:mcp_wait_for_message"]},
-    {"id":"MCP-05","area":"mcp","name":"Get latest capture","kind":"existing","risk":"medium","surface":"mcp:get_latest_capture","tests":["contract:mcp_get_latest_capture"]},
-    {"id":"MCP-06","area":"mcp","name":"List captures","kind":"existing","risk":"medium","surface":"mcp:list_captures","tests":["contract:mcp_list_captures"]},
-    {"id":"MCP-07","area":"mcp","name":"Take screenshot","kind":"existing","risk":"high","surface":"mcp:take_screenshot","tests":["contract:mcp_take_screenshot"]},
-    {"id":"MCP-08","area":"mcp","name":"Show guide","kind":"existing","risk":"medium","surface":"mcp:show_guide","tests":["contract:mcp_show_guide"]},
-    {"id":"MCP-09","area":"mcp","name":"Update guide","kind":"existing","risk":"medium","surface":"mcp:update_guide","tests":["contract:mcp_update_guide"]},
-    {"id":"MCP-10","area":"mcp","name":"Show panel","kind":"existing","risk":"medium","surface":"mcp:show_panel","tests":["contract:mcp_show_panel"]},
-    {"id":"MCP-11","area":"mcp","name":"Annotate screen","kind":"existing","risk":"high","surface":"mcp:annotate_screen","tests":["contract:mcp_annotate_screen"]},
-    {"id":"MCP-12","area":"mcp","name":"Clear annotations","kind":"existing","risk":"medium","surface":"mcp:clear_annotations","tests":["contract:mcp_clear_annotations"]},
-    {"id":"MCP-13","area":"mcp","name":"Remove overlay","kind":"existing","risk":"medium","surface":"mcp:remove_overlay","tests":["contract:mcp_remove_overlay"]},
-    {"id":"MCP-14","area":"mcp","name":"List overlays","kind":"existing","risk":"medium","surface":"mcp:list_overlays","tests":["contract:mcp_list_overlays"]},
-    {"id":"MCP-15","area":"mcp","name":"Get recent dictations","kind":"existing","risk":"high","surface":"mcp:get_recent_dictations","tests":["contract:mcp_get_recent_dictations"]},
-
-    {"id":"PIL-01","area":"pill","name":"Render collapsed pill, flash, picker, and grown modes","kind":"existing","risk":"high","tests":["visual:pill_modes"]},
-    {"id":"PIL-02","area":"pill","name":"Keep stable numbered session slots and active indicator","kind":"existing","risk":"critical","tests":["e2e:session_slots"]},
-    {"id":"PIL-03","area":"pill","name":"Pulse unread state until the exact session is viewed","kind":"existing","risk":"high","tests":["e2e:unread_ring"]},
-    {"id":"PIL-04","area":"pill","name":"Persist unread ghost push stacks after session death and app restart","kind":"existing","risk":"critical","tests":["e2e:ghost_pushes"]},
-    {"id":"PIL-05","area":"pill","name":"Double-select reads a stack while arrival never auto-plays","kind":"existing","risk":"high","tests":["e2e:double_select_speech"]},
-    {"id":"PIL-06","area":"pill","name":"Persist each session push stack across app relaunch","kind":"existing","risk":"critical","tests":["e2e:push_stack_persistence"]},
-    {"id":"PIL-07","area":"pill","name":"Close keeps a stack and pending ask available","kind":"existing","risk":"high","tests":["e2e:push_close_keep"]},
-    {"id":"PIL-08","area":"pill","name":"Trash deletes a stack, cancels its ask, and removes its session","kind":"existing","risk":"high","tests":["e2e:push_trash_delete"]},
-    {"id":"PIL-09","area":"pill","name":"Background Assistant completion shows receipt without taking over screen","kind":"existing","risk":"critical","tests":["visual:assistant_receipt"]},
-
-    {"id":"TTS-01","area":"tts","name":"Speak selected or pasted text through the unified player","kind":"existing","risk":"high","tests":["e2e:tts_speak"]},
-    {"id":"TTS-02","area":"tts","name":"Apply configured voice, preset, instructions, and speed","kind":"existing","risk":"high","tests":["contract:tts_configuration"]},
-    {"id":"TTS-03","area":"tts","name":"Pause, resume, seek, and stop the unified player","kind":"existing","risk":"high","tests":["tests/player/main.swift","e2e:tts_transport"]},
-    {"id":"TTS-04","area":"tts","name":"Stream Assistant speech at sentence boundaries","kind":"existing","risk":"high","tests":["tests/player/main.swift","e2e:live_reply_speech"]},
-    {"id":"TTS-05","area":"tts","name":"Read the active message stack from its speaker control","kind":"existing","risk":"high","tests":["e2e:message_speaker"]},
-    {"id":"TTS-06","area":"tts","name":"Never auto-play speech when an agent message arrives","kind":"existing","risk":"critical","tests":["e2e:no_arrival_autoplay"]},
-    {"id":"TTS-07","area":"tts","name":"Starting any recording barges in and stops playback","kind":"existing","risk":"critical","tests":["e2e:tts_barge_in"]},
-    {"id":"TTS-08","area":"tts","name":"Escape remains the panic stop while the Assistant is acting","kind":"existing","risk":"critical","tests":["e2e:escape_panic"]},
-
-    {"id":"OVR-01","area":"overlay","name":"Validate and render guide, panel, and annotation JSON documents","kind":"existing","risk":"high","tests":["contract:overlay_documents"]},
-    {"id":"OVR-02","area":"overlay","name":"Poll live overlay files and repaint changes","kind":"existing","risk":"high","tests":["e2e:overlay_file_poll"]},
-    {"id":"OVR-03","area":"overlay","name":"Render overlays only for the active owning session","kind":"existing","risk":"critical","tests":["e2e:overlay_session_scope"]},
-    {"id":"OVR-04","area":"overlay","name":"User close removes the owning live overlay file","kind":"existing","risk":"high","tests":["e2e:overlay_user_close"]},
-    {"id":"OVR-05","area":"overlay","name":"Map annotation coordinates to fixed screenshot pixels","kind":"existing","risk":"high","tests":["visual:overlay_coordinates"]},
-
-    {"id":"CAP-01","area":"capture_store","name":"Write capture transcript, metadata, and ordered frames","kind":"existing","risk":"high","tests":["contract:capture_bundle"]},
-    {"id":"CAP-02","area":"capture_store","name":"Deduplicate equivalent capture frames while preserving order","kind":"existing","risk":"high","tests":["contract:capture_frame_dedupe"]},
-    {"id":"CAP-03","area":"capture_store","name":"Prune bundles and ad-hoc screenshots at configured caps","kind":"existing","risk":"medium","tests":["contract:capture_pruning"]},
-    {"id":"CAP-04","area":"capture_store","name":"List and retrieve recent completed capture bundles","kind":"existing","risk":"high","tests":["contract:capture_recent_list","tests/capture_clipboard/main.swift","e2e:pasteboard_write"]},
-
-    {"id":"WAT-01","area":"watcher","name":"Record while active and pause while idle","kind":"existing","risk":"high","tests":["contract:watcher_activity"]},
-    {"id":"WAT-02","area":"watcher","name":"Pause while the screen is locked and resume safely","kind":"existing","risk":"high","tests":["contract:watcher_lock"]},
-    {"id":"WAT-03","area":"watcher","name":"Store metadata and deduplicated screen frames","kind":"existing","risk":"critical","tests":["contract:watcher_capture"]},
-    {"id":"WAT-04","area":"watcher","name":"Store optional motion-deduplicated camera frames","kind":"existing","risk":"high","tests":["contract:watcher_camera"]},
-    {"id":"WAT-05","area":"watcher","name":"Apply watcher day and frame retention limits","kind":"existing","risk":"high","tests":["contract:watcher_retention"]},
-    {"id":"WAT-06","area":"watcher","name":"Run review and promote ledger patterns only after the evidence threshold","kind":"existing","risk":"high","tests":["contract:watcher_review"]},
-    {"id":"WAT-07","area":"watcher","name":"Expose watcher enabled, paused, frame, and review status in menu and Settings","kind":"existing","risk":"medium","tests":["visual:watcher_status"]},
-
-    {"id":"SYN-01","area":"sync","name":"Open pairing only after Mac-side consent and issue a token","kind":"existing","risk":"critical","tests":["contract:sync_pairing"]},
-    {"id":"SYN-02","area":"sync","name":"Ingest phone dictations into the isolated Mac history","kind":"existing","risk":"high","tests":["contract:sync_ingest"]},
-    {"id":"SYN-03","area":"sync","name":"Deduplicate and upsert repeated phone dictations","kind":"existing","risk":"high","tests":["contract:sync_dedupe_upsert"]},
-    {"id":"SYN-04","area":"sync","name":"Recover safely from disconnected or unauthorized phone clients","kind":"existing","risk":"high","tests":["contract:sync_recovery"]},
-
-    {"id":"JOB-01","area":"jobs","name":"Persist manual, interval, inbox, capture, and watcher triggers","kind":"new","risk":"critical","tests":["contract:job_triggers"]},
-    {"id":"JOB-02","area":"jobs","name":"Admit jobs fairly under global and per-runtime concurrency caps","kind":"new","risk":"critical","tests":["contract:job_concurrency"]},
-    {"id":"JOB-03","area":"jobs","name":"Prevent overlapping runs for one conversation or concurrency key","kind":"new","risk":"critical","tests":["contract:job_exclusion"]},
-    {"id":"JOB-04","area":"jobs","name":"Lease and heartbeat a run only from its owning worker","kind":"new","risk":"critical","tests":["contract:job_leases"]},
-    {"id":"JOB-05","area":"jobs","name":"Expire leases and recover interrupted runs after crashes","kind":"new","risk":"critical","tests":["failure:job_lease_recovery"]},
-    {"id":"JOB-06","area":"jobs","name":"Deduplicate trigger events exactly once","kind":"new","risk":"critical","tests":["contract:job_idempotency"]},
-    {"id":"JOB-07","area":"jobs","name":"Cancel active work and join its process tree","kind":"new","risk":"critical","tests":["contract:job_cancel"]},
-    {"id":"JOB-08","area":"jobs","name":"Retry retryable failures within the maximum attempt policy","kind":"new","risk":"critical","tests":["contract:job_retry_attempts"]},
-    {"id":"JOB-09","area":"jobs","name":"Enforce each job's daily cost budget","kind":"new","risk":"critical","tests":["contract:job_budget"]},
-    {"id":"JOB-10","area":"jobs","name":"Interrupt work that exceeds its maximum runtime","kind":"new","risk":"critical","tests":["failure:job_timeout"]},
-    {"id":"JOB-11","area":"jobs","name":"Surface blocked or failed unattended runs to the user","kind":"new","risk":"high","tests":["e2e:job_result_push"]},
-    {"id":"JOB-12","area":"jobs","name":"Run three isolated agents without process, text, or tool leakage","kind":"new","risk":"critical","tests":["soak:three_agents"]},
-    {"id":"JOB-13","area":"jobs","name":"Persist an exact OpenRouter model per OpenCode automation across default changes and relaunch","kind":"new","risk":"critical","tests":["contract:job_model_pin","e2e:job_model_pin"]},
-
-    {"id":"MOD-01","area":"models","name":"Refresh and cache OpenRouter model capabilities, prices, context, and output limits with offline fallback","kind":"new","risk":"critical","tests":["contract:model_catalog","tests/openrouter_models/main.swift"]},
-    {"id":"MOD-02","area":"models","name":"Route concurrently scheduled OpenCode jobs through their distinct pinned models","kind":"new","risk":"critical","tests":["e2e:job_model_pin"]},
-
-    {"id":"SEC-01","area":"security","name":"Bind embedded runtime and QA services to loopback only","kind":"new","risk":"critical","tests":["security:loopback_bind"]},
-    {"id":"SEC-02","area":"security","name":"Require rotating Basic authentication for each OpenCode process","kind":"new","risk":"critical","tests":["security:runtime_auth"]},
-    {"id":"SEC-03","area":"security","name":"Scope internal capability authority to one run, message, conversation, and root","kind":"new","risk":"critical","tests":["security:capability_scope"]},
-    {"id":"SEC-04","area":"security","name":"Expire and rotate capability tokens and reject replay","kind":"new","risk":"critical","tests":["security:tool_token_replay"]},
-    {"id":"SEC-05","area":"security","name":"Keep provider credentials in Keychain and out of generated state","kind":"new","risk":"critical","tests":["tests/model_gateway/main.swift","security:provider_key_canary"]},
-    {"id":"SEC-06","area":"security","name":"Redirect every writable config and runtime store into its authorized root","kind":"new","risk":"critical","tests":["security:config_isolation"]},
-    {"id":"SEC-07","area":"security","name":"Sanitize child process and external MCP environments","kind":"new","risk":"critical","tests":["security:child_environment"]},
-    {"id":"SEC-08","area":"security","name":"Deny path traversal and symlink escapes from allowed roots","kind":"new","risk":"critical","tests":["security:path_containment"]},
-    {"id":"SEC-09","area":"security","name":"Apply explicit allow, ask, and deny permission outcomes","kind":"new","risk":"critical","tests":["security:permission_policy"]},
-    {"id":"SEC-10","area":"security","name":"Enable only selected external MCP servers and tools","kind":"new","risk":"critical","tests":["security:mcp_allowlist"]},
-    {"id":"SEC-11","area":"security","name":"Redact secrets and credentials from logs and runtime errors","kind":"new","risk":"critical","tests":["security:log_redaction"]},
-    {"id":"SEC-12","area":"security","name":"Exclude QA control routes and tokens from release builds","kind":"new","risk":"critical","tests":["security:release_qa_absent"]},
-    {"id":"SEC-13","area":"security","name":"Desktop QA ignores physical keyboard input and hides its surface during unattended work","kind":"new","risk":"critical","tests":["e2e:qa_physical_input_isolation"]},
-    {"id":"SEC-14","area":"security","name":"Keep OpenRouter credentials out of the model catalog cache and enforce the validated model allowlist","kind":"new","risk":"critical","tests":["security:model_catalog_secret","tests/model_gateway/main.swift"]},
-
-    {"id":"UI-01","area":"ui","name":"Choose the default runtime for new conversations in Settings","kind":"new","risk":"high","tests":["visual:runtime_default"]},
-    {"id":"UI-02","area":"ui","name":"Show and persist the per-conversation runtime selector","kind":"new","risk":"critical","tests":["e2e:runtime_selector"]},
-    {"id":"UI-03","area":"ui","name":"Disable runtime switching while that conversation is running","kind":"new","risk":"high","tests":["e2e:runtime_selector_running"]},
-    {"id":"UI-04","area":"ui","name":"Show runtime starting, healthy, degraded, mismatch, and stopped states","kind":"new","risk":"high","tests":["visual:runtime_health"]},
-    {"id":"UI-05","area":"ui","name":"Resolve permission requests through an accessible user prompt","kind":"new","risk":"critical","tests":["e2e:permission_prompt"]},
-    {"id":"UI-06","area":"ui","name":"Show queued, running, blocked, failed, and completed agent jobs","kind":"new","risk":"high","tests":["visual:job_status"]},
-    {"id":"UI-07","area":"ui","name":"Present legacy conversation migration without transcript loss or duplicate scaffolds","kind":"new","risk":"high","tests":["e2e:migration_presentation"]},
-    {"id":"UI-08","area":"ui","name":"Expose keyboard navigation and accessibility labels for every new control","kind":"new","risk":"high","tests":["e2e:accessibility_labels"]},
-    {"id":"UI-09","area":"ui","name":"Search the current OpenRouter catalog in Settings and while pinning an OpenCode automation model","kind":"new","risk":"high","tests":["tests/openrouter_model_picker/main.swift","visual:automation_model_picker","visual:settings_model_picker","e2e:accessibility_labels"]},
-    {"id":"UI-10","area":"ui","name":"Classify Mission Control threads and automations into typed destinations without ambiguous deep links","kind":"new","risk":"high","tests":["tests/agents_navigation/main.swift"]}
+    {
+      "id": "AST-01",
+      "area": "assistant",
+      "name": "Create, select, and delete Assistant conversations",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "tests/assistant_history/main.swift"
+      ]
+    },
+    {
+      "id": "AST-02",
+      "area": "assistant",
+      "name": "Restore transcript, active conversation, and unread cursor after restart",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "tests/assistant_history/main.swift"
+      ]
+    },
+    {
+      "id": "AST-03",
+      "area": "assistant",
+      "name": "FLORA wake matching strips the configured wake name",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "tests/assistant_wake/main.swift"
+      ]
+    },
+    {
+      "id": "AST-04",
+      "area": "assistant",
+      "name": "FLORA continuity chooses only current or new and fails safely",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "tests/assistant_continuity/main.swift"
+      ]
+    },
+    {
+      "id": "AST-05",
+      "area": "assistant",
+      "name": "Assistant folder loads persona, memory, ledger, and workspace",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "tests/assistants/main.swift"
+      ]
+    },
+    {
+      "id": "AST-06",
+      "area": "assistant",
+      "name": "Assistant image turn preserves attachment and coordinate geometry",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:assistant_image"
+      ]
+    },
+    {
+      "id": "AST-07",
+      "area": "assistant",
+      "name": "Stop interrupts a running turn and leaves durable interrupted state",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:assistant_interrupt"
+      ]
+    },
+    {
+      "id": "AST-08",
+      "area": "assistant",
+      "name": "Runtime errors become visible durable notes without blank finals",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:runtime_failure_note"
+      ]
+    },
+    {
+      "id": "AST-09",
+      "area": "assistant",
+      "name": "Assistant replies drive existing panel, pill, and TTS callbacks exactly once",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:assistant_callback_reduction"
+      ]
+    },
+    {
+      "id": "BLD-01",
+      "area": "build",
+      "name": "Compile every Swift source with the selected Xcode SDK",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "scripts/test-agent-harness.sh:compile_app"
+      ]
+    },
+    {
+      "id": "BLD-02",
+      "area": "build",
+      "name": "Install and sign the native app with a stable identity",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:install_signature"
+      ]
+    },
+    {
+      "id": "BLD-03",
+      "area": "build",
+      "name": "Launch, quit, and relaunch without corrupting state",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:launch_relaunch"
+      ]
+    },
+    {
+      "id": "BLD-04",
+      "area": "build",
+      "name": "Redirect every writable store to an isolated absolute QA root",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/voice_flow_paths/main.swift"
+      ]
+    },
+    {
+      "id": "CAP-01",
+      "area": "capture_store",
+      "name": "Write capture transcript, metadata, and ordered frames",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:capture_bundle"
+      ]
+    },
+    {
+      "id": "CAP-02",
+      "area": "capture_store",
+      "name": "Deduplicate equivalent capture frames while preserving order",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:capture_frame_dedupe"
+      ]
+    },
+    {
+      "id": "CAP-03",
+      "area": "capture_store",
+      "name": "Prune bundles and ad-hoc screenshots at configured caps",
+      "kind": "existing",
+      "risk": "medium",
+      "tests": [
+        "contract:capture_pruning"
+      ]
+    },
+    {
+      "id": "CAP-04",
+      "area": "capture_store",
+      "name": "List and retrieve recent completed capture bundles",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:capture_recent_list",
+        "tests/capture_clipboard/main.swift",
+        "e2e:pasteboard_write"
+      ]
+    },
+    {
+      "id": "DIC-01",
+      "area": "capture",
+      "name": "Hold Dictate transcribes and contextually delivers or pastes",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:dictate_hold"
+      ]
+    },
+    {
+      "id": "DIC-02",
+      "area": "capture",
+      "name": "Double-press Dictate keeps the result in Inbox",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:dictate_inbox"
+      ]
+    },
+    {
+      "id": "DIC-03",
+      "area": "capture",
+      "name": "Dictate plus snapshot freezes one release-time screenshot",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:dictate_snapshot"
+      ]
+    },
+    {
+      "id": "DIC-04",
+      "area": "capture",
+      "name": "Continuous capture stores narration and deduped ordered frames",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:continuous_capture"
+      ]
+    },
+    {
+      "id": "DIC-05",
+      "area": "capture",
+      "name": "Annotation commits on Escape and Escape remains panic stop",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:annotation_escape"
+      ]
+    },
+    {
+      "id": "DIC-06",
+      "area": "capture",
+      "name": "Overlapping hotkeys apply longest-match precedence",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "tests/hotkey_precedence/main.swift"
+      ]
+    },
+    {
+      "id": "DIC-07",
+      "area": "capture",
+      "name": "CaptureRun freezes capability, route, display, paste target, and interaction",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "tests/capture_routing/main.swift"
+      ]
+    },
+    {
+      "id": "DIC-08",
+      "area": "capture",
+      "name": "Asynchronous transcription and screenshots correlate by run UUID",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "tests/capture_routing/main.swift"
+      ]
+    },
+    {
+      "id": "DIC-09",
+      "area": "capture",
+      "name": "No visible conversation falls back to the frozen paste target",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:paste_fallback"
+      ]
+    },
+    {
+      "id": "JOB-01",
+      "area": "jobs",
+      "name": "Persist manual, interval, inbox, capture, and watcher triggers",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:job_triggers"
+      ]
+    },
+    {
+      "id": "JOB-02",
+      "area": "jobs",
+      "name": "Admit jobs fairly under global and per-runtime concurrency caps",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:job_concurrency"
+      ]
+    },
+    {
+      "id": "JOB-03",
+      "area": "jobs",
+      "name": "Prevent overlapping runs for one conversation or concurrency key",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:job_exclusion"
+      ]
+    },
+    {
+      "id": "JOB-04",
+      "area": "jobs",
+      "name": "Lease and heartbeat a run only from its owning worker",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:job_leases"
+      ]
+    },
+    {
+      "id": "JOB-05",
+      "area": "jobs",
+      "name": "Expire leases and recover interrupted runs after crashes",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "failure:job_lease_recovery"
+      ]
+    },
+    {
+      "id": "JOB-06",
+      "area": "jobs",
+      "name": "Deduplicate trigger events exactly once",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:job_idempotency"
+      ]
+    },
+    {
+      "id": "JOB-07",
+      "area": "jobs",
+      "name": "Cancel active work and join its process tree",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:job_cancel"
+      ]
+    },
+    {
+      "id": "JOB-08",
+      "area": "jobs",
+      "name": "Retry retryable failures within the maximum attempt policy",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:job_retry_attempts"
+      ]
+    },
+    {
+      "id": "JOB-09",
+      "area": "jobs",
+      "name": "Enforce each job's daily cost budget",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:job_budget"
+      ]
+    },
+    {
+      "id": "JOB-10",
+      "area": "jobs",
+      "name": "Interrupt work that exceeds its maximum runtime",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "failure:job_timeout"
+      ]
+    },
+    {
+      "id": "JOB-11",
+      "area": "jobs",
+      "name": "Surface blocked or failed unattended runs to the user",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "e2e:job_result_push"
+      ]
+    },
+    {
+      "id": "JOB-12",
+      "area": "jobs",
+      "name": "Run three isolated agents without process, text, or tool leakage",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "soak:three_agents"
+      ]
+    },
+    {
+      "id": "JOB-13",
+      "area": "jobs",
+      "name": "Persist an exact OpenRouter model per OpenCode automation across default changes and relaunch",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:job_model_pin",
+        "e2e:job_model_pin"
+      ]
+    },
+    {
+      "id": "MCP-01",
+      "area": "mcp",
+      "name": "Set external session name",
+      "kind": "existing",
+      "risk": "medium",
+      "surface": "mcp:set_session_name",
+      "tests": [
+        "contract:mcp_set_session_name"
+      ]
+    },
+    {
+      "id": "MCP-02",
+      "area": "mcp",
+      "name": "Report or ask the user",
+      "kind": "existing",
+      "risk": "critical",
+      "surface": "mcp:report_to_user",
+      "tests": [
+        "contract:mcp_report_to_user"
+      ]
+    },
+    {
+      "id": "MCP-03",
+      "area": "mcp",
+      "name": "Check queued messages",
+      "kind": "existing",
+      "risk": "high",
+      "surface": "mcp:check_messages",
+      "tests": [
+        "contract:mcp_check_messages"
+      ]
+    },
+    {
+      "id": "MCP-04",
+      "area": "mcp",
+      "name": "Wait for a live user message",
+      "kind": "existing",
+      "risk": "high",
+      "surface": "mcp:wait_for_message",
+      "tests": [
+        "contract:mcp_wait_for_message"
+      ]
+    },
+    {
+      "id": "MCP-05",
+      "area": "mcp",
+      "name": "Get latest capture",
+      "kind": "existing",
+      "risk": "medium",
+      "surface": "mcp:get_latest_capture",
+      "tests": [
+        "contract:mcp_get_latest_capture"
+      ]
+    },
+    {
+      "id": "MCP-06",
+      "area": "mcp",
+      "name": "List captures",
+      "kind": "existing",
+      "risk": "medium",
+      "surface": "mcp:list_captures",
+      "tests": [
+        "contract:mcp_list_captures"
+      ]
+    },
+    {
+      "id": "MCP-07",
+      "area": "mcp",
+      "name": "Take screenshot",
+      "kind": "existing",
+      "risk": "high",
+      "surface": "mcp:take_screenshot",
+      "tests": [
+        "contract:mcp_take_screenshot"
+      ]
+    },
+    {
+      "id": "MCP-08",
+      "area": "mcp",
+      "name": "Show guide",
+      "kind": "existing",
+      "risk": "medium",
+      "surface": "mcp:show_guide",
+      "tests": [
+        "contract:mcp_show_guide"
+      ]
+    },
+    {
+      "id": "MCP-09",
+      "area": "mcp",
+      "name": "Update guide",
+      "kind": "existing",
+      "risk": "medium",
+      "surface": "mcp:update_guide",
+      "tests": [
+        "contract:mcp_update_guide"
+      ]
+    },
+    {
+      "id": "MCP-10",
+      "area": "mcp",
+      "name": "Show panel",
+      "kind": "existing",
+      "risk": "medium",
+      "surface": "mcp:show_panel",
+      "tests": [
+        "contract:mcp_show_panel"
+      ]
+    },
+    {
+      "id": "MCP-11",
+      "area": "mcp",
+      "name": "Annotate screen",
+      "kind": "existing",
+      "risk": "high",
+      "surface": "mcp:annotate_screen",
+      "tests": [
+        "contract:mcp_annotate_screen"
+      ]
+    },
+    {
+      "id": "MCP-12",
+      "area": "mcp",
+      "name": "Clear annotations",
+      "kind": "existing",
+      "risk": "medium",
+      "surface": "mcp:clear_annotations",
+      "tests": [
+        "contract:mcp_clear_annotations"
+      ]
+    },
+    {
+      "id": "MCP-13",
+      "area": "mcp",
+      "name": "Remove overlay",
+      "kind": "existing",
+      "risk": "medium",
+      "surface": "mcp:remove_overlay",
+      "tests": [
+        "contract:mcp_remove_overlay"
+      ]
+    },
+    {
+      "id": "MCP-14",
+      "area": "mcp",
+      "name": "List overlays",
+      "kind": "existing",
+      "risk": "medium",
+      "surface": "mcp:list_overlays",
+      "tests": [
+        "contract:mcp_list_overlays"
+      ]
+    },
+    {
+      "id": "MCP-15",
+      "area": "mcp",
+      "name": "Get recent dictations",
+      "kind": "existing",
+      "risk": "high",
+      "surface": "mcp:get_recent_dictations",
+      "tests": [
+        "contract:mcp_get_recent_dictations"
+      ]
+    },
+    {
+      "id": "MEM-01",
+      "area": "memory",
+      "name": "Compose the system role, assistant persona, memory, handoff, and task in distinct layers",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "contract:prompt_layers"
+      ]
+    },
+    {
+      "id": "MEM-02",
+      "area": "memory",
+      "name": "Bound core memory injection and preserve superseded facts",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "tests/assistants/main.swift"
+      ]
+    },
+    {
+      "id": "MEM-03",
+      "area": "memory",
+      "name": "Apply core memory updates atomically with a revision precondition",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:memory_revision"
+      ]
+    },
+    {
+      "id": "MEM-04",
+      "area": "memory",
+      "name": "Read and update the assistant ledger within its folder",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "contract:memory_ledger"
+      ]
+    },
+    {
+      "id": "MEM-05",
+      "area": "memory",
+      "name": "Reject secret-looking or oversized memory writes",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:memory_boundaries"
+      ]
+    },
+    {
+      "id": "MOD-01",
+      "area": "models",
+      "name": "Refresh and cache OpenRouter model capabilities, prices, context, and output limits with offline fallback",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:model_catalog",
+        "tests/openrouter_models/main.swift"
+      ]
+    },
+    {
+      "id": "MOD-02",
+      "area": "models",
+      "name": "Route concurrently scheduled OpenCode jobs through their distinct pinned models",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "e2e:job_model_pin"
+      ]
+    },
+    {
+      "id": "OVR-01",
+      "area": "overlay",
+      "name": "Validate and render guide, panel, and annotation JSON documents",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:overlay_documents"
+      ]
+    },
+    {
+      "id": "OVR-02",
+      "area": "overlay",
+      "name": "Poll live overlay files and repaint changes",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:overlay_file_poll"
+      ]
+    },
+    {
+      "id": "OVR-03",
+      "area": "overlay",
+      "name": "Render overlays only for the active owning session",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:overlay_session_scope"
+      ]
+    },
+    {
+      "id": "OVR-04",
+      "area": "overlay",
+      "name": "User close removes the owning live overlay file",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:overlay_user_close"
+      ]
+    },
+    {
+      "id": "OVR-05",
+      "area": "overlay",
+      "name": "Map annotation coordinates to fixed screenshot pixels",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "visual:overlay_coordinates"
+      ]
+    },
+    {
+      "id": "PIL-01",
+      "area": "pill",
+      "name": "Render collapsed pill, flash, picker, and grown modes",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "visual:pill_modes"
+      ]
+    },
+    {
+      "id": "PIL-02",
+      "area": "pill",
+      "name": "Keep stable numbered session slots and active indicator",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:session_slots"
+      ]
+    },
+    {
+      "id": "PIL-03",
+      "area": "pill",
+      "name": "Pulse unread state until the exact session is viewed",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:unread_ring"
+      ]
+    },
+    {
+      "id": "PIL-04",
+      "area": "pill",
+      "name": "Persist unread ghost push stacks after session death and app restart",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:ghost_pushes"
+      ]
+    },
+    {
+      "id": "PIL-05",
+      "area": "pill",
+      "name": "Double-select reads a stack while arrival never auto-plays",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:double_select_speech"
+      ]
+    },
+    {
+      "id": "PIL-06",
+      "area": "pill",
+      "name": "Persist each session push stack across app relaunch",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:push_stack_persistence"
+      ]
+    },
+    {
+      "id": "PIL-07",
+      "area": "pill",
+      "name": "Close keeps a stack and pending ask available",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:push_close_keep"
+      ]
+    },
+    {
+      "id": "PIL-08",
+      "area": "pill",
+      "name": "Trash deletes a stack, cancels its ask, and removes its session",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:push_trash_delete"
+      ]
+    },
+    {
+      "id": "PIL-09",
+      "area": "pill",
+      "name": "Background Assistant completion shows receipt without taking over screen",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "visual:assistant_receipt"
+      ]
+    },
+    {
+      "id": "RUN-01",
+      "area": "runtime",
+      "name": "Discover and authenticate Codex CLI",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "live:codex_discovery_auth"
+      ]
+    },
+    {
+      "id": "RUN-02",
+      "area": "runtime",
+      "name": "Codex starts and resumes JSONL sessions",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "tests/test_backend_protocol.py",
+        "tests/codex_runtime/main.swift",
+        "live:codex_new_resume"
+      ]
+    },
+    {
+      "id": "RUN-03",
+      "area": "runtime",
+      "name": "Codex accepts image attachments and interrupts its process group",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "live:codex_image_interrupt"
+      ]
+    },
+    {
+      "id": "RUN-04",
+      "area": "runtime",
+      "name": "Discover, pin, authenticate, and health-check OpenCode",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/opencode_supervisor/main.swift"
+      ]
+    },
+    {
+      "id": "RUN-05",
+      "area": "runtime",
+      "name": "OpenCode creates directory-scoped sessions and streams normalized events",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/opencode_runtime/main.swift",
+        "live:opencode_session_stream"
+      ]
+    },
+    {
+      "id": "RUN-06",
+      "area": "runtime",
+      "name": "OpenCode sends images and reads fresh Voice Flow screenshots",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "live:opencode_image_read"
+      ]
+    },
+    {
+      "id": "RUN-07",
+      "area": "runtime",
+      "name": "OpenCode aborts turns and leaves uncertain bindings dirty",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/opencode_runtime/main.swift"
+      ]
+    },
+    {
+      "id": "RUN-08",
+      "area": "runtime",
+      "name": "OpenCode supervisor restarts crashed servers without orphan children",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "failure:opencode_restart"
+      ]
+    },
+    {
+      "id": "RUN-09",
+      "area": "runtime",
+      "name": "Choose Codex or OpenCode per conversation and persist preference",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "e2e:runtime_selector"
+      ]
+    },
+    {
+      "id": "RUN-10",
+      "area": "runtime",
+      "name": "Switching runtimes reseeds stale sessions from canonical history",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:runtime_binding_switch"
+      ]
+    },
+    {
+      "id": "RUN-11",
+      "area": "runtime",
+      "name": "Dirty turns never append duplicate user or final messages",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:dirty_turn_recovery"
+      ]
+    },
+    {
+      "id": "RUN-12",
+      "area": "runtime",
+      "name": "Legacy Codex thread IDs migrate and remain rollback-readable",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/assistant_history/main.swift"
+      ]
+    },
+    {
+      "id": "SEC-01",
+      "area": "security",
+      "name": "Bind embedded runtime and QA services to loopback only",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:loopback_bind"
+      ]
+    },
+    {
+      "id": "SEC-02",
+      "area": "security",
+      "name": "Require rotating Basic authentication for each OpenCode process",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:runtime_auth"
+      ]
+    },
+    {
+      "id": "SEC-03",
+      "area": "security",
+      "name": "Scope internal capability authority to one run, message, conversation, and root",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:capability_scope"
+      ]
+    },
+    {
+      "id": "SEC-04",
+      "area": "security",
+      "name": "Expire and rotate capability tokens and reject replay",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:tool_token_replay"
+      ]
+    },
+    {
+      "id": "SEC-05",
+      "area": "security",
+      "name": "Keep provider credentials in Keychain and out of generated state",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/model_gateway/main.swift",
+        "security:provider_key_canary"
+      ]
+    },
+    {
+      "id": "SEC-06",
+      "area": "security",
+      "name": "Redirect every writable config and runtime store into its authorized root",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:config_isolation"
+      ]
+    },
+    {
+      "id": "SEC-07",
+      "area": "security",
+      "name": "Sanitize child process and external MCP environments",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:child_environment"
+      ]
+    },
+    {
+      "id": "SEC-08",
+      "area": "security",
+      "name": "Deny path traversal and symlink escapes from allowed roots",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:path_containment"
+      ]
+    },
+    {
+      "id": "SEC-09",
+      "area": "security",
+      "name": "Apply explicit allow, ask, and deny permission outcomes",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:permission_policy"
+      ]
+    },
+    {
+      "id": "SEC-10",
+      "area": "security",
+      "name": "Enable only selected external MCP servers and tools",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:mcp_allowlist"
+      ]
+    },
+    {
+      "id": "SEC-11",
+      "area": "security",
+      "name": "Redact secrets and credentials from logs and runtime errors",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:log_redaction"
+      ]
+    },
+    {
+      "id": "SEC-12",
+      "area": "security",
+      "name": "Exclude QA control routes and tokens from release builds",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:release_qa_absent"
+      ]
+    },
+    {
+      "id": "SEC-13",
+      "area": "security",
+      "name": "Desktop QA ignores physical keyboard input and hides its surface during unattended work",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "e2e:qa_physical_input_isolation"
+      ]
+    },
+    {
+      "id": "SEC-14",
+      "area": "security",
+      "name": "Keep OpenRouter credentials out of the model catalog cache and enforce the validated model allowlist",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:model_catalog_secret",
+        "tests/model_gateway/main.swift"
+      ]
+    },
+    {
+      "id": "SEC-15",
+      "area": "security",
+      "kind": "new",
+      "risk": "critical",
+      "name": "Confine agent file writes and deletions to granted workspaces at the kernel",
+      "tests": [
+        "tests/sandbox_containment/main.swift"
+      ]
+    },
+    {
+      "id": "SEC-16",
+      "area": "security",
+      "kind": "new",
+      "risk": "critical",
+      "name": "Keep secret-shaped files unreadable even inside a granted workspace",
+      "tests": [
+        "tests/sandbox_containment/main.swift"
+      ]
+    },
+    {
+      "id": "SEC-17",
+      "area": "security",
+      "kind": "new",
+      "risk": "critical",
+      "name": "Deny direct agent egress so all traffic leaves through the logged proxy",
+      "tests": [
+        "tests/sandbox_containment/main.swift"
+      ]
+    },
+    {
+      "id": "SEC-18",
+      "area": "security",
+      "kind": "new",
+      "risk": "critical",
+      "name": "Enforce the capability dial below the model, including descendant processes",
+      "tests": [
+        "tests/sandbox_containment/main.swift",
+        "tests/agent_permissions/main.swift"
+      ]
+    },
+    {
+      "id": "SKL-01",
+      "area": "skills",
+      "name": "Validate canonical assistant SKILL.md packages",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "contract:skill_validation"
+      ]
+    },
+    {
+      "id": "SKL-02",
+      "area": "skills",
+      "name": "Project only the selected skill allowlist atomically",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "contract:skill_projection"
+      ]
+    },
+    {
+      "id": "SKL-03",
+      "area": "skills",
+      "name": "Record source digests and refresh changed skills",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "contract:skill_manifest"
+      ]
+    },
+    {
+      "id": "SKL-04",
+      "area": "skills",
+      "name": "Expose equivalent selected skill content to Codex and OpenCode",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "live:skill_runtime_parity"
+      ]
+    },
+    {
+      "id": "SKL-05",
+      "area": "skills",
+      "name": "Deny unselected global or project skills",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:skill_isolation"
+      ]
+    },
+    {
+      "id": "SYN-01",
+      "area": "sync",
+      "name": "Open pairing only after Mac-side consent and issue a token",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "contract:sync_pairing"
+      ]
+    },
+    {
+      "id": "SYN-02",
+      "area": "sync",
+      "name": "Ingest phone dictations into the isolated Mac history",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:sync_ingest"
+      ]
+    },
+    {
+      "id": "SYN-03",
+      "area": "sync",
+      "name": "Deduplicate and upsert repeated phone dictations",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:sync_dedupe_upsert"
+      ]
+    },
+    {
+      "id": "SYN-04",
+      "area": "sync",
+      "name": "Recover safely from disconnected or unauthorized phone clients",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:sync_recovery"
+      ]
+    },
+    {
+      "id": "TOL-01",
+      "area": "tools",
+      "name": "Computer screenshot returns bounded path, dimensions, and cursor coordinates",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tool:computer_screenshot"
+      ]
+    },
+    {
+      "id": "TOL-02",
+      "area": "tools",
+      "name": "Computer control enforces action enum and trust-profile permission",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tool:computer_control"
+      ]
+    },
+    {
+      "id": "TOL-03",
+      "area": "tools",
+      "name": "Context returns bounded captures and recent dictations with pagination",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tool:context"
+      ]
+    },
+    {
+      "id": "TOL-04",
+      "area": "tools",
+      "name": "Overlay creates, updates, removes, and lists session-scoped elements",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tool:overlay"
+      ]
+    },
+    {
+      "id": "TOL-05",
+      "area": "tools",
+      "name": "User tool reports, checks, and waits within one Assistant run",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tool:user_interaction"
+      ]
+    },
+    {
+      "id": "TOL-06",
+      "area": "tools",
+      "name": "Memory tool applies bounded atomic reads and writes",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tool:memory"
+      ]
+    },
+    {
+      "id": "TOL-07",
+      "area": "tools",
+      "name": "Tool schemas reject malformed and ambiguous arguments",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "contract:tool_schemas"
+      ]
+    },
+    {
+      "id": "TOL-08",
+      "area": "tools",
+      "name": "Tool calls cannot cross runtime session, conversation, assistant, or path boundaries",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:tool_session_isolation"
+      ]
+    },
+    {
+      "id": "TOL-09",
+      "area": "tools",
+      "name": "Tool results are bounded, semantic, and steer after truncation or error",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "contract:tool_results"
+      ]
+    },
+    {
+      "id": "TOL-10",
+      "area": "tools",
+      "name": "Capability tokens expire, rotate, and reject replay",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "security:tool_token_replay"
+      ]
+    },
+    {
+      "id": "TTS-01",
+      "area": "tts",
+      "name": "Speak selected or pasted text through the unified player",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:tts_speak"
+      ]
+    },
+    {
+      "id": "TTS-02",
+      "area": "tts",
+      "name": "Apply configured voice, preset, instructions, and speed",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:tts_configuration"
+      ]
+    },
+    {
+      "id": "TTS-03",
+      "area": "tts",
+      "name": "Pause, resume, seek, and stop the unified player",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "tests/player/main.swift",
+        "e2e:tts_transport"
+      ]
+    },
+    {
+      "id": "TTS-04",
+      "area": "tts",
+      "name": "Stream Assistant speech at sentence boundaries",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "tests/player/main.swift",
+        "e2e:live_reply_speech"
+      ]
+    },
+    {
+      "id": "TTS-05",
+      "area": "tts",
+      "name": "Read the active message stack from its speaker control",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "e2e:message_speaker"
+      ]
+    },
+    {
+      "id": "TTS-06",
+      "area": "tts",
+      "name": "Never auto-play speech when an agent message arrives",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:no_arrival_autoplay"
+      ]
+    },
+    {
+      "id": "TTS-07",
+      "area": "tts",
+      "name": "Starting any recording barges in and stops playback",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:tts_barge_in"
+      ]
+    },
+    {
+      "id": "TTS-08",
+      "area": "tts",
+      "name": "Escape remains the panic stop while the Assistant is acting",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "e2e:escape_panic"
+      ]
+    },
+    {
+      "id": "UI-01",
+      "area": "ui",
+      "name": "Choose the default runtime for new conversations in Settings",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "visual:runtime_default"
+      ]
+    },
+    {
+      "id": "UI-02",
+      "area": "ui",
+      "name": "Show and persist the per-conversation runtime selector",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "e2e:runtime_selector"
+      ]
+    },
+    {
+      "id": "UI-03",
+      "area": "ui",
+      "name": "Disable runtime switching while that conversation is running",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "e2e:runtime_selector_running"
+      ]
+    },
+    {
+      "id": "UI-04",
+      "area": "ui",
+      "name": "Show runtime starting, healthy, degraded, mismatch, and stopped states",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "visual:runtime_health"
+      ]
+    },
+    {
+      "id": "UI-05",
+      "area": "ui",
+      "name": "Resolve permission requests through an accessible user prompt",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "e2e:permission_prompt"
+      ]
+    },
+    {
+      "id": "UI-06",
+      "area": "ui",
+      "name": "Show queued, running, blocked, failed, and completed agent jobs",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "visual:job_status"
+      ]
+    },
+    {
+      "id": "UI-07",
+      "area": "ui",
+      "name": "Present legacy conversation migration without transcript loss or duplicate scaffolds",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "e2e:migration_presentation"
+      ]
+    },
+    {
+      "id": "UI-08",
+      "area": "ui",
+      "name": "Expose keyboard navigation and accessibility labels for every new control",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "e2e:accessibility_labels"
+      ]
+    },
+    {
+      "id": "UI-09",
+      "area": "ui",
+      "name": "Search the current OpenRouter catalog in Settings and while pinning an OpenCode automation model",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/openrouter_model_picker/main.swift",
+        "visual:automation_model_picker",
+        "visual:settings_model_picker",
+        "e2e:accessibility_labels"
+      ]
+    },
+    {
+      "id": "UI-10",
+      "area": "ui",
+      "name": "Classify Mission Control threads and automations into typed destinations without ambiguous deep links",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/agents_navigation/main.swift"
+      ]
+    },
+    {
+      "id": "WAT-01",
+      "area": "watcher",
+      "name": "Record while active and pause while idle",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:watcher_activity"
+      ]
+    },
+    {
+      "id": "WAT-02",
+      "area": "watcher",
+      "name": "Pause while the screen is locked and resume safely",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:watcher_lock"
+      ]
+    },
+    {
+      "id": "WAT-03",
+      "area": "watcher",
+      "name": "Store metadata and deduplicated screen frames",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "contract:watcher_capture"
+      ]
+    },
+    {
+      "id": "WAT-04",
+      "area": "watcher",
+      "name": "Store optional motion-deduplicated camera frames",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:watcher_camera"
+      ]
+    },
+    {
+      "id": "WAT-05",
+      "area": "watcher",
+      "name": "Apply watcher day and frame retention limits",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:watcher_retention"
+      ]
+    },
+    {
+      "id": "WAT-06",
+      "area": "watcher",
+      "name": "Run review and promote ledger patterns only after the evidence threshold",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "contract:watcher_review"
+      ]
+    },
+    {
+      "id": "WAT-07",
+      "area": "watcher",
+      "name": "Expose watcher enabled, paused, frame, and review status in menu and Settings",
+      "kind": "existing",
+      "risk": "medium",
+      "tests": [
+        "visual:watcher_status"
+      ]
+    }
   ]
 }

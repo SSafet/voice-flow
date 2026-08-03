@@ -193,6 +193,23 @@ class UserSettings {
     var queueEnabled: Bool = true
     // Assistant computer control (voiceflow_computer beyond screenshots).
     var assistantComputerUse: Bool = false
+    // Live capability dial (VF-59). Defined here rather than next to
+    // AgentPermissionPolicy so that contract stays compilable standalone.
+    var agentCapabilityDial: AgentCapabilityDial {
+        AgentCapabilityDial(runCommands: agentRunCommands,
+                            reachNetwork: agentReachNetwork,
+                            controlScreen: assistantComputerUse)
+    }
+    // Capability dial (VF-59). Each switch is backed by a sandbox rule, so
+    // turning one off is enforced by the kernel rather than asked of the model.
+    var agentRunCommands: Bool = true
+    var agentReachNetwork: Bool = true
+    // Roots the agent may WRITE to. Reads are open everywhere except secret
+    // shapes; only writes and deletions are confined, which is the whole point.
+    var agentWorkspaceRoots: [String] = DefaultAgentWorkspaceRoots
+    // Egress hosts. Empty allowlist = log everything, block nothing.
+    var agentEgressAllowedHosts: [String] = []
+    var agentEgressBlockedHosts: [String] = []
     var watcherIntervalSeconds: Int = 5
     var watcherIdlePauseSeconds: Int = 90
     var watcherKeepDays: Int = 30
@@ -286,6 +303,11 @@ class UserSettings {
         if let v = dict["workflow_watcher_enabled"] as? Bool { workflowWatcherEnabled = v }
         if let v = dict["queue_enabled"] as? Bool { queueEnabled = v }
         if let v = dict["assistant_computer_use"] as? Bool { assistantComputerUse = v }
+        if let v = dict["agent_run_commands"] as? Bool { agentRunCommands = v }
+        if let v = dict["agent_reach_network"] as? Bool { agentReachNetwork = v }
+        if let v = dict["agent_workspace_roots"] as? [String] { agentWorkspaceRoots = v }
+        if let v = dict["agent_egress_allowed_hosts"] as? [String] { agentEgressAllowedHosts = v }
+        if let v = dict["agent_egress_blocked_hosts"] as? [String] { agentEgressBlockedHosts = v }
         if let v = dict["watcher_interval_seconds"] as? Int { watcherIntervalSeconds = max(2, v) }
         if let v = dict["watcher_idle_pause_seconds"] as? Int { watcherIdlePauseSeconds = max(30, v) }
         if let v = dict["watcher_keep_days"] as? Int { watcherKeepDays = max(3, v) }
@@ -332,6 +354,11 @@ class UserSettings {
             "workflow_watcher_enabled": workflowWatcherEnabled,
             "queue_enabled": queueEnabled,
             "assistant_computer_use": assistantComputerUse,
+            "agent_run_commands": agentRunCommands,
+            "agent_reach_network": agentReachNetwork,
+            "agent_workspace_roots": agentWorkspaceRoots,
+            "agent_egress_allowed_hosts": agentEgressAllowedHosts,
+            "agent_egress_blocked_hosts": agentEgressBlockedHosts,
             "watcher_interval_seconds": watcherIntervalSeconds,
             "watcher_idle_pause_seconds": watcherIdlePauseSeconds,
             "watcher_keep_days": watcherKeepDays,

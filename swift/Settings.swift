@@ -33,6 +33,9 @@ final class SettingsStore: ObservableObject {
     @Published var doubleSelectSpeak: Bool { didSet { commit() } }
     @Published var queueEnabled: Bool { didSet { commit() } }
     @Published var assistantComputerUse: Bool { didSet { commit() } }
+    @Published var agentRunCommands: Bool { didSet { commit() } }
+    @Published var agentReachNetwork: Bool { didSet { commit() } }
+    @Published var agentWorkspaceRoots: [String] { didSet { commit() } }
     @Published var workflowWatcherEnabled: Bool { didSet { commit() } }
     @Published var watcherInterval: Double { didSet { commit() } }
     @Published var watcherIdlePause: Double { didSet { commit() } }
@@ -78,6 +81,9 @@ final class SettingsStore: ObservableObject {
         doubleSelectSpeak = s.doubleSelectSpeak
         queueEnabled = s.queueEnabled
         assistantComputerUse = s.assistantComputerUse
+        agentRunCommands = s.agentRunCommands
+        agentReachNetwork = s.agentReachNetwork
+        agentWorkspaceRoots = s.agentWorkspaceRoots
         workflowWatcherEnabled = s.workflowWatcherEnabled
         watcherInterval = Double(s.watcherIntervalSeconds)
         watcherIdlePause = Double(s.watcherIdlePauseSeconds)
@@ -136,6 +142,9 @@ final class SettingsStore: ObservableObject {
         s.doubleSelectSpeak = doubleSelectSpeak
         s.queueEnabled = queueEnabled
         s.assistantComputerUse = assistantComputerUse
+        s.agentRunCommands = agentRunCommands
+        s.agentReachNetwork = agentReachNetwork
+        s.agentWorkspaceRoots = agentWorkspaceRoots
         s.workflowWatcherEnabled = workflowWatcherEnabled
         s.watcherIntervalSeconds = Int(watcherInterval)
         s.watcherIdlePauseSeconds = Int(watcherIdlePause)
@@ -669,12 +678,30 @@ private struct AssistantSettingsView: View {
             }
 
             Section {
+                Toggle(isOn: $store.agentRunCommands) {
+                    SettingRowLabel(title: "Run commands",
+                                    subtitle: "Shell commands, scripts, and build tools. Off is enforced by the sandbox — the system refuses to start any program, rather than trusting the model not to try.")
+                }
+                Toggle(isOn: $store.agentReachNetwork) {
+                    SettingRowLabel(title: "Reach the network",
+                                    subtitle: "Web pages, search, and connected services. All traffic goes through Voice Flow, which records every destination. Off leaves no route out at all.")
+                }
                 Toggle(isOn: $store.assistantComputerUse) {
-                    SettingRowLabel(title: "Let the Assistant control this Mac",
-                                    subtitle: "FLORA can move the mouse, click, and type during her turns — without per-action confirmation. Off keeps her to screenshots only.")
+                    SettingRowLabel(title: "Control this Mac",
+                                    subtitle: "Move the mouse, click, and type during a turn. Off keeps the Assistant to screenshots only.")
                 }
             } header: {
-                Text("Computer use")
+                Text("What the Assistant can do")
+            } footer: {
+                Text("Turn these down when you're running a smaller model you trust less. Each one is enforced by the operating system, not by instructions the model could talk itself out of.")
+            }
+
+            Section {
+                WorkspaceRootsEditor(roots: $store.agentWorkspaceRoots)
+            } header: {
+                Text("Folders the Assistant can change")
+            } footer: {
+                Text("The Assistant can read almost anywhere, but it can only create, edit, or delete inside these folders — enforced by the system, so a script it writes cannot reach past them either. Passwords, keys, and .env files stay unreadable even here.")
             }
 
             Section {
@@ -866,6 +893,64 @@ private enum WatcherActions {
 
 // Whether Claude Code has actually talked to the MCP server, plus the
 // one-time registration command (the server is useless until it's run).
+/// The granted-workspace list (VF-59). Paths are stored tilde-relative so the
+/// list stays readable and portable; the sandbox expands them at launch.
+private struct WorkspaceRootsEditor: View {
+    @Binding var roots: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(roots.enumerated()), id: \.offset) { index, root in
+                HStack(spacing: 8) {
+                    Image(systemName: "folder")
+                        .foregroundStyle(.secondary)
+                    Text(root)
+                        .font(.system(.body, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer()
+                    Button {
+                        roots.remove(at: index)
+                    } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Stop letting the Assistant change this folder")
+                }
+            }
+            if roots.isEmpty {
+                Text("No folders granted — the Assistant can read, but cannot change anything.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Button {
+                addRoot()
+            } label: {
+                Label("Add a folder…", systemImage: "plus")
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func addRoot() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Grant"
+        panel.message = "Choose a folder the Assistant may create, edit, and delete files in."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let path = url.standardizedFileURL.path
+        let stored = path == home ? "~"
+            : path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count)
+            : path
+        guard !roots.contains(stored) else { return }
+        roots.append(stored)
+    }
+}
+
 private struct ClaudeConnectionRow: View {
     @State private var lastActivity: Date? = MCPServer.lastActivity
     @State private var copied = false

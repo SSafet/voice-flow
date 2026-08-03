@@ -117,9 +117,15 @@ compile_and_run agent_capabilities swift/VoiceFlowPaths.swift swift/AssistantWak
 compile_and_run agent_prompt swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentCapabilities.swift \
     swift/AgentPromptComposer.swift tests/agent_prompt/main.swift
+compile_and_run sandbox_containment swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
+    swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
+    swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift \
+    swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift \
+    swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
+    tests/sandbox_containment/main.swift -framework Security
 compile_and_run agent_permissions swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
-    tests/agent_permissions/main.swift
+    swift/Sandbox.swift tests/agent_permissions/main.swift
 compile_and_run qa_control -D VOICE_FLOW_QA swift/VoiceFlowPaths.swift \
     swift/AssistantWake.swift swift/Assistants.swift swift/AgentRuntimeTypes.swift \
     swift/AgentCapabilities.swift swift/QAControl.swift \
@@ -149,12 +155,12 @@ compile_and_run codex_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swi
 compile_and_run opencode_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
     swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
-    swift/ModelGateway.swift swift/OpenRouterModels.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
+    swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
     tests/opencode_runtime/main.swift -framework Security
 compile_and_run opencode_http swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
     swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift \
-    swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift swift/OpenCodeSupervisor.swift \
+    swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeSupervisor.swift \
     swift/OpenCodeHTTPClient.swift tests/opencode_http/main.swift -framework Security
 
 "$PROJECT_DIR/.venv/bin/python" tests/test_backend_protocol.py -q
@@ -207,7 +213,7 @@ case "$MODE" in
             swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
             swift/AssistantWake.swift swift/Assistants.swift swift/AgentCapabilities.swift \
             swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
-            swift/ModelGateway.swift swift/OpenRouterModels.swift swift/OpenCodeSupervisor.swift tests/opencode_supervisor/main.swift -framework Security
+            swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeSupervisor.swift tests/opencode_supervisor/main.swift -framework Security
         compile_only codex_live_turn swift/Codex.swift tests/codex_live_turn/main.swift
         VOICE_FLOW_CONFIG_ROOT="$BUILD_DIR/codex-live-config" \
             VOICE_FLOW_CANARY_CODEX_REPORT="$BUILD_DIR/codex-canary.json" \

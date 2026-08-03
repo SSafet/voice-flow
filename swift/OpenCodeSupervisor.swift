@@ -159,7 +159,12 @@ actor OpenCodeSupervisor: OpenCodeServing {
         let log: OpenCodeProcessLog
         let gateway: ModelGatewayServer
         let toolServer: AgentToolServer
+        let egress: EgressProxyServer?
         let allowedModels: Set<String>
+        /// The containment this process was launched under. A profile is fixed
+        /// at exec time, so a changed policy means a new process — never a
+        /// running one silently keeping the old, looser boundary.
+        let sandboxPolicy: AgentSandboxPolicy
     }
 
     private var instances: [AgentTrustProfile: Instance] = [:]
@@ -218,9 +223,13 @@ actor OpenCodeSupervisor: OpenCodeServing {
                            modelID: String?) async throws -> OpenCodeConnection {
         while true {
             try Task.checkCancellation()
-            if let modelID,
-               let instance = instances[profile], instance.process.isRunning,
-               !instance.allowedModels.contains(modelID) {
+            let desiredSandbox = Self.sandboxPolicy(profile: profile)
+            if let instance = instances[profile], instance.process.isRunning,
+               (modelID.map { !instance.allowedModels.contains($0) } ?? false)
+                 || instance.sandboxPolicy != desiredSandbox {
+                // Same drain-then-roll rule the model catalog already uses: a
+                // tightened dial or a new granted root must not kill turns that
+                // are mid-flight, but it must apply before the next one starts.
                 if activeConnections[profile, default: 0] > 0 {
                     try await Task.sleep(nanoseconds: 50_000_000)
                     continue
@@ -271,6 +280,7 @@ actor OpenCodeSupervisor: OpenCodeServing {
         guard let instance = instances.removeValue(forKey: profile) else { return }
         instance.gateway.stop()
         instance.toolServer.stop()
+        instance.egress?.stop()
         if instance.process.isRunning {
             let pid = instance.process.processIdentifier
             let descendants = Self.descendants(of: pid)
@@ -360,10 +370,9 @@ actor OpenCodeSupervisor: OpenCodeServing {
                 ],
             ] as [String: Any])
         })
-        var permission = AgentPermissionPolicy(profile: profile).openCodeConfiguration(
-            selectedSkills: [], readableExternalRoots: [
-                VoiceFlowPaths.shared.directory("captures")
-            ])
+        let dial = AgentSandboxSettings.shared.snapshot().dial
+        var permission = AgentPermissionPolicy(profile: profile, dial: dial)
+            .openCodeConfiguration(selectedSkills: [], readableExternalRoots: [])
         // The server is rooted in an empty XDG home and every Assistant turn
         // atomically replaces that Assistant's .opencode/skills projection.
         // OpenCode permission rules are process-wide, so discovery isolation—not
@@ -390,17 +399,75 @@ actor OpenCodeSupervisor: OpenCodeServing {
         let configURL = root.appendingPathComponent("voice-flow-opencode.json")
         try configData.write(to: configURL, options: .atomic)
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = [
-            "--pure", "serve", "--hostname", "127.0.0.1",
-            "--port", String(port), "--print-logs", "--log-level", "WARN",
-        ]
-        process.currentDirectoryURL = root
         let homeRoot = root.appendingPathComponent("home", isDirectory: true)
         try FileManager.default.createDirectory(at: homeRoot, withIntermediateDirectories: true)
+
+        // Egress: the sandbox denies every non-loopback connection, so this
+        // proxy is the only way out and the dial's network switch is simply
+        // whether it exists. Nothing to bypass — there is no second route.
+        var egress: EgressProxyServer?
+        var proxyConnection: EgressProxyConnection?
+        if dial.reachNetwork {
+            let server = EgressProxyServer(policy: {
+                let live = AgentSandboxSettings.shared.snapshot()
+                return EgressPolicy(allowedHosts: live.egressAllowedHosts,
+                                    blockedHosts: live.egressBlockedHosts)
+            })
+            do {
+                proxyConnection = try server.start()
+                egress = server
+            } catch {
+                gateway.stop()
+                toolServer.stop()
+                egress?.stop()
+                throw error
+            }
+        }
+
+        let sandboxPolicy = Self.sandboxPolicy(profile: profile)
+        let sandboxPrefix: [String]
+        do {
+            let profileURL = root.appendingPathComponent("sandbox.sb")
+            guard let prefix = try AgentSandbox.launchPrefix(
+                policy: sandboxPolicy, profileURL: profileURL) else {
+                // Refusing to start beats starting unconfined: a runtime that
+                // quietly loses its boundary is the failure this ticket exists
+                // to prevent.
+                gateway.stop(); toolServer.stop(); egress?.stop()
+                throw OpenCodeSupervisorError.launchFailed(
+                    "sandbox-exec is unavailable, so the agent cannot be contained")
+            }
+            sandboxPrefix = prefix
+        } catch let error as OpenCodeSupervisorError {
+            throw error
+        } catch {
+            gateway.stop(); toolServer.stop(); egress?.stop()
+            throw OpenCodeSupervisorError.launchFailed(
+                "could not write the sandbox profile: \(error.localizedDescription)")
+        }
+
+        let process = Process()
+        let serveArguments = [
+            binary, "--pure", "serve", "--hostname", "127.0.0.1",
+            "--port", String(port), "--print-logs", "--log-level", "WARN",
+        ]
+        // argv[0] is sandbox-exec; the runtime binary becomes its argument, so
+        // the profile is applied by the kernel before opencode's first
+        // instruction and is inherited by everything it spawns.
+        process.executableURL = URL(fileURLWithPath: sandboxPrefix[0])
+        process.arguments = Array(sandboxPrefix.dropFirst()) + serveArguments
+        process.currentDirectoryURL = root
         var environment = Self.sanitizedEnvironment()
         environment["HOME"] = homeRoot.path
+        if let proxyConnection {
+            environment["HTTPS_PROXY"] = proxyConnection.proxyURL
+            environment["HTTP_PROXY"] = proxyConnection.proxyURL
+            environment["https_proxy"] = proxyConnection.proxyURL
+            environment["http_proxy"] = proxyConnection.proxyURL
+            // The loopback services must not be proxied through the proxy.
+            environment["NO_PROXY"] = "127.0.0.1,localhost"
+            environment["no_proxy"] = "127.0.0.1,localhost"
+        }
         environment["XDG_CONFIG_HOME"] = configRoot.path
         environment["XDG_DATA_HOME"] = dataRoot.path
         environment["XDG_CACHE_HOME"] = cacheRoot.path
@@ -425,6 +492,7 @@ actor OpenCodeSupervisor: OpenCodeServing {
             log.stop(pipe: output)
             gateway.stop()
             toolServer.stop()
+            egress?.stop()
             throw CancellationError()
         }
 
@@ -434,6 +502,7 @@ actor OpenCodeSupervisor: OpenCodeServing {
             log.stop(pipe: output)
             gateway.stop()
             toolServer.stop()
+            egress?.stop()
             throw OpenCodeSupervisorError.launchFailed(error.localizedDescription)
         }
         do {
@@ -445,6 +514,7 @@ actor OpenCodeSupervisor: OpenCodeServing {
             log.stop(pipe: output)
             gateway.stop()
             toolServer.stop()
+            egress?.stop()
             throw OpenCodeSupervisorError.launchFailed(
                 "could not record runtime process ownership")
         }
@@ -456,8 +526,8 @@ actor OpenCodeSupervisor: OpenCodeServing {
         instances[profile] = Instance(
             process: process, connection: connection, root: root,
             output: output, log: log,
-            gateway: gateway, toolServer: toolServer,
-            allowedModels: allowedModels)
+            gateway: gateway, toolServer: toolServer, egress: egress,
+            allowedModels: allowedModels, sandboxPolicy: sandboxPolicy)
 
         for _ in 0..<60 {
             if Task.isCancelled {
@@ -470,6 +540,7 @@ actor OpenCodeSupervisor: OpenCodeServing {
                 log.stop(pipe: output)
                 gateway.stop()
                 toolServer.stop()
+                egress?.stop()
                 throw OpenCodeSupervisorError.launchFailed(
                     detail.isEmpty ? "process exited before health check" : detail)
             }
@@ -582,6 +653,36 @@ actor OpenCodeSupervisor: OpenCodeServing {
             throw OpenCodeSupervisorError.launchFailed("could not generate runtime credentials")
         }
         return Data(bytes).base64EncodedString()
+    }
+
+    /// The containment for one trust profile, derived from the user's granted
+    /// roots and dial (VF-59). Pure and deterministic so `acquireConnection`
+    /// can compare it against what a running process was launched with.
+    static func sandboxPolicy(profile: AgentTrustProfile) -> AgentSandboxPolicy {
+        let settings = AgentSandboxSettings.shared.snapshot()
+        let dial = settings.dial
+        let runtimeRoot = VoiceFlowPaths.shared
+            .directory("runtime/opencode/\(profile.rawValue)")
+        let workspaces = settings.workspaceRoots.compactMap { raw -> URL? in
+            let expanded = NSString(string: raw).expandingTildeInPath
+            guard !expanded.isEmpty, expanded.hasPrefix("/") else { return nil }
+            return URL(fileURLWithPath: expanded)
+        }
+        // Assistant folders stay writable regardless of the granted list —
+        // memory, ledger and skills live there and are the agent's own state.
+        let assistantRoot = VoiceFlowPaths.shared.directory("assistants")
+        var temporary: [URL] = []
+        if let tmp = ProcessInfo.processInfo.environment["TMPDIR"] {
+            temporary.append(URL(fileURLWithPath: tmp))
+        }
+        temporary.append(URL(fileURLWithPath: "/private/var/folders"))
+        temporary.append(URL(fileURLWithPath: "/private/tmp"))
+        return AgentSandboxPolicy(
+            workspaceRoots: workspaces,
+            runtimeRoots: [runtimeRoot, assistantRoot],
+            temporaryRoots: temporary,
+            allowShell: dial.runCommands,
+            allowNetwork: dial.reachNetwork)
     }
 
     static func sanitizedEnvironment(

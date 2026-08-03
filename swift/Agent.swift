@@ -8,6 +8,15 @@ import CoreGraphics
 
 let DefaultAgentBaseURL = "https://openrouter.ai/api/v1"
 let DefaultAgentModel = "anthropic/claude-sonnet-4.5"
+
+/// Writable roots granted to the agent out of the box (VF-59). These are the
+/// places the assistant was repeatedly asked to work in and couldn't — the
+/// Desktop it was told to organize, the Downloads it was told to save into,
+/// Voice Flow's own data it was asked to inspect. Everything outside stays
+/// read-only until the user grants it.
+let DefaultAgentWorkspaceRoots = [
+    "~/repos", "~/Desktop", "~/Downloads", "~/.config/voice-flow",
+]
 private let AgentMaxTokens = 8_192
 
 enum AgentActivity: String {

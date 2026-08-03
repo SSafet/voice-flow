@@ -702,6 +702,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupCore() {
+        // The sandbox reads the granted roots and dial the same just-in-time
+        // way the model gateway reads credentials, so a settings change applies
+        // to the next runtime start without restarting the app (VF-59).
+        AgentSandboxSettings.shared.configure {
+            let settings = UserSettings.shared
+            return AgentSandboxSnapshot(
+                workspaceRoots: settings.agentWorkspaceRoots,
+                dial: settings.agentCapabilityDial,
+                egressAllowedHosts: settings.agentEgressAllowedHosts,
+                egressBlockedHosts: settings.agentEgressBlockedHosts)
+        }
         ModelGatewayCredentials.shared.configure { [weak self] in
             let configured = UserSettings.shared.agentBaseURL
             let baseURL = URL(string: configured) ?? URL(string: DefaultAgentBaseURL)!

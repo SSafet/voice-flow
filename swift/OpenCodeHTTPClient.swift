@@ -124,9 +124,23 @@ final class OpenCodeEventReducer {
             case "permission.asked", "permission.updated":
                 guard properties["sessionID"] as? String == sessionID,
                       let id = properties["id"] as? String else { return [] }
-                let title = properties["permission"] as? String ?? "Permission requested"
-                let detail = (properties["patterns"] as? [String])?
-                    .joined(separator: ", ") ?? title
+                // Fields per the pinned 1.17 Permission type: `title` carries
+                // the human-readable action (for bash, the command itself) and
+                // `pattern` is the rule that matched, as a string or a list.
+                // This previously read `permission` and `patterns`, neither of
+                // which exists — so every prompt rendered as a bare
+                // "Permission requested" with no detail to decide on.
+                let type = properties["type"] as? String
+                let title = properties["title"] as? String
+                    ?? type.map { "\($0) requested" }
+                    ?? "Permission requested"
+                let patterns: [String]
+                switch properties["pattern"] {
+                case let single as String: patterns = [single]
+                case let many as [String]: patterns = many
+                default: patterns = []
+                }
+                let detail = patterns.isEmpty ? title : patterns.joined(separator: ", ")
                 return [.permission(AgentPermissionRequest(id: id, title: title, detail: detail))]
             default:
                 return []
