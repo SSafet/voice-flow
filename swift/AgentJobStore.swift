@@ -38,6 +38,8 @@ struct AgentJob: Equatable {
     let prompt: String
     let trustProfile: AgentTrustProfile
     let state: AgentJobState
+    let isEnabled: Bool
+    let generation: Int
     let nextRunAt: Date?
     let intervalSeconds: TimeInterval?
     let concurrencyKey: String
@@ -53,6 +55,7 @@ struct AgentJob: Equatable {
          modelID: String? = nil,
          prompt: String, trustProfile: AgentTrustProfile = .unattended,
          state: AgentJobState = .queued, nextRunAt: Date? = Date(),
+         isEnabled: Bool? = nil, generation: Int = 1,
          intervalSeconds: TimeInterval? = nil,
          concurrencyKey: String? = nil,
          dailyBudgetUSD: Double = 1.0,
@@ -70,6 +73,8 @@ struct AgentJob: Equatable {
         self.prompt = prompt
         self.trustProfile = trustProfile
         self.state = state
+        self.isEnabled = isEnabled ?? (state != .disabled && state != .cancelled)
+        self.generation = max(0, generation)
         self.nextRunAt = nextRunAt
         self.intervalSeconds = intervalSeconds
         self.concurrencyKey = concurrencyKey ?? conversationID
@@ -114,6 +119,7 @@ struct AgentRun: Equatable {
     let jobID: String
     let turnID: UUID
     let runtime: AgentRuntimeKind
+    let generation: Int
     let state: AgentRunState
     let workerID: String
     let leaseExpiresAt: Date
@@ -129,8 +135,28 @@ struct AgentRun: Equatable {
 struct AgentJobStateSnapshot: Equatable {
     let id: String
     let state: AgentJobState
+    let isEnabled: Bool
+    let generation: Int
     let nextRunAt: Date?
+    let pendingTriggerAt: Date?
     let updatedAt: Date
+}
+
+struct AgentJobControlTransition: Equatable {
+    let job: AgentJob
+    let cancelledRunIDs: [String]
+    let didTransition: Bool
+}
+
+enum AgentRunNowOutcome: Equatable {
+    case queued(AgentJob)
+    case rejectedDisabled(AgentJob)
+    case rejectedRunning(AgentJob)
+}
+
+enum AgentJobFinishOutcome: Equatable {
+    case applied
+    case superseded
 }
 
 enum AgentJobStoreError: LocalizedError {
@@ -178,8 +204,9 @@ final class AgentJobStore {
               id, assistant_slug, conversation_id, runtime, trigger_kind,
               prompt, trust_profile, state, next_run_at, interval_seconds,
               concurrency_key, daily_budget_usd, max_duration_seconds,
-              max_attempts, created_at, updated_at, model_id, name
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              max_attempts, created_at, updated_at, model_id, name,
+              is_enabled, execution_generation
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               assistant_slug=excluded.assistant_slug,
               conversation_id=excluded.conversation_id,
@@ -191,7 +218,9 @@ final class AgentJobStore {
               daily_budget_usd=excluded.daily_budget_usd,
               max_duration_seconds=excluded.max_duration_seconds,
               max_attempts=excluded.max_attempts, updated_at=excluded.updated_at,
-              model_id=excluded.model_id, name=excluded.name
+              model_id=excluded.model_id, name=excluded.name,
+              is_enabled=excluded.is_enabled,
+              execution_generation=excluded.execution_generation
             """
             try withStatement(sql) { statement in
                 bind(job, to: statement)
@@ -294,6 +323,7 @@ final class AgentJobStore {
                 modelID: configuration.modelID, prompt: prompt,
                 trustProfile: configuration.trustProfile,
                 state: current.state, nextRunAt: current.nextRunAt,
+                isEnabled: current.isEnabled, generation: current.generation,
                 intervalSeconds: configuration.intervalSeconds,
                 concurrencyKey: configuration.concurrencyKey,
                 dailyBudgetUSD: max(0, configuration.dailyBudgetUSD),
@@ -368,8 +398,11 @@ final class AgentJobStore {
                       state=CASE WHEN state='running' THEN state ELSE 'queued' END,
                       next_run_at=CASE WHEN state='running' THEN next_run_at ELSE ? END,
                       pending_trigger_at=CASE WHEN state='running' THEN ? ELSE pending_trigger_at END,
+                      execution_generation=CASE
+                        WHEN state IN ('running','queued') THEN execution_generation
+                        ELSE execution_generation+1 END,
                       updated_at=?
-                    WHERE id=? AND state NOT IN ('cancelled','disabled')
+                    WHERE id=? AND is_enabled=1
                     """) { statement in
                     sqlite3_bind_double(statement, 1, at.timeIntervalSince1970)
                     sqlite3_bind_double(statement, 2, at.timeIntervalSince1970)
@@ -405,8 +438,11 @@ final class AgentJobStore {
                       state=CASE WHEN state='running' THEN state ELSE 'queued' END,
                       next_run_at=CASE WHEN state='running' THEN next_run_at ELSE ? END,
                       pending_trigger_at=CASE WHEN state='running' THEN ? ELSE pending_trigger_at END,
+                      execution_generation=CASE
+                        WHEN state IN ('running','queued') THEN execution_generation
+                        ELSE execution_generation+1 END,
                       updated_at=?
-                    WHERE trigger_kind=? AND state NOT IN ('cancelled','disabled')
+                    WHERE trigger_kind=? AND is_enabled=1
                     """) { statement in
                     sqlite3_bind_double(statement, 1, at.timeIntervalSince1970)
                     sqlite3_bind_double(statement, 2, at.timeIntervalSince1970)
@@ -444,10 +480,8 @@ final class AgentJobStore {
                     let attempts = try scalarInt(
                         """
                         SELECT COUNT(*) FROM agent_runs
-                        WHERE job_id=? AND started_at>COALESCE(
-                          (SELECT MAX(finished_at) FROM agent_runs
-                           WHERE job_id=? AND state='completed'), 0)
-                        """, texts: [job.id, job.id])
+                        WHERE job_id=? AND execution_generation=?
+                        """, text: job.id, integer: job.generation)
                     guard attempts < job.maxAttempts else {
                         try setJobState(job.id, state: .failed, at: now)
                         continue
@@ -462,13 +496,19 @@ final class AgentJobStore {
                     }
                     let run = AgentRun(
                         id: UUID().uuidString, jobID: job.id, turnID: UUID(),
-                        runtime: job.runtime, state: .running, workerID: workerID,
+                        runtime: job.runtime, generation: job.generation,
+                        state: .running, workerID: workerID,
                         leaseExpiresAt: now.addingTimeInterval(leaseSeconds),
                         heartbeatAt: now, attempt: attempts + 1,
                         startedAt: now, finishedAt: nil, costUSD: 0,
                         error: nil, resultMessageID: nil)
                     try insert(run)
-                    try setJobState(job.id, state: .running, at: now)
+                    try withStatement(
+                        "UPDATE agent_jobs SET state='running',next_run_at=NULL,updated_at=? WHERE id=?") { statement in
+                        sqlite3_bind_double(statement, 1, now.timeIntervalSince1970)
+                        bindText(job.id, at: 2, to: statement)
+                        try stepDone(statement)
+                    }
                     return run
                 }
                 return nil
@@ -495,54 +535,162 @@ final class AgentJobStore {
         }
     }
 
+    @discardableResult
     func complete(runID: String, workerID: String,
                   resultMessageID: UUID?, costUSD: Double,
-                  now: Date = Date()) throws {
+                  now: Date = Date()) throws -> AgentJobFinishOutcome {
         try finish(runID: runID, workerID: workerID, state: .completed,
                    error: nil, resultMessageID: resultMessageID,
                    costUSD: costUSD, now: now, retryDelay: nil)
     }
 
+    @discardableResult
     func fail(runID: String, workerID: String, error: String,
-              retryable: Bool, now: Date = Date(), retryDelay: TimeInterval = 5) throws {
+              retryable: Bool, now: Date = Date(), retryDelay: TimeInterval = 5) throws
+        -> AgentJobFinishOutcome {
         try finish(runID: runID, workerID: workerID, state: .failed,
                    error: error, resultMessageID: nil, costUSD: 0,
                    now: now, retryDelay: retryable ? retryDelay : nil)
     }
 
-    func cancel(jobID: String, now: Date = Date()) throws {
+    func stopActiveRun(jobID: String, now: Date = Date()) throws
+        -> AgentJobControlTransition {
         try lock.withLock {
             try transaction {
-                try setJobState(jobID, state: .cancelled, at: now)
+                guard let job = try jobUnlocked(id: jobID) else {
+                    throw AgentJobStoreError.invalidState("automation no longer exists")
+                }
+                let runIDs = try activeRunIDsUnlocked(jobID: jobID)
+                guard !runIDs.isEmpty else {
+                    return AgentJobControlTransition(
+                        job: job, cancelledRunIDs: [], didTransition: false)
+                }
+                try cancelActiveRunsUnlocked(jobID: jobID, now: now, reason: "stopped by user")
+                let interval = job.trigger == .interval ? job.intervalSeconds : nil
+                let target: AgentJobState = interval == nil ? .completed : .queued
+                let next = interval.map { now.addingTimeInterval(max(1, $0)) }
                 try withStatement(
-                    "UPDATE agent_runs SET state='cancelled', finished_at=? WHERE job_id=? AND state='running'") { statement in
-                    sqlite3_bind_double(statement, 1, now.timeIntervalSince1970)
-                    bindText(jobID, at: 2, to: statement)
+                    """
+                    UPDATE agent_jobs SET state=?,next_run_at=?,pending_trigger_at=NULL,
+                      is_enabled=1,execution_generation=execution_generation+1,updated_at=?
+                    WHERE id=? AND is_enabled=1
+                    """) { statement in
+                    bindText(target.rawValue, at: 1, to: statement)
+                    bindOptionalDouble(next?.timeIntervalSince1970, at: 2, to: statement)
+                    sqlite3_bind_double(statement, 3, now.timeIntervalSince1970)
+                    bindText(jobID, at: 4, to: statement)
                     try stepDone(statement)
                 }
+                guard let updated = try jobUnlocked(id: jobID) else {
+                    throw AgentJobStoreError.invalidState("automation no longer exists")
+                }
+                return AgentJobControlTransition(
+                    job: updated, cancelledRunIDs: runIDs, didTransition: true)
             }
         }
     }
 
-    func runNow(jobID: String, at: Date = Date()) throws {
-        _ = try enqueueEvent(
-            source: "manual", eventID: UUID().uuidString,
-            jobID: jobID, at: at)
-    }
-
-    func setEnabled(jobID: String, enabled: Bool, now: Date = Date()) throws {
+    func disable(jobID: String, now: Date = Date()) throws
+        -> AgentJobControlTransition {
         try lock.withLock {
-            try withStatement(
-                "UPDATE agent_jobs SET state=?, next_run_at=?, updated_at=? WHERE id=?") { statement in
-                bindText(enabled ? AgentJobState.queued.rawValue : AgentJobState.disabled.rawValue,
-                         at: 1, to: statement)
-                if enabled { sqlite3_bind_double(statement, 2, now.timeIntervalSince1970) }
-                else { sqlite3_bind_null(statement, 2) }
-                sqlite3_bind_double(statement, 3, now.timeIntervalSince1970)
-                bindText(jobID, at: 4, to: statement)
-                try stepDone(statement)
+            try transaction {
+                guard let job = try jobUnlocked(id: jobID) else {
+                    throw AgentJobStoreError.invalidState("automation no longer exists")
+                }
+                let runIDs = try activeRunIDsUnlocked(jobID: jobID)
+                let changed = job.isEnabled || !runIDs.isEmpty
+                if !runIDs.isEmpty {
+                    try cancelActiveRunsUnlocked(
+                        jobID: jobID, now: now, reason: "disabled by user")
+                }
+                let target: AgentJobState = job.state == .blocked || job.state == .failed
+                    ? job.state : .disabled
+                try withStatement(
+                    """
+                    UPDATE agent_jobs SET state=?,is_enabled=0,next_run_at=NULL,
+                      pending_trigger_at=NULL,execution_generation=execution_generation+?,
+                      updated_at=? WHERE id=?
+                    """) { statement in
+                    bindText(target.rawValue, at: 1, to: statement)
+                    sqlite3_bind_int(statement, 2, changed ? 1 : 0)
+                    sqlite3_bind_double(statement, 3, now.timeIntervalSince1970)
+                    bindText(jobID, at: 4, to: statement)
+                    try stepDone(statement)
+                }
+                guard let updated = try jobUnlocked(id: jobID) else {
+                    throw AgentJobStoreError.invalidState("automation no longer exists")
+                }
+                return AgentJobControlTransition(
+                    job: updated, cancelledRunIDs: runIDs, didTransition: changed)
             }
         }
+    }
+
+    func enable(jobID: String, now: Date = Date()) throws
+        -> AgentJobControlTransition {
+        try lock.withLock {
+            try transaction {
+                guard let job = try jobUnlocked(id: jobID) else {
+                    throw AgentJobStoreError.invalidState("automation no longer exists")
+                }
+                guard !job.isEnabled else {
+                    return AgentJobControlTransition(
+                        job: job, cancelledRunIDs: [], didTransition: false)
+                }
+                let interval = job.trigger == .interval ? job.intervalSeconds : nil
+                let target: AgentJobState = interval == nil ? .completed : .queued
+                let next = interval.map { now.addingTimeInterval(max(1, $0)) }
+                try withStatement(
+                    """
+                    UPDATE agent_jobs SET state=?,is_enabled=1,next_run_at=?,
+                      pending_trigger_at=NULL,execution_generation=execution_generation+1,
+                      updated_at=? WHERE id=?
+                    """) { statement in
+                    bindText(target.rawValue, at: 1, to: statement)
+                    bindOptionalDouble(next?.timeIntervalSince1970, at: 2, to: statement)
+                    sqlite3_bind_double(statement, 3, now.timeIntervalSince1970)
+                    bindText(jobID, at: 4, to: statement)
+                    try stepDone(statement)
+                }
+                guard let updated = try jobUnlocked(id: jobID) else {
+                    throw AgentJobStoreError.invalidState("automation no longer exists")
+                }
+                return AgentJobControlTransition(
+                    job: updated, cancelledRunIDs: [], didTransition: true)
+            }
+        }
+    }
+
+    func runNow(jobID: String, at: Date = Date()) throws -> AgentRunNowOutcome {
+        try lock.withLock {
+            try transaction {
+                guard let job = try jobUnlocked(id: jobID) else {
+                    throw AgentJobStoreError.invalidState("automation no longer exists")
+                }
+                guard job.isEnabled else { return .rejectedDisabled(job) }
+                guard job.state != .running else { return .rejectedRunning(job) }
+                try withStatement(
+                    """
+                    UPDATE agent_jobs SET state='queued',next_run_at=?,pending_trigger_at=NULL,
+                      execution_generation=execution_generation+1,updated_at=? WHERE id=?
+                    """) { statement in
+                    sqlite3_bind_double(statement, 1, at.timeIntervalSince1970)
+                    sqlite3_bind_double(statement, 2, at.timeIntervalSince1970)
+                    bindText(jobID, at: 3, to: statement)
+                    try stepDone(statement)
+                }
+                guard let updated = try jobUnlocked(id: jobID) else {
+                    throw AgentJobStoreError.invalidState("automation no longer exists")
+                }
+                return .queued(updated)
+            }
+        }
+    }
+
+    @available(*, deprecated, message: "Use enable/disable through AgentSupervisor")
+    func setEnabled(jobID: String, enabled: Bool, now: Date = Date()) throws {
+        if enabled { _ = try enable(jobID: jobID, now: now) }
+        else { _ = try disable(jobID: jobID, now: now) }
     }
 
     /// Prepare an Assistant folder for Trash without losing rollback. Every
@@ -554,15 +702,22 @@ final class AgentJobStore {
         try lock.withLock {
             try transaction {
                 let jobs = try withStatement(
-                    "SELECT id,state,next_run_at,updated_at FROM agent_jobs WHERE assistant_slug=? ORDER BY id") { statement in
+                    """
+                    SELECT id,state,is_enabled,execution_generation,next_run_at,
+                      pending_trigger_at,updated_at
+                    FROM agent_jobs WHERE assistant_slug=? ORDER BY id
+                    """) { statement in
                     bindText(assistantSlug, at: 1, to: statement)
                     var result: [AgentJobStateSnapshot] = []
                     while sqlite3_step(statement) == SQLITE_ROW {
                         result.append(AgentJobStateSnapshot(
                             id: text(statement, 0),
                             state: AgentJobState(rawValue: text(statement, 1)) ?? .failed,
-                            nextRunAt: optionalDate(statement, 2),
-                            updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 3))))
+                            isEnabled: sqlite3_column_int(statement, 2) == 1,
+                            generation: Int(sqlite3_column_int(statement, 3)),
+                            nextRunAt: optionalDate(statement, 4),
+                            pendingTriggerAt: optionalDate(statement, 5),
+                            updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 6))))
                     }
                     return result
                 }
@@ -571,7 +726,7 @@ final class AgentJobStore {
                         "an automation for this Assistant is running")
                 }
                 try withStatement(
-                    "UPDATE agent_jobs SET state='disabled',next_run_at=NULL,updated_at=? WHERE assistant_slug=?") { statement in
+                    "UPDATE agent_jobs SET state='disabled',is_enabled=0,next_run_at=NULL,pending_trigger_at=NULL,updated_at=? WHERE assistant_slug=?") { statement in
                     sqlite3_bind_double(statement, 1, now.timeIntervalSince1970)
                     bindText(assistantSlug, at: 2, to: statement)
                     try stepDone(statement)
@@ -587,11 +742,17 @@ final class AgentJobStore {
             try transaction {
                 for snapshot in snapshots {
                     try withStatement(
-                        "UPDATE agent_jobs SET state=?,next_run_at=?,updated_at=? WHERE id=?") { statement in
+                        """
+                        UPDATE agent_jobs SET state=?,is_enabled=?,execution_generation=?,
+                          next_run_at=?,pending_trigger_at=?,updated_at=? WHERE id=?
+                        """) { statement in
                         bindText(snapshot.state.rawValue, at: 1, to: statement)
-                        bindOptionalDouble(snapshot.nextRunAt?.timeIntervalSince1970, at: 2, to: statement)
-                        sqlite3_bind_double(statement, 3, snapshot.updatedAt.timeIntervalSince1970)
-                        bindText(snapshot.id, at: 4, to: statement)
+                        sqlite3_bind_int(statement, 2, snapshot.isEnabled ? 1 : 0)
+                        sqlite3_bind_int(statement, 3, Int32(snapshot.generation))
+                        bindOptionalDouble(snapshot.nextRunAt?.timeIntervalSince1970, at: 4, to: statement)
+                        bindOptionalDouble(snapshot.pendingTriggerAt?.timeIntervalSince1970, at: 5, to: statement)
+                        sqlite3_bind_double(statement, 6, snapshot.updatedAt.timeIntervalSince1970)
+                        bindText(snapshot.id, at: 7, to: statement)
                         try stepDone(statement)
                     }
                 }
@@ -616,16 +777,15 @@ final class AgentJobStore {
                         bindText(run.id, at: 3, to: statement)
                         try stepDone(statement)
                     }
-                    guard let job = try jobUnlocked(id: run.jobID) else { continue }
+                    guard let job = try jobUnlocked(id: run.jobID),
+                          job.isEnabled, job.generation == run.generation else { continue }
                     let attempts = try scalarInt(
                         """
                         SELECT COUNT(*) FROM agent_runs
-                        WHERE job_id=? AND started_at>COALESCE(
-                          (SELECT MAX(finished_at) FROM agent_runs
-                           WHERE job_id=? AND state='completed'), 0)
-                        """, texts: [job.id, job.id])
+                        WHERE job_id=? AND execution_generation=?
+                        """, text: job.id, integer: job.generation)
                     if attempts < job.maxAttempts {
-                        try schedule(job.id, at: now.addingTimeInterval(retryDelay))
+                        try schedule(job.id, at: now.addingTimeInterval(retryDelay), newGeneration: false)
                     } else {
                         try setJobState(job.id, state: .failed, at: now)
                     }
@@ -651,7 +811,8 @@ final class AgentJobStore {
 
     private func finish(runID: String, workerID: String,
                         state: AgentRunState, error: String?, resultMessageID: UUID?,
-                        costUSD: Double, now: Date, retryDelay: TimeInterval?) throws {
+                        costUSD: Double, now: Date, retryDelay: TimeInterval?) throws
+        -> AgentJobFinishOutcome {
         try lock.withLock {
             try transaction {
                 guard let run = try runs(
@@ -660,7 +821,21 @@ final class AgentJobStore {
                         self.bindText(runID, at: 1, to: statement)
                         self.bindText(workerID, at: 2, to: statement)
                     }).first else {
-                    throw AgentJobStoreError.invalidState("run lease is no longer owned by this worker")
+                    return .superseded
+                }
+                guard let job = try jobUnlocked(id: run.jobID),
+                      job.isEnabled, job.generation == run.generation else {
+                    try withStatement(
+                        """
+                        UPDATE agent_runs SET state='cancelled',finished_at=?,error='superseded'
+                        WHERE id=? AND worker_id=? AND state='running'
+                        """) { statement in
+                        sqlite3_bind_double(statement, 1, now.timeIntervalSince1970)
+                        bindText(runID, at: 2, to: statement)
+                        bindText(workerID, at: 3, to: statement)
+                        try stepDone(statement)
+                    }
+                    return .superseded
                 }
                 try withStatement(
                     """
@@ -676,7 +851,6 @@ final class AgentJobStore {
                     bindText(workerID, at: 7, to: statement)
                     try stepDone(statement)
                 }
-                guard let job = try jobUnlocked(id: run.jobID) else { return }
                 let pending = try scalarDouble(
                     "SELECT COALESCE(pending_trigger_at,0) FROM agent_jobs WHERE id=?",
                     text: job.id)
@@ -686,25 +860,27 @@ final class AgentJobStore {
                         bindText(job.id, at: 1, to: statement)
                         try stepDone(statement)
                     }
-                    try schedule(job.id, at: now)
+                    try schedule(job.id, at: now, newGeneration: true)
                 } else if state == .completed, job.trigger == .interval, let interval = job.intervalSeconds {
-                    try schedule(job.id, at: now.addingTimeInterval(interval))
+                    try schedule(
+                        job.id, at: now.addingTimeInterval(interval), newGeneration: true)
                 } else if let retryDelay {
                     let attempts = try scalarInt(
                         """
                         SELECT COUNT(*) FROM agent_runs
-                        WHERE job_id=? AND started_at>COALESCE(
-                          (SELECT MAX(finished_at) FROM agent_runs
-                           WHERE job_id=? AND state='completed'), 0)
-                        """, texts: [job.id, job.id])
+                        WHERE job_id=? AND execution_generation=?
+                        """, text: job.id, integer: job.generation)
                     if attempts < job.maxAttempts {
-                        try schedule(job.id, at: now.addingTimeInterval(retryDelay))
+                        try schedule(
+                            job.id, at: now.addingTimeInterval(retryDelay),
+                            newGeneration: false)
                     } else {
                         try setJobState(job.id, state: .failed, at: now)
                     }
                 } else {
                     try setJobState(job.id, state: state == .completed ? .completed : .failed, at: now)
                 }
+                return .applied
             }
         }
     }
@@ -713,7 +889,8 @@ final class AgentJobStore {
         try withStatement(
             """
             SELECT * FROM agent_jobs
-            WHERE state='queued' AND next_run_at IS NOT NULL AND next_run_at<=?
+            WHERE is_enabled=1 AND state='queued'
+              AND next_run_at IS NOT NULL AND next_run_at<=?
             ORDER BY next_run_at ASC, updated_at ASC, created_at ASC
             """) { statement in
             sqlite3_bind_double(statement, 1, now.timeIntervalSince1970)
@@ -723,12 +900,18 @@ final class AgentJobStore {
         }
     }
 
-    private func schedule(_ jobID: String, at date: Date) throws {
+    private func schedule(_ jobID: String, at date: Date,
+                          newGeneration: Bool) throws {
         try withStatement(
-            "UPDATE agent_jobs SET state='queued', next_run_at=?, updated_at=? WHERE id=?") { statement in
+            """
+            UPDATE agent_jobs SET state='queued',next_run_at=?,
+              execution_generation=execution_generation+?,updated_at=?
+            WHERE id=? AND is_enabled=1
+            """) { statement in
             sqlite3_bind_double(statement, 1, date.timeIntervalSince1970)
-            sqlite3_bind_double(statement, 2, date.timeIntervalSince1970)
-            bindText(jobID, at: 3, to: statement)
+            sqlite3_bind_int(statement, 2, newGeneration ? 1 : 0)
+            sqlite3_bind_double(statement, 3, date.timeIntervalSince1970)
+            bindText(jobID, at: 4, to: statement)
             try stepDone(statement)
         }
     }
@@ -742,13 +925,40 @@ final class AgentJobStore {
         }
     }
 
+    private func activeRunIDsUnlocked(jobID: String) throws -> [String] {
+        try withStatement(
+            "SELECT id FROM agent_runs WHERE job_id=? AND state='running' ORDER BY started_at,id"
+        ) { statement in
+            bindText(jobID, at: 1, to: statement)
+            var ids: [String] = []
+            while sqlite3_step(statement) == SQLITE_ROW { ids.append(text(statement, 0)) }
+            return ids
+        }
+    }
+
+    private func cancelActiveRunsUnlocked(
+        jobID: String, now: Date, reason: String
+    ) throws {
+        try withStatement(
+            """
+            UPDATE agent_runs SET state='cancelled',finished_at=?,error=?
+            WHERE job_id=? AND state='running'
+            """) { statement in
+            sqlite3_bind_double(statement, 1, now.timeIntervalSince1970)
+            bindText(reason, at: 2, to: statement)
+            bindText(jobID, at: 3, to: statement)
+            try stepDone(statement)
+        }
+    }
+
     private func insert(_ run: AgentRun) throws {
         try withStatement(
             """
             INSERT INTO agent_runs (
               id,job_id,turn_id,runtime,state,worker_id,lease_expires_at,
-              heartbeat_at,attempt,started_at,finished_at,cost_usd,error,result_message_id
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              heartbeat_at,attempt,started_at,finished_at,cost_usd,error,result_message_id,
+              execution_generation
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """) { statement in
             bindText(run.id, at: 1, to: statement)
             bindText(run.jobID, at: 2, to: statement)
@@ -764,6 +974,7 @@ final class AgentJobStore {
             sqlite3_bind_double(statement, 12, run.costUSD)
             bindOptionalText(run.error, at: 13, to: statement)
             bindOptionalText(run.resultMessageID?.uuidString, at: 14, to: statement)
+            sqlite3_bind_int(statement, 15, Int32(run.generation))
             try stepDone(statement)
         }
     }
@@ -796,6 +1007,8 @@ final class AgentJobStore {
             trustProfile: AgentTrustProfile(rawValue: text(statement, 6)) ?? .unattended,
             state: AgentJobState(rawValue: text(statement, 7)) ?? .failed,
             nextRunAt: optionalDate(statement, 8),
+            isEnabled: sqlite3_column_int(statement, 19) == 1,
+            generation: Int(sqlite3_column_int(statement, 20)),
             intervalSeconds: optionalDouble(statement, 9),
             concurrencyKey: text(statement, 10),
             dailyBudgetUSD: sqlite3_column_double(statement, 11),
@@ -810,6 +1023,7 @@ final class AgentJobStore {
             id: text(statement, 0), jobID: text(statement, 1),
             turnID: UUID(uuidString: text(statement, 2)) ?? UUID(),
             runtime: AgentRuntimeKind(rawValue: text(statement, 3)) ?? .codex,
+            generation: Int(sqlite3_column_int(statement, 14)),
             state: AgentRunState(rawValue: text(statement, 4)) ?? .failed,
             workerID: text(statement, 5),
             leaseExpiresAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 6)),
@@ -846,7 +1060,9 @@ final class AgentJobStore {
           updated_at REAL NOT NULL,
           pending_trigger_at REAL,
           model_id TEXT,
-          name TEXT
+          name TEXT,
+          is_enabled INTEGER NOT NULL DEFAULT 1,
+          execution_generation INTEGER NOT NULL DEFAULT 1
         )
         """)
         try exec("""
@@ -864,7 +1080,8 @@ final class AgentJobStore {
           finished_at REAL,
           cost_usd REAL NOT NULL DEFAULT 0,
           error TEXT,
-          result_message_id TEXT
+          result_message_id TEXT,
+          execution_generation INTEGER NOT NULL DEFAULT 1
         )
         """)
         try exec("""
@@ -879,9 +1096,40 @@ final class AgentJobStore {
         try exec("CREATE INDEX IF NOT EXISTS idx_jobs_conversation ON agent_jobs(conversation_id,state)")
         try exec("CREATE INDEX IF NOT EXISTS idx_jobs_assistant ON agent_jobs(assistant_slug,state)")
         try exec("CREATE INDEX IF NOT EXISTS idx_runs_active ON agent_runs(state,runtime,lease_expires_at)")
-        try? exec("ALTER TABLE agent_jobs ADD COLUMN pending_trigger_at REAL")
-        try? exec("ALTER TABLE agent_jobs ADD COLUMN model_id TEXT")
-        try? exec("ALTER TABLE agent_jobs ADD COLUMN name TEXT")
+        try addColumnIfMissing(
+            table: "agent_jobs", column: "pending_trigger_at",
+            definition: "pending_trigger_at REAL")
+        try addColumnIfMissing(
+            table: "agent_jobs", column: "model_id", definition: "model_id TEXT")
+        try addColumnIfMissing(
+            table: "agent_jobs", column: "name", definition: "name TEXT")
+        let schemaVersion = try scalarInt("PRAGMA user_version")
+        if schemaVersion < 1 {
+            try addColumnIfMissing(
+                table: "agent_jobs", column: "is_enabled",
+                definition: "is_enabled INTEGER NOT NULL DEFAULT 1")
+            try addColumnIfMissing(
+                table: "agent_jobs", column: "execution_generation",
+                definition: "execution_generation INTEGER NOT NULL DEFAULT 1")
+            try addColumnIfMissing(
+                table: "agent_runs", column: "execution_generation",
+                definition: "execution_generation INTEGER NOT NULL DEFAULT 0")
+            try transaction {
+                try exec("""
+                UPDATE agent_jobs SET is_enabled=CASE
+                  WHEN state IN ('disabled','cancelled') THEN 0 ELSE 1 END,
+                  execution_generation=1
+                """)
+                try exec("""
+                UPDATE agent_runs SET execution_generation=1
+                WHERE started_at>COALESCE(
+                  (SELECT MAX(completed.finished_at) FROM agent_runs AS completed
+                   WHERE completed.job_id=agent_runs.job_id
+                     AND completed.state='completed'),0)
+                """)
+                try exec("PRAGMA user_version=1")
+            }
+        }
         try exec("""
         UPDATE agent_jobs
         SET name=CASE
@@ -893,6 +1141,19 @@ final class AgentJobStore {
         END
         WHERE name IS NULL OR trim(name)=''
         """)
+    }
+
+    private func addColumnIfMissing(
+        table: String, column: String, definition: String
+    ) throws {
+        let exists = try withStatement("PRAGMA table_info(\(table))") { statement in
+            var found = false
+            while sqlite3_step(statement) == SQLITE_ROW {
+                if text(statement, 1) == column { found = true }
+            }
+            return found
+        }
+        if !exists { try exec("ALTER TABLE \(table) ADD COLUMN \(definition)") }
     }
 
     private func transaction<T>(_ work: () throws -> T) throws -> T {
@@ -940,6 +1201,16 @@ final class AgentJobStore {
         }
     }
 
+    private func scalarInt(_ sql: String, text value: String,
+                           integer: Int) throws -> Int {
+        try withStatement(sql) { statement in
+            bindText(value, at: 1, to: statement)
+            sqlite3_bind_int(statement, 2, Int32(integer))
+            guard sqlite3_step(statement) == SQLITE_ROW else { return 0 }
+            return Int(sqlite3_column_int(statement, 0))
+        }
+    }
+
     private func scalarDouble(_ sql: String, text value: String,
                               number: Double) throws -> Double {
         try withStatement(sql) { statement in
@@ -977,6 +1248,8 @@ final class AgentJobStore {
         sqlite3_bind_double(statement, 16, job.updatedAt.timeIntervalSince1970)
         bindOptionalText(job.modelID, at: 17, to: statement)
         bindText(job.name, at: 18, to: statement)
+        sqlite3_bind_int(statement, 19, job.isEnabled ? 1 : 0)
+        sqlite3_bind_int(statement, 20, Int32(job.generation))
     }
 
     private func bindText(_ value: String, at index: Int32, to statement: OpaquePointer) {

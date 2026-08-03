@@ -50,7 +50,7 @@ while Date() < deadline {
     if jobs.allSatisfy({ $0.state == .completed }) { break }
     try await Task.sleep(nanoseconds: 40_000_000)
 }
-await supervisor.stop()
+await supervisor.shutdown()
 let jobs = try store.jobs()
 expect(jobs.allSatisfy { $0.state == .completed }, "supervisor did not drain three jobs")
 expect(executor.peak == 3, "three isolated workers were not admitted concurrently")
@@ -86,13 +86,18 @@ while Date() < cancelDeadline {
     if try cancelStore.job(id: cancelJob.id)?.state == .running { break }
     try await Task.sleep(nanoseconds: 20_000_000)
 }
-await cancelSupervisor.cancel(jobID: cancelJob.id)
+try await cancelSupervisor.stopRun(jobID: cancelJob.id)
 expect(cancellationExecutor.finished,
-       "cancel returned before the active executor had fully unwound")
+       "Stop returned before the active executor had fully unwound")
 let cancelledState = try cancelStore.job(id: cancelJob.id)?.state
-expect(cancelledState == .cancelled,
-       "joined cancellation did not preserve the durable cancelled state")
-await cancelSupervisor.stop()
+let cancelledEnabled = try cancelStore.job(id: cancelJob.id)?.isEnabled
+expect(cancelledState == .completed && cancelledEnabled == true,
+       "joined Stop did not return the enabled automation to Ready")
+try await cancelSupervisor.disable(jobID: cancelJob.id)
+let disabledAfterStop = try cancelStore.job(id: cancelJob.id)?.isEnabled
+expect(disabledAfterStop == false,
+       "Disable did not persist after the stopped executor joined")
+await cancelSupervisor.shutdown()
 
 final class TimeoutExecutor: AgentJobExecuting {
     private let lock = NSLock()
@@ -140,5 +145,5 @@ expect(timeoutState == .failed,
        "maximum runtime did not leave a terminal failed job")
 expect(timeoutRuns.isEmpty,
        "timed-out run remained leased")
-await timeoutSupervisor.stop()
+await timeoutSupervisor.shutdown()
 print("agent supervisor tests passed")

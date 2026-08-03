@@ -54,6 +54,12 @@ expect(migratedLegacy?.modelID == nil,
        "legacy null model did not survive migration")
 expect(migratedLegacy?.name == "legacy",
        "legacy prompt was not migrated to a stable automation name")
+expect(migratedLegacy?.isEnabled == true && migratedLegacy?.generation == 1,
+       "legacy automation control fields were not backfilled")
+let reopenedMigration = try AgentJobStore(url: legacyURL)
+let reopenedLegacy = try reopenedMigration.job(id: "legacy-model")
+expect(reopenedLegacy == migratedLegacy,
+       "automation schema migration was not idempotent")
 
 let corruptURL = VoiceFlowPaths.shared.file("jobs-corrupt.sqlite")
 try Data("this is not sqlite".utf8).write(to: corruptURL, options: .atomic)
@@ -255,10 +261,12 @@ _ = try store.claimNext(workerID: "budget-worker", now: now.addingTimeInterval(3
 let storedBudget = try store.job(id: "budget")
 expect(storedBudget?.state == .blocked, "zero-budget job was not blocked")
 
-try store.cancel(jobID: "job-b", now: now.addingTimeInterval(40))
+let disabledTransition = try store.disable(
+    jobID: "job-b", now: now.addingTimeInterval(40))
 let cancelled = try store.job(id: "job-b")
 let listed = try store.jobs()
-expect(cancelled?.state == .cancelled, "job cancellation was not durable")
+expect(disabledTransition.job.isEnabled == false && cancelled?.isEnabled == false,
+       "job disablement was not durable")
 expect(listed.count == 5, "job listing lost rows")
 
 // An event arriving during a lease must never start a concurrent duplicate;
@@ -315,19 +323,106 @@ let intervalRun2 = try intervalStore.claimNext(
     workerID: "interval-2", now: now.addingTimeInterval(11))
 expect(intervalRun2 != nil, "successful interval did not reset maxAttempts")
 
-// Disabled/cancelled jobs stay inert until explicitly enabled; run-now then
-// enters the same durable admission path.
-try intervalStore.cancel(jobID: "interval-reset", now: now.addingTimeInterval(12))
-try intervalStore.runNow(jobID: "interval-reset", at: now.addingTimeInterval(13))
+// Disable cancels the active run and fences stale completions. Enable restores
+// eligibility but an interval does not run until its next scheduled time.
+let disabledInterval = try intervalStore.disable(
+    jobID: "interval-reset", now: now.addingTimeInterval(12))
+expect(disabledInterval.cancelledRunIDs == [intervalRun2!.id],
+       "disable did not return the exact executor handle to join")
+let staleIntervalFinish = try intervalStore.complete(
+    runID: intervalRun2!.id, workerID: "interval-2",
+    resultMessageID: UUID(), costUSD: 0,
+    now: now.addingTimeInterval(13))
+expect(staleIntervalFinish == .superseded,
+       "a disabled run was allowed to reschedule itself")
+let disabledRunNow = try intervalStore.runNow(
+    jobID: "interval-reset", at: now.addingTimeInterval(13))
+if case .rejectedDisabled = disabledRunNow { }
+else { expect(false, "run now accepted a disabled automation") }
 let cancelledClaim = try intervalStore.claimNext(
     workerID: "interval-3", now: now.addingTimeInterval(13))
 expect(cancelledClaim == nil,
-       "cancelled job was revived without enable")
-try intervalStore.setEnabled(
-    jobID: "interval-reset", enabled: true, now: now.addingTimeInterval(14))
+       "disabled job was revived without enable")
+let enabledInterval = try intervalStore.enable(
+    jobID: "interval-reset", now: now.addingTimeInterval(14))
 let enabledJob = try intervalStore.job(id: "interval-reset")
-expect(enabledJob?.state == .queued,
-       "explicit enable did not restore queue state")
+expect(enabledInterval.didTransition && enabledJob?.state == .queued
+       && enabledJob?.nextRunAt == now.addingTimeInterval(24),
+       "explicit enable did not schedule the next interval")
+let intervalTooEarly = try intervalStore.claimNext(
+    workerID: "interval-too-early", now: now.addingTimeInterval(14))
+expect(intervalTooEarly == nil,
+       "enabling an interval started it immediately")
+
+// Stop is not Disable. It joins only the active execution wave, clears a
+// trigger that arrived before the stop transaction, and keeps the automation
+// eligible for later events.
+let stopStore = try AgentJobStore(
+    url: VoiceFlowPaths.shared.file("jobs-stop-semantics.sqlite"))
+let stopJob = AgentJob(
+    id: "stop-event", name: "Inbox triage", assistantSlug: "flora",
+    conversationID: "stop-event-c", runtime: .opencode, trigger: .capture,
+    prompt: "Triage capture", nextRunAt: now, dailyBudgetUSD: 10,
+    maxAttempts: 2, createdAt: now, updatedAt: now)
+try stopStore.put(stopJob)
+let stoppedRun = try stopStore.claimNext(workerID: "stop-worker", now: now)!
+_ = try stopStore.enqueueEvent(
+    source: "capture", eventID: "before-stop", jobID: stopJob.id,
+    at: now.addingTimeInterval(1))
+let pendingBeforeStop = try stopStore.hasPendingTrigger(jobID: stopJob.id)
+expect(pendingBeforeStop,
+       "pre-stop trigger was not coalesced")
+let stopped = try stopStore.stopActiveRun(
+    jobID: stopJob.id, now: now.addingTimeInterval(2))
+expect(stopped.didTransition && stopped.cancelledRunIDs == [stoppedRun.id]
+       && stopped.job.isEnabled && stopped.job.state == .completed
+       && stopped.job.nextRunAt == nil,
+       "Stop did not return an enabled event automation to Ready")
+let pendingAfterStop = try stopStore.hasPendingTrigger(jobID: stopJob.id)
+expect(!pendingAfterStop,
+       "Stop did not clear the pre-existing follow-up")
+let staleStopFailure = try stopStore.fail(
+    runID: stoppedRun.id, workerID: "stop-worker", error: "late",
+    retryable: true, now: now.addingTimeInterval(3), retryDelay: 0)
+expect(staleStopFailure == .superseded,
+       "a stopped executor revived its retry epoch")
+let postStopEvent = try stopStore.enqueueEvent(
+    source: "capture", eventID: "after-stop", jobID: stopJob.id,
+    at: now.addingTimeInterval(4))
+let postStopRun = try stopStore.claimNext(
+    workerID: "stop-worker-2", now: now.addingTimeInterval(4))
+expect(postStopEvent && postStopRun?.generation == stopped.job.generation + 1,
+       "an event linearized after Stop was not admitted as new work")
+
+let intervalStopStore = try AgentJobStore(
+    url: VoiceFlowPaths.shared.file("jobs-stop-interval.sqlite"))
+try intervalStopStore.put(AgentJob(
+    id: "stop-interval", assistantSlug: "flora", conversationID: "stop-interval-c",
+    runtime: .codex, trigger: .interval, prompt: "Poll",
+    nextRunAt: now, intervalSeconds: 90, dailyBudgetUSD: 10,
+    createdAt: now, updatedAt: now))
+_ = try intervalStopStore.claimNext(workerID: "interval-stop-worker", now: now)
+let intervalStopped = try intervalStopStore.stopActiveRun(
+    jobID: "stop-interval", now: now.addingTimeInterval(5))
+expect(intervalStopped.job.isEnabled && intervalStopped.job.state == .queued
+       && intervalStopped.job.nextRunAt == now.addingTimeInterval(95),
+       "stopped interval did not preserve its schedule")
+
+let disabledEventStore = try AgentJobStore(
+    url: VoiceFlowPaths.shared.file("jobs-disabled-events.sqlite"))
+try disabledEventStore.put(AgentJob(
+    id: "disabled-event", assistantSlug: "flora", conversationID: "disabled-event-c",
+    runtime: .codex, trigger: .watcher, prompt: "Review", state: .completed,
+    nextRunAt: nil, createdAt: now, updatedAt: now))
+_ = try disabledEventStore.disable(jobID: "disabled-event", now: now)
+let droppedDisabledEvent = try disabledEventStore.enqueueEvent(
+    source: "watcher", eventID: "disabled-once", jobID: "disabled-event", at: now)
+_ = try disabledEventStore.enable(jobID: "disabled-event", now: now.addingTimeInterval(1))
+let replayedDisabledEvent = try disabledEventStore.enqueueEvent(
+    source: "watcher", eventID: "disabled-once", jobID: "disabled-event",
+    at: now.addingTimeInterval(2))
+expect(!droppedDisabledEvent && !replayedDisabledEvent,
+       "a disabled exactly-once event was not recorded and dropped")
 
 let retryStore = try AgentJobStore(
     url: VoiceFlowPaths.shared.file("jobs-retry-test.sqlite"))
@@ -352,4 +447,17 @@ expect(terminalRetry?.state == .failed,
        "maximum retry attempts did not leave a terminal failure")
 let retryRows = try retryStore.activeRuns()
 expect(retryRows.isEmpty, "terminal retry left an active lease")
+let retryRunNow = try retryStore.runNow(
+    jobID: retryJob.id, at: now.addingTimeInterval(3))
+let retryGeneration: Int
+if case .queued(let queuedRetry) = retryRunNow {
+    retryGeneration = queuedRetry.generation
+} else {
+    retryGeneration = -1
+}
+let freshRetry = try retryStore.claimNext(
+    workerID: "retry-fresh", now: now.addingTimeInterval(3))
+expect(retryGeneration == (terminalRetry?.generation ?? 0) + 1
+       && freshRetry?.attempt == 1 && freshRetry?.generation == retryGeneration,
+       "Run Now after exhausted retries did not start a fresh execution generation")
 print("agent job store tests passed")

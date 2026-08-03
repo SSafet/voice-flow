@@ -282,7 +282,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let backgroundSupervisor = agentSupervisor
         Task.detached {
             await foregroundAgent?.shutdown()
-            await backgroundSupervisor?.stop()
+            await backgroundSupervisor?.shutdown()
             await AgentPermissionBroker.shared.rejectAll()
             await OpenCodeSupervisor.shared.stopAll()
             teardown.signal()
@@ -4845,29 +4845,42 @@ extension AppDelegate: AgentsDataSource {
     }
 
     func runAgentJob(_ jobId: String) {
-        guard let agentJobStore else { return }
-        do {
-            try agentJobStore.runNow(jobID: jobId)
-            Task { [weak self] in await self?.agentSupervisor?.wake() }
-            chatPanel.refreshAgents()
-        } catch {
-            replyBubble.showTransient("could not run automation", seconds: 5)
+        Task { [weak self] in
+            do {
+                _ = try await self?.agentSupervisor?.runNow(jobID: jobId)
+                await MainActor.run { self?.chatPanel.refreshAgents() }
+            } catch {
+                await MainActor.run {
+                    self?.replyBubble.showTransient("could not run automation", seconds: 5)
+                }
+            }
         }
     }
 
     func cancelAgentJob(_ jobId: String) {
-        Task { [weak self] in await self?.agentSupervisor?.cancel(jobID: jobId) }
-        chatPanel.refreshAgents()
+        Task { [weak self] in
+            do {
+                try await self?.agentSupervisor?.stopRun(jobID: jobId)
+                await MainActor.run { self?.chatPanel.refreshAgents() }
+            } catch {
+                await MainActor.run {
+                    self?.replyBubble.showTransient("could not stop automation", seconds: 5)
+                }
+            }
+        }
     }
 
     func setAgentJob(_ jobId: String, enabled: Bool) {
-        guard let agentJobStore else { return }
-        do {
-            try agentJobStore.setEnabled(jobID: jobId, enabled: enabled)
-            if enabled { Task { [weak self] in await self?.agentSupervisor?.wake() } }
-            chatPanel.refreshAgents()
-        } catch {
-            replyBubble.showTransient("could not update automation", seconds: 5)
+        Task { [weak self] in
+            do {
+                if enabled { try await self?.agentSupervisor?.enable(jobID: jobId) }
+                else { try await self?.agentSupervisor?.disable(jobID: jobId) }
+                await MainActor.run { self?.chatPanel.refreshAgents() }
+            } catch {
+                await MainActor.run {
+                    self?.replyBubble.showTransient("could not update automation", seconds: 5)
+                }
+            }
         }
     }
 

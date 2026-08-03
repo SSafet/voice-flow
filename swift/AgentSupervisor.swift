@@ -52,6 +52,7 @@ actor AgentSupervisor {
     private let workerID: String
     private var loopTask: Task<Void, Never>?
     private var running: [String: Task<Void, Never>] = [:]
+    private var operatorControlledRuns: Set<String> = []
     private var reportedTerminal: [String: AgentJobState] = [:]
     var onStatus: ((AgentJobStatusUpdate) -> Void)?
 
@@ -71,7 +72,7 @@ actor AgentSupervisor {
         onStatus = handler
     }
 
-    func stop() async {
+    func shutdown() async {
         loopTask?.cancel()
         loopTask = nil
         let tasks = running
@@ -84,21 +85,57 @@ actor AgentSupervisor {
 
     func wake() async { await admit() }
 
-    func cancel(jobID: String) async {
-        // Resolve the live executor handles before transitioning their run
-        // rows out of `running`; otherwise activeRuns() can no longer find
-        // the very processes cancellation must join.
-        let active = ((try? store.activeRuns()) ?? []).filter { $0.jobID == jobID }
-        try? store.cancel(jobID: jobID)
-        for run in active {
-            let task = running[run.id]
-            task?.cancel()
-            await executor.cancel(runID: run.id)
-            await task?.value
-        }
+    func stopRun(jobID: String) async throws {
+        let transition = try store.stopActiveRun(jobID: jobID)
+        guard transition.didTransition else { return }
+        await cancelAndJoin(transition.cancelledRunIDs)
         emit(AgentJobStatusUpdate(
-            jobID: jobID, runID: nil, state: .cancelled,
-            message: "Agent job cancelled."))
+            jobID: jobID, runID: nil, state: transition.job.state,
+            message: transition.job.trigger == .interval
+                ? "Automation stopped. Its next interval remains scheduled."
+                : "Automation stopped and remains ready."))
+    }
+
+    func disable(jobID: String) async throws {
+        let transition = try store.disable(jobID: jobID)
+        await cancelAndJoin(transition.cancelledRunIDs)
+        emit(AgentJobStatusUpdate(
+            jobID: jobID, runID: nil, state: .disabled,
+            message: "Automation disabled."))
+    }
+
+    func enable(jobID: String) async throws {
+        let transition = try store.enable(jobID: jobID)
+        guard transition.didTransition else { return }
+        emit(AgentJobStatusUpdate(
+            jobID: jobID, runID: nil, state: transition.job.state,
+            message: transition.job.trigger == .interval
+                ? "Automation enabled. Its next interval is scheduled."
+                : "Automation enabled and ready."))
+        await admit()
+    }
+
+    @discardableResult
+    func runNow(jobID: String) async throws -> AgentRunNowOutcome {
+        let outcome = try store.runNow(jobID: jobID)
+        if case .queued(let job) = outcome {
+            emit(AgentJobStatusUpdate(
+                jobID: jobID, runID: nil, state: .queued,
+                message: "Automation queued to run now."))
+            await admit()
+        }
+        return outcome
+    }
+
+    private func cancelAndJoin(_ runIDs: [String]) async {
+        guard !runIDs.isEmpty else { return }
+        operatorControlledRuns.formUnion(runIDs)
+        let tasks = runIDs.reduce(into: [String: Task<Void, Never>]()) { result, id in
+            if let task = running[id] { result[id] = task; task.cancel() }
+        }
+        for id in runIDs { await executor.cancel(runID: id) }
+        for id in runIDs { await tasks[id]?.value }
+        operatorControlledRuns.subtract(runIDs)
     }
 
     private func runLoop() async {
@@ -140,9 +177,8 @@ actor AgentSupervisor {
             ) { group in
                 group.addTask { [executor] in
                     try await executor.execute(job: job, run: run) { [weak self] detail in
-                        Task { await self?.emit(AgentJobStatusUpdate(
-                            jobID: job.id, runID: run.id, state: .running,
-                            message: detail)) }
+                        Task { await self?.emitProgress(
+                            jobID: job.id, runID: run.id, detail: detail) }
                     }
                 }
                 group.addTask {
@@ -169,26 +205,40 @@ actor AgentSupervisor {
             let cost = result.usage?.costUSD.map {
                 NSDecimalNumber(decimal: $0).doubleValue
             } ?? 0
-            try store.complete(
+            let finish = try store.complete(
                 runID: run.id, workerID: workerID,
                 resultMessageID: result.resultMessageID, costUSD: cost)
-            emit(AgentJobStatusUpdate(
-                jobID: job.id, runID: run.id, state: .completed,
-                message: "Agent job completed."))
+            if finish == .applied {
+                emit(AgentJobStatusUpdate(
+                    jobID: job.id, runID: run.id, state: .completed,
+                    message: "Agent job completed."))
+            }
         } catch is CancellationError {
-            try? store.fail(
-                runID: run.id, workerID: workerID,
-                error: "cancelled", retryable: false)
+            if !operatorControlledRuns.contains(run.id) {
+                _ = try? store.fail(
+                    runID: run.id, workerID: workerID,
+                    error: "cancelled", retryable: false)
+            }
         } catch {
+            if operatorControlledRuns.contains(run.id) {
+                running.removeValue(forKey: run.id)
+                await admit()
+                return
+            }
             await executor.cancel(runID: run.id)
             let retryable = (error as? AgentRuntimeFailure)?.retryable
                 ?? !(error is AgentSupervisorError)
             let jitterSeed = run.id.utf8.reduce(UInt(0)) { ($0 &* 31) &+ UInt($1) }
             let retryDelay = 3.0 + Double(jitterSeed % 4_000) / 1_000
-            try? store.fail(
+            let finish = try? store.fail(
                 runID: run.id, workerID: workerID,
                 error: AgentSecretPolicy.redacted(error.localizedDescription),
                 retryable: retryable, retryDelay: retryDelay)
+            if finish == .superseded {
+                running.removeValue(forKey: run.id)
+                await admit()
+                return
+            }
             let durableState = (try? store.job(id: job.id)?.state) ?? .failed
             if durableState == .blocked || durableState == .failed {
                 reportedTerminal[job.id] = durableState
@@ -222,5 +272,12 @@ actor AgentSupervisor {
 
     private func emit(_ update: AgentJobStatusUpdate) {
         onStatus?(update)
+    }
+
+    private func emitProgress(jobID: String, runID: String, detail: String) {
+        guard !operatorControlledRuns.contains(runID),
+              (try? store.run(id: runID)?.state) == .running else { return }
+        emit(AgentJobStatusUpdate(
+            jobID: jobID, runID: runID, state: .running, message: detail))
     }
 }
