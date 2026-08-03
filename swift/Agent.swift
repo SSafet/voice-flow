@@ -268,9 +268,31 @@ final class AgentSession {
         return active
     }
 
-    func markCurrentAssistantRepliesSeen() {
-        history.markAssistantRepliesSeen(for: currentSessionId)
+    func conversation(_ id: String) -> AssistantConversation? {
+        history.conversation(id)
+    }
+
+    @discardableResult
+    func completeConversation(_ id: String) -> AssistantConversation? {
+        guard let conversation = history.completeConversation(id) else { return nil }
         notifyHistoryChanged()
+        return conversation
+    }
+
+    @discardableResult
+    func reopenConversation(_ id: String) -> AssistantConversation? {
+        guard let conversation = history.reopenConversation(id) else { return nil }
+        notifyHistoryChanged()
+        return conversation
+    }
+
+    func markAssistantRepliesSeen(for id: String) {
+        history.markAssistantRepliesSeen(for: id)
+        notifyHistoryChanged()
+    }
+
+    func markCurrentAssistantRepliesSeen() {
+        markAssistantRepliesSeen(for: currentSessionId)
     }
 
     func interrupt() {

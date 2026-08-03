@@ -183,6 +183,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         chatPanel.refreshAgents()
     }
 
+    /// Archive state is independent from the session registry. Reopening a
+    /// retained external thread makes only its newest retained item active;
+    /// history stays intact and no connection is fabricated.
+    private func reopenStack(_ sessionId: String) {
+        guard var queue = sessionPushes[sessionId], let last = queue.indices.last else { return }
+        queue[last].done = false
+        sessionPushes[sessionId] = queue
+        chatPanel.refreshAgents()
+    }
+
     // Agent session
     var screenCapture: ScreenCapture!
     var captureScheduler: CaptureScheduler!
@@ -746,7 +756,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.onGrownTypedReply = { [weak self] text in
             guard let self else { return }
             if let sid = self.currentPushSessionId {
-                self.sendMessage(toSession: sid, text: text)
+                try? self.sendMessage(
+                    toThread: AgentsThreadID(source: .mcp, value: sid), text: text)
                 self.currentPushSessionId = nil
                 self.indicator.hideGrown()
                 self.replyBubble.showTransient("sent ✓", seconds: 3)
@@ -2097,7 +2108,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Hand the user's answer to the MCP tool call that's blocked on it.
     /// If that call already timed out, the answer goes to the inbox instead
     /// so Claude still gets it on its next check-in.
-    private func fulfillInteraction(_ interaction: PendingInteraction, text: String, includeScreenshot: Bool) {
+    private func fulfillInteraction(_ interaction: PendingInteraction, text: String,
+                                    includeScreenshot: Bool,
+                                    archiveAfterAnswer: Bool = true) {
         Task { @MainActor in
             var attachments: [String] = []
             let display = DisplayTopology.underMouse ?? DisplayTopology.primary
@@ -2120,14 +2133,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             attachAnswer(text, to: interaction.sessionId)
             answeredSession(interaction.sessionId,
                             note: "answer sent to \(sessionName(for: interaction.sessionId))",
-                            clearStack: true)
+                            clearStack: archiveAfterAnswer)
         }
     }
 
     /// Same interaction contract for evidence already frozen by CaptureRun.
     /// Never takes a later screenshot or consults the current target session.
     private func fulfillInteraction(_ interaction: PendingInteraction, text: String,
-                                    attachments: [String]) {
+                                    attachments: [String],
+                                    archiveAfterAnswer: Bool = true) {
         guard !interaction.resolved else {
             inbox.add(text: text, attachments: attachments, session: interaction.sessionId)
             replyBubble.showTransient("\(sessionName(for: interaction.sessionId)) had stopped waiting — answer queued", seconds: 6)
@@ -2139,7 +2153,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         attachAnswer(text, to: interaction.sessionId)
         answeredSession(interaction.sessionId,
                         note: "answer sent to \(sessionName(for: interaction.sessionId))",
-                        clearStack: true)
+                        clearStack: archiveAfterAnswer)
     }
 
     /// Record the user's reply on the newest unanswered ask push of the
@@ -5126,7 +5140,7 @@ extension AppDelegate: AgentsDataSource {
                     ?? conversation.assistantSlug
                     ?? DefaultAssistantWakeWord,
                 unread: conversation.hasUnseenAssistantReply,
-                pendingAsk: false,
+                pendingAsk: conversation.turnState == .interrupted,
                 live: conversation.turnState == .running,
                 archived: conversation.completedAt != nil,
                 completed: conversation.completedAt != nil,
@@ -5170,6 +5184,9 @@ extension AppDelegate: AgentsDataSource {
                 preview = "paused · \(progressIdx + 1)/\(activePushes.count) — " + preview
             }
             if preview.count > 120 { preview = String(preview.prefix(120)) + "…" }
+            let archived = !queue.isEmpty && queue.allSatisfy { $0.done == true }
+            let connected = mcpServer.sessions.session(session.id)?.engaged == true
+            let listening = inbox.hasWaiter(exactSession: session.id)
             let row = AgentSessionRow(
                 id: session.id,
                 kind: .mcp,
@@ -5181,12 +5198,9 @@ extension AppDelegate: AgentsDataSource {
                 owner: session.label,
                 unread: queue.contains { !$0.seen },
                 pendingAsk: hasPendingAsk(for: session.id),
-                live: false,
-                archived: session.number == nil && !pickerIds.contains(session.id),
-                // A numberless, no-longer-eligible row IS a consumed thread —
-                // "completed"; a numberless ELIGIBLE row is just queued for
-                // a slot (ticket VF-48).
-                completed: session.number == nil && !pickerIds.contains(session.id),
+                live: connected || listening,
+                archived: archived,
+                completed: archived,
                 ghost: session.number != nil && mcpServer.sessions.session(session.id) == nil)
             return (row, newest?.at)
         }
@@ -5201,16 +5215,111 @@ extension AppDelegate: AgentsDataSource {
         return assistantRows + mcpRows
     }
 
-    func agentThread(for sessionId: String) -> [SessionPush] {
-        sessionPushes[sessionId] ?? []
+    func agentThreadDetail(for id: AgentsThreadID) -> AgentThreadDetail? {
+        switch id.source {
+        case .assistant:
+            guard let conversation = agent.conversation(id.value) else { return nil }
+            let owner = conversation.assistantNameSnapshot
+                ?? conversation.assistantSlug
+                ?? DefaultAssistantWakeWord
+            let ownerAvailable = conversation.assistantSlug.flatMap {
+                AssistantsStore.shared.assistant(slug: $0)
+            } != nil || conversation.assistantSlug == nil
+            let jobs = (try? agentJobStore?.jobs(conversationID: conversation.id)) ?? []
+            let messages = conversation.messages.map { message in
+                AgentThreadMessage(
+                    id: message.id.uuidString, at: message.at,
+                    role: {
+                        switch message.role {
+                        case .assistant: return .assistant
+                        case .user: return .user
+                        case .note: return .note
+                        }
+                    }(),
+                    text: message.text, hint: message.attachmentNote)
+            }
+            let state: String
+            if conversation.completedAt != nil { state = "completed" }
+            else if conversation.turnState == .running { state = "working" }
+            else if conversation.turnState == .interrupted { state = "interrupted" }
+            else if conversation.hasUnseenAssistantReply { state = "unread" }
+            else { state = "recent" }
+            let readOnlyReason: String?
+            if !ownerAvailable {
+                readOnlyReason = "Assistant unavailable. History remains readable."
+            } else if agent.isRunning {
+                readOnlyReason = conversation.id == agent.currentSessionId
+                    ? "This conversation is working."
+                    : "Another conversation is working. Wait for it to finish before replying."
+            } else {
+                readOnlyReason = nil
+            }
+            return AgentThreadDetail(
+                id: id, title: conversation.title, owner: owner, state: state,
+                messages: messages, archived: conversation.completedAt != nil,
+                live: conversation.turnState == .running,
+                canReply: conversation.completedAt == nil && ownerAvailable && !agent.isRunning,
+                canSpeak: conversation.latestAssistantReply != nil,
+                canComplete: conversation.turnState != .running,
+                canDelete: conversation.turnState != .running && jobs.isEmpty,
+                claimsContextualFocus: ownerAvailable
+                    && conversation.id == agent.currentSessionId,
+                readOnlyReason: readOnlyReason,
+                linkedAutomationCount: jobs.count)
+        case .mcp:
+            guard let row = agentSessionRows().first(where: {
+                $0.kind == .mcp && $0.id == id.value
+            }) else { return nil }
+            let queue = sessionPushes[id.value] ?? []
+            var messages: [AgentThreadMessage] = []
+            for push in queue {
+                messages.append(AgentThreadMessage(
+                    id: push.id.uuidString, at: push.at, role: .assistant,
+                    text: push.text, hint: push.hint))
+                if let answer = push.answer, !answer.isEmpty {
+                    messages.append(AgentThreadMessage(
+                        id: "\(push.id.uuidString):answer", at: push.at,
+                        role: .user, text: answer, hint: nil))
+                }
+            }
+            let listening = inbox.hasWaiter(exactSession: id.value)
+            let connected = mcpServer.sessions.session(id.value)?.engaged == true
+            let state: String
+            if row.archived { state = "completed" }
+            else if row.pendingAsk { state = "needs your reply" }
+            else if row.unread { state = "unread" }
+            else if listening { state = "listening" }
+            else if connected { state = "connected" }
+            else { state = "ended · replies will queue" }
+            return AgentThreadDetail(
+                id: id, title: row.name, owner: row.owner, state: state,
+                messages: messages, archived: row.archived,
+                live: listening || connected,
+                canReply: !row.archived, canSpeak: !queue.isEmpty,
+                canComplete: true, canDelete: true,
+                claimsContextualFocus: true,
+                readOnlyReason: nil, linkedAutomationCount: 0)
+        }
     }
 
-    func markThreadSeen(_ sessionId: String) {
-        guard let queue = sessionPushes[sessionId] else { return }
-        sessionPushes[sessionId] = queue.map { push in
-            var seen = push
-            seen.seen = true
-            return seen
+    @discardableResult
+    func activateThread(_ id: AgentsThreadID) -> Bool {
+        guard id.source == .assistant else { return true }
+        guard let conversation = agent.activateConversation(id.value) else { return false }
+        replySpeaker.voiceOverride = agent.activeAssistant?.voice
+        chatPanel.restoreAssistantConversation(conversation)
+        return true
+    }
+
+    func markThreadSeen(_ id: AgentsThreadID) {
+        if id.source == .assistant {
+            agent.markAssistantRepliesSeen(for: id.value)
+        } else if let queue = sessionPushes[id.value] {
+            sessionPushes[id.value] = queue.map { push in
+                var seen = push
+                seen.seen = true
+                return seen
+            }
         }
         refreshUnreadIndicator()
         chatPanel.refreshTabBadges()
@@ -5221,61 +5330,155 @@ extension AppDelegate: AgentsDataSource {
         return interaction.sessionId == sessionId && !interaction.resolved
     }
 
-    /// Typed in the panel's thread composer: resolves the session's blocked
-    /// ask if one waits, otherwise queues in its inbox (delivered live to a
-    /// listener, or on the session's next check-in).
-    func sendMessage(toSession sessionId: String, text: String) {
-        if let interaction = pendingInteraction, interaction.sessionId == sessionId, !interaction.resolved {
-            fulfillInteraction(interaction, text: text, includeScreenshot: false)
-            return
-        }
-        let live = inbox.hasWaiter(for: sessionId)
-        inbox.add(text: text, attachments: [], session: sessionId)
-        // The sent message must be VISIBLE in the thread, not swallowed:
-        // it attaches (↳) under the newest push — the message it answers.
-        if var queue = sessionPushes[sessionId], let idx = queue.indices.last {
-            if queue[idx].answer == nil {
-                queue[idx].answer = text
-            } else {
-                queue[idx].answer! += "\n↳ " + text
+    func sendMessage(toThread id: AgentsThreadID, text: String) throws {
+        switch id.source {
+        case .assistant:
+            guard let snapshot = agent.conversation(id.value) else {
+                throw threadActionError("No longer available")
             }
-            queue[idx].seen = true
-            queue[idx].spoken = true   // replied-to = consumed (ticket #16)
-            sessionPushes[sessionId] = queue
-            // Replying consumes the stack: done history in the panel, out
-            // of the pill's quick surfaces (ticket #14).
-            markStackDone(sessionId)
-            refreshUnreadIndicator()
+            guard snapshot.assistantSlug.flatMap({
+                AssistantsStore.shared.assistant(slug: $0)
+            }) != nil || snapshot.assistantSlug == nil else {
+                throw threadActionError("Assistant unavailable. History remains readable.")
+            }
+            guard !agent.isRunning, let conversation = agent.activateConversation(id.value) else {
+                throw threadActionError("Another conversation is working. Wait for it to finish before replying.")
+            }
+            chatPanel.restoreAssistantConversation(conversation)
+            assistantTurnUsesReceiptPresentation = false
+            sendToAgent(text: text, includeFreshScreenshot: false)
+        case .mcp:
+            guard agentThreadDetail(for: id) != nil else {
+                throw threadActionError("No longer available")
+            }
+            if let interaction = pendingInteraction,
+               interaction.sessionId == id.value, !interaction.resolved {
+                fulfillInteraction(
+                    interaction, text: text, includeScreenshot: false,
+                    archiveAfterAnswer: false)
+                return
+            }
+            reopenStack(id.value)
+            let live = inbox.hasWaiter(exactSession: id.value)
+            inbox.add(text: text, attachments: [], session: id.value)
+            if var queue = sessionPushes[id.value], let index = queue.indices.last {
+                if queue[index].answer == nil { queue[index].answer = text }
+                else { queue[index].answer! += "\n↳ " + text }
+                queue[index].seen = true
+                queue[index].spoken = true
+                queue[index].done = false
+                sessionPushes[id.value] = queue
+                refreshUnreadIndicator()
+            }
+            replyBubble.showTransient(
+                live ? "sent to \(sessionName(for: id.value))"
+                    : "queued for \(sessionName(for: id.value)) — delivered when it reconnects",
+                seconds: 5)
         }
-        replyBubble.showTransient(live ? "sent to \(sessionName(for: sessionId))"
-                                       : "queued for \(sessionName(for: sessionId)) — delivered on its next check-in",
-                                  seconds: 5)
     }
 
-    /// The thread header's 🔊 — same read-aloud as re-selecting the session.
-    func speakThread(_ sessionId: String) {
-        speakSessionUnconsumed(sessionId)
+    func speakThread(_ id: AgentsThreadID) {
+        switch id.source {
+        case .assistant:
+            guard let text = agent.conversation(id.value)?.latestAssistantReply?.text,
+                  !text.isEmpty else { return }
+            speakTextThroughPlayer(
+                text, source: .assistantReply(title: agentThreadDetail(for: id)?.title ?? "Assistant"),
+                showSettingsOnMissingKey: true)
+        case .mcp:
+            speakSessionUnconsumed(id.value)
+        }
     }
 
-    /// The thread header's ✓ — the user is done with this thread: stack,
-    /// session, and its overlays all go (a live session re-adopts on its
-    /// next call, so this is always safe).
-    func completeThread(_ sessionId: String) {
-        if let interaction = pendingInteraction, interaction.sessionId == sessionId {
-            interaction.cancelled = true
-            interaction.semaphore.signal()
-        }
-        sessionPushes.removeValue(forKey: sessionId)
-        inbox.cancelWait(for: sessionId)
-        overlayManager.removeAll(forSession: sessionId)
-        _ = mcpServer.sessions.close(sessionId)
-        if targetSessionId == sessionId {
-            setTargetSession(firstAvailableTarget(excluding: sessionId), announce: false)
+    func completeThread(_ id: AgentsThreadID) throws {
+        switch id.source {
+        case .assistant:
+            guard agent.completeConversation(id.value) != nil else {
+                throw threadActionError("Wait for this conversation to finish before completing it.")
+            }
+        case .mcp:
+            guard sessionPushes[id.value] != nil else {
+                throw threadActionError("No longer available")
+            }
+            if let interaction = pendingInteraction, interaction.sessionId == id.value {
+                interaction.cancelled = true
+                interaction.semaphore.signal()
+            }
+            markStackDone(id.value)
+            _ = inbox.removeQueued(exactSession: id.value)
+            _ = inbox.terminateWait(exactSession: id.value)
+            overlayManager.removeAll(forSession: id.value)
+            _ = mcpServer.sessions.close(id.value)
+            if targetSessionId == id.value {
+                setTargetSession(firstAvailableTarget(excluding: id.value), announce: false)
+            }
         }
         refreshSessionIndicator()
         refreshUnreadIndicator()
         chatPanel.refreshAgents()
         replyBubble.showTransient("thread completed", seconds: 4)
+    }
+
+    func reopenThread(_ id: AgentsThreadID) throws {
+        switch id.source {
+        case .assistant:
+            guard agent.reopenConversation(id.value) != nil else {
+                throw threadActionError("No longer available")
+            }
+        case .mcp:
+            guard sessionPushes[id.value] != nil else {
+                throw threadActionError("No longer available")
+            }
+            reopenStack(id.value)
+        }
+        refreshSessionIndicator()
+        refreshUnreadIndicator()
+        chatPanel.refreshAgents()
+    }
+
+    func deleteThread(_ id: AgentsThreadID) throws {
+        switch id.source {
+        case .assistant:
+            let jobs = try agentJobStore?.jobs(conversationID: id.value) ?? []
+            guard jobs.isEmpty else {
+                throw threadActionError(
+                    "This conversation is used by \(jobs.count) automation\(jobs.count == 1 ? "" : "s"). Reassign or delete them first.")
+            }
+            guard agent.deleteConversation(id.value) != nil else {
+                throw threadActionError("Wait for this conversation to finish before deleting it.")
+            }
+            chatPanel.restoreAssistantConversation(agent.currentConversation)
+        case .mcp:
+            guard sessionPushes[id.value] != nil
+                    || mcpServer.sessions.session(id.value) != nil else {
+                return
+            }
+            if let interaction = pendingInteraction, interaction.sessionId == id.value {
+                interaction.cancelled = true
+                interaction.semaphore.signal()
+            }
+            if playerContext?.sessionId == id.value { stopSpeechPlayback() }
+            sessionPushes.removeValue(forKey: id.value)
+            sessionLabels.removeValue(forKey: id.value)
+            sessionSlots.removeValue(forKey: id.value)
+            _ = inbox.removeQueued(exactSession: id.value)
+            _ = inbox.terminateWait(exactSession: id.value)
+            overlayManager.removeAll(forSession: id.value)
+            _ = mcpServer.sessions.close(id.value)
+            if currentPushSessionId == id.value { currentPushSessionId = nil }
+            if targetSessionId == id.value {
+                setTargetSession(firstAvailableTarget(excluding: id.value), announce: false)
+            }
+        }
+        refreshSessionIndicator()
+        refreshUnreadIndicator()
+        chatPanel.refreshAgents()
+        replyBubble.showTransient("thread deleted", seconds: 4)
+    }
+
+    private func threadActionError(_ message: String) -> NSError {
+        NSError(domain: "VoiceFlow.Threads", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     /// Read-aloud honors the consumption cursor (ticket #16): only pushes

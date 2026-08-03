@@ -40,6 +40,37 @@ struct AgentSessionRow {
     let ghost: Bool
 }
 
+enum AgentThreadMessageRole {
+    case assistant
+    case user
+    case note
+}
+
+struct AgentThreadMessage {
+    let id: String
+    let at: Date
+    let role: AgentThreadMessageRole
+    let text: String
+    let hint: String?
+}
+
+struct AgentThreadDetail {
+    let id: AgentsThreadID
+    let title: String
+    let owner: String
+    let state: String
+    let messages: [AgentThreadMessage]
+    let archived: Bool
+    let live: Bool
+    let canReply: Bool
+    let canSpeak: Bool
+    let canComplete: Bool
+    let canDelete: Bool
+    let claimsContextualFocus: Bool
+    let readOnlyReason: String?
+    let linkedAutomationCount: Int
+}
+
 struct AgentJobRow {
     let id: String
     let name: String
@@ -108,16 +139,17 @@ struct AgentAssistantRow {
 
 protocol AgentsDataSource: AnyObject {
     func agentSessionRows() -> [AgentSessionRow]
-    func agentThread(for sessionId: String) -> [AppDelegate.SessionPush]
-    func markThreadSeen(_ sessionId: String)
-    /// True when this session has a blocked ask waiting for the user.
-    func hasPendingAsk(for sessionId: String) -> Bool
-    /// Route a typed message: resolves the pending ask if one waits,
-    /// otherwise queues it in the session's inbox.
-    func sendMessage(toSession sessionId: String, text: String)
-    func speakThread(_ sessionId: String)
-    /// User marked the thread done — delete its stack, session, overlays.
-    func completeThread(_ sessionId: String)
+    func agentThreadDetail(for id: AgentsThreadID) -> AgentThreadDetail?
+    @discardableResult func activateThread(_ id: AgentsThreadID) -> Bool
+    func markThreadSeen(_ id: AgentsThreadID)
+    /// Route a typed message through the exact source adapter. Assistant
+    /// turns use canonical history; external messages resolve a live ask or
+    /// queue for only that session.
+    func sendMessage(toThread id: AgentsThreadID, text: String) throws
+    func speakThread(_ id: AgentsThreadID)
+    func completeThread(_ id: AgentsThreadID) throws
+    func reopenThread(_ id: AgentsThreadID) throws
+    func deleteThread(_ id: AgentsThreadID) throws
     func agentAssistantRows() -> [AgentAssistantRow]
     func agentJobRows() -> [AgentJobRow]
     func agentAutomationModels() -> [OpenRouterModel]
@@ -156,7 +188,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private enum Mode {
         case destination(AgentsDestination)
         case search
-        case thread(String)
+        case thread(AgentsThreadID)
         case job(String)
         case automationCreate
         case automationEdit(String)
@@ -200,10 +232,21 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
     private var mode: Mode = .destination(.now)
     private var currentDestination: AgentsDestination = .now
+    private var threadFilter: AgentsThreadFilter = .open
 
     var openSessionId: String? {
+        if case .thread(let id) = mode, id.source == .mcp { return id.value }
+        return nil
+    }
+
+    var openThreadID: AgentsThreadID? {
         if case .thread(let id) = mode { return id }
         return nil
+    }
+
+    var openAssistantThreadClaimsFocus: Bool {
+        guard case .thread(let id) = mode, id.source == .assistant else { return false }
+        return dataSource?.agentThreadDetail(for: id)?.claimsContextualFocus == true
     }
 
     private var contentStack: NSView!          // flipped document view
@@ -237,6 +280,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var assistantMemoryRevision: String?
     private var assistantSkillButtons: [String: NSButton] = [:]
     private var assistantDeleteConfirmationSlug: String?
+    private var threadDeleteConfirmationID: AgentsThreadID?
+    private var threadDrafts: [AgentsThreadID: String] = [:]
+    private var threadInlineError: String?
     private var inlineError: String?
     private var scrollObserver: NSObjectProtocol?
 
@@ -375,21 +421,32 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 #endif
 
     func openThread(_ sessionId: String) {
+        openThread(AgentsThreadID(source: .mcp, value: sessionId))
+    }
+
+    func openThread(_ id: AgentsThreadID) {
         currentDestination = .threads
-        mode = .thread(sessionId)
-        dataSource?.markThreadSeen(sessionId)
+        if id.source == .assistant { _ = dataSource?.activateThread(id) }
+        mode = .thread(id)
+        threadInlineError = nil
         rebuild()
+        // Selection is navigation, not consumption. Flip seen only after the
+        // exact typed detail has actually attached to a visible window.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window?.isVisible == true,
+                  case .thread(let visible) = self.mode, visible == id else { return }
+            self.dataSource?.markThreadSeen(id)
+            self.styleNavigation()
+        }
     }
 
     /// Re-render whatever is on screen from fresh data. An in-progress
     /// composer draft (and its focus) survives the rebuild — pushes from
     /// other sessions must never eat what the user is typing.
     func refresh() {
-        if case .thread(let sid) = mode {
-            // A session with zero pushes is still a valid, messageable
-            // thread — fall back to the list only when the session is gone.
-            let known = dataSource?.agentSessionRows().contains { $0.id == sid } ?? false
-            if !known, dataSource?.agentThread(for: sid).isEmpty ?? true {
+        if case .thread(let id) = mode {
+            if let field = composerField { threadDrafts[id] = field.stringValue }
+            if dataSource?.agentThreadDetail(for: id) == nil {
                 mode = .destination(currentDestination)
             }
         } else if case .job(let id) = mode,
@@ -420,7 +477,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         } ?? false
         rebuild()
         if let field = composerField {
-            if !draft.isEmpty { field.stringValue = draft }
+            if case .thread(let id) = mode {
+                field.stringValue = threadDrafts[id] ?? draft
+            } else if !draft.isEmpty {
+                field.stringValue = draft
+            }
             if hadFocus { field.window?.makeFirstResponder(field) }
         }
         if let value = assistantDraft.0 { assistantNameField?.stringValue = value }
@@ -707,15 +768,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     private func styleNavigation() {
-        let threads = dataSource?.agentSessionRows() ?? []
-        let unreadThreads = threads.filter { $0.unread && !$0.archived }.count
+        let threadAttention = AgentsThreadProjection.attentionCount(threadProjectionInputs())
         let attention = nowSnapshot().attentionCount
         for destination in AgentsDestination.allCases {
             guard let button = navigationButtons[destination] else { continue }
             let count: Int
             switch destination {
             case .now: count = attention
-            case .threads: count = unreadThreads
+            case .threads: count = threadAttention
             case .assistants, .automations: count = 0
             }
             let title = count > 0 ? "\(destination.label)  \(count)" : destination.label
@@ -1604,34 +1664,93 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     private func buildThreads() {
         var top = contentStack.topAnchor
-        let create = makeRow(
-            leading: symbolIcon("plus", description: "new conversation"),
-            name: "New conversation", unread: false,
-            preview: "Start a separate Assistant conversation", time: "")
-        create.rowAction = .newAssistant
-        place(create, below: &top, gap: 2)
+        let tools = NSView()
+        let filter = NSSegmentedControl(
+            labels: AgentsThreadFilter.allCases.map(\.label),
+            trackingMode: .selectOne, target: self,
+            action: #selector(threadFilterChanged(_:)))
+        filter.selectedSegment = threadFilter.rawValue
+        filter.segmentStyle = .texturedRounded
+        filter.controlSize = .small
+        filter.setAccessibilityLabel("Filter threads")
+        let create = NSButton(title: "+", target: self,
+                              action: #selector(newThreadTapped))
+        create.bezelStyle = .rounded
+        create.controlSize = .small
+        create.setAccessibilityLabel("New conversation")
+        for view in [filter, create] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            tools.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            filter.leadingAnchor.constraint(equalTo: tools.leadingAnchor),
+            filter.topAnchor.constraint(equalTo: tools.topAnchor),
+            filter.bottomAnchor.constraint(equalTo: tools.bottomAnchor),
+            create.leadingAnchor.constraint(equalTo: filter.trailingAnchor, constant: 7),
+            create.trailingAnchor.constraint(equalTo: tools.trailingAnchor),
+            create.centerYAnchor.constraint(equalTo: filter.centerYAnchor),
+            create.widthAnchor.constraint(equalToConstant: 32),
+        ])
+        place(tools, below: &top, gap: 7)
 
         let rows = dataSource?.agentSessionRows() ?? []
-        let grouped = AgentsThreadProjection.grouped(threadProjectionInputs())
-        for group in AgentsThreadGroup.allCases {
-            let ids = Set((grouped[group] ?? []).map(\.id))
+        let sections = AgentsThreadProjection.sections(
+            threadProjectionInputs(), for: threadFilter)
+        for section in sections {
+            let ids = Set(section.rows.map(\.id))
             let members = rows.filter { row in
                 ids.contains(AgentsThreadID(
                     source: row.kind == .assistant ? .assistant : .mcp,
                     value: row.id))
+            }.sorted { lhs, rhs in
+                let lhsID = AgentsThreadID(
+                    source: lhs.kind == .assistant ? .assistant : .mcp, value: lhs.id)
+                let rhsID = AgentsThreadID(
+                    source: rhs.kind == .assistant ? .assistant : .mcp, value: rhs.id)
+                return (section.rows.firstIndex { $0.id == lhsID } ?? .max)
+                    < (section.rows.firstIndex { $0.id == rhsID } ?? .max)
             }
             guard !members.isEmpty else { continue }
-            place(sectionHeader(group.label.uppercased(), count: members.count), below: &top, gap: 12)
+            place(sectionHeader(section.group.label.uppercased(), count: members.count),
+                  below: &top, gap: 12)
             for row in members {
+                let id = AgentsThreadID(
+                    source: row.kind == .assistant ? .assistant : .mcp,
+                    value: row.id)
                 let view = makeRow(
                     leading: leadingIcon(for: row), name: row.name,
                     unread: row.unread || row.pendingAsk,
-                    preview: "\(row.owner) · \(row.preview)", time: row.time)
-                view.rowAction = row.kind == .assistant ? .assistant(row.id) : .mcp(row.id)
+                    preview: "\(row.owner) · \(threadEvidence(row)) · \(row.preview)",
+                    time: row.time)
+                view.rowAction = .thread(id)
                 place(view, below: &top, gap: 0)
             }
         }
+        if sections.isEmpty {
+            let copy: String
+            switch threadFilter {
+            case .open: copy = "No open threads\nStart a conversation"
+            case .needs: copy = "Nothing needs you"
+            case .unread: copy = "You're caught up"
+            case .live: copy = "Nothing live"
+            case .done: copy = "No completed threads"
+            }
+            let empty = NSTextField(wrappingLabelWithString: copy)
+            empty.font = .systemFont(ofSize: 12.5, weight: .medium)
+            empty.textColor = Theme.text3
+            empty.alignment = .center
+            place(empty, below: &top, gap: 28)
+        }
         finishContent(top)
+    }
+
+    private func threadEvidence(_ row: AgentSessionRow) -> String {
+        if row.archived { return "completed" }
+        if row.pendingAsk { return "needs your reply" }
+        if row.unread { return "unread" }
+        if row.live { return row.kind == .assistant ? "working" : "live" }
+        if row.ghost { return "ended" }
+        return "recent"
     }
 
     private func makeNowRow(_ item: AgentsNowItem) -> AgentListRowView {
@@ -1844,12 +1963,25 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             inlineError = nil
             rebuild()
         case .newAssistant:
-            onNewAssistant?()
+            if let slug = dataSource?.agentAssistantRows().first(where: \.isDefault)?.slug {
+                do {
+                    if let id = try dataSource?.createAgentAssistantConversation(slug: slug) {
+                        openThread(AgentsThreadID(source: .assistant, value: id))
+                    }
+                } catch {
+                    threadInlineError = error.localizedDescription
+                    rebuild()
+                }
+            } else {
+                onNewAssistant?()
+            }
         case .newAssistantConversation(let slug):
             do {
                 let id = try dataSource?.createAgentAssistantConversation(slug: slug)
                 inlineError = nil
-                if let id { onOpenAssistantSession?(id) }
+                if let id {
+                    openThread(AgentsThreadID(source: .assistant, value: id))
+                }
             } catch {
                 inlineError = error.localizedDescription
                 rebuild()
@@ -1860,9 +1992,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             inlineError = nil
             rebuild()
         case .assistant(let id):
-            onOpenAssistantSession?(id)
+            openThread(AgentsThreadID(source: .assistant, value: id))
         case .mcp(let id):
-            onOpenSession?(id)
+            openThread(AgentsThreadID(source: .mcp, value: id))
+        case .thread(let id):
             openThread(id)
         case .job(let id):
             currentDestination = .automations
@@ -1890,12 +2023,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             rebuild()
         case .thread(let id):
             currentDestination = .threads
-            if id.source == .assistant {
-                onOpenAssistantSession?(id.value)
-            } else {
-                onOpenSession?(id.value)
-                openThread(id.value)
-            }
+            openThread(id)
         }
     }
 
@@ -1937,163 +2065,185 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         return view
     }
 
-    private func buildThread(_ sessionId: String) {
-        guard let dataSource else { return }
-        let pushes = dataSource.agentThread(for: sessionId)
-        let rows = dataSource.agentSessionRows()
-        let title = rows.first { $0.id == sessionId }?.name ?? "Claude"
-        let pendingAsk = dataSource.hasPendingAsk(for: sessionId)
-
+    private func buildThread(_ id: AgentsThreadID) {
+        guard let detail = dataSource?.agentThreadDetail(for: id) else {
+            var top = contentStack.topAnchor
+            place(emptyLabel("No longer available"), below: &top, gap: 28)
+            finishContent(top)
+            return
+        }
         var top = contentStack.topAnchor
 
-        // Nav bar: ‹ back — centered title — 🔊, hairline below.
         let header = NSView()
-        header.translatesAutoresizingMaskIntoConstraints = false
-
         let back = NSButton(title: "‹", target: self, action: #selector(backTapped))
         back.isBordered = false
         back.font = .systemFont(ofSize: 16, weight: .medium)
         back.contentTintColor = Theme.text2
+        let title = NSTextField(labelWithString: detail.title)
+        title.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        title.textColor = Theme.text
+        title.lineBreakMode = .byTruncatingTail
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let state = NSTextField(labelWithString: "\(detail.owner) · \(detail.state)")
+        state.font = .systemFont(ofSize: 10.5)
+        state.textColor = detail.live ? Theme.accent : Theme.text3
+        state.lineBreakMode = .byTruncatingTail
+        state.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let labels = NSStackView(views: [title, state])
+        labels.orientation = .vertical
+        labels.alignment = .leading
+        labels.spacing = 1
 
-        let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        titleLabel.textColor = Theme.text
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.maximumNumberOfLines = 1
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        titleLabel.alignment = .center
+        let lifecycle = NSButton(
+            image: NSImage(systemSymbolName: detail.archived ? "arrow.uturn.backward.circle" : "checkmark.circle",
+                           accessibilityDescription: detail.archived ? "Reopen thread" : "Complete thread") ?? NSImage(),
+            target: self, action: #selector(threadLifecycleTapped))
+        lifecycle.isBordered = false
+        lifecycle.contentTintColor = Theme.text3
+        lifecycle.isEnabled = detail.archived || detail.canComplete
+        lifecycle.toolTip = detail.archived ? "Reopen thread" : "Complete thread"
 
-        let speak = NSButton(image: NSImage(systemSymbolName: "speaker.wave.2",
-                                            accessibilityDescription: nil) ?? NSImage(),
-                             target: self, action: #selector(speakTapped))
+        let speak = NSButton(
+            image: NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: "Read thread aloud") ?? NSImage(),
+            target: self, action: #selector(speakTapped))
         speak.isBordered = false
         speak.contentTintColor = Theme.text3
-        speak.identifier = NSUserInterfaceItemIdentifier(sessionId)
+        speak.isHidden = !detail.canSpeak
 
-        // ✓ — mark the thread complete: history is kept until the user
-        // says it's done, then it goes away entirely (ticket QA).
-        let complete = NSButton(image: NSImage(systemSymbolName: "checkmark.circle",
-                                               accessibilityDescription: nil) ?? NSImage(),
-                                target: self, action: #selector(completeTapped))
-        complete.isBordered = false
-        complete.contentTintColor = Theme.text3
-        complete.toolTip = "Mark complete — remove this thread"
-        complete.identifier = NSUserInterfaceItemIdentifier(sessionId)
+        let delete = NSButton(
+            image: NSImage(systemSymbolName: "trash", accessibilityDescription: "Delete thread") ?? NSImage(),
+            target: self, action: #selector(deleteThreadTapped))
+        delete.isBordered = false
+        delete.contentTintColor = Theme.text3
+        delete.isEnabled = detail.canDelete
+        delete.toolTip = detail.linkedAutomationCount > 0
+            ? "Used by \(detail.linkedAutomationCount) automation\(detail.linkedAutomationCount == 1 ? "" : "s")"
+            : "Delete thread permanently"
 
         let line = NSView()
         line.wantsLayer = true
         line.layer?.backgroundColor = Theme.border.cgColor
-
-        for v in [back, titleLabel, complete, speak, line] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            header.addSubview(v)
+        for view in [back, labels, lifecycle, speak, delete, line] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(view)
         }
         NSLayoutConstraint.activate([
             back.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 2),
-            back.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -4),
-            titleLabel.centerXAnchor.constraint(equalTo: header.centerXAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -4),
-            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: back.trailingAnchor, constant: 8),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: complete.leadingAnchor, constant: -8),
-            complete.trailingAnchor.constraint(equalTo: speak.leadingAnchor, constant: -8),
-            complete.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -4),
-            speak.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -4),
-            speak.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -4),
+            back.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -3),
+            labels.leadingAnchor.constraint(equalTo: back.trailingAnchor, constant: 7),
+            labels.centerYAnchor.constraint(equalTo: header.centerYAnchor, constant: -3),
+            labels.trailingAnchor.constraint(lessThanOrEqualTo: lifecycle.leadingAnchor, constant: -7),
+            lifecycle.trailingAnchor.constraint(equalTo: speak.leadingAnchor, constant: -6),
+            lifecycle.centerYAnchor.constraint(equalTo: labels.centerYAnchor),
+            speak.trailingAnchor.constraint(equalTo: delete.leadingAnchor, constant: -6),
+            speak.centerYAnchor.constraint(equalTo: labels.centerYAnchor),
+            delete.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -3),
+            delete.centerYAnchor.constraint(equalTo: labels.centerYAnchor),
             line.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             line.trailingAnchor.constraint(equalTo: header.trailingAnchor),
             line.bottomAnchor.constraint(equalTo: header.bottomAnchor),
             line.heightAnchor.constraint(equalToConstant: 1),
-            header.heightAnchor.constraint(equalToConstant: 34),
+            header.heightAnchor.constraint(equalToConstant: 48),
         ])
         place(header, below: &top, gap: 0)
 
-        // Flat blocks — one per push, question or not.
-        var attachedComposer = false
-        for (index, push) in pushes.enumerated() {
-            let block = NSView()
-            block.translatesAutoresizingMaskIntoConstraints = false
-
-            let text = NSTextField(wrappingLabelWithString: push.text)
-            text.font = .systemFont(ofSize: 12.5)
-            text.textColor = push.isAsk ? Theme.text : Theme.text2
-            text.maximumNumberOfLines = 0
-            text.isSelectable = true
-            text.translatesAutoresizingMaskIntoConstraints = false
-            block.addSubview(text)
-
-            var lastAnchor = text.bottomAnchor
+        if threadDeleteConfirmationID == id {
+            let confirmation = NSView()
+            let copy = NSTextField(labelWithString: "Delete permanently?")
+            copy.font = .systemFont(ofSize: 11.5, weight: .medium)
+            copy.textColor = Theme.text
+            let cancel = NSButton(title: "Cancel", target: self,
+                                  action: #selector(cancelDeleteThreadTapped))
+            let confirm = NSButton(title: "Delete", target: self,
+                                   action: #selector(confirmDeleteThreadTapped))
+            confirm.contentTintColor = Theme.accent
+            for view in [copy, cancel, confirm] {
+                view.translatesAutoresizingMaskIntoConstraints = false
+                confirmation.addSubview(view)
+            }
             NSLayoutConstraint.activate([
-                text.topAnchor.constraint(equalTo: block.topAnchor, constant: 9),
-                text.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 4),
-                text.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -4),
+                copy.leadingAnchor.constraint(equalTo: confirmation.leadingAnchor, constant: 4),
+                copy.centerYAnchor.constraint(equalTo: confirmation.centerYAnchor),
+                cancel.leadingAnchor.constraint(greaterThanOrEqualTo: copy.trailingAnchor, constant: 8),
+                confirm.leadingAnchor.constraint(equalTo: cancel.trailingAnchor, constant: 6),
+                confirm.trailingAnchor.constraint(equalTo: confirmation.trailingAnchor),
+                cancel.centerYAnchor.constraint(equalTo: confirmation.centerYAnchor),
+                confirm.centerYAnchor.constraint(equalTo: confirmation.centerYAnchor),
+                confirmation.heightAnchor.constraint(equalToConstant: 34),
             ])
+            place(confirmation, below: &top, gap: 6)
+        }
 
-            if let answer = push.answer {
-                // The user's reply lives attached to what it answered.
-                let arrow = NSTextField(labelWithString: "↳")
-                arrow.font = .systemFont(ofSize: 11.5, weight: .bold)
-                arrow.textColor = Theme.accent
-                let answerLabel = NSTextField(wrappingLabelWithString: answer)
-                answerLabel.font = .systemFont(ofSize: 11.5)
-                answerLabel.textColor = Theme.text2
-                answerLabel.maximumNumberOfLines = 0
-                for v in [arrow, answerLabel] {
-                    v.translatesAutoresizingMaskIntoConstraints = false
-                    block.addSubview(v)
+        if let error = threadInlineError {
+            place(errorLabel(error), below: &top, gap: 8)
+        }
+
+        for (index, message) in detail.messages.enumerated() {
+            let block = NSView()
+            let role = NSTextField(labelWithString: {
+                switch message.role {
+                case .assistant: return detail.owner.uppercased()
+                case .user: return "YOU"
+                case .note: return "NOTE"
                 }
-                NSLayoutConstraint.activate([
-                    arrow.topAnchor.constraint(equalTo: lastAnchor, constant: 6),
-                    arrow.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 16),
-                    answerLabel.topAnchor.constraint(equalTo: arrow.topAnchor),
-                    answerLabel.leadingAnchor.constraint(equalTo: arrow.trailingAnchor, constant: 7),
-                    answerLabel.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -4),
-                ])
-                lastAnchor = answerLabel.bottomAnchor
-            } else if push.isAsk, pendingAsk, index == pushes.lastIndex(where: { $0.isAsk && $0.answer == nil }) {
-                // The attached composer IS the ask signal.
-                let (row, field) = makeComposer(placeholder: "answer…", sessionId: sessionId)
-                row.translatesAutoresizingMaskIntoConstraints = false
-                block.addSubview(row)
-                NSLayoutConstraint.activate([
-                    row.topAnchor.constraint(equalTo: lastAnchor, constant: 10),
-                    row.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 4),
-                    row.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -4),
-                ])
-                lastAnchor = row.bottomAnchor
-                composerField = field
-                attachedComposer = true
+            }())
+            role.font = .systemFont(ofSize: 9.5, weight: .semibold)
+            role.textColor = message.role == .user ? Theme.accent : Theme.text3
+            let bodyText = [message.text, message.hint]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+            let body = NSTextField(wrappingLabelWithString: bodyText)
+            body.font = .systemFont(ofSize: 12.5)
+            body.textColor = message.role == .note ? Theme.text3 : Theme.text2
+            body.maximumNumberOfLines = 0
+            body.isSelectable = true
+            let divider = NSView()
+            divider.wantsLayer = true
+            divider.layer?.backgroundColor = Theme.border.cgColor
+            for view in [role, body, divider] {
+                view.translatesAutoresizingMaskIntoConstraints = false
+                block.addSubview(view)
             }
-
-            lastAnchor.constraint(equalTo: block.bottomAnchor, constant: -9).isActive = true
-
-            if index < pushes.count - 1 {
-                let sep = NSView()
-                sep.wantsLayer = true
-                sep.layer?.backgroundColor = Theme.border.cgColor
-                sep.translatesAutoresizingMaskIntoConstraints = false
-                block.addSubview(sep)
-                NSLayoutConstraint.activate([
-                    sep.leadingAnchor.constraint(equalTo: block.leadingAnchor),
-                    sep.trailingAnchor.constraint(equalTo: block.trailingAnchor),
-                    sep.bottomAnchor.constraint(equalTo: block.bottomAnchor),
-                    sep.heightAnchor.constraint(equalToConstant: 1),
-                ])
-            }
+            NSLayoutConstraint.activate([
+                role.topAnchor.constraint(equalTo: block.topAnchor, constant: 9),
+                role.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 4),
+                body.topAnchor.constraint(equalTo: role.bottomAnchor, constant: 4),
+                body.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 4),
+                body.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -4),
+                body.bottomAnchor.constraint(equalTo: block.bottomAnchor, constant: -9),
+                divider.leadingAnchor.constraint(equalTo: block.leadingAnchor),
+                divider.trailingAnchor.constraint(equalTo: block.trailingAnchor),
+                divider.bottomAnchor.constraint(equalTo: block.bottomAnchor),
+                divider.heightAnchor.constraint(equalToConstant: index == detail.messages.count - 1 ? 0 : 1),
+            ])
             place(block, below: &top, gap: 0)
         }
 
-        if !attachedComposer {
-            let (row, field) = makeComposer(placeholder: "message this session…", sessionId: sessionId)
-            place(row, below: &top, gap: 10)
-            composerField = field
+        if detail.messages.isEmpty {
+            place(emptyLabel("No messages yet"), below: &top, gap: 24)
         }
 
-        let bottom = top.constraint(equalTo: contentStack.bottomAnchor, constant: -12)
-        bottom.priority = .defaultLow
-        bottom.isActive = true
+        if detail.archived {
+            place(emptyLabel("Reopen this thread to reply"), below: &top, gap: 14)
+        } else if detail.canReply {
+            let (row, field) = makeComposer(
+                placeholder: id.source == .assistant ? "Message \(detail.owner)…" : "Message this thread…")
+            field.stringValue = threadDrafts[id] ?? ""
+            place(row, below: &top, gap: 10)
+            composerField = field
+        } else if let reason = detail.readOnlyReason {
+            let notice = NSTextField(wrappingLabelWithString: reason)
+            notice.font = .systemFont(ofSize: 11.5)
+            notice.textColor = Theme.text3
+            notice.alignment = .center
+            place(notice, below: &top, gap: 14)
+        }
+
+        finishContent(top)
     }
 
-    private func makeComposer(placeholder: String, sessionId: String) -> (NSView, NSTextField) {
+    private func makeComposer(placeholder: String) -> (NSView, NSTextField) {
         let row = NSView()
 
         let field = NSTextField()
@@ -2105,7 +2255,6 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         field.focusRingType = .none
         field.wantsLayer = true
         field.layer?.cornerRadius = 8
-        field.identifier = NSUserInterfaceItemIdentifier(sessionId)
         field.target = self
         field.action = #selector(composerSent(_:))
         field.lineBreakMode = .byWordWrapping
@@ -2119,7 +2268,6 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                             target: self, action: #selector(sendTapped(_:)))
         send.isBordered = false
         send.contentTintColor = Theme.accent
-        send.identifier = NSUserInterfaceItemIdentifier(sessionId)
 
         for v in [field, send] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -2158,6 +2306,29 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         inlineError = nil
         assistantDeleteConfirmationSlug = nil
         automationDeleteConfirmationID = nil
+        threadDeleteConfirmationID = nil
+        threadInlineError = nil
+        rebuild()
+    }
+
+    @objc private func newThreadTapped() {
+        if let slug = dataSource?.agentAssistantRows().first(where: \.isDefault)?.slug {
+            do {
+                if let id = try dataSource?.createAgentAssistantConversation(slug: slug) {
+                    openThread(AgentsThreadID(source: .assistant, value: id))
+                }
+            } catch {
+                threadInlineError = error.localizedDescription
+                rebuild()
+            }
+        } else {
+            onNewAssistant?()
+        }
+    }
+
+    @objc private func threadFilterChanged(_ sender: NSSegmentedControl) {
+        threadFilter = AgentsThreadFilter(rawValue: sender.selectedSegment) ?? .open
+        threadInlineError = nil
         rebuild()
     }
 
@@ -2423,16 +2594,54 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func speakTapped(_ sender: NSButton) {
-        guard let id = sender.identifier?.rawValue else { return }
+        guard case .thread(let id) = mode else { return }
         dataSource?.speakThread(id)
     }
 
-    @objc private func completeTapped(_ sender: NSButton) {
-        guard let id = sender.identifier?.rawValue else { return }
-        dataSource?.completeThread(id)
-        currentDestination = .threads
-        mode = .destination(.threads)
+    @objc private func threadLifecycleTapped() {
+        guard let dataSource, case .thread(let id) = mode,
+              let detail = dataSource.agentThreadDetail(for: id) else { return }
+        do {
+            if detail.archived { try dataSource.reopenThread(id) }
+            else { try dataSource.completeThread(id) }
+            threadInlineError = nil
+            threadDeleteConfirmationID = nil
+            threadFilter = detail.archived ? .open : .done
+            mode = .destination(.threads)
+            rebuild()
+        } catch {
+            threadInlineError = error.localizedDescription
+            rebuild()
+        }
+    }
+
+    @objc private func deleteThreadTapped() {
+        guard case .thread(let id) = mode else { return }
+        threadDeleteConfirmationID = id
+        threadInlineError = nil
         rebuild()
+    }
+
+    @objc private func cancelDeleteThreadTapped() {
+        threadDeleteConfirmationID = nil
+        threadInlineError = nil
+        rebuild()
+    }
+
+    @objc private func confirmDeleteThreadTapped() {
+        guard let dataSource, case .thread(let id) = mode,
+              threadDeleteConfirmationID == id else { return }
+        do {
+            try dataSource.deleteThread(id)
+            threadDeleteConfirmationID = nil
+            threadInlineError = nil
+            threadDrafts.removeValue(forKey: id)
+            mode = .destination(.threads)
+            rebuild()
+        } catch {
+            threadInlineError = error.localizedDescription
+            rebuild()
+        }
     }
 
     @objc private func composerSent(_ sender: NSTextField) { submit(sender) }
@@ -2479,11 +2688,19 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     private func submit(_ field: NSTextField) {
         let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let id = field.identifier?.rawValue else { return }
-        field.stringValue = ""
-        dataSource?.sendMessage(toSession: id, text: text)
-        // The answer attaches to its ask (or queues) — re-render to show it.
-        DispatchQueue.main.async { self.refresh() }
+        guard !text.isEmpty, case .thread(let id) = mode, let dataSource else { return }
+        threadDrafts[id] = text
+        do {
+            try dataSource.sendMessage(toThread: id, text: text)
+            threadDrafts[id] = ""
+            field.stringValue = ""
+            threadInlineError = nil
+            DispatchQueue.main.async { self.refresh() }
+        } catch {
+            threadInlineError = error.localizedDescription
+            field.stringValue = text
+            rebuild()
+        }
     }
 }
 
@@ -2494,6 +2711,7 @@ private enum AgentListRowAction {
     case newJob
     case assistant(String)
     case mcp(String)
+    case thread(AgentsThreadID)
     case job(String)
     case assistantWorkspace(String)
     case object(AgentsObjectID)

@@ -95,6 +95,7 @@ final class ChatPanel {
     var conversationFocus: ConversationFocus {
         guard isVisible, currentTab == .agents, !speechOpen else { return .none }
         if assistantOpen { return .assistant }
+        if agentsView.openAssistantThreadClaimsFocus { return .assistant }
         if let id = agentsView.openSessionId { return .session(id) }
         return .none
     }
@@ -511,6 +512,13 @@ final class ChatPanel {
         speechOpen = false
         applyTab(.agents)
         agentsView.openThread(sessionId)
+    }
+
+    func openAgentThread(_ id: AgentsThreadID) {
+        assistantOpen = false
+        speechOpen = false
+        applyTab(.agents)
+        agentsView.openThread(id)
     }
 
     func showAgentsList() {
