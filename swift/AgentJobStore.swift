@@ -29,6 +29,7 @@ enum AgentRunState: String, Codable {
 
 struct AgentJob: Equatable {
     let id: String
+    let name: String
     let assistantSlug: String
     let conversationID: String
     let runtime: AgentRuntimeKind
@@ -46,7 +47,7 @@ struct AgentJob: Equatable {
     let createdAt: Date
     let updatedAt: Date
 
-    init(id: String = UUID().uuidString,
+    init(id: String = UUID().uuidString, name: String? = nil,
          assistantSlug: String, conversationID: String,
          runtime: AgentRuntimeKind, trigger: AgentJobTriggerKind,
          modelID: String? = nil,
@@ -59,6 +60,7 @@ struct AgentJob: Equatable {
          maxAttempts: Int = 3,
          createdAt: Date = Date(), updatedAt: Date = Date()) {
         self.id = id
+        self.name = Self.normalizedName(name, prompt: prompt)
         self.assistantSlug = assistantSlug
         self.conversationID = conversationID
         self.runtime = runtime
@@ -77,6 +79,34 @@ struct AgentJob: Equatable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
+
+    static func normalizedName(_ proposed: String?, prompt: String) -> String {
+        let explicit = proposed?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let firstPromptLine = prompt
+            .split(whereSeparator: { $0.isNewline })
+            .map(String.init)
+            .first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let source = explicit.isEmpty ? firstPromptLine : explicit
+        let fallback = source.isEmpty ? "Untitled automation" : source
+        return String(fallback.prefix(80))
+    }
+}
+
+struct AgentJobConfiguration: Equatable {
+    let name: String
+    let assistantSlug: String
+    let conversationID: String
+    let runtime: AgentRuntimeKind
+    let modelID: String?
+    let trigger: AgentJobTriggerKind
+    let prompt: String
+    let trustProfile: AgentTrustProfile
+    let intervalSeconds: TimeInterval?
+    let concurrencyKey: String
+    let dailyBudgetUSD: Double
+    let maxDurationSeconds: TimeInterval
+    let maxAttempts: Int
 }
 
 struct AgentRun: Equatable {
@@ -148,8 +178,8 @@ final class AgentJobStore {
               id, assistant_slug, conversation_id, runtime, trigger_kind,
               prompt, trust_profile, state, next_run_at, interval_seconds,
               concurrency_key, daily_budget_usd, max_duration_seconds,
-              max_attempts, created_at, updated_at, model_id
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              max_attempts, created_at, updated_at, model_id, name
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               assistant_slug=excluded.assistant_slug,
               conversation_id=excluded.conversation_id,
@@ -161,7 +191,7 @@ final class AgentJobStore {
               daily_budget_usd=excluded.daily_budget_usd,
               max_duration_seconds=excluded.max_duration_seconds,
               max_attempts=excluded.max_attempts, updated_at=excluded.updated_at,
-              model_id=excluded.model_id
+              model_id=excluded.model_id, name=excluded.name
             """
             try withStatement(sql) { statement in
                 bind(job, to: statement)
@@ -199,6 +229,104 @@ final class AgentJobStore {
                 var result: [AgentJob] = []
                 while sqlite3_step(statement) == SQLITE_ROW { result.append(decodeJob(statement)) }
                 return result
+            }
+        }
+    }
+
+    func runs(jobID: String, limit: Int = 30, before: Date? = nil) throws -> [AgentRun] {
+        try lock.withLock {
+            let boundedLimit = min(max(limit, 1), 100)
+            if let before {
+                return try runs(
+                    sql: "SELECT * FROM agent_runs WHERE job_id=? AND started_at<? ORDER BY started_at DESC LIMIT ?",
+                    bind: { statement in
+                        self.bindText(jobID, at: 1, to: statement)
+                        sqlite3_bind_double(statement, 2, before.timeIntervalSince1970)
+                        sqlite3_bind_int(statement, 3, Int32(boundedLimit))
+                    })
+            }
+            return try runs(
+                sql: "SELECT * FROM agent_runs WHERE job_id=? ORDER BY started_at DESC LIMIT ?",
+                bind: { statement in
+                    self.bindText(jobID, at: 1, to: statement)
+                    sqlite3_bind_int(statement, 2, Int32(boundedLimit))
+                })
+        }
+    }
+
+    func spentToday(jobID: String, now: Date = Date()) throws -> Double {
+        try lock.withLock {
+            let start = Calendar(identifier: .gregorian).startOfDay(for: now)
+            return try scalarDouble(
+                "SELECT COALESCE(SUM(cost_usd),0) FROM agent_runs WHERE job_id=? AND started_at>=?",
+                text: jobID, number: start.timeIntervalSince1970)
+        }
+    }
+
+    func hasPendingTrigger(jobID: String) throws -> Bool {
+        try lock.withLock {
+            try scalarDouble(
+                "SELECT COALESCE(pending_trigger_at,0) FROM agent_jobs WHERE id=?",
+                text: jobID) > 0
+        }
+    }
+
+    func updateConfiguration(
+        jobID: String, configuration: AgentJobConfiguration,
+        now: Date = Date()
+    ) throws {
+        try lock.withLock {
+            guard let current = try jobUnlocked(id: jobID) else {
+                throw AgentJobStoreError.invalidState("automation no longer exists")
+            }
+            guard current.state != .running else {
+                throw AgentJobStoreError.invalidState("stop the automation before editing it")
+            }
+            let prompt = configuration.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !prompt.isEmpty else {
+                throw AgentJobStoreError.invalidState("instructions cannot be empty")
+            }
+            let updated = AgentJob(
+                id: current.id, name: configuration.name,
+                assistantSlug: configuration.assistantSlug,
+                conversationID: configuration.conversationID,
+                runtime: configuration.runtime, trigger: configuration.trigger,
+                modelID: configuration.modelID, prompt: prompt,
+                trustProfile: configuration.trustProfile,
+                state: current.state, nextRunAt: current.nextRunAt,
+                intervalSeconds: configuration.intervalSeconds,
+                concurrencyKey: configuration.concurrencyKey,
+                dailyBudgetUSD: max(0, configuration.dailyBudgetUSD),
+                maxDurationSeconds: max(1, configuration.maxDurationSeconds),
+                maxAttempts: max(1, configuration.maxAttempts),
+                createdAt: current.createdAt, updatedAt: now)
+            try put(updated)
+        }
+    }
+
+    func delete(jobID: String) throws {
+        try lock.withLock {
+            try transaction {
+                guard let job = try jobUnlocked(id: jobID) else { return }
+                guard job.state != .running else {
+                    throw AgentJobStoreError.invalidState(
+                        "stop the automation before deleting it")
+                }
+                let liveRuns = try scalarInt(
+                    "SELECT COUNT(*) FROM agent_runs WHERE job_id=? AND state='running'",
+                    text: jobID)
+                guard liveRuns == 0 else {
+                    throw AgentJobStoreError.invalidState(
+                        "stop the automation before deleting it")
+                }
+                try withStatement("DELETE FROM agent_runs WHERE job_id=?") { statement in
+                    bindText(jobID, at: 1, to: statement)
+                    try stepDone(statement)
+                }
+                try withStatement("DELETE FROM agent_jobs WHERE id=?") { statement in
+                    bindText(jobID, at: 1, to: statement)
+                    try stepDone(statement)
+                }
             }
         }
     }
@@ -658,7 +786,8 @@ final class AgentJobStore {
 
     private func decodeJob(_ statement: OpaquePointer) -> AgentJob {
         AgentJob(
-            id: text(statement, 0), assistantSlug: text(statement, 1),
+            id: text(statement, 0), name: optionalText(statement, 18),
+            assistantSlug: text(statement, 1),
             conversationID: text(statement, 2),
             runtime: AgentRuntimeKind(rawValue: text(statement, 3)) ?? .codex,
             trigger: AgentJobTriggerKind(rawValue: text(statement, 4)) ?? .manual,
@@ -716,7 +845,8 @@ final class AgentJobStore {
           created_at REAL NOT NULL,
           updated_at REAL NOT NULL,
           pending_trigger_at REAL,
-          model_id TEXT
+          model_id TEXT,
+          name TEXT
         )
         """)
         try exec("""
@@ -751,6 +881,18 @@ final class AgentJobStore {
         try exec("CREATE INDEX IF NOT EXISTS idx_runs_active ON agent_runs(state,runtime,lease_expires_at)")
         try? exec("ALTER TABLE agent_jobs ADD COLUMN pending_trigger_at REAL")
         try? exec("ALTER TABLE agent_jobs ADD COLUMN model_id TEXT")
+        try? exec("ALTER TABLE agent_jobs ADD COLUMN name TEXT")
+        try exec("""
+        UPDATE agent_jobs
+        SET name=CASE
+          WHEN trim(prompt)='' THEN 'Untitled automation'
+          WHEN instr(replace(prompt,char(13),''),char(10))>0 THEN
+            substr(trim(replace(prompt,char(13),'')),1,
+              instr(trim(replace(prompt,char(13),'')),char(10))-1)
+          ELSE trim(prompt)
+        END
+        WHERE name IS NULL OR trim(name)=''
+        """)
     }
 
     private func transaction<T>(_ work: () throws -> T) throws -> T {
@@ -834,6 +976,7 @@ final class AgentJobStore {
         sqlite3_bind_double(statement, 15, job.createdAt.timeIntervalSince1970)
         sqlite3_bind_double(statement, 16, job.updatedAt.timeIntervalSince1970)
         bindOptionalText(job.modelID, at: 17, to: statement)
+        bindText(job.name, at: 18, to: statement)
     }
 
     private func bindText(_ value: String, at index: Int32, to statement: OpaquePointer) {

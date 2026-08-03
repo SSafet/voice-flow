@@ -52,6 +52,8 @@ let migrated = try AgentJobStore(url: legacyURL)
 let migratedLegacy = try migrated.job(id: "legacy-model")
 expect(migratedLegacy?.modelID == nil,
        "legacy null model did not survive migration")
+expect(migratedLegacy?.name == "legacy",
+       "legacy prompt was not migrated to a stable automation name")
 
 let corruptURL = VoiceFlowPaths.shared.file("jobs-corrupt.sqlite")
 try Data("this is not sqlite".utf8).write(to: corruptURL, options: .atomic)
@@ -73,7 +75,8 @@ catch { expect(false, "unwritable job path produced an untyped error: \(error)")
 let url = VoiceFlowPaths.shared.file("jobs-test.sqlite")
 let store = try AgentJobStore(url: url)
 let jobA = AgentJob(
-    id: "job-a", assistantSlug: "flora", conversationID: "conversation-a",
+    id: "job-a", name: "Morning brief",
+    assistantSlug: "flora", conversationID: "conversation-a",
     runtime: .opencode, trigger: .manual, modelID: "test/model-fast",
     prompt: "A", nextRunAt: now,
     dailyBudgetUSD: 2, maxAttempts: 3, createdAt: now, updatedAt: now)
@@ -99,6 +102,59 @@ expect(sharedConversationJobs.map(\.id) == ["job-a", "job-conflict"],
 let storedModelJob = try store.job(id: "job-a")
 expect(storedModelJob?.modelID == "test/model-fast",
        "per-job model ID did not round-trip")
+expect(storedModelJob?.name == "Morning brief",
+       "stable automation name did not round-trip")
+
+// Automation detail/edit/delete use the job database as their single
+// lifecycle boundary. History is paged newest-first, configuration edits
+// preserve state/creation, and deletion removes runs atomically.
+let lifecycleStore = try AgentJobStore(
+    url: VoiceFlowPaths.shared.file("jobs-automation-lifecycle.sqlite"))
+let lifecycleJob = AgentJob(
+    id: "lifecycle", name: "Weekly synthesis",
+    assistantSlug: "flora", conversationID: "lifecycle-c",
+    runtime: .codex, trigger: .manual, prompt: "Synthesize the week",
+    nextRunAt: now, dailyBudgetUSD: 5,
+    createdAt: now, updatedAt: now)
+try lifecycleStore.put(lifecycleJob)
+let lifecycleRun = try lifecycleStore.claimNext(
+    workerID: "lifecycle-worker", now: now)!
+do {
+    try lifecycleStore.delete(jobID: lifecycleJob.id)
+    expect(false, "running automation was deleted")
+} catch AgentJobStoreError.invalidState { }
+catch { expect(false, "running deletion produced the wrong error: \(error)") }
+try lifecycleStore.complete(
+    runID: lifecycleRun.id, workerID: "lifecycle-worker",
+    resultMessageID: UUID(), costUSD: 0.35,
+    now: now.addingTimeInterval(2))
+let lifecycleRuns = try lifecycleStore.runs(jobID: lifecycleJob.id, limit: 10)
+expect(lifecycleRuns.map(\.id) == [lifecycleRun.id],
+       "automation run history was not returned newest-first")
+let lifecycleSpend = try lifecycleStore.spentToday(jobID: lifecycleJob.id, now: now)
+expect(abs(lifecycleSpend - 0.35) < 0.0001,
+       "automation daily spend did not include completed runs")
+try lifecycleStore.updateConfiguration(
+    jobID: lifecycleJob.id,
+    configuration: AgentJobConfiguration(
+        name: "Weekly operating review", assistantSlug: "flora",
+        conversationID: "lifecycle-c", runtime: .opencode,
+        modelID: "test/model-review", trigger: .interval,
+        prompt: "Review the operating week", trustProfile: .unattended,
+        intervalSeconds: 3600, concurrencyKey: "lifecycle-c",
+        dailyBudgetUSD: 7, maxDurationSeconds: 600, maxAttempts: 2),
+    now: now.addingTimeInterval(3))
+let editedLifecycle = try lifecycleStore.job(id: lifecycleJob.id)
+expect(editedLifecycle?.name == "Weekly operating review"
+       && editedLifecycle?.runtime == .opencode
+       && editedLifecycle?.state == .completed
+       && editedLifecycle?.createdAt == now,
+       "automation configuration edit replaced durable lifecycle fields")
+try lifecycleStore.delete(jobID: lifecycleJob.id)
+let deletedLifecycleJob = try lifecycleStore.job(id: lifecycleJob.id)
+let deletedLifecycleRuns = try lifecycleStore.runs(jobID: lifecycleJob.id)
+expect(deletedLifecycleJob == nil && deletedLifecycleRuns.isEmpty,
+       "automation deletion did not remove the job and its run history atomically")
 
 // Assistant deletion prepares every owned job transactionally and can restore
 // the exact prior states if moving the folder to Trash fails.
