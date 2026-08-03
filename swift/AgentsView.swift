@@ -1413,13 +1413,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         ])
         place(tools, below: &top, gap: 6)
 
-        let filter = NSSegmentedControl(
+        let filter = makeFilterStrip(
             labels: AutomationFilter.allCases.map(\.label),
-            trackingMode: .selectOne, target: self,
+            selected: automationFilter.rawValue,
             action: #selector(automationFilterChanged(_:)))
-        filter.selectedSegment = automationFilter.rawValue
-        filter.segmentStyle = .texturedRounded
-        filter.controlSize = .small
         filter.setAccessibilityLabel("Filter automations")
         place(filter, below: &top, gap: 8)
 
@@ -1692,13 +1689,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func buildThreads() {
         var top = contentStack.topAnchor
         let tools = NSView()
-        let filter = NSSegmentedControl(
+        let filter = makeFilterStrip(
             labels: AgentsThreadFilter.allCases.map(\.label),
-            trackingMode: .selectOne, target: self,
+            selected: threadFilter.rawValue,
             action: #selector(threadFilterChanged(_:)))
-        filter.selectedSegment = threadFilter.rawValue
-        filter.segmentStyle = .texturedRounded
-        filter.controlSize = .small
         filter.setAccessibilityLabel("Filter threads")
         let create = NSButton(title: "+", target: self,
                               action: #selector(newThreadTapped))
@@ -1812,6 +1806,32 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         text.textColor = Theme.text3
         text.setAccessibilityLabel(count.map { "\(title), \($0)" } ?? title)
         return text
+    }
+
+    private func makeFilterStrip(labels: [String], selected: Int,
+                                 action: Selector) -> NSStackView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.distribution = .fillEqually
+        stack.spacing = 3
+        for (index, label) in labels.enumerated() {
+            let button = NSButton(title: label, target: self, action: action)
+            button.tag = index
+            button.isBordered = false
+            button.font = .systemFont(ofSize: 10.5, weight: index == selected ? .semibold : .medium)
+            button.contentTintColor = index == selected ? Theme.text : Theme.text3
+            button.wantsLayer = true
+            button.layer?.cornerRadius = 5
+            button.layer?.backgroundColor = index == selected
+                ? Theme.cardHover.cgColor : NSColor.clear.cgColor
+            button.layer?.borderWidth = index == selected ? 0.7 : 0
+            button.layer?.borderColor = Theme.borderHover.cgColor
+            button.heightAnchor.constraint(equalToConstant: 24).isActive = true
+            button.setAccessibilityLabel("\(label) filter\(index == selected ? ", selected" : "")")
+            stack.addArrangedSubview(button)
+        }
+        return stack
     }
 
     private func emptyLabel(_ value: String) -> NSView {
@@ -2370,8 +2390,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
     }
 
-    @objc private func threadFilterChanged(_ sender: NSSegmentedControl) {
-        threadFilter = AgentsThreadFilter(rawValue: sender.selectedSegment) ?? .open
+    @objc private func threadFilterChanged(_ sender: NSButton) {
+        threadFilter = AgentsThreadFilter(rawValue: sender.tag) ?? .open
         threadInlineError = nil
         rebuild()
     }
@@ -2384,8 +2404,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         rebuild()
     }
 
-    @objc private func automationFilterChanged(_ sender: NSSegmentedControl) {
-        automationFilter = AutomationFilter(rawValue: sender.selectedSegment) ?? .all
+    @objc private func automationFilterChanged(_ sender: NSButton) {
+        automationFilter = AutomationFilter(rawValue: sender.tag) ?? .all
         rebuild()
     }
 
