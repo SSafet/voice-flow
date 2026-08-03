@@ -92,6 +92,7 @@ protocol AgentsDataSource: AnyObject {
     func updateAgentAssistantMemory(slug: String, kind: String, content: String,
                                     expectedRevision: String) throws -> AgentMemoryDocument
     func createAgentAssistantConversation(slug: String) throws -> String
+    func deleteAgentAssistant(slug: String) throws -> AssistantDeletionOutcome
 }
 
 final class AgentsView: NSView, NSTextFieldDelegate {
@@ -146,6 +147,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var assistantMemoryKind = "core"
     private var assistantMemoryRevision: String?
     private var assistantSkillButtons: [String: NSButton] = [:]
+    private var assistantDeleteConfirmationSlug: String?
     private var inlineError: String?
     private var scrollObserver: NSObjectProtocol?
 
@@ -791,6 +793,34 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         duplicate.bezelStyle = .inline
         duplicate.controlSize = .small
         place(duplicate, below: &top, gap: 10)
+
+        place(formLabel("DESTRUCTIVE"), below: &top, gap: 22)
+        if assistantDeleteConfirmationSlug == definition.slug {
+            let warning = NSTextField(wrappingLabelWithString:
+                "Move this Assistant's folder to Trash, disable \(snapshot.jobs.count) automations, and keep \(snapshot.conversations.count) conversations read-only in Threads.")
+            warning.font = .systemFont(ofSize: 11)
+            warning.textColor = Theme.accent
+            warning.maximumNumberOfLines = 0
+            place(warning, below: &top, gap: 6)
+            let actions = NSStackView()
+            actions.orientation = .horizontal
+            actions.spacing = 8
+            let confirm = NSButton(title: "Move to Trash", target: self,
+                                   action: #selector(confirmDeleteAssistantTapped))
+            confirm.bezelStyle = .rounded
+            let cancel = NSButton(title: "Cancel", target: self,
+                                  action: #selector(cancelDeleteAssistantTapped))
+            cancel.bezelStyle = .rounded
+            actions.addArrangedSubview(confirm)
+            actions.addArrangedSubview(cancel)
+            place(actions, below: &top, gap: 10)
+        } else {
+            let remove = NSButton(title: "Delete assistant…", target: self,
+                                  action: #selector(deleteAssistantTapped))
+            remove.bezelStyle = .inline
+            remove.contentTintColor = Theme.accent
+            place(remove, below: &top, gap: 6)
+        }
     }
 
     private func makeAssistantConversationRow(_ conversation: AssistantConversation) -> AgentListRowView {
@@ -1483,6 +1513,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         currentDestination = destination
         mode = .destination(destination)
         inlineError = nil
+        assistantDeleteConfirmationSlug = nil
         rebuild()
     }
 
@@ -1494,6 +1525,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     @objc private func backTapped() {
         mode = .destination(currentDestination)
         inlineError = nil
+        assistantDeleteConfirmationSlug = nil
         rebuild()
     }
 
@@ -1603,6 +1635,35 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 slug: slug, name: snapshot.document.definition.name + " Copy")
             inlineError = nil
             mode = .assistantWorkspace(duplicate, .overview)
+            rebuild()
+        } catch {
+            inlineError = error.localizedDescription
+            rebuild()
+        }
+    }
+
+    @objc private func deleteAssistantTapped() {
+        guard case .assistantWorkspace(let slug, _) = mode else { return }
+        assistantDeleteConfirmationSlug = slug
+        inlineError = nil
+        rebuild()
+    }
+
+    @objc private func cancelDeleteAssistantTapped() {
+        assistantDeleteConfirmationSlug = nil
+        inlineError = nil
+        rebuild()
+    }
+
+    @objc private func confirmDeleteAssistantTapped() {
+        guard let dataSource,
+              case .assistantWorkspace(let slug, _) = mode,
+              assistantDeleteConfirmationSlug == slug else { return }
+        do {
+            _ = try dataSource.deleteAgentAssistant(slug: slug)
+            assistantDeleteConfirmationSlug = nil
+            inlineError = nil
+            mode = .destination(.assistants)
             rebuild()
         } catch {
             inlineError = error.localizedDescription

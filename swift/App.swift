@@ -4912,6 +4912,14 @@ extension AppDelegate: AgentsDataSource {
         return id
     }
 
+    func deleteAgentAssistant(slug: String) throws -> AssistantDeletionOutcome {
+        let outcome = try assistantWorkspaceCoordinator.deleteAssistant(slug: slug)
+        replySpeaker.voiceOverride = agent.activeAssistant?.voice
+        chatPanel.restoreAssistantConversation(agent.currentConversation)
+        chatPanel.refreshAgents()
+        return outcome
+    }
+
     func agentSessionRows() -> [AgentSessionRow] {
         let activeAssistantConversationId = agent?.currentSessionId
         let assistantNumber = assistantPickerSessionId.flatMap { id in

@@ -16,6 +16,11 @@ struct AssistantWorkspaceSnapshot {
     let jobs: [AgentJob]
 }
 
+struct AssistantDeletionOutcome {
+    let disabledAutomationCount: Int
+    let retainedConversationCount: Int
+}
+
 enum AssistantWorkspaceError: LocalizedError {
     case busy
     case unavailable(String)
@@ -94,6 +99,46 @@ final class AssistantWorkspaceCoordinator {
               agent.moveConversation(id, to: assistant) != nil else {
             throw AssistantWorkspaceError.unavailable("Conversation could not be moved.")
         }
+    }
+
+    func deleteAssistant(slug: String) throws -> AssistantDeletionOutcome {
+        guard assistants.assistants.count > 1 else {
+            throw AssistantStoreError.cannotDeleteLast
+        }
+        guard !(agent.isRunning && agent.activeAssistant?.slug == slug) else {
+            throw AssistantWorkspaceError.busy
+        }
+        guard let jobs = jobStore() else {
+            throw AssistantWorkspaceError.unavailable("Automations are unavailable; deletion cannot be verified safely.")
+        }
+        let retained = agent.conversations.filter { $0.assistantSlug == slug }.count
+        let priorStates = try jobs.disableJobsForAssistant(slug)
+        do {
+            try assistants.moveToTrash(slug: slug)
+        } catch {
+            do { try jobs.restoreJobStates(priorStates) }
+            catch {
+                throw AssistantWorkspaceError.unavailable(
+                    "Moving the Assistant to Trash failed, and automation states could not be restored: \(error.localizedDescription)")
+            }
+            throw error
+        }
+
+        if agent.activeAssistant?.slug == slug,
+           let fallback = assistants.base {
+            if let conversation = agent.conversations
+                .filter({ $0.assistantSlug == fallback.slug })
+                .max(by: { $0.updatedAt < $1.updatedAt }) {
+                _ = agent.activateConversation(conversation.id)
+            } else {
+                _ = agent.createConversation(for: fallback)
+            }
+        }
+        _ = agent.reconcileAutomationReferences(
+            (try? jobs.jobReferencesByConversation()) ?? [:])
+        return AssistantDeletionOutcome(
+            disabledAutomationCount: priorStates.count,
+            retainedConversationCount: retained)
     }
 
     @discardableResult

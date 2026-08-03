@@ -99,6 +99,51 @@ expect(sharedConversationJobs.map(\.id) == ["job-a", "job-conflict"],
 let storedModelJob = try store.job(id: "job-a")
 expect(storedModelJob?.modelID == "test/model-fast",
        "per-job model ID did not round-trip")
+
+// Assistant deletion prepares every owned job transactionally and can restore
+// the exact prior states if moving the folder to Trash fails.
+let deletionStore = try AgentJobStore(
+    url: VoiceFlowPaths.shared.file("jobs-assistant-delete.sqlite"))
+let deletionJobs = [
+    AgentJob(id: "delete-ready", assistantSlug: "research", conversationID: "d1",
+             runtime: .codex, trigger: .manual, prompt: "one", state: .completed,
+             nextRunAt: nil, createdAt: now, updatedAt: now),
+    AgentJob(id: "delete-queued", assistantSlug: "research", conversationID: "d2",
+             runtime: .codex, trigger: .interval, prompt: "two", state: .queued,
+             nextRunAt: now.addingTimeInterval(60), intervalSeconds: 60,
+             createdAt: now, updatedAt: now),
+    AgentJob(id: "delete-disabled", assistantSlug: "research", conversationID: "d3",
+             runtime: .codex, trigger: .manual, prompt: "three", state: .disabled,
+             nextRunAt: nil, createdAt: now, updatedAt: now),
+]
+for job in deletionJobs { try deletionStore.put(job) }
+let deletionSnapshots = try deletionStore.disableJobsForAssistant("research", now: now)
+expect(deletionSnapshots.count == 3,
+       "Assistant deletion did not capture every job state")
+let disabledDeletionJobs = try deletionStore.jobs(limit: 10)
+expect(disabledDeletionJobs.allSatisfy { $0.state == .disabled },
+       "Assistant deletion preparation left an owned job enabled")
+try deletionStore.restoreJobStates(deletionSnapshots)
+let restoredDeletionJobs = try deletionStore.jobs(limit: 10)
+expect(restoredDeletionJobs.first(where: { $0.id == "delete-ready" })?.state == .completed
+       && restoredDeletionJobs.first(where: { $0.id == "delete-queued" })?.state == .queued
+       && restoredDeletionJobs.first(where: { $0.id == "delete-disabled" })?.state == .disabled,
+       "failed Trash compensation did not restore exact job states")
+
+let runningDeleteStore = try AgentJobStore(
+    url: VoiceFlowPaths.shared.file("jobs-assistant-delete-running.sqlite"))
+try runningDeleteStore.put(AgentJob(
+    id: "delete-running", assistantSlug: "research", conversationID: "d-running",
+    runtime: .codex, trigger: .manual, prompt: "running", state: .running,
+    nextRunAt: nil, createdAt: now, updatedAt: now))
+do {
+    _ = try runningDeleteStore.disableJobsForAssistant("research", now: now)
+    expect(false, "Assistant deletion accepted a running automation")
+} catch AgentJobStoreError.invalidState { }
+catch { expect(false, "running deletion guard produced the wrong error: \(error)") }
+let runningAfterRejectedDelete = try runningDeleteStore.job(id: "delete-running")
+expect(runningAfterRejectedDelete?.state == .running,
+       "running deletion guard partially mutated the job")
 let inboxJob = AgentJob(
     id: "inbox", assistantSlug: "flora", conversationID: "inbox-c",
     runtime: .opencode, trigger: .inbox, prompt: "inbox", state: .completed,

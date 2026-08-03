@@ -96,6 +96,13 @@ struct AgentRun: Equatable {
     let resultMessageID: UUID?
 }
 
+struct AgentJobStateSnapshot: Equatable {
+    let id: String
+    let state: AgentJobState
+    let nextRunAt: Date?
+    let updatedAt: Date
+}
+
 enum AgentJobStoreError: LocalizedError {
     case database(String)
     case invalidState(String)
@@ -406,6 +413,60 @@ final class AgentJobStore {
                 sqlite3_bind_double(statement, 3, now.timeIntervalSince1970)
                 bindText(jobID, at: 4, to: statement)
                 try stepDone(statement)
+            }
+        }
+    }
+
+    /// Prepare an Assistant folder for Trash without losing rollback. Every
+    /// owned job state is captured and non-running jobs are disabled in one
+    /// transaction; a running row aborts the whole operation unchanged.
+    func disableJobsForAssistant(
+        _ assistantSlug: String, now: Date = Date()
+    ) throws -> [AgentJobStateSnapshot] {
+        try lock.withLock {
+            try transaction {
+                let jobs = try withStatement(
+                    "SELECT id,state,next_run_at,updated_at FROM agent_jobs WHERE assistant_slug=? ORDER BY id") { statement in
+                    bindText(assistantSlug, at: 1, to: statement)
+                    var result: [AgentJobStateSnapshot] = []
+                    while sqlite3_step(statement) == SQLITE_ROW {
+                        result.append(AgentJobStateSnapshot(
+                            id: text(statement, 0),
+                            state: AgentJobState(rawValue: text(statement, 1)) ?? .failed,
+                            nextRunAt: optionalDate(statement, 2),
+                            updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 3))))
+                    }
+                    return result
+                }
+                guard !jobs.contains(where: { $0.state == .running }) else {
+                    throw AgentJobStoreError.invalidState(
+                        "an automation for this Assistant is running")
+                }
+                try withStatement(
+                    "UPDATE agent_jobs SET state='disabled',next_run_at=NULL,updated_at=? WHERE assistant_slug=?") { statement in
+                    sqlite3_bind_double(statement, 1, now.timeIntervalSince1970)
+                    bindText(assistantSlug, at: 2, to: statement)
+                    try stepDone(statement)
+                }
+                return jobs
+            }
+        }
+    }
+
+    func restoreJobStates(_ snapshots: [AgentJobStateSnapshot]) throws {
+        guard !snapshots.isEmpty else { return }
+        try lock.withLock {
+            try transaction {
+                for snapshot in snapshots {
+                    try withStatement(
+                        "UPDATE agent_jobs SET state=?,next_run_at=?,updated_at=? WHERE id=?") { statement in
+                        bindText(snapshot.state.rawValue, at: 1, to: statement)
+                        bindOptionalDouble(snapshot.nextRunAt?.timeIntervalSince1970, at: 2, to: statement)
+                        sqlite3_bind_double(statement, 3, snapshot.updatedAt.timeIntervalSince1970)
+                        bindText(snapshot.id, at: 4, to: statement)
+                        try stepDone(statement)
+                    }
+                }
             }
         }
     }
