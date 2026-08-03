@@ -47,11 +47,45 @@ struct AgentJobRow {
     let time: String
     let updatedAt: Date
     let assistantName: String
+    let assistantSlug: String
     let state: AgentJobState
+    let isEnabled: Bool
     let runtime: AgentRuntimeKind
     let trigger: AgentJobTriggerKind
     let modelID: String?
     let prompt: String
+    let nextRunAt: Date?
+    let intervalSeconds: TimeInterval?
+    let dailyBudgetUSD: Double
+    let spentTodayUSD: Double
+    let maxDurationSeconds: TimeInterval
+    let maxAttempts: Int
+    let hasPendingTrigger: Bool
+    let runs: [AgentRunRow]
+}
+
+struct AgentRunRow {
+    let id: String
+    let state: AgentRunState
+    let startedAt: Date
+    let finishedAt: Date?
+    let attempt: Int
+    let costUSD: Double
+    let error: String?
+}
+
+struct AgentAutomationDraft {
+    let name: String
+    let assistantSlug: String
+    let runtime: AgentRuntimeKind
+    let modelID: String?
+    let trigger: AgentJobTriggerKind
+    let prompt: String
+    let intervalSeconds: TimeInterval?
+    let dailyBudgetUSD: Double
+    let maxDurationSeconds: TimeInterval
+    let maxAttempts: Int
+    let enabled: Bool
 }
 
 struct AgentAssistantRow {
@@ -81,6 +115,11 @@ protocol AgentsDataSource: AnyObject {
     func completeThread(_ sessionId: String)
     func agentAssistantRows() -> [AgentAssistantRow]
     func agentJobRows() -> [AgentJobRow]
+    func agentAutomationModels() -> [OpenRouterModel]
+    func createAgentAutomation(_ draft: AgentAutomationDraft) throws -> String
+    func updateAgentAutomation(id: String, draft: AgentAutomationDraft) throws
+    func duplicateAgentAutomation(id: String) throws -> String
+    func deleteAgentAutomation(id: String) throws
     func runAgentJob(_ jobId: String)
     func cancelAgentJob(_ jobId: String)
     func setAgentJob(_ jobId: String, enabled: Bool)

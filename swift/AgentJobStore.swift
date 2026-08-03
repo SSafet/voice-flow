@@ -315,6 +315,25 @@ final class AgentJobStore {
             guard !prompt.isEmpty else {
                 throw AgentJobStoreError.invalidState("instructions cannot be empty")
             }
+            var state = current.state
+            var nextRunAt = current.nextRunAt
+            var generation = current.generation
+            if current.isEnabled,
+               current.state != .blocked, current.state != .failed,
+               configuration.trigger != current.trigger
+                || (configuration.trigger == .interval
+                    && configuration.intervalSeconds != current.intervalSeconds) {
+                generation += 1
+                if configuration.trigger == .interval,
+                   let interval = configuration.intervalSeconds {
+                    state = .queued
+                    nextRunAt = now.addingTimeInterval(max(1, interval))
+                } else {
+                    state = .completed
+                    nextRunAt = nil
+                }
+            }
+            if !current.isEnabled { nextRunAt = nil }
             let updated = AgentJob(
                 id: current.id, name: configuration.name,
                 assistantSlug: configuration.assistantSlug,
@@ -322,8 +341,8 @@ final class AgentJobStore {
                 runtime: configuration.runtime, trigger: configuration.trigger,
                 modelID: configuration.modelID, prompt: prompt,
                 trustProfile: configuration.trustProfile,
-                state: current.state, nextRunAt: current.nextRunAt,
-                isEnabled: current.isEnabled, generation: current.generation,
+                state: state, nextRunAt: nextRunAt,
+                isEnabled: current.isEnabled, generation: generation,
                 intervalSeconds: configuration.intervalSeconds,
                 concurrencyKey: configuration.concurrencyKey,
                 dailyBudgetUSD: max(0, configuration.dailyBudgetUSD),

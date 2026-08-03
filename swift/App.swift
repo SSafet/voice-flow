@@ -4785,25 +4785,181 @@ extension AppDelegate: AgentsDataSource {
     func agentJobRows() -> [AgentJobRow] {
         let jobs = (try? agentJobStore?.jobs(limit: 100)) ?? []
         return jobs.map { job in
-            let firstLine = job.prompt
-                .replacingOccurrences(of: "\n", with: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let title = firstLine.count > 48 ? String(firstLine.prefix(48)) + "…" : firstLine
-            var preview = "\(job.state.rawValue) · \(job.runtime.label) · \(job.trigger.rawValue)"
-            if let modelID = job.modelID { preview += " · \(modelID)" }
-            if let next = job.nextRunAt, job.state == .queued {
-                preview += " · " + Self.pushTimeFormatter.string(from: next)
-            }
             let assistantName = AssistantsStore.shared.assistant(slug: job.assistantSlug)?.name
                 ?? job.assistantSlug
+            let preview: String
+            if !job.isEnabled {
+                preview = "Off · \(assistantName) · \(job.trigger.rawValue)"
+            } else {
+                switch job.state {
+                case .running:
+                    preview = "Running now · \(assistantName)"
+                case .blocked:
+                    preview = "Budget or permission blocked · \(assistantName)"
+                case .failed:
+                    preview = "Failed · \(assistantName)"
+                case .queued:
+                    let next = job.nextRunAt.map(Self.pushTimeFormatter.string(from:)) ?? "soon"
+                    preview = "Next \(next) · \(assistantName)"
+                case .completed:
+                    preview = job.trigger == .manual
+                        ? "Ready · \(assistantName)"
+                        : "Listening · \(assistantName) · \(job.trigger.rawValue)"
+                case .cancelled, .disabled:
+                    preview = "Off · \(assistantName)"
+                }
+            }
+            let runRows = ((try? agentJobStore?.runs(jobID: job.id, limit: 12)) ?? []).map {
+                AgentRunRow(
+                    id: $0.id, state: $0.state, startedAt: $0.startedAt,
+                    finishedAt: $0.finishedAt, attempt: $0.attempt,
+                    costUSD: $0.costUSD, error: $0.error)
+            }
             return AgentJobRow(
-                id: job.id, name: title.isEmpty ? "automation" : title,
+                id: job.id, name: job.name,
                 preview: preview,
-                time: Self.pushTimeFormatter.string(from: job.updatedAt),
+                time: job.nextRunAt.map(Self.pushTimeFormatter.string(from:))
+                    ?? Self.pushTimeFormatter.string(from: job.updatedAt),
                 updatedAt: job.updatedAt, assistantName: assistantName,
-                state: job.state, runtime: job.runtime,
-                trigger: job.trigger, modelID: job.modelID, prompt: job.prompt)
+                assistantSlug: job.assistantSlug,
+                state: job.state, isEnabled: job.isEnabled,
+                runtime: job.runtime, trigger: job.trigger,
+                modelID: job.modelID, prompt: job.prompt,
+                nextRunAt: job.nextRunAt, intervalSeconds: job.intervalSeconds,
+                dailyBudgetUSD: job.dailyBudgetUSD,
+                spentTodayUSD: (try? agentJobStore?.spentToday(jobID: job.id)) ?? 0,
+                maxDurationSeconds: job.maxDurationSeconds,
+                maxAttempts: job.maxAttempts,
+                hasPendingTrigger: (try? agentJobStore?.hasPendingTrigger(jobID: job.id)) ?? false,
+                runs: runRows)
         }
+    }
+
+    func agentAutomationModels() -> [OpenRouterModel] {
+        let jobs = (try? agentJobStore?.jobs(limit: 500)) ?? []
+        var fallback = Set(jobs.compactMap(\.modelID))
+        fallback.insert(UserSettings.shared.agentModel)
+        return OpenRouterModelCatalog.shared.cachedModels(including: fallback)
+    }
+
+    func createAgentAutomation(_ draft: AgentAutomationDraft) throws -> String {
+        guard let agentJobStore else {
+            throw AgentJobStoreError.invalidState("automations are unavailable")
+        }
+        guard let assistant = AssistantsStore.shared.assistant(slug: draft.assistantSlug) else {
+            throw AgentJobStoreError.invalidState("the selected Assistant is unavailable")
+        }
+        let prompt = draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            throw AgentJobStoreError.invalidState("instructions cannot be empty")
+        }
+        if draft.runtime == .opencode,
+           draft.modelID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            throw AgentJobStoreError.invalidState("choose an OpenRouter model")
+        }
+        let now = Date()
+        let interval = draft.trigger == .interval
+            ? max(60, draft.intervalSeconds ?? 3_600) : nil
+        let jobID = UUID().uuidString
+        let conversation = agent.createAutomationConversation(
+            jobID: jobID, assistant: assistant)
+        let job = AgentJob(
+            id: jobID, name: draft.name,
+            assistantSlug: assistant.slug, conversationID: conversation.id,
+            runtime: draft.runtime, trigger: draft.trigger,
+            modelID: draft.runtime == .opencode ? draft.modelID : nil,
+            prompt: prompt, trustProfile: .unattended,
+            state: draft.enabled ? (interval == nil ? .completed : .queued) : .disabled,
+            nextRunAt: draft.enabled ? interval.map { now.addingTimeInterval($0) } : nil,
+            isEnabled: draft.enabled,
+            intervalSeconds: interval,
+            dailyBudgetUSD: min(max(0, draft.dailyBudgetUSD), 10_000),
+            maxDurationSeconds: min(max(30, draft.maxDurationSeconds), 14_400),
+            maxAttempts: min(max(1, draft.maxAttempts), 10),
+            createdAt: now, updatedAt: now)
+        do {
+            try agentJobStore.put(job)
+            _ = agent.reconcileAutomationReferences(
+                try agentJobStore.jobReferencesByConversation())
+            chatPanel.refreshAgents()
+            return job.id
+        } catch {
+            if let references = try? agentJobStore.jobReferencesByConversation() {
+                _ = agent.reconcileAutomationReferences(references)
+                _ = agent.deleteConversation(conversation.id)
+            }
+            throw error
+        }
+    }
+
+    func updateAgentAutomation(id: String, draft: AgentAutomationDraft) throws {
+        guard let agentJobStore, let current = try agentJobStore.job(id: id) else {
+            throw AgentJobStoreError.invalidState("automation no longer exists")
+        }
+        guard AssistantsStore.shared.assistant(slug: draft.assistantSlug) != nil else {
+            throw AgentJobStoreError.invalidState("the selected Assistant is unavailable")
+        }
+        guard !draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AgentJobStoreError.invalidState("instructions cannot be empty")
+        }
+        if draft.runtime == .opencode,
+           draft.modelID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            throw AgentJobStoreError.invalidState("choose an OpenRouter model")
+        }
+        let moved = current.assistantSlug != draft.assistantSlug
+        if moved {
+            try assistantWorkspaceCoordinator.moveConversation(
+                id: current.conversationID, to: draft.assistantSlug)
+        }
+        do {
+            try agentJobStore.updateConfiguration(
+                jobID: id,
+                configuration: AgentJobConfiguration(
+                    name: draft.name, assistantSlug: draft.assistantSlug,
+                    conversationID: current.conversationID, runtime: draft.runtime,
+                    modelID: draft.runtime == .opencode ? draft.modelID : nil,
+                    trigger: draft.trigger, prompt: draft.prompt,
+                    trustProfile: current.trustProfile,
+                    intervalSeconds: draft.trigger == .interval
+                        ? max(60, draft.intervalSeconds ?? 3_600) : nil,
+                    concurrencyKey: current.concurrencyKey,
+                    dailyBudgetUSD: min(max(0, draft.dailyBudgetUSD), 10_000),
+                    maxDurationSeconds: min(max(30, draft.maxDurationSeconds), 14_400),
+                    maxAttempts: min(max(1, draft.maxAttempts), 10)))
+        } catch {
+            if moved {
+                try? assistantWorkspaceCoordinator.moveConversation(
+                    id: current.conversationID, to: current.assistantSlug)
+            }
+            throw error
+        }
+        _ = agent.reconcileAutomationReferences(
+            try agentJobStore.jobReferencesByConversation())
+        chatPanel.refreshAgents()
+    }
+
+    func duplicateAgentAutomation(id: String) throws -> String {
+        guard let source = agentJobRows().first(where: { $0.id == id }) else {
+            throw AgentJobStoreError.invalidState("automation no longer exists")
+        }
+        return try createAgentAutomation(AgentAutomationDraft(
+            name: source.name + " Copy", assistantSlug: source.assistantSlug,
+            runtime: source.runtime, modelID: source.modelID,
+            trigger: source.trigger, prompt: source.prompt,
+            intervalSeconds: source.intervalSeconds,
+            dailyBudgetUSD: source.dailyBudgetUSD,
+            maxDurationSeconds: source.maxDurationSeconds,
+            maxAttempts: source.maxAttempts, enabled: false))
+    }
+
+    func deleteAgentAutomation(id: String) throws {
+        guard let agentJobStore else {
+            throw AgentJobStoreError.invalidState("automations are unavailable")
+        }
+        try agentJobStore.delete(jobID: id)
+        _ = agent.reconcileAutomationReferences(
+            try agentJobStore.jobReferencesByConversation())
+        chatPanel.refreshAgents()
     }
 
     func agentAssistantRows() -> [AgentAssistantRow] {
