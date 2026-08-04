@@ -1164,6 +1164,11 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     private var session: AVCaptureSession?
     private var audioData = Data()
     private(set) var isRecording = false
+    /// Recording, or stopped but still draining/handing off its audio. A new
+    /// capture must not begin while this is true: inside the drain window
+    /// `isRecording` is already false, and a start keyed off that flag alone
+    /// resets `audioData` and destroys the stopping recording (VF-44).
+    var isBusy: Bool { isRecording || drainCompletion != nil }
     private(set) var clippingDetected = false
     /// Bytes captured by the last completed recording (0 = no buffer ever
     /// arrived — a wedged device or missing mic, not a short press).
@@ -1296,6 +1301,14 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     }
 
     func start() {
+        // A start that races a stop's drain window must not clobber the
+        // draining recording (VF-44): settle the pending drain synchronously
+        // so the stopping run's audio reaches its completion before this
+        // run's buffer replaces it.
+        if drainCompletion != nil {
+            vflog("audio: start during drain — settling previous recording first")
+            finishStop()
+        }
 #if VOICE_FLOW_QA
         if ProcessInfo.processInfo.environment["VOICE_FLOW_QA_AUDIO_FIXTURE"] == "1" {
             var samples = [Int16](repeating: 6_000, count: 3_200)

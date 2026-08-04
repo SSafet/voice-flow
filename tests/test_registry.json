@@ -512,6 +512,10 @@
       "runner": "unit"
     },
     {
+      "id": "tests/audio_recorder/main.swift",
+      "runner": "unit"
+    },
+    {
       "id": "tests/capture_routing/main.swift",
       "runner": "unit"
     },

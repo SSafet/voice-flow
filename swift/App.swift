@@ -277,6 +277,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // ── launch backend ──────────────────────────────
         state = .loading
         backend.start()
+
+        // VF-44: recordings whose transcription never delivered survive as
+        // WAVs — say so once per launch instead of losing them silently.
+        let pendingAudio = PendingAudioStore.pendingFiles()
+        if !pendingAudio.isEmpty {
+            vflog("pending-audio: \(pendingAudio.count) unprocessed recording(s) from earlier runs")
+            chatPanel.addNote("\(pendingAudio.count) unprocessed recording(s) kept in \(PendingAudioStore.directory().path)")
+        }
         vflog("app started")
     }
 
@@ -2335,8 +2343,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                               handsFree: Bool,
                               appendToEntryId: String? = nil) {
         // A normal Dictate press while toggle-Dictate is active commits the
-        // existing run; the next press starts the contextual one.
-        if recorder.isRecording,
+        // existing run; the next press starts the contextual one. isBusy (not
+        // isRecording) so a press landing inside the stop's drain window is a
+        // harmless notice instead of a start that destroys the draining audio
+        // (VF-44).
+        if recorder.isBusy,
            let id = activeRunId, let run = captureRuns[id],
            case .historyOnly = run.route, deliveryPolicy == .contextual {
             stopCapture()
@@ -2345,7 +2356,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                         : "kept in Inbox — press again to dictate", seconds: 5)
             return
         }
-        guard !recorder.isRecording else { return }
+        guard !recorder.isBusy else { return }
 
         // Snapshot intent before collapsing the pill/panel-adjacent UI.
         let focus = visibleConversationFocus()
@@ -2463,6 +2474,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             if self.activeRunId == nil { self.state = .processing }
+            // VF-44: keep the raw audio recoverable until the transcript is
+            // delivered — a transcription failure, crash, or quit mid-
+            // processing must not lose recorded speech.
+            PendingAudioStore.save(pcm: pcmData, runId: id, sampleRate: 16000)
             let settings = UserSettings.shared
             let provider = settings.dictationProvider
             let openAIAPIKey = provider == .openai ? KeychainStore.shared.loadOpenAIAPIKey() : nil
@@ -2608,6 +2623,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             run.phase = .failed
             captureRuns[id] = run
             chatPanel.addNote(message)
+            chatPanel.addNote("Raw audio kept in \(PendingAudioStore.directory().path)")
             replyBubble.showTransient("couldn't transcribe — capture kept from being misrouted",
                                       seconds: 6, isError: true)
         }
@@ -2648,6 +2664,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             chatPanel.appendDictation(entryId: appendEntryId, text: note)
             replyBubble.showTransient("added to your dictation")
             run.phase = .delivered
+            PendingAudioStore.remove(runId: id)
             captureRuns[id] = run
             playSound("Pop")
             if activeRunId == nil { state = .done }
@@ -2755,6 +2772,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             capability: run.capability, attachments: attachmentPaths,
             captureId: run.continuousSummary?.id)
         run.phase = .delivered
+        PendingAudioStore.remove(runId: id)
         captureRuns[id] = run
         playSound("Pop")
         if activeRunId == nil { state = .done }
