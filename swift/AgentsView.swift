@@ -368,7 +368,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 title: destination.label, target: self,
                 action: #selector(destinationTapped(_:)))
             button.isBordered = false
-            button.font = .systemFont(ofSize: 10.5, weight: .medium)
+            button.font = .systemFont(ofSize: 12.5, weight: .medium)
             button.identifier = NSUserInterfaceItemIdentifier(destination.rawValue)
             button.setAccessibilityLabel("Open \(destination.label)")
             button.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -861,7 +861,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             let snapshot = nowSnapshot()
             let rows = snapshot.needsYou.count + snapshot.running.count
             let sections = (snapshot.needsYou.isEmpty ? 0 : 1) + (snapshot.running.isEmpty ? 0 : 1)
-            preferredHeight = rows == 0 ? 126 : min(420, 64 + CGFloat(rows * 60 + sections * 30))
+            preferredHeight = rows == 0 ? 126 : min(560, 64 + CGFloat(rows * 74 + sections * 34))
         } else if case .destination(.automations) = mode {
             let all = dataSource?.agentJobRows() ?? []
             let visible = all.filter { automationMatches($0) }
@@ -878,10 +878,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             else if visible.isEmpty { preferredHeight = 220 }
             else {
                 preferredHeight = min(
-                    420, 100 + CGFloat(visible.count * 60 + sections * 30))
+                    560, 100 + CGFloat(visible.count * 74 + sections * 34))
             }
         } else {
-            preferredHeight = 420
+            preferredHeight = 560
         }
         DispatchQueue.main.async { [weak self] in
             self?.onPreferredHeightChanged?(preferredHeight)
@@ -931,7 +931,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             let title = count > 0 ? "\(destination.label)  \(count)" : destination.label
             let selected = destination == currentDestination
             let attributed = NSMutableAttributedString(string: title, attributes: [
-                .font: NSFont.systemFont(ofSize: 10.5, weight: selected ? .semibold : .medium),
+                .font: NSFont.systemFont(ofSize: 12.5, weight: selected ? .semibold : .medium),
                 .foregroundColor: selected ? Theme.text : Theme.text3,
             ])
             if selected {
@@ -1950,7 +1950,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func sectionHeader(_ title: String, count: Int?) -> NSView {
         let value = count.map { "\(title)  \($0)" } ?? title
         let text = NSTextField(labelWithString: value)
-        text.font = .systemFont(ofSize: 10.5, weight: .semibold)
+        text.font = .systemFont(ofSize: 11.5, weight: .semibold)
         text.textColor = Theme.text3
         text.setAccessibilityLabel(count.map { "\(title), \($0)" } ?? title)
         return text
@@ -1967,7 +1967,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             let button = NSButton(title: label, target: self, action: action)
             button.tag = index
             button.isBordered = false
-            button.font = .systemFont(ofSize: 10.5, weight: index == selected ? .semibold : .medium)
+            button.font = .systemFont(ofSize: 12, weight: index == selected ? .semibold : .medium)
             button.contentTintColor = index == selected ? Theme.text : Theme.text3
             button.wantsLayer = true
             button.layer?.cornerRadius = 5
@@ -1975,7 +1975,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 ? Theme.cardHover.cgColor : NSColor.clear.cgColor
             button.layer?.borderWidth = index == selected ? 0.7 : 0
             button.layer?.borderColor = Theme.borderHover.cgColor
-            button.heightAnchor.constraint(equalToConstant: 24).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 28).isActive = true
             button.setAccessibilityLabel("\(label) filter\(index == selected ? ", selected" : "")")
             stack.addArrangedSubview(button)
         }
@@ -2111,7 +2111,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         row.layer?.borderColor = Theme.border.cgColor
 
         let nameLabel = NSTextField(labelWithString: name)
-        nameLabel.font = .systemFont(ofSize: 13, weight: unread ? .semibold : .medium)
+        nameLabel.font = .systemFont(ofSize: 15, weight: unread ? .semibold : .medium)
         nameLabel.textColor = Theme.text
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.maximumNumberOfLines = 1
@@ -2122,7 +2122,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         // line, matching the mock's row grammar.
         let metadata = action != nil && !time.isEmpty ? "\(preview) · \(time)" : preview
         let previewLabel = NSTextField(labelWithString: metadata)
-        previewLabel.font = .systemFont(ofSize: 11)
+        previewLabel.font = .systemFont(ofSize: 12)
         previewLabel.textColor = Theme.text3
         previewLabel.lineBreakMode = .byTruncatingTail
         previewLabel.maximumNumberOfLines = 1
@@ -2131,7 +2131,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         let trailing: NSView
         if let action {
             let verb = NSTextField(labelWithString: "\(action) ›")
-            verb.font = .systemFont(ofSize: 12, weight: .medium)
+            verb.font = .systemFont(ofSize: 13.5, weight: .medium)
             verb.textColor = Theme.accent
             trailing = verb
         } else {
@@ -2148,20 +2148,20 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             row.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            leading.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
+            leading.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 14),
             leading.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            leading.widthAnchor.constraint(equalToConstant: 22),
+            leading.widthAnchor.constraint(equalToConstant: 26),
 
-            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 10),
-            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 44),
+            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 13),
+            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 54),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -8),
 
-            previewLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 3),
+            previewLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
             previewLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             previewLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -8),
-            previewLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -10),
+            previewLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -13),
 
-            trailing.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
+            trailing.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -14),
             trailing.centerYAnchor.constraint(equalTo: row.centerYAnchor),
         ])
 

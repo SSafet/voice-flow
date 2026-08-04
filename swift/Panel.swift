@@ -42,9 +42,9 @@ final class ChatPanel {
     var onTTSSeek: ((Double) -> Void)?
     var onTTSStop: (() -> Void)?
 
-    private let width: CGFloat = 400
-    private let maxHeight: CGFloat = 520
-    private var height: CGFloat = 520
+    private let width: CGFloat = 520
+    private let maxHeight: CGFloat = 660
+    private var height: CGFloat = 660
 
     private var panel: KeyablePanel!
     private var inboxTabButton: NSButton!
