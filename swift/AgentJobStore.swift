@@ -4,9 +4,29 @@ import SQLite3
 enum AgentJobTriggerKind: String, Codable, CaseIterable {
     case manual
     case interval
+    case daily
     case inbox
     case capture
     case watcher
+}
+
+/// Wall-clock time for `.daily` automations, stored as minutes past local
+/// midnight. Parsing accepts "8", "8:30", "08:30".
+enum AgentDailyTime {
+    static func minutes(from text: String) -> Int? {
+        let parts = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count <= 2, let hour = Int(parts[0]),
+              (0..<24).contains(hour) else { return nil }
+        let minute = parts.count == 2 ? Int(parts[1]) : 0
+        guard let minute, (0..<60).contains(minute) else { return nil }
+        return hour * 60 + minute
+    }
+
+    static func label(minutes: Int) -> String {
+        let clamped = min(max(minutes, 0), 24 * 60 - 1)
+        return String(format: "%02d:%02d", clamped / 60, clamped % 60)
+    }
 }
 
 enum AgentJobState: String, Codable {
@@ -42,6 +62,7 @@ struct AgentJob: Equatable {
     let generation: Int
     let nextRunAt: Date?
     let intervalSeconds: TimeInterval?
+    let dailyTimeMinutes: Int?
     let concurrencyKey: String
     let dailyBudgetUSD: Double
     let maxDurationSeconds: TimeInterval
@@ -57,6 +78,7 @@ struct AgentJob: Equatable {
          state: AgentJobState = .queued, nextRunAt: Date? = Date(),
          isEnabled: Bool? = nil, generation: Int = 1,
          intervalSeconds: TimeInterval? = nil,
+         dailyTimeMinutes: Int? = nil,
          concurrencyKey: String? = nil,
          dailyBudgetUSD: Double = 1.0,
          maxDurationSeconds: TimeInterval = 900,
@@ -77,6 +99,7 @@ struct AgentJob: Equatable {
         self.generation = max(0, generation)
         self.nextRunAt = nextRunAt
         self.intervalSeconds = intervalSeconds
+        self.dailyTimeMinutes = dailyTimeMinutes.map { min(max($0, 0), 24 * 60 - 1) }
         self.concurrencyKey = concurrencyKey ?? conversationID
         self.dailyBudgetUSD = dailyBudgetUSD
         self.maxDurationSeconds = maxDurationSeconds
@@ -96,6 +119,41 @@ struct AgentJob: Equatable {
         let fallback = source.isEmpty ? "Untitled automation" : source
         return String(fallback.prefix(80))
     }
+
+    /// Next local wall-clock occurrence of `minutes` past midnight, strictly
+    /// after `now`. Calendar arithmetic keeps 08:00 meaning 08:00 across DST.
+    static func nextDailyRun(minutes: Int, after now: Date) -> Date {
+        let clamped = min(max(minutes, 0), 24 * 60 - 1)
+        var time = DateComponents()
+        time.hour = clamped / 60
+        time.minute = clamped % 60
+        time.second = 0
+        return Calendar.current.nextDate(
+            after: now, matching: time, matchingPolicy: .nextTime,
+            direction: .forward) ?? now.addingTimeInterval(86_400)
+    }
+
+    /// Where a self-scheduling trigger runs next after `now`; nil for manual
+    /// and event triggers, which wait for their event instead.
+    static func nextScheduledRun(trigger: AgentJobTriggerKind,
+                                 intervalSeconds: TimeInterval?,
+                                 dailyTimeMinutes: Int?,
+                                 after now: Date) -> Date? {
+        switch trigger {
+        case .interval:
+            return intervalSeconds.map { now.addingTimeInterval(max(1, $0)) }
+        case .daily:
+            return dailyTimeMinutes.map { nextDailyRun(minutes: $0, after: now) }
+        case .manual, .inbox, .capture, .watcher:
+            return nil
+        }
+    }
+
+    func nextScheduledRun(after now: Date) -> Date? {
+        Self.nextScheduledRun(
+            trigger: trigger, intervalSeconds: intervalSeconds,
+            dailyTimeMinutes: dailyTimeMinutes, after: now)
+    }
 }
 
 struct AgentJobConfiguration: Equatable {
@@ -108,6 +166,7 @@ struct AgentJobConfiguration: Equatable {
     let prompt: String
     let trustProfile: AgentTrustProfile
     let intervalSeconds: TimeInterval?
+    let dailyTimeMinutes: Int?
     let concurrencyKey: String
     let dailyBudgetUSD: Double
     let maxDurationSeconds: TimeInterval
@@ -205,8 +264,8 @@ final class AgentJobStore {
               prompt, trust_profile, state, next_run_at, interval_seconds,
               concurrency_key, daily_budget_usd, max_duration_seconds,
               max_attempts, created_at, updated_at, model_id, name,
-              is_enabled, execution_generation
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              is_enabled, execution_generation, daily_time_minutes
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               assistant_slug=excluded.assistant_slug,
               conversation_id=excluded.conversation_id,
@@ -220,7 +279,8 @@ final class AgentJobStore {
               max_attempts=excluded.max_attempts, updated_at=excluded.updated_at,
               model_id=excluded.model_id, name=excluded.name,
               is_enabled=excluded.is_enabled,
-              execution_generation=excluded.execution_generation
+              execution_generation=excluded.execution_generation,
+              daily_time_minutes=excluded.daily_time_minutes
             """
             try withStatement(sql) { statement in
                 bind(job, to: statement)
@@ -322,12 +382,17 @@ final class AgentJobStore {
                current.state != .blocked, current.state != .failed,
                configuration.trigger != current.trigger
                 || (configuration.trigger == .interval
-                    && configuration.intervalSeconds != current.intervalSeconds) {
+                    && configuration.intervalSeconds != current.intervalSeconds)
+                || (configuration.trigger == .daily
+                    && configuration.dailyTimeMinutes != current.dailyTimeMinutes) {
                 generation += 1
-                if configuration.trigger == .interval,
-                   let interval = configuration.intervalSeconds {
+                if let next = AgentJob.nextScheduledRun(
+                    trigger: configuration.trigger,
+                    intervalSeconds: configuration.intervalSeconds,
+                    dailyTimeMinutes: configuration.dailyTimeMinutes,
+                    after: now) {
                     state = .queued
-                    nextRunAt = now.addingTimeInterval(max(1, interval))
+                    nextRunAt = next
                 } else {
                     state = .completed
                     nextRunAt = nil
@@ -344,6 +409,7 @@ final class AgentJobStore {
                 state: state, nextRunAt: nextRunAt,
                 isEnabled: current.isEnabled, generation: generation,
                 intervalSeconds: configuration.intervalSeconds,
+                dailyTimeMinutes: configuration.dailyTimeMinutes,
                 concurrencyKey: configuration.concurrencyKey,
                 dailyBudgetUSD: max(0, configuration.dailyBudgetUSD),
                 maxDurationSeconds: max(1, configuration.maxDurationSeconds),
@@ -586,9 +652,8 @@ final class AgentJobStore {
                         job: job, cancelledRunIDs: [], didTransition: false)
                 }
                 try cancelActiveRunsUnlocked(jobID: jobID, now: now, reason: "stopped by user")
-                let interval = job.trigger == .interval ? job.intervalSeconds : nil
-                let target: AgentJobState = interval == nil ? .completed : .queued
-                let next = interval.map { now.addingTimeInterval(max(1, $0)) }
+                let next = job.nextScheduledRun(after: now)
+                let target: AgentJobState = next == nil ? .completed : .queued
                 try withStatement(
                     """
                     UPDATE agent_jobs SET state=?,next_run_at=?,pending_trigger_at=NULL,
@@ -659,11 +724,10 @@ final class AgentJobStore {
                 }
                 // Failed is terminal until explicit Retry: re-enabling must
                 // not silently reschedule or erase the failure.
-                let interval = job.trigger == .interval ? job.intervalSeconds : nil
+                let scheduled = job.nextScheduledRun(after: now)
                 let target: AgentJobState = job.state == .failed ? .failed
-                    : interval == nil ? .completed : .queued
-                let next = target == .failed ? nil
-                    : interval.map { now.addingTimeInterval(max(1, $0)) }
+                    : scheduled == nil ? .completed : .queued
+                let next = target == .failed ? nil : scheduled
                 try withStatement(
                     """
                     UPDATE agent_jobs SET state=?,is_enabled=1,next_run_at=?,
@@ -924,9 +988,8 @@ final class AgentJobStore {
                         try stepDone(statement)
                     }
                     try schedule(job.id, at: now, newGeneration: true)
-                } else if state == .completed, job.trigger == .interval, let interval = job.intervalSeconds {
-                    try schedule(
-                        job.id, at: now.addingTimeInterval(interval), newGeneration: true)
+                } else if state == .completed, let next = job.nextScheduledRun(after: now) {
+                    try schedule(job.id, at: next, newGeneration: true)
                 } else if let retryDelay {
                     let attempts = try scalarInt(
                         """
@@ -1073,6 +1136,7 @@ final class AgentJobStore {
             isEnabled: sqlite3_column_int(statement, 19) == 1,
             generation: Int(sqlite3_column_int(statement, 20)),
             intervalSeconds: optionalDouble(statement, 9),
+            dailyTimeMinutes: optionalDouble(statement, 21).map(Int.init),
             concurrencyKey: text(statement, 10),
             dailyBudgetUSD: sqlite3_column_double(statement, 11),
             maxDurationSeconds: sqlite3_column_double(statement, 12),
@@ -1193,6 +1257,11 @@ final class AgentJobStore {
                 try exec("PRAGMA user_version=1")
             }
         }
+        // Placed after the version-1 block so the column lands at the same
+        // index (21) on legacy and fresh databases alike.
+        try addColumnIfMissing(
+            table: "agent_jobs", column: "daily_time_minutes",
+            definition: "daily_time_minutes REAL")
         // An older build toggles enablement through `state` alone and never
         // touches `is_enabled`, so the two can diverge after a downgrade
         // round-trip. Reconcile on every open, not just at migration:
@@ -1331,6 +1400,7 @@ final class AgentJobStore {
         bindText(job.name, at: 18, to: statement)
         sqlite3_bind_int(statement, 19, job.isEnabled ? 1 : 0)
         sqlite3_bind_int(statement, 20, Int32(job.generation))
+        bindOptionalDouble(job.dailyTimeMinutes.map(Double.init), at: 21, to: statement)
     }
 
     private func bindText(_ value: String, at index: Int32, to statement: OpaquePointer) {

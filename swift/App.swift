@@ -1186,10 +1186,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let selectedTrigger = editor.selectedTrigger
         let minutes = min(max(editor.intervalField.doubleValue, 1), 43_200)
+        let dailyTime = editor.selectedDailyTimeMinutes
+        if selectedTrigger == .daily, dailyTime == nil {
+            replyBubble.showTransient("Daily time must look like 08:00", seconds: 7)
+            return
+        }
         let dailyBudget = min(max(editor.budgetField.doubleValue, 0), 10_000)
         let now = Date()
-        let nextRun: Date? = selectedTrigger == .interval
-            ? now.addingTimeInterval(minutes * 60) : nil
+        let nextRun = AgentJob.nextScheduledRun(
+            trigger: selectedTrigger,
+            intervalSeconds: minutes * 60,
+            dailyTimeMinutes: dailyTime, after: now)
         let jobID = UUID().uuidString
         let conversation = agent.createAutomationConversation(
             jobID: jobID, assistant: assistant)
@@ -1200,9 +1207,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             runtime: selectedRuntime, trigger: selectedTrigger,
             modelID: selectedModel,
             prompt: task, trustProfile: .unattended,
-            state: selectedTrigger == .interval ? .queued : .completed,
+            state: nextRun == nil ? .completed : .queued,
             nextRunAt: nextRun,
             intervalSeconds: selectedTrigger == .interval ? minutes * 60 : nil,
+            dailyTimeMinutes: selectedTrigger == .daily ? dailyTime : nil,
             dailyBudgetUSD: dailyBudget,
             maxDurationSeconds: 900, maxAttempts: 3,
             createdAt: now, updatedAt: now)
@@ -3406,6 +3414,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if action == "select_trigger", let trigger = payload["trigger"] as? String {
                 let labels = [
                     "manual": "Manual", "interval": "Interval",
+                    "daily": "Daily at time",
                     "inbox": "Inbox message", "capture": "Capture completed",
                     "watcher": "Watcher action",
                 ]
@@ -3485,7 +3494,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let trigger = (payload["trigger"] as? String)
                 .flatMap(AgentJobTriggerKind.init(rawValue:)) ?? .manual
             let interval = (payload["interval_seconds"] as? NSNumber)?.doubleValue
+            let dailyTime = (payload["daily_time_minutes"] as? NSNumber)?.intValue
             let now = Date()
+            let nextRun = AgentJob.nextScheduledRun(
+                trigger: trigger,
+                intervalSeconds: max(1, interval ?? 60),
+                dailyTimeMinutes: dailyTime ?? 8 * 60, after: now)
             let job = AgentJob(
                 assistantSlug: assistant.slug,
                 conversationID: (payload["conversation_id"] as? String) ?? agent.currentSessionId,
@@ -3494,9 +3508,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 prompt: prompt,
                 trustProfile: (payload["trust_profile"] as? String)
                     .flatMap(AgentTrustProfile.init(rawValue:)) ?? .unattended,
-                state: trigger == .interval ? .queued : .completed,
-                nextRunAt: trigger == .interval ? now.addingTimeInterval(max(1, interval ?? 60)) : nil,
+                state: nextRun == nil ? .completed : .queued,
+                nextRunAt: nextRun,
                 intervalSeconds: trigger == .interval ? max(1, interval ?? 60) : nil,
+                dailyTimeMinutes: trigger == .daily ? dailyTime ?? 8 * 60 : nil,
                 concurrencyKey: payload["concurrency_key"] as? String,
                 dailyBudgetUSD: (payload["daily_budget_usd"] as? NSNumber)?.doubleValue ?? 1,
                 maxDurationSeconds: (payload["max_duration_seconds"] as? NSNumber)?.doubleValue ?? 900,
@@ -3523,7 +3538,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case ("POST", "/__qa/jobs/trigger"):
             guard let raw = payload["trigger"] as? String,
                   let trigger = AgentJobTriggerKind(rawValue: raw),
-                  trigger != .manual && trigger != .interval else {
+                  trigger != .manual && trigger != .interval && trigger != .daily else {
                 return .error(400, "trigger must be inbox, capture, or watcher.")
             }
             let eventID = (payload["event_id"] as? String) ?? UUID().uuidString
@@ -4969,6 +4984,7 @@ extension AppDelegate: AgentsDataSource {
                 runtime: job.runtime, trigger: job.trigger,
                 modelID: job.modelID, prompt: job.prompt,
                 nextRunAt: job.nextRunAt, intervalSeconds: job.intervalSeconds,
+                dailyTimeMinutes: job.dailyTimeMinutes,
                 dailyBudgetUSD: job.dailyBudgetUSD,
                 spentTodayUSD: (try? agentJobStore?.spentToday(jobID: job.id)) ?? 0,
                 maxDurationSeconds: job.maxDurationSeconds,
@@ -5042,6 +5058,11 @@ extension AppDelegate: AgentsDataSource {
         let now = Date()
         let interval = draft.trigger == .interval
             ? max(60, draft.intervalSeconds ?? 3_600) : nil
+        let dailyTime = draft.trigger == .daily
+            ? (draft.dailyTimeMinutes ?? 8 * 60) : nil
+        let nextRun = AgentJob.nextScheduledRun(
+            trigger: draft.trigger, intervalSeconds: interval,
+            dailyTimeMinutes: dailyTime, after: now)
         let jobID = UUID().uuidString
         let conversation = agent.createAutomationConversation(
             jobID: jobID, assistant: assistant)
@@ -5051,10 +5072,11 @@ extension AppDelegate: AgentsDataSource {
             runtime: draft.runtime, trigger: draft.trigger,
             modelID: draft.runtime == .opencode ? draft.modelID : nil,
             prompt: prompt, trustProfile: .unattended,
-            state: draft.enabled ? (interval == nil ? .completed : .queued) : .disabled,
-            nextRunAt: draft.enabled ? interval.map { now.addingTimeInterval($0) } : nil,
+            state: draft.enabled ? (nextRun == nil ? .completed : .queued) : .disabled,
+            nextRunAt: draft.enabled ? nextRun : nil,
             isEnabled: draft.enabled,
             intervalSeconds: interval,
+            dailyTimeMinutes: dailyTime,
             dailyBudgetUSD: min(max(0, draft.dailyBudgetUSD), 10_000),
             maxDurationSeconds: min(max(30, draft.maxDurationSeconds), 14_400),
             maxAttempts: min(max(1, draft.maxAttempts), 10),
@@ -5104,6 +5126,8 @@ extension AppDelegate: AgentsDataSource {
                     trustProfile: current.trustProfile,
                     intervalSeconds: draft.trigger == .interval
                         ? max(60, draft.intervalSeconds ?? 3_600) : nil,
+                    dailyTimeMinutes: draft.trigger == .daily
+                        ? (draft.dailyTimeMinutes ?? 8 * 60) : nil,
                     concurrencyKey: current.concurrencyKey,
                     dailyBudgetUSD: min(max(0, draft.dailyBudgetUSD), 10_000),
                     maxDurationSeconds: min(max(30, draft.maxDurationSeconds), 14_400),
@@ -5129,6 +5153,7 @@ extension AppDelegate: AgentsDataSource {
             runtime: source.runtime, modelID: source.modelID,
             trigger: source.trigger, prompt: source.prompt,
             intervalSeconds: source.intervalSeconds,
+            dailyTimeMinutes: source.dailyTimeMinutes,
             dailyBudgetUSD: source.dailyBudgetUSD,
             maxDurationSeconds: source.maxDurationSeconds,
             maxAttempts: source.maxAttempts, enabled: false))

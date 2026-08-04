@@ -7,6 +7,7 @@ final class AgentJobEditorView: NSView {
     private static let triggerChoices: [(label: String, kind: AgentJobTriggerKind)] = [
         ("Manual", .manual),
         ("Interval", .interval),
+        ("Daily at time", .daily),
         ("Inbox message", .inbox),
         ("Capture completed", .capture),
         ("Watcher action", .watcher),
@@ -16,6 +17,7 @@ final class AgentJobEditorView: NSView {
     let runtimePopUp = NSPopUpButton()
     let triggerPopUp = NSPopUpButton()
     let intervalField = NSTextField(string: "60")
+    let dailyTimeField = NSTextField(string: "08:00")
     let budgetField = NSTextField(string: "1.00")
     let modelCombo = OpenRouterModelComboBox()
 
@@ -29,7 +31,7 @@ final class AgentJobEditorView: NSView {
          defaultModelID: String) {
         allModels = models.models
         catalogStatus = models.statusText
-        super.init(frame: NSRect(x: 0, y: 0, width: 590, height: 216))
+        super.init(frame: NSRect(x: 0, y: 0, width: 590, height: 244))
         appearance = NSAppearance(named: .darkAqua)
 
         promptField.placeholderString = "What should the assistant do?"
@@ -53,6 +55,7 @@ final class AgentJobEditorView: NSView {
             popUp.layer?.cornerRadius = 6
         }
         intervalField.setAccessibilityLabel("Automation interval in minutes")
+        dailyTimeField.setAccessibilityLabel("Automation daily run time (HH:MM)")
         budgetField.setAccessibilityLabel("Automation daily budget in US dollars")
 
         modelCombo.setAccessibilityLabel("OpenCode model")
@@ -83,6 +86,7 @@ final class AgentJobEditorView: NSView {
             [NSTextField(labelWithString: ""), modelDetail],
             [NSTextField(labelWithString: "Trigger"), triggerPopUp],
             [NSTextField(labelWithString: "Interval min"), intervalField],
+            [NSTextField(labelWithString: "Daily at (HH:MM)"), dailyTimeField],
             [NSTextField(labelWithString: "Daily budget $"), budgetField],
             [NSTextField(labelWithString: ""), modelStatus],
         ])
@@ -102,7 +106,7 @@ final class AgentJobEditorView: NSView {
             control.translatesAutoresizingMaskIntoConstraints = false
             control.widthAnchor.constraint(equalToConstant: 240).isActive = true
         }
-        for control in [promptField, modelCombo, intervalField, budgetField] {
+        for control in [promptField, modelCombo, intervalField, dailyTimeField, budgetField] {
             control.translatesAutoresizingMaskIntoConstraints = false
             control.widthAnchor.constraint(equalToConstant: 470).isActive = true
         }
@@ -135,6 +139,10 @@ final class AgentJobEditorView: NSView {
         let index = min(max(triggerPopUp.indexOfSelectedItem, 0),
                         Self.triggerChoices.count - 1)
         return Self.triggerChoices[index].kind
+    }
+
+    var selectedDailyTimeMinutes: Int? {
+        AgentDailyTime.minutes(from: dailyTimeField.stringValue)
     }
 
     var selectedModelID: String? {

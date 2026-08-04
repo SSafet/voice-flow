@@ -147,7 +147,8 @@ try lifecycleStore.updateConfiguration(
         conversationID: "lifecycle-c", runtime: .opencode,
         modelID: "test/model-review", trigger: .interval,
         prompt: "Review the operating week", trustProfile: .unattended,
-        intervalSeconds: 3600, concurrencyKey: "lifecycle-c",
+        intervalSeconds: 3600, dailyTimeMinutes: nil,
+        concurrencyKey: "lifecycle-c",
         dailyBudgetUSD: 7, maxDurationSeconds: 600, maxAttempts: 2),
     now: now.addingTimeInterval(3))
 let editedLifecycle = try lifecycleStore.job(id: lifecycleJob.id)
@@ -355,6 +356,69 @@ let intervalTooEarly = try intervalStore.claimNext(
     workerID: "interval-too-early", now: now.addingTimeInterval(14))
 expect(intervalTooEarly == nil,
        "enabling an interval started it immediately")
+
+// A daily automation reschedules itself onto the next local wall-clock
+// occurrence of its time — after completion, after enable, and after stop.
+let dailyStore = try AgentJobStore(
+    url: VoiceFlowPaths.shared.file("jobs-daily-test.sqlite"))
+expect(AgentDailyTime.minutes(from: "8") == 480
+       && AgentDailyTime.minutes(from: "08:00") == 480
+       && AgentDailyTime.minutes(from: "23:59") == 1_439
+       && AgentDailyTime.minutes(from: "24:00") == nil
+       && AgentDailyTime.minutes(from: "8:60") == nil
+       && AgentDailyTime.minutes(from: "eight") == nil,
+       "daily time parsing accepted or rejected the wrong shapes")
+let eightAM = 8 * 60
+let dailyJob = AgentJob(
+    id: "daily-brief", name: "Morning brief", assistantSlug: "flora",
+    conversationID: "daily-c", runtime: .codex, trigger: .daily,
+    prompt: "Brief me", nextRunAt: now, dailyTimeMinutes: eightAM,
+    dailyBudgetUSD: 10, createdAt: now, updatedAt: now)
+try dailyStore.put(dailyJob)
+let storedDaily = try dailyStore.job(id: "daily-brief")
+expect(storedDaily?.dailyTimeMinutes == eightAM,
+       "daily time did not round-trip through the store")
+let dailyRun = try dailyStore.claimNext(workerID: "daily-worker", now: now)!
+let dailyDone = now.addingTimeInterval(60)
+try dailyStore.complete(
+    runID: dailyRun.id, workerID: "daily-worker",
+    resultMessageID: UUID(), costUSD: 0.1, now: dailyDone)
+let rescheduledDaily = try dailyStore.job(id: "daily-brief")
+let expectedNext = AgentJob.nextDailyRun(minutes: eightAM, after: dailyDone)
+var expectedComponents = Calendar.current.dateComponents(
+    [.hour, .minute], from: rescheduledDaily?.nextRunAt ?? .distantPast)
+expect(rescheduledDaily?.state == .queued
+       && rescheduledDaily?.nextRunAt == expectedNext
+       && (rescheduledDaily?.nextRunAt ?? .distantPast) > dailyDone
+       && (rescheduledDaily?.nextRunAt ?? .distantFuture)
+           <= dailyDone.addingTimeInterval(25 * 3_600)
+       && expectedComponents.hour == 8 && expectedComponents.minute == 0,
+       "a completed daily automation was not rescheduled to the next 08:00")
+_ = try dailyStore.disable(jobID: "daily-brief", now: dailyDone.addingTimeInterval(1))
+let enabledDaily = try dailyStore.enable(
+    jobID: "daily-brief", now: dailyDone.addingTimeInterval(2))
+expectedComponents = Calendar.current.dateComponents(
+    [.hour, .minute], from: enabledDaily.job.nextRunAt ?? .distantPast)
+expect(enabledDaily.job.state == .queued
+       && expectedComponents.hour == 8 && expectedComponents.minute == 0,
+       "enabling a daily automation did not schedule its next 08:00")
+try dailyStore.updateConfiguration(
+    jobID: "daily-brief",
+    configuration: AgentJobConfiguration(
+        name: "Morning brief", assistantSlug: "flora",
+        conversationID: "daily-c", runtime: .codex, modelID: nil,
+        trigger: .daily, prompt: "Brief me", trustProfile: .unattended,
+        intervalSeconds: nil, dailyTimeMinutes: 19 * 60 + 30,
+        concurrencyKey: "daily-c", dailyBudgetUSD: 10,
+        maxDurationSeconds: 900, maxAttempts: 3),
+    now: dailyDone.addingTimeInterval(3))
+let retimedDaily = try dailyStore.job(id: "daily-brief")
+expectedComponents = Calendar.current.dateComponents(
+    [.hour, .minute], from: retimedDaily?.nextRunAt ?? .distantPast)
+expect(retimedDaily?.dailyTimeMinutes == 19 * 60 + 30
+       && retimedDaily?.state == .queued
+       && expectedComponents.hour == 19 && expectedComponents.minute == 30,
+       "changing the daily time did not reschedule onto the new time")
 
 // Stop is not Disable. It joins only the active execution wave, clears a
 // trigger that arrived before the stop transaction, and keeps the automation

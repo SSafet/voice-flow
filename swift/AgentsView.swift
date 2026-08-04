@@ -94,6 +94,7 @@ struct AgentJobRow {
     let prompt: String
     let nextRunAt: Date?
     let intervalSeconds: TimeInterval?
+    let dailyTimeMinutes: Int?
     let dailyBudgetUSD: Double
     let spentTodayUSD: Double
     let maxDurationSeconds: TimeInterval
@@ -120,6 +121,7 @@ struct AgentAutomationDraft {
     let trigger: AgentJobTriggerKind
     let prompt: String
     let intervalSeconds: TimeInterval?
+    let dailyTimeMinutes: Int?
     let dailyBudgetUSD: Double
     let maxDurationSeconds: TimeInterval
     let maxAttempts: Int
@@ -230,6 +232,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         let trigger: String?
         let model: String
         let interval: String
+        let dailyTime: String
         let budget: String
         let duration: String
         let attempts: String
@@ -283,6 +286,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var automationTriggerPopUp: NSPopUpButton?
     private var automationModelCombo: OpenRouterModelComboBox?
     private var automationIntervalField: NSTextField?
+    private var automationDailyTimeField: NSTextField?
     private var automationBudgetField: NSTextField?
     private var automationDurationField: NSTextField?
     private var automationAttemptsField: NSTextField?
@@ -745,7 +749,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         status.textColor = job.state == .blocked || job.state == .failed ? Theme.accent : Theme.text
         place(status, below: &top, gap: 13)
 
-        var metaText = "\(job.trigger.rawValue) · \(job.runtime.label)"
+        var metaText = job.trigger == .daily
+            ? "daily at \(AgentDailyTime.label(minutes: job.dailyTimeMinutes ?? 0)) · \(job.runtime.label)"
+            : "\(job.trigger.rawValue) · \(job.runtime.label)"
         if let modelID = job.modelID { metaText += " · \(modelID)" }
         if job.hasPendingTrigger { metaText += " · one follow-up waiting" }
         let meta = NSTextField(wrappingLabelWithString: metaText)
@@ -890,6 +896,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         automationTriggerPopUp = nil
         automationModelCombo = nil
         automationIntervalField = nil
+        automationDailyTimeField = nil
         automationBudgetField = nil
         automationDurationField = nil
         automationAttemptsField = nil
@@ -1456,6 +1463,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             trigger: automationTriggerPopUp?.selectedItem?.representedObject as? String,
             model: automationModelCombo?.stringValue ?? "",
             interval: automationIntervalField?.stringValue ?? "",
+            dailyTime: automationDailyTimeField?.stringValue ?? "",
             budget: automationBudgetField?.stringValue ?? "",
             duration: automationDurationField?.stringValue ?? "",
             attempts: automationAttemptsField?.stringValue ?? "")
@@ -1488,6 +1496,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             inlineError = "Interval must be at least one minute."
             return nil
         }
+        var dailyTimeMinutes: Int?
+        if trigger == .daily {
+            guard let parsed = AgentDailyTime.minutes(from: values.dailyTime) else {
+                inlineError = "Daily time must look like 08:00."
+                return nil
+            }
+            dailyTimeMinutes = parsed
+        }
         let budget = Double(values.budget) ?? -1
         let durationMinutes = Double(values.duration) ?? 0
         let attempts = Int(values.attempts) ?? 0
@@ -1519,6 +1535,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             runtime: runtime, modelID: runtime == .opencode ? model : nil,
             trigger: trigger, prompt: prompt,
             intervalSeconds: trigger == .interval ? intervalMinutes * 60 : nil,
+            dailyTimeMinutes: dailyTimeMinutes,
             dailyBudgetUSD: budget,
             maxDurationSeconds: durationMinutes * 60,
             maxAttempts: attempts, enabled: enabled)
@@ -1537,6 +1554,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         select(popUp: automationTriggerPopUp, representedObject: values.trigger)
         automationModelCombo?.stringValue = values.model
         automationIntervalField?.stringValue = values.interval
+        automationDailyTimeField?.stringValue = values.dailyTime
         automationBudgetField?.stringValue = values.budget
         automationDurationField?.stringValue = values.duration
         automationAttemptsField?.stringValue = values.attempts
@@ -1735,8 +1753,12 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         interval.stringValue = String(format: "%.0f", (existing?.intervalSeconds ?? 3_600) / 60)
         interval.setAccessibilityLabel("Automation interval in minutes")
         automationIntervalField = interval
+        let dailyTime = formField(placeholder: "08:00")
+        dailyTime.stringValue = AgentDailyTime.label(minutes: existing?.dailyTimeMinutes ?? 8 * 60)
+        dailyTime.setAccessibilityLabel("Automation daily run time (HH:MM)")
+        automationDailyTimeField = dailyTime
         place(automationFormRow([
-            ("TRIGGER", trigger), ("EVERY (MIN)", interval),
+            ("TRIGGER", trigger), ("EVERY (MIN)", interval), ("AT (HH:MM)", dailyTime),
         ]), below: &top, gap: 12)
 
         place(formLabel("OPENCODE MODEL"), below: &top, gap: 12)
@@ -1853,6 +1875,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         switch trigger {
         case .manual: return "Manual"
         case .interval: return "Interval"
+        case .daily: return "Daily at time"
         case .inbox: return "Inbox message"
         case .capture: return "Capture completed"
         case .watcher: return "Watcher action"
@@ -1864,6 +1887,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         automationModelCombo?.isEnabled = runtime == AgentRuntimeKind.opencode.rawValue
         let trigger = automationTriggerPopUp?.selectedItem?.representedObject as? String
         automationIntervalField?.isEnabled = trigger == AgentJobTriggerKind.interval.rawValue
+        automationDailyTimeField?.isEnabled = trigger == AgentJobTriggerKind.daily.rawValue
     }
 
     private func buildThreads() {

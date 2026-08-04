@@ -17,9 +17,23 @@ enum AgentRuntimeKind: String, CaseIterable {
 enum AgentJobTriggerKind: String {
     case manual
     case interval
+    case daily
     case inbox
     case capture
     case watcher
+}
+
+// Stub mirroring AgentJobStore.swift's parser; the store suite tests the real one.
+enum AgentDailyTime {
+    static func minutes(from text: String) -> Int? {
+        let parts = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count <= 2, let hour = Int(parts[0]),
+              (0..<24).contains(hour) else { return nil }
+        let minute = parts.count == 2 ? Int(parts[1]) : 0
+        guard let minute, (0..<60).contains(minute) else { return nil }
+        return hour * 60 + minute
+    }
 }
 
 enum Theme {

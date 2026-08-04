@@ -107,8 +107,8 @@ actor AgentSupervisor {
         await cancelAndJoin(transition.cancelledRunIDs)
         emit(AgentJobStatusUpdate(
             jobID: jobID, runID: nil, state: transition.job.state,
-            message: transition.job.trigger == .interval
-                ? "Automation stopped. Its next interval remains scheduled."
+            message: transition.job.state == .queued
+                ? "Automation stopped. Its next run remains scheduled."
                 : "Automation stopped and remains ready."))
     }
 
@@ -127,8 +127,8 @@ actor AgentSupervisor {
             jobID: jobID, runID: nil, state: transition.job.state,
             message: transition.job.state == .failed
                 ? "Automation enabled. It stays failed until you retry it."
-                : transition.job.trigger == .interval
-                    ? "Automation enabled. Its next interval is scheduled."
+                : transition.job.state == .queued
+                    ? "Automation enabled. Its next run is scheduled."
                     : "Automation enabled and ready."))
         await admit()
     }
