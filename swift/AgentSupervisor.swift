@@ -53,14 +53,19 @@ actor AgentSupervisor {
     private var loopTask: Task<Void, Never>?
     private var running: [String: Task<Void, Never>] = [:]
     private var operatorControlledRuns: Set<String> = []
+    private var shuttingDown = false
     private var reportedTerminal: [String: AgentJobState] = [:]
     var onStatus: ((AgentJobStatusUpdate) -> Void)?
 
+    private let recoverySweepInterval: TimeInterval
+
     init(store: AgentJobStore, executor: any AgentJobExecuting,
-         workerID: String = "voice-flow-\(UUID().uuidString)") {
+         workerID: String = "voice-flow-\(UUID().uuidString)",
+         recoverySweepInterval: TimeInterval = 30) {
         self.store = store
         self.executor = executor
         self.workerID = workerID
+        self.recoverySweepInterval = recoverySweepInterval
     }
 
     func start() {
@@ -73,14 +78,25 @@ actor AgentSupervisor {
     }
 
     func shutdown() async {
+        shuttingDown = true
         loopTask?.cancel()
         loopTask = nil
         let tasks = running
         running.removeAll()
+        // App teardown is not an execution failure: suppress the tasks'
+        // cancellation write, join them, then hand the leased runs back so
+        // the next launch resumes them instead of recording a fake failure.
+        operatorControlledRuns.formUnion(tasks.keys)
         for (runID, task) in tasks {
             task.cancel()
             await executor.cancel(runID: runID)
         }
+        for task in tasks.values { await task.value }
+        for runID in tasks.keys {
+            _ = try? store.releaseInterrupted(
+                runID: runID, workerID: workerID, reason: "app quit")
+        }
+        operatorControlledRuns.subtract(tasks.keys)
     }
 
     func wake() async { await admit() }
@@ -109,9 +125,11 @@ actor AgentSupervisor {
         guard transition.didTransition else { return }
         emit(AgentJobStatusUpdate(
             jobID: jobID, runID: nil, state: transition.job.state,
-            message: transition.job.trigger == .interval
-                ? "Automation enabled. Its next interval is scheduled."
-                : "Automation enabled and ready."))
+            message: transition.job.state == .failed
+                ? "Automation enabled. It stays failed until you retry it."
+                : transition.job.trigger == .interval
+                    ? "Automation enabled. Its next interval is scheduled."
+                    : "Automation enabled and ready."))
         await admit()
     }
 
@@ -139,14 +157,24 @@ actor AgentSupervisor {
     }
 
     private func runLoop() async {
+        // The recovery sweep must repeat: after a crash the stale run's lease
+        // can outlive the relaunch by up to the job's whole max duration, and
+        // a launch-only sweep would leave it consuming a concurrency slot —
+        // and blocking Edit/Run/Delete — for the entire session.
         _ = try? store.recoverExpired()
+        var lastSweep = Date()
         while !Task.isCancelled {
             await admit()
+            if Date().timeIntervalSince(lastSweep) >= recoverySweepInterval {
+                lastSweep = Date()
+                _ = try? store.recoverExpired()
+            }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
     }
 
     private func admit() async {
+        guard !shuttingDown else { return }
         while running.count < AgentJobStore.globalConcurrency {
             guard let run = try? store.claimNext(workerID: workerID),
                   let job = try? store.job(id: run.jobID) else { break }

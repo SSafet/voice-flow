@@ -462,4 +462,105 @@ let freshRetry = try retryStore.claimNext(
 expect(retryGeneration == (terminalRetry?.generation ?? 0) + 1
        && freshRetry?.attempt == 1 && freshRetry?.generation == retryGeneration,
        "Run Now after exhausted retries did not start a fresh execution generation")
+// App teardown hands a leased run back as interrupted and reschedules —
+// quitting Voice Flow mid-run must never mark a healthy automation failed.
+let releaseStore = try AgentJobStore(
+    url: VoiceFlowPaths.shared.file("jobs-release-test.sqlite"))
+let releaseJob = AgentJob(
+    id: "release-job", assistantSlug: "flora", conversationID: "release-c",
+    runtime: .opencode, trigger: .manual, prompt: "release", nextRunAt: now,
+    createdAt: now, updatedAt: now)
+try releaseStore.put(releaseJob)
+let releaseRun = try releaseStore.claimNext(workerID: "release-worker", now: now)!
+let released = try releaseStore.releaseInterrupted(
+    runID: releaseRun.id, workerID: "release-worker", reason: "app quit",
+    now: now.addingTimeInterval(1), retryDelay: 0)
+expect(released, "release did not find the leased run")
+let releasedJob = try releaseStore.job(id: "release-job")
+expect(releasedJob?.state == .queued && releasedJob?.isEnabled == true,
+       "app-quit release must reschedule the job, not fail it")
+let releasedRun = try releaseStore.run(id: releaseRun.id)
+expect(releasedRun?.state == .interrupted && releasedRun?.error == "app quit",
+       "app-quit release must record an interrupted run, not a failure")
+let resumedRun = try releaseStore.claimNext(
+    workerID: "release-worker-2", now: now.addingTimeInterval(2))
+expect(resumedRun?.jobID == "release-job",
+       "released job was not claimable again on the next launch")
+let releasedTwice = try releaseStore.releaseInterrupted(
+    runID: releaseRun.id, workerID: "release-worker", reason: "app quit")
+expect(!releasedTwice, "release must be idempotent for a run that is no longer leased")
+
+// Failed is terminal until explicit Retry: neither event intake nor a
+// disable→enable round-trip may silently revive a terminally failed job.
+let terminalStore = try AgentJobStore(
+    url: VoiceFlowPaths.shared.file("jobs-terminal-test.sqlite"))
+let terminalJob = AgentJob(
+    id: "terminal-job", assistantSlug: "flora", conversationID: "terminal-c",
+    runtime: .opencode, trigger: .inbox, prompt: "terminal", nextRunAt: now,
+    maxAttempts: 1, createdAt: now, updatedAt: now)
+try terminalStore.put(terminalJob)
+let terminalRun = try terminalStore.claimNext(workerID: "terminal-worker", now: now)!
+try terminalStore.fail(
+    runID: terminalRun.id, workerID: "terminal-worker",
+    error: "exhausted", retryable: false, now: now.addingTimeInterval(1))
+let terminalFixture = try terminalStore.job(id: "terminal-job")
+expect(terminalFixture?.state == .failed, "terminal fixture did not reach failed")
+let eventRevived = try terminalStore.enqueueEvent(
+    source: "inbox", eventID: "revive-1", jobID: "terminal-job",
+    at: now.addingTimeInterval(2))
+let afterEvent = try terminalStore.job(id: "terminal-job")
+expect(!eventRevived && afterEvent?.state == .failed,
+       "an event revived a terminally failed job without explicit Retry")
+let triggerRevived = try terminalStore.enqueueTrigger(
+    .inbox, source: "inbox", eventID: "revive-2", at: now.addingTimeInterval(3))
+let afterTrigger = try terminalStore.job(id: "terminal-job")
+expect(triggerRevived == 0 && afterTrigger?.state == .failed,
+       "a fanned trigger revived a terminally failed job")
+_ = try terminalStore.disable(jobID: "terminal-job", now: now.addingTimeInterval(4))
+_ = try terminalStore.enable(jobID: "terminal-job", now: now.addingTimeInterval(5))
+let reenabled = try terminalStore.job(id: "terminal-job")
+expect(reenabled?.state == .failed && reenabled?.isEnabled == true,
+       "disable→enable erased a terminal failure without explicit Retry")
+let claimedWithoutRetry = try terminalStore.claimNext(
+    workerID: "terminal-worker-2", now: now.addingTimeInterval(6))
+expect(claimedWithoutRetry == nil,
+       "a re-enabled failed job became claimable without Retry")
+guard case .queued = try terminalStore.runNow(
+    jobID: "terminal-job", at: now.addingTimeInterval(7)) else {
+    fputs("FAIL: explicit Retry no longer revives a failed job\n", stderr); exit(1)
+}
+
+// An older build toggles enablement through `state` alone. The divergence
+// must reconcile on every open — not only during the one-shot migration —
+// or a disabled automation can run again after a downgrade round-trip.
+let divergenceURL = VoiceFlowPaths.shared.file("jobs-divergence-test.sqlite")
+do {
+    let seedStore = try AgentJobStore(url: divergenceURL)
+    try seedStore.put(AgentJob(
+        id: "divergent-job", assistantSlug: "flora", conversationID: "divergent-c",
+        runtime: .opencode, trigger: .inbox, prompt: "divergent", nextRunAt: now,
+        createdAt: now, updatedAt: now))
+}
+func oldBuildWrite(_ sql: String) {
+    var db: OpaquePointer?
+    expect(sqlite3_open(divergenceURL.path, &db) == SQLITE_OK, "raw open failed")
+    expect(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK, "raw old-build write failed")
+    sqlite3_close(db)
+}
+oldBuildWrite("UPDATE agent_jobs SET state='disabled', next_run_at=NULL WHERE id='divergent-job'")
+let afterOldDisable = try AgentJobStore(url: divergenceURL)
+let oldDisabled = try afterOldDisable.job(id: "divergent-job")
+expect(oldDisabled?.isEnabled == false,
+       "an old-build disable was not reconciled — the automation would run again")
+let divergedEvent = try afterOldDisable.enqueueEvent(
+    source: "inbox", eventID: "diverge-1", jobID: "divergent-job",
+    at: now.addingTimeInterval(1))
+expect(!divergedEvent,
+       "an event queued an automation the user disabled on an older build")
+oldBuildWrite("UPDATE agent_jobs SET state='queued', next_run_at=1800000000 WHERE id='divergent-job'")
+let afterOldEnable = try AgentJobStore(url: divergenceURL)
+let oldEnabled = try afterOldEnable.job(id: "divergent-job")
+expect(oldEnabled?.isEnabled == true && oldEnabled?.state == .queued,
+       "an old-build enable left the job permanently stuck queued-but-disabled")
+
 print("agent job store tests passed")

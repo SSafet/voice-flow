@@ -146,4 +146,66 @@ expect(timeoutState == .failed,
 expect(timeoutRuns.isEmpty,
        "timed-out run remained leased")
 await timeoutSupervisor.shutdown()
+
+// Quit mid-run: shutdown must hand the leased run back — interrupted and
+// requeued — never record a fabricated failure for a healthy automation.
+final class QuitHangExecutor: AgentJobExecuting {
+    func execute(job: AgentJob, run: AgentRun,
+                 progress: @escaping (String) -> Void) async throws -> AgentJobExecutionResult {
+        try await Task.sleep(nanoseconds: 60_000_000_000)
+        return AgentJobExecutionResult(resultMessageID: nil, usage: nil)
+    }
+    func cancel(runID: String) async {}
+}
+let quitStore = try AgentJobStore(url: VoiceFlowPaths.shared.file("supervisor-quit.sqlite"))
+try quitStore.put(AgentJob(
+    id: "quit-job", assistantSlug: "flora", conversationID: "quit-conversation",
+    runtime: .opencode, trigger: .manual, prompt: "quit me", nextRunAt: Date(),
+    maxDurationSeconds: 120))
+let quitSupervisor = AgentSupervisor(
+    store: quitStore, executor: QuitHangExecutor(), workerID: "quit-worker")
+await quitSupervisor.start()
+let quitDeadline = Date().addingTimeInterval(4)
+while Date() < quitDeadline {
+    if try quitStore.job(id: "quit-job")?.state == .running { break }
+    try await Task.sleep(nanoseconds: 40_000_000)
+}
+let quitFixture = try quitStore.job(id: "quit-job")
+expect(quitFixture?.state == .running, "quit fixture never started running")
+await quitSupervisor.shutdown()
+let afterQuit = try quitStore.job(id: "quit-job")
+expect(afterQuit?.state == .queued && afterQuit?.isEnabled == true,
+       "app quit mid-run failed a healthy automation instead of requeueing it")
+let afterQuitRuns = try quitStore.activeRuns()
+expect(afterQuitRuns.isEmpty, "app quit left a leased run behind")
+
+// Crash recovery: the expired-lease sweep must repeat while the app runs.
+// A launch-only sweep misses a lease that outlives the relaunch and leaves
+// the job stuck running — unclaimable, uneditable — for the whole session.
+let sweepStore = try AgentJobStore(url: VoiceFlowPaths.shared.file("supervisor-sweep.sqlite"))
+try sweepStore.put(AgentJob(
+    id: "sweep-job", assistantSlug: "flora", conversationID: "sweep-conversation",
+    runtime: .opencode, trigger: .manual, prompt: "sweep me", nextRunAt: Date(),
+    maxDurationSeconds: 5))
+let deadRun = try sweepStore.claimNext(workerID: "dead-worker", leaseSeconds: 1.2)!
+let sweepSupervisor = AgentSupervisor(
+    store: sweepStore, executor: FakeExecutor(), workerID: "sweep-worker",
+    recoverySweepInterval: 0.3)
+await sweepSupervisor.start()
+let sweepDeadline = Date().addingTimeInterval(6)
+var sweepRecovered = false
+while Date() < sweepDeadline {
+    if try sweepStore.run(id: deadRun.id)?.state == .interrupted {
+        sweepRecovered = true
+        break
+    }
+    try await Task.sleep(nanoseconds: 60_000_000)
+}
+await sweepSupervisor.shutdown()
+expect(sweepRecovered,
+       "a crashed worker's expired lease was never recovered while the app stayed running")
+let sweptJob = try sweepStore.job(id: "sweep-job")
+expect(sweptJob?.state != .failed,
+       "lease recovery marked a healthy interrupted job as failed")
+
 print("agent supervisor tests passed")

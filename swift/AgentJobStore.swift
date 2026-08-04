@@ -397,7 +397,8 @@ final class AgentJobStore {
     }
 
     /// Exactly-once trigger intake. A duplicate source/event pair makes no
-    /// state change even across app restarts.
+    /// state change even across app restarts. A failed job is terminal:
+    /// events never revive it — only an explicit Retry (runNow) does.
     @discardableResult
     func enqueueEvent(source: String, eventID: String, jobID: String,
                       at: Date = Date()) throws -> Bool {
@@ -421,7 +422,7 @@ final class AgentJobStore {
                         WHEN state IN ('running','queued') THEN execution_generation
                         ELSE execution_generation+1 END,
                       updated_at=?
-                    WHERE id=? AND is_enabled=1
+                    WHERE id=? AND is_enabled=1 AND state!='failed'
                     """) { statement in
                     sqlite3_bind_double(statement, 1, at.timeIntervalSince1970)
                     sqlite3_bind_double(statement, 2, at.timeIntervalSince1970)
@@ -461,7 +462,7 @@ final class AgentJobStore {
                         WHEN state IN ('running','queued') THEN execution_generation
                         ELSE execution_generation+1 END,
                       updated_at=?
-                    WHERE trigger_kind=? AND is_enabled=1
+                    WHERE trigger_kind=? AND is_enabled=1 AND state!='failed'
                     """) { statement in
                     sqlite3_bind_double(statement, 1, at.timeIntervalSince1970)
                     sqlite3_bind_double(statement, 2, at.timeIntervalSince1970)
@@ -656,9 +657,13 @@ final class AgentJobStore {
                     return AgentJobControlTransition(
                         job: job, cancelledRunIDs: [], didTransition: false)
                 }
+                // Failed is terminal until explicit Retry: re-enabling must
+                // not silently reschedule or erase the failure.
                 let interval = job.trigger == .interval ? job.intervalSeconds : nil
-                let target: AgentJobState = interval == nil ? .completed : .queued
-                let next = interval.map { now.addingTimeInterval(max(1, $0)) }
+                let target: AgentJobState = job.state == .failed ? .failed
+                    : interval == nil ? .completed : .queued
+                let next = target == .failed ? nil
+                    : interval.map { now.addingTimeInterval(max(1, $0)) }
                 try withStatement(
                     """
                     UPDATE agent_jobs SET state=?,is_enabled=1,next_run_at=?,
@@ -810,6 +815,45 @@ final class AgentJobStore {
                     }
                 }
                 return expired.count
+            }
+        }
+    }
+
+    /// Hand a still-leased run back at app teardown. The run is recorded as
+    /// interrupted — never failed — and the job is rescheduled exactly like
+    /// an expired lease, so the next launch resumes the work instead of
+    /// surfacing a fabricated failure for a healthy automation.
+    @discardableResult
+    func releaseInterrupted(runID: String, workerID: String, reason: String,
+                            now: Date = Date(), retryDelay: TimeInterval = 5) throws -> Bool {
+        try lock.withLock {
+            try transaction {
+                guard let run = try runs(
+                    sql: "SELECT * FROM agent_runs WHERE id=? AND worker_id=? AND state='running'",
+                    bind: { statement in
+                        self.bindText(runID, at: 1, to: statement)
+                        self.bindText(workerID, at: 2, to: statement)
+                    }).first else { return false }
+                try withStatement(
+                    "UPDATE agent_runs SET state='interrupted', finished_at=?, error=? WHERE id=? AND state='running'") { statement in
+                    sqlite3_bind_double(statement, 1, now.timeIntervalSince1970)
+                    bindText(reason, at: 2, to: statement)
+                    bindText(runID, at: 3, to: statement)
+                    try stepDone(statement)
+                }
+                guard let job = try jobUnlocked(id: run.jobID),
+                      job.isEnabled, job.generation == run.generation else { return true }
+                let attempts = try scalarInt(
+                    """
+                    SELECT COUNT(*) FROM agent_runs
+                    WHERE job_id=? AND execution_generation=?
+                    """, text: job.id, integer: job.generation)
+                if attempts < job.maxAttempts {
+                    try schedule(job.id, at: now.addingTimeInterval(retryDelay), newGeneration: false)
+                } else {
+                    try setJobState(job.id, state: .failed, at: now)
+                }
+                return true
             }
         }
     }
@@ -1149,6 +1193,24 @@ final class AgentJobStore {
                 try exec("PRAGMA user_version=1")
             }
         }
+        // An older build toggles enablement through `state` alone and never
+        // touches `is_enabled`, so the two can diverge after a downgrade
+        // round-trip. Reconcile on every open, not just at migration:
+        // old-build disable leaves state='disabled'/'cancelled'; old-build
+        // enable leaves state='queued' (a state this build never combines
+        // with is_enabled=0 — disable() preserves only blocked/failed).
+        // The generation bump mirrors enable()/disable() so runs started
+        // before the old-build toggle cannot resurrect the job's state.
+        try exec("""
+        UPDATE agent_jobs SET is_enabled=0,
+          execution_generation=execution_generation+1
+        WHERE state IN ('disabled','cancelled') AND is_enabled=1
+        """)
+        try exec("""
+        UPDATE agent_jobs SET is_enabled=1,
+          execution_generation=execution_generation+1
+        WHERE state='queued' AND is_enabled=0
+        """)
         try exec("""
         UPDATE agent_jobs
         SET name=CASE
