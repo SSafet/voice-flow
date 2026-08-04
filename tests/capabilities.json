@@ -1520,6 +1520,36 @@
       "tests": [
         "visual:watcher_status"
       ]
+    },
+    {
+      "id": "DIC-10",
+      "area": "dictation",
+      "name": "Stop/start race cannot destroy a draining recording; raw audio recoverable until delivery (VF-44)",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/audio_recorder/main.swift"
+      ]
+    },
+    {
+      "id": "TTS-09",
+      "area": "tts",
+      "name": "Agent output is sanitized into speakable text before read-aloud (VF-43)",
+      "kind": "new",
+      "risk": "medium",
+      "tests": [
+        "tests/speech_sanitizer/main.swift"
+      ]
+    },
+    {
+      "id": "TTS-10",
+      "area": "tts",
+      "name": "Speech speed persists across pill, drawer, and Settings (VF-56)",
+      "kind": "new",
+      "risk": "medium",
+      "tests": [
+        "tests/speech_speed/main.swift"
+      ]
     }
   ]
 }
