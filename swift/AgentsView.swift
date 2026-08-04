@@ -266,6 +266,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var scrollView: NSScrollView!
     private var navigationBar: NSView!
     private var navigationButtons: [AgentsDestination: NSButton] = [:]
+    private var navigationBadges: [AgentsDestination: NSTextField] = [:]
+    private var navigationUnderlines: [AgentsDestination: NSView] = [:]
     private var searchButton: NSButton!
     private var searchField: NSTextField?
     private var searchQuery = ""
@@ -358,22 +360,60 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.distribution = .fill
-        stack.spacing = 2
+        // The mock spreads the destinations evenly across the full width;
+        // .fill dumped all the slack into one gap.
+        stack.distribution = .equalCentering
+        stack.spacing = 4
         stack.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(stack)
 
         for destination in AgentsDestination.allCases {
+            let item = NSView()
             let button = NSButton(
                 title: destination.label, target: self,
                 action: #selector(destinationTapped(_:)))
             button.isBordered = false
-            button.font = .systemFont(ofSize: 12.5, weight: .medium)
+            button.font = .systemFont(ofSize: 13, weight: .medium)
             button.identifier = NSUserInterfaceItemIdentifier(destination.rawValue)
             button.setAccessibilityLabel("Open \(destination.label)")
-            button.setContentHuggingPriority(.defaultLow, for: .horizontal)
             navigationButtons[destination] = button
-            stack.addArrangedSubview(button)
+
+            let badge = NSTextField(labelWithString: "")
+            badge.font = .systemFont(ofSize: 10.5, weight: .semibold)
+            badge.textColor = Theme.accent
+            badge.alignment = .center
+            badge.wantsLayer = true
+            badge.layer?.backgroundColor = Theme.cardHover.cgColor
+            badge.layer?.cornerRadius = 7
+            badge.isHidden = true
+            navigationBadges[destination] = badge
+
+            let underline = NSView()
+            underline.wantsLayer = true
+            underline.layer?.backgroundColor = Theme.accent.cgColor
+            underline.layer?.cornerRadius = 1
+            underline.isHidden = true
+            navigationUnderlines[destination] = underline
+
+            for subview in [button, badge, underline] {
+                subview.translatesAutoresizingMaskIntoConstraints = false
+                item.addSubview(subview)
+            }
+            NSLayoutConstraint.activate([
+                button.leadingAnchor.constraint(equalTo: item.leadingAnchor),
+                button.topAnchor.constraint(equalTo: item.topAnchor, constant: 4),
+                badge.leadingAnchor.constraint(equalTo: button.trailingAnchor, constant: 3),
+                badge.trailingAnchor.constraint(equalTo: item.trailingAnchor),
+                badge.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 18),
+                badge.heightAnchor.constraint(equalToConstant: 15),
+                underline.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+                underline.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+                underline.topAnchor.constraint(equalTo: button.bottomAnchor, constant: 5),
+                underline.heightAnchor.constraint(equalToConstant: 2),
+                underline.bottomAnchor.constraint(equalTo: item.bottomAnchor),
+            ])
+            stack.addArrangedSubview(item)
         }
 
         searchButton = NSButton(
@@ -394,10 +434,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         line.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(line)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 2),
+            stack.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -2),
             stack.topAnchor.constraint(equalTo: bar.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: line.topAnchor, constant: -2),
+            stack.bottomAnchor.constraint(equalTo: line.topAnchor, constant: -6),
             line.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
             line.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
             line.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
@@ -856,36 +896,15 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .assistantCreate: buildAssistantCreate()
         }
         styleNavigation()
-        let preferredHeight: CGFloat
-        if case .destination(.now) = mode {
-            let snapshot = nowSnapshot()
-            let rows = snapshot.needsYou.count + snapshot.running.count
-            let sections = (snapshot.needsYou.isEmpty ? 0 : 1) + (snapshot.running.isEmpty ? 0 : 1)
-            preferredHeight = rows == 0 ? 126 : min(560, 64 + CGFloat(rows * 74 + sections * 34))
-        } else if case .destination(.automations) = mode {
-            let all = dataSource?.agentJobRows() ?? []
-            let visible = all.filter { automationMatches($0) }
-            let sections = Set(visible.map { job -> AgentsAutomationGroup in
-                if !job.isEnabled { return .disabled }
-                switch job.state {
-                case .blocked, .failed: return .needsAttention
-                case .running, .queued: return .activeUpcoming
-                case .completed: return .ready
-                case .cancelled, .disabled: return .disabled
-                }
-            }).count
-            if all.isEmpty { preferredHeight = 190 }
-            else if visible.isEmpty { preferredHeight = 220 }
-            else {
-                preferredHeight = min(
-                    560, 100 + CGFloat(visible.count * 74 + sections * 34))
-            }
-        } else {
-            preferredHeight = 560
-        }
+        // Content-fit height, the way the mocks are framed: every screen
+        // measures its real content and the panel ends just after the last
+        // card, clamped by the panel's own floor/ceiling.
         DispatchQueue.main.async { [weak self] in
-            self?.onPreferredHeightChanged?(preferredHeight)
+            guard let self else { return }
+            self.contentStack.layoutSubtreeIfNeeded()
+            self.onPreferredHeightChanged?(self.contentStack.frame.height)
         }
+
         DispatchQueue.main.async { [weak self] in self?.refreshHoverStatesForPointer() }
     }
 
@@ -928,24 +947,15 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             case .threads: count = threadAttention
             case .assistants, .automations: count = 0
             }
-            let title = count > 0 ? "\(destination.label)  \(count)" : destination.label
             let selected = destination == currentDestination
-            let attributed = NSMutableAttributedString(string: title, attributes: [
-                .font: NSFont.systemFont(ofSize: 12.5, weight: selected ? .semibold : .medium),
-                .foregroundColor: selected ? Theme.text : Theme.text3,
-            ])
-            if selected {
-                attributed.addAttributes([
-                    .underlineStyle: NSUnderlineStyle.single.rawValue,
-                    .underlineColor: Theme.accent,
-                ], range: NSRange(location: 0, length: title.count))
-            } else if count > 0 {
-                attributed.addAttribute(
-                    .foregroundColor, value: Theme.accent,
-                    range: NSRange(location: destination.label.count + 2,
-                                   length: title.count - destination.label.count - 2))
-            }
-            button.attributedTitle = attributed
+            button.attributedTitle = NSAttributedString(
+                string: destination.label, attributes: [
+                    .font: NSFont.systemFont(ofSize: 13, weight: selected ? .semibold : .medium),
+                    .foregroundColor: selected ? Theme.text : Theme.text3,
+                ])
+            navigationBadges[destination]?.stringValue = " \(count) "
+            navigationBadges[destination]?.isHidden = count == 0
+            navigationUnderlines[destination]?.isHidden = !selected
         }
         searchButton.contentTintColor = {
             if case .search = mode { return Theme.accent }
@@ -1007,7 +1017,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         var top = contentStack.topAnchor
         let rows = dataSource?.agentAssistantRows() ?? []
         let create = makeRow(
-            leading: symbolIcon("plus", description: "new assistant"),
+            leading: circled(symbolIcon("plus", description: "new assistant", pointSize: 15)),
             name: "New assistant", unread: false,
             preview: "Create a persistent identity, memory, skills, and workspace", time: "")
         create.rowAction = .newAssistantIdentity
@@ -1021,10 +1031,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             else if assistant.isDefault { state = "default" }
             else { state = "" }
             let view = makeRow(
-                leading: WaveformIconView(), name: assistant.name,
+                leading: circled(WaveformIconView()), name: assistant.name,
                 unread: assistant.attentionCount > 0,
-                preview: assistant.description.isEmpty ? inventory : "\(assistant.description) · \(inventory)",
-                time: state)
+                preview: assistant.description.isEmpty
+                    ? "Persistent identity" : assistant.description,
+                time: state, stats: inventory)
             view.rowAction = .assistantWorkspace(assistant.slug)
             place(view, below: &top, gap: 6)
         }
@@ -1563,11 +1574,13 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 let view = makeRow(
                     leading: job.isEnabled
                         ? jobStateIcon(job.state)
-                        : symbolIcon("pause.circle", description: "automation disabled"),
+                        : circled(symbolIcon("pause.circle", description: "automation disabled",
+                                             pointSize: 16)),
                     name: job.name,
                     unread: job.state == .blocked || job.state == .failed,
                     preview: "\(job.assistantName) · \(job.preview)", time: job.time,
-                    action: needsReview ? "Review" : nil)
+                    action: needsReview ? "Review" : nil,
+                    progress: jobProgress(job))
                 view.rowAction = .job(job.id)
                 place(view, below: &top, gap: 6)
             }
@@ -1879,7 +1892,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                     leading: leadingIcon(for: row), name: row.name,
                     unread: row.unread || row.pendingAsk,
                     preview: parts.filter { !$0.isEmpty }.joined(separator: " · "),
-                    time: row.time,
+                    time: row.updatedAt == .distantPast
+                        ? row.time : Self.relativeTime(row.updatedAt),
                     action: row.pendingAsk && !row.archived ? "Reply" : nil)
                 view.rowAction = .thread(id)
                 place(view, below: &top, gap: 6)
@@ -1922,27 +1936,35 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             }) {
                 leading = leadingIcon(for: row)
             } else {
-                leading = symbolIcon("text.bubble", description: "thread")
+                leading = circled(symbolIcon("text.bubble", description: "thread",
+                                             pointSize: 16))
             }
         case .automation(let id):
             let state = dataSource?.agentJobRows().first(where: { $0.id == id })?.state ?? .failed
             leading = jobStateIcon(state)
         case .assistant:
-            leading = WaveformIconView()
+            leading = circled(WaveformIconView())
         }
         // A session's label doubles as its owner — repeating it reads as
         // "tickets — VF53 · tickets — VF53".
-        let metadata = item.owner == item.title
-            ? item.summary : "\(item.owner) · \(item.summary)"
+        var parts = item.owner == item.title ? [item.summary]
+            : [item.owner, item.summary]
+        parts.append(Self.relativeTime(item.updatedAt))
         let verb: String?
         switch item.kind {
         case .pendingAsk: verb = "Reply"
         case .blockedAutomation, .failedAutomation: verb = "Review"
         case .runningAutomation, .runningThread: verb = nil
         }
+        var progress: Double?
+        if case .automation(let jobID) = item.objectID, item.kind == .runningAutomation,
+           let job = dataSource?.agentJobRows().first(where: { $0.id == jobID }) {
+            progress = jobProgress(job)
+        }
         let view = makeRow(
             leading: leading, name: item.title, unread: item.needsAttention,
-            preview: metadata, time: "", action: verb)
+            preview: parts.filter { !$0.isEmpty }.joined(separator: " · "),
+            time: "", action: verb, progress: progress)
         view.rowAction = .object(item.objectID)
         return view
     }
@@ -1950,8 +1972,18 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func sectionHeader(_ title: String, count: Int?) -> NSView {
         let value = count.map { "\(title)  \($0)" } ?? title
         let text = NSTextField(labelWithString: value)
-        text.font = .systemFont(ofSize: 11.5, weight: .semibold)
-        text.textColor = Theme.text3
+        let attributed = NSMutableAttributedString(string: value, attributes: [
+            .font: NSFont.systemFont(ofSize: 11.5, weight: .semibold),
+            .foregroundColor: Theme.text3,
+            .kern: 0.8,
+        ])
+        if count != nil {
+            attributed.addAttribute(
+                .foregroundColor, value: Theme.accent,
+                range: NSRange(location: title.count + 2,
+                               length: value.count - title.count - 2))
+        }
+        text.attributedStringValue = attributed
         text.setAccessibilityLabel(count.map { "\(title), \($0)" } ?? title)
         return text
     }
@@ -2081,28 +2113,33 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// muted number, completed = quiet outlined check. No text suffixes.
     private func leadingIcon(for row: AgentSessionRow) -> NSView {
         if row.kind == .assistant {
-            if let number = row.number { return RingNumberView(number: number) }
-            return WaveformIconView()
+            if let number = row.number { return RingNumberView(number: number, side: 40) }
+            return circled(WaveformIconView())
+        }
+        if row.pendingAsk {
+            let ask = symbolIcon("questionmark.bubble", description: "waiting question",
+                                 pointSize: 16)
+            (ask as? NSImageView)?.contentTintColor = Theme.accent
+            return circled(ask)
         }
         guard let number = row.number else {
-            let image = NSImageView(image: NSImage(systemSymbolName: "checkmark.circle",
-                                                   accessibilityDescription: "completed") ?? NSImage())
-            image.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
-            image.contentTintColor = Theme.text3
-            return image
+            return circled(symbolIcon("checkmark.circle", description: "completed",
+                                      pointSize: 16))
         }
         if row.ghost {
             let label = NSTextField(labelWithString: "\(number)")
-            label.font = .systemFont(ofSize: 10.5, weight: .semibold)
+            label.font = .systemFont(ofSize: 13, weight: .semibold)
             label.textColor = Theme.text3
-            return label
+            return circled(label)
         }
-        return RingNumberView(number: number)
+        return RingNumberView(number: number, side: 40)
     }
 
     private func makeRow(leading: NSView, name: String, unread: Bool,
                          preview: String, time: String,
-                         action: String? = nil) -> AgentListRowView {
+                         action: String? = nil,
+                         stats: String? = nil,
+                         progress: Double? = nil) -> AgentListRowView {
         let row = AgentListRowView()
         row.wantsLayer = true
         row.layer?.cornerRadius = 10
@@ -2136,7 +2173,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             trailing = verb
         } else {
             let timeLabel = NSTextField(labelWithString: time)
-            timeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+            timeLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
             timeLabel.textColor = Theme.text3
             trailing = timeLabel
         }
@@ -2150,24 +2187,97 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         NSLayoutConstraint.activate([
             leading.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 14),
             leading.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            leading.widthAnchor.constraint(equalToConstant: 26),
+            leading.widthAnchor.constraint(equalToConstant: 40),
 
             nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 13),
-            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 54),
+            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 66),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -8),
 
             previewLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
             previewLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             previewLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -8),
-            previewLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -13),
 
             trailing.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -14),
             trailing.centerYAnchor.constraint(equalTo: row.centerYAnchor),
         ])
+        var lastBaseline = previewLabel.bottomAnchor
+
+        if let stats {
+            let statsLabel = NSTextField(labelWithString: stats)
+            statsLabel.font = .systemFont(ofSize: 11.5)
+            statsLabel.textColor = Theme.text3
+            statsLabel.lineBreakMode = .byTruncatingTail
+            statsLabel.maximumNumberOfLines = 1
+            statsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            statsLabel.translatesAutoresizingMaskIntoConstraints = false
+            row.addSubview(statsLabel)
+            NSLayoutConstraint.activate([
+                statsLabel.topAnchor.constraint(equalTo: lastBaseline, constant: 4),
+                statsLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+                statsLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -8),
+            ])
+            lastBaseline = statsLabel.bottomAnchor
+        }
+
+        if let progress {
+            let track = NSView()
+            track.wantsLayer = true
+            track.layer?.backgroundColor = Theme.border.cgColor
+            track.layer?.cornerRadius = 1.5
+            let fill = NSView()
+            fill.wantsLayer = true
+            fill.layer?.backgroundColor = Theme.accent.cgColor
+            fill.layer?.cornerRadius = 1.5
+            for bar in [track, fill] {
+                bar.translatesAutoresizingMaskIntoConstraints = false
+                row.addSubview(bar)
+            }
+            let fraction = max(0.04, min(0.96, progress))
+            NSLayoutConstraint.activate([
+                track.topAnchor.constraint(equalTo: lastBaseline, constant: 7),
+                track.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+                track.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -14),
+                track.heightAnchor.constraint(equalToConstant: 3),
+                fill.leadingAnchor.constraint(equalTo: track.leadingAnchor),
+                fill.topAnchor.constraint(equalTo: track.topAnchor),
+                fill.bottomAnchor.constraint(equalTo: track.bottomAnchor),
+                fill.widthAnchor.constraint(equalTo: track.widthAnchor, multiplier: fraction),
+            ])
+            lastBaseline = track.bottomAnchor
+        }
+        lastBaseline.constraint(equalTo: row.bottomAnchor, constant: -13).isActive = true
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(rowClicked(_:)))
         row.addGestureRecognizer(click)
         return row
+    }
+
+    /// The mock's leading icon: a thin amber-dim circle enclosing the glyph.
+    private func circled(_ inner: NSView, diameter: CGFloat = 40) -> NSView {
+        let circle = NSView()
+        circle.wantsLayer = true
+        circle.layer?.cornerRadius = diameter / 2
+        circle.layer?.borderWidth = 1.3
+        circle.layer?.borderColor = Theme.accentDim.cgColor
+        circle.translatesAutoresizingMaskIntoConstraints = false
+        inner.translatesAutoresizingMaskIntoConstraints = false
+        circle.addSubview(inner)
+        NSLayoutConstraint.activate([
+            circle.widthAnchor.constraint(equalToConstant: diameter),
+            circle.heightAnchor.constraint(equalToConstant: diameter),
+            inner.centerXAnchor.constraint(equalTo: circle.centerXAnchor),
+            inner.centerYAnchor.constraint(equalTo: circle.centerYAnchor),
+        ])
+        return circle
+    }
+
+    /// Compact relative age for row metadata ("asked 4m ago" territory).
+    static func relativeTime(_ date: Date, now: Date = Date()) -> String {
+        let seconds = now.timeIntervalSince(date)
+        if seconds < 60 { return "now" }
+        if seconds < 3600 { return "\(Int(seconds / 60))m ago" }
+        if seconds < 86400 { return "\(Int(seconds / 3600))h ago" }
+        return "\(Int(seconds / 86400))d ago"
     }
 
     @objc private func rowClicked(_ gesture: NSClickGestureRecognizer) {
@@ -2245,10 +2355,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
     }
 
-    private func symbolIcon(_ name: String, description: String) -> NSView {
+    private func symbolIcon(_ name: String, description: String,
+                            pointSize: CGFloat = 12) -> NSView {
         let image = NSImageView(image: NSImage(
             systemSymbolName: name, accessibilityDescription: description) ?? NSImage())
-        image.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+        image.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
         image.contentTintColor = Theme.text3
         return image
     }
@@ -2262,10 +2373,20 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .completed: symbol = "checkmark.circle"
         case .cancelled, .disabled: symbol = "pause.circle"
         }
-        let view = symbolIcon(symbol, description: "automation \(state.rawValue)")
+        let view = symbolIcon(symbol, description: "automation \(state.rawValue)",
+                              pointSize: 16)
         (view as? NSImageView)?.contentTintColor = state == .blocked || state == .failed
             ? Theme.accent : Theme.text3
-        return view
+        return circled(view)
+    }
+
+    /// Elapsed fraction of the active run against its maximum duration —
+    /// the honest signal available for the mock's progress bar.
+    private func jobProgress(_ job: AgentJobRow) -> Double? {
+        guard job.isEnabled, job.state == .running,
+              let run = job.runs.first(where: { $0.state == .running }),
+              job.maxDurationSeconds > 0 else { return nil }
+        return Date().timeIntervalSince(run.startedAt) / job.maxDurationSeconds
     }
 
     private func runStateIcon(_ state: AgentRunState) -> NSView {
@@ -3042,15 +3163,17 @@ private final class AgentListRowView: HoverRowView {
 /// to an agent" (option A of design/agent-row-icons.html).
 final class RingNumberView: NSView {
     private let number: Int
-    init(number: Int) {
+    private let side: CGFloat
+    init(number: Int, side: CGFloat = 16) {
         self.number = number
+        self.side = side
         super.init(frame: .zero)
     }
     required init?(coder: NSCoder) { fatalError() }
-    override var intrinsicContentSize: NSSize { NSSize(width: 16, height: 16) }
+    override var intrinsicContentSize: NSSize { NSSize(width: side, height: side) }
 
     override func draw(_ dirtyRect: NSRect) {
-        let side: CGFloat = min(bounds.width, bounds.height, 16)
+        let side: CGFloat = min(bounds.width, bounds.height, self.side)
         let square = NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2,
                             width: side, height: side).insetBy(dx: 0.75, dy: 0.75)
         let ring = NSBezierPath(ovalIn: square)
@@ -3060,7 +3183,8 @@ final class RingNumberView: NSView {
 
         let text = NSAttributedString(
             string: "\(number)",
-            attributes: [.font: NSFont.systemFont(ofSize: 8.5, weight: .semibold),
+            attributes: [.font: NSFont.systemFont(
+                            ofSize: max(8.5, side * 0.36), weight: .semibold),
                          .foregroundColor: Theme.accent])
         let size = text.size()
         text.draw(at: NSPoint(x: bounds.midX - size.width / 2,

@@ -42,7 +42,7 @@ final class ChatPanel {
     var onTTSSeek: ((Double) -> Void)?
     var onTTSStop: (() -> Void)?
 
-    private let width: CGFloat = 520
+    private let width: CGFloat = 440
     private let maxHeight: CGFloat = 660
     private var height: CGFloat = 660
 
@@ -469,7 +469,7 @@ final class ChatPanel {
         if agentsList {
             agentsView.refresh()
         } else {
-            setPreferredAgentsContentHeight(maxHeight - 100)
+            setPreferredAgentsContentHeight(maxHeight - 136)
         }
     }
 
@@ -879,7 +879,7 @@ final class ChatPanel {
     }
 
     private func setPreferredAgentsContentHeight(_ contentHeight: CGFloat) {
-        let desired = min(maxHeight, max(286, contentHeight + 100))
+        let desired = min(maxHeight, max(286, contentHeight + 136))
         guard abs(desired - height) > 0.5 else { return }
         height = desired
         guard panel.isVisible else { return }
