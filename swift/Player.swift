@@ -52,6 +52,27 @@ enum SpeechSentencer {
     }
 }
 
+/// Which pushes a session read-aloud plays (ticket VF-53). Fresh = active
+/// (not retired to done history) and neither spoken nor answered — matching
+/// what the pill actually shows. Fully caught up, an explicit press replays
+/// only the NEWEST push, never the whole retained archive from the top.
+enum PushSpeechSelection {
+    struct Item {
+        let spoken: Bool
+        let answered: Bool
+        let done: Bool
+    }
+
+    static func selection(for items: [Item]) -> (indices: [Int], replay: Bool) {
+        let active = items.indices.filter { !items[$0].done }
+        let fresh = active.filter { !items[$0].spoken && !items[$0].answered }
+        if !fresh.isEmpty { return (fresh, false) }
+        if let newestActive = active.last { return ([newestActive], true) }
+        if let newest = items.indices.last { return ([newest], true) }
+        return ([], true)
+    }
+}
+
 /// Maps the player's flat sentence queue back onto the stack's messages:
 /// chunk index → (message ordinal, sentence within it) — the "2/3" label
 /// and the per-push consumption cursor both read from here.

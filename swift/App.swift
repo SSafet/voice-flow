@@ -179,6 +179,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             var done = push
             done.done = true
             done.seen = true
+            // VF-53: consumed by any means is consumed for the voice too —
+            // otherwise a later read-aloud replays retired history from the top.
+            done.spoken = true
             return done
         }
         chatPanel.refreshAgents()
@@ -5700,8 +5703,14 @@ extension AppDelegate: AgentsDataSource {
             replyBubble.showTransient("nothing to read for this session", seconds: 4)
             return
         }
-        let fresh = queue.indices.filter { queue[$0].spoken != true && queue[$0].answer == nil }
-        let replay = fresh.isEmpty
+        // VF-53: scope to what the pill shows (done history excluded) and,
+        // once fully caught up, replay only the newest push — listening
+        // starts from the latest, never the whole archive from the top.
+        let (indices, replay) = PushSpeechSelection.selection(for: queue.map {
+            PushSpeechSelection.Item(spoken: $0.spoken == true,
+                                     answered: $0.answer != nil,
+                                     done: $0.done == true)
+        })
         if replay, !allowReplay {
             // Never flashMessage here — it would stomp the grown view the
             // user is looking at (interaction audit C4/C13); showTransient
@@ -5709,7 +5718,6 @@ extension AppDelegate: AgentsDataSource {
             replyBubble.showTransient("all heard — 🔊 replays", seconds: 3)
             return
         }
-        let indices = replay ? Array(queue.indices) : fresh
         // VF-43: speech gets the sanitized form; the stored push text and
         // everything the panel shows stay untouched.
         let sentences = indices.map { SpeechSentencer.sentences(of: SpeechSanitizer.sanitize(queue[$0].text)) }

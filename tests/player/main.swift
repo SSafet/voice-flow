@@ -60,3 +60,51 @@ expect(QueuedPlayback.chunk(atFrame: 999_999, boundaries: boundaries) == 2, "far
 expect(QueuedPlayback.chunk(atFrame: 100, boundaries: []) == nil, "no boundaries yet = no position")
 let afterSkip: [(chunk: Int, frame: Int64)] = [(5, 0), (6, 30_000)]
 expect(QueuedPlayback.chunk(atFrame: 10, boundaries: afterSkip) == 5, "after a skip the playhead maps into the new chunk numbering")
+
+// ── push selection (VF-53: listening starts from the latest) ──
+
+typealias PSI = PushSpeechSelection.Item
+func item(spoken: Bool = false, answered: Bool = false, done: Bool = false) -> PSI {
+    PSI(spoken: spoken, answered: answered, done: done)
+}
+
+let freshTail = PushSpeechSelection.selection(for: [
+    item(spoken: true), item(), item(),
+])
+expect(freshTail.indices == [1, 2] && !freshTail.replay,
+       "unheard pushes play in order, spoken ones are skipped")
+
+let doneScoped = PushSpeechSelection.selection(for: [
+    item(done: true), item(done: true), item(),
+])
+expect(doneScoped.indices == [2] && !doneScoped.replay,
+       "done history never re-enters a fresh read")
+
+let trashedThenNew = PushSpeechSelection.selection(for: [
+    item(spoken: true, done: true), item(spoken: true, done: true), item(),
+])
+expect(trashedThenNew.indices == [2] && !trashedThenNew.replay,
+       "a new push after a trashed stack reads alone")
+
+let caughtUp = PushSpeechSelection.selection(for: [
+    item(spoken: true), item(spoken: true), item(spoken: true),
+])
+expect(caughtUp.indices == [2] && caughtUp.replay,
+       "caught up: replay is the NEWEST push only, not the archive from the top")
+
+let allDone = PushSpeechSelection.selection(for: [
+    item(spoken: true, done: true), item(spoken: true, done: true),
+])
+expect(allDone.indices == [1] && allDone.replay,
+       "all retired: replay re-reads just the newest retired push")
+
+let answeredOnly = PushSpeechSelection.selection(for: [
+    item(answered: true), item(),
+])
+expect(answeredOnly.indices == [1] && !answeredOnly.replay,
+       "answered pushes are consumed for the voice")
+
+expect(PushSpeechSelection.selection(for: []).indices.isEmpty,
+       "empty stack selects nothing")
+
+print("push selection tests passed")
