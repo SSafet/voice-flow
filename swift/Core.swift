@@ -186,6 +186,9 @@ class UserSettings {
     // Re-selecting the already-active session (⌃⌥N again / menu) reads its
     // queued messages aloud — pushes themselves never auto-play audio.
     var doubleSelectSpeak: Bool = true
+    // VF-43: chip-model rewrite of heavy agent text before manual read-aloud.
+    // Off (or unavailable) still sanitizes deterministically.
+    var speechCleanupLLMEnabled: Bool = true
     // Ambient workflow watcher: deduped screenshot + activity line into
     // ~/.config/voice-flow/watcher for the daily Claude review.
     var workflowWatcherEnabled: Bool = false
@@ -300,6 +303,7 @@ class UserSettings {
             assistantWakeWord = Self.trimmed(v, fallback: DefaultAssistantWakeWord)
         }
         if let v = dict["double_select_speak"] as? Bool { doubleSelectSpeak = v }
+        if let v = dict["speech_cleanup_llm"] as? Bool { speechCleanupLLMEnabled = v }
         if let v = dict["workflow_watcher_enabled"] as? Bool { workflowWatcherEnabled = v }
         if let v = dict["queue_enabled"] as? Bool { queueEnabled = v }
         if let v = dict["assistant_computer_use"] as? Bool { assistantComputerUse = v }
@@ -351,6 +355,7 @@ class UserSettings {
             "assistant_wake_enabled": assistantWakeEnabled,
             "assistant_wake_word": Self.trimmed(assistantWakeWord, fallback: DefaultAssistantWakeWord),
             "double_select_speak": doubleSelectSpeak,
+            "speech_cleanup_llm": speechCleanupLLMEnabled,
             "workflow_watcher_enabled": workflowWatcherEnabled,
             "queue_enabled": queueEnabled,
             "assistant_computer_use": assistantComputerUse,

@@ -552,6 +552,10 @@
       "runner": "unit"
     },
     {
+      "id": "tests/speech_sanitizer/main.swift",
+      "runner": "unit"
+    },
+    {
       "id": "tests/sandbox_containment/main.swift",
       "runner": "unit"
     },

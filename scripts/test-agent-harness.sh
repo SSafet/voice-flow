@@ -103,6 +103,7 @@ compile_and_run capture_store swift/VoiceFlowPaths.swift swift/DisplayContext.sw
     swift/ScreenCapture.swift swift/Capture.swift tests/capture_store/main.swift \
     -framework Cocoa -framework ScreenCaptureKit
 compile_and_run player swift/Player.swift tests/player/main.swift
+compile_and_run speech_sanitizer swift/SpeechSanitizer.swift tests/speech_sanitizer/main.swift
 compile_and_run watcher_bus swift/VoiceFlowPaths.swift swift/WatcherPolicy.swift \
     swift/WatcherBus.swift tests/watcher_bus/main.swift
 compile_and_run hotkey_precedence "${APP_SUPPORT_SOURCES[@]}" tests/hotkey_precedence/main.swift \

@@ -5710,7 +5710,9 @@ extension AppDelegate: AgentsDataSource {
             return
         }
         let indices = replay ? Array(queue.indices) : fresh
-        let sentences = indices.map { SpeechSentencer.sentences(of: queue[$0].text) }
+        // VF-43: speech gets the sanitized form; the stored push text and
+        // everything the panel shows stay untouched.
+        let sentences = indices.map { SpeechSentencer.sentences(of: SpeechSanitizer.sanitize(queue[$0].text)) }
         let map = PlaybackQueueMap(counts: sentences.map { $0.count })
         guard map.totalChunks > 0 else {
             replyBubble.showTransient("nothing to read for this session", seconds: 4)
@@ -5755,8 +5757,36 @@ extension AppDelegate: AgentsDataSource {
     @discardableResult
     private func speakTextThroughPlayer(_ text: String, source: PlayerContext.Source,
                                         request baseRequest: TTSRequest? = nil,
-                                        showSettingsOnMissingKey: Bool) -> String? {
-        let sentences = SpeechSentencer.sentences(of: text)
+                                        showSettingsOnMissingKey: Bool,
+                                        preSanitized: Bool = false) -> String? {
+        // VF-43: agent-origin text passes through the speech-cleanup step;
+        // user-chosen text (selection, Speech drawer, HTTP API) reads
+        // verbatim. Heavy content gets one chip-model rewrite attempt with
+        // a short timeout; the deterministic sanitizer is the fallback.
+        if !preSanitized, case .assistantReply = source,
+           UserSettings.shared.speechCleanupLLMEnabled,
+           SpeechSanitizer.hasHeavyContent(text) {
+            replyBubble.showTransient("preparing speech…", seconds: 2)
+            let original = text
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let polished = await SpeechCleanupLLM.shared.cleanup(original)
+                _ = self.speakTextThroughPlayer(
+                    polished ?? SpeechSanitizer.sanitize(original), source: source,
+                    request: baseRequest, showSettingsOnMissingKey: showSettingsOnMissingKey,
+                    preSanitized: true)
+            }
+            return nil
+        }
+        let speakable: String
+        if preSanitized {
+            speakable = text
+        } else if case .text = source {
+            speakable = text
+        } else {
+            speakable = SpeechSanitizer.sanitize(text)
+        }
+        let sentences = SpeechSentencer.sentences(of: speakable)
         guard !sentences.isEmpty else { return "Nothing to read." }
         var request = baseRequest ?? chatPanel.currentTTSRequest()
         request.text = text

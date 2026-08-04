@@ -1209,6 +1209,9 @@ final class TTSController: NSObject {
 final class AgentReplySpeaker {
     private let tts: TTSController
     private var buffer = ""
+    /// VF-43: streamed chunks are sanitized before they reach the voice —
+    /// stateful so a code fence opened in one chunk stays silent in the next.
+    private var sanitizer = SpeechSanitizerStream()
     private(set) var isActive = false
     /// The active assistant's own voice (ticket VF-49); nil keeps the
     /// user's global TTS voice.
@@ -1227,6 +1230,7 @@ final class AgentReplySpeaker {
     func begin() {
         guard !isActive else { return }
         buffer = ""
+        sanitizer = SpeechSanitizerStream()
         let settings = UserSettings.shared
         do {
             try tts.beginLiveSpeech(
@@ -1244,13 +1248,14 @@ final class AgentReplySpeaker {
         guard isActive else { return }
         buffer += delta
         while let chunk = nextChunk() {
-            tts.feedLiveSpeech(chunk)
+            let speakable = sanitizer.sanitize(chunk)
+            if !speakable.isEmpty { tts.feedLiveSpeech(speakable) }
         }
     }
 
     func finish() {
         guard isActive else { return }
-        let rest = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rest = sanitizer.sanitize(buffer.trimmingCharacters(in: .whitespacesAndNewlines))
         if !rest.isEmpty {
             tts.feedLiveSpeech(rest)
         }
