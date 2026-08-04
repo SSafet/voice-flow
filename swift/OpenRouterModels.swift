@@ -78,11 +78,22 @@ struct OpenRouterModelCatalogResult: Equatable {
         switch source {
         case .live:
             return "\(models.count) tool-capable OpenRouter models · updated now"
+        case .cache where warning == nil:
+            // A deliberately reused fresh snapshot, not a failed refresh.
+            return "\(models.count) tool-capable OpenRouter models · updated \(Self.age(fetchedAt))"
         case .cache:
             return "\(models.count) cached OpenRouter models · refresh unavailable"
         case .fallback:
             return "OpenRouter list unavailable · type an exact model ID"
         }
+    }
+
+    private static func age(_ fetchedAt: Date?) -> String {
+        guard let fetchedAt else { return "earlier" }
+        let minutes = Int(Date().timeIntervalSince(fetchedAt) / 60)
+        if minutes < 1 { return "just now" }
+        if minutes < 60 { return "\(minutes)m ago" }
+        return "\(minutes / 60)h ago"
     }
 }
 
@@ -157,10 +168,15 @@ final class OpenRouterModelCatalog {
         let data: [APIModel]
     }
 
+    /// How long a snapshot is served before `refreshIfStale` goes back to the
+    /// network. Providers add models daily, so a day-old list is a stale list.
+    static let defaultMaxAge: TimeInterval = 6 * 3600
+
     private let lock = NSLock()
     private let cacheURL: URL
     private let session: URLSession
     private var memoryCache: Cache?
+    private var inFlight: Task<OpenRouterModelCatalogResult, Never>?
 
     init(cacheURL: URL = VoiceFlowPaths.shared.file("openrouter-models.json"),
          session: URLSession = .shared) {
@@ -171,6 +187,64 @@ final class OpenRouterModelCatalog {
     func cachedModels(including fallbackIDs: Set<String> = []) -> [OpenRouterModel] {
         let cached = lock.withLock { loadCacheLocked()?.models ?? [] }
         return Self.merging(cached, fallbackIDs: fallbackIDs)
+    }
+
+    /// The last stored snapshot as a result, so a surface that skipped the
+    /// network still renders a populated picker with an honest status line.
+    func cachedResult(including fallbackIDs: Set<String> = [])
+        -> OpenRouterModelCatalogResult {
+        let cached = lock.withLock { loadCacheLocked() }
+        guard let cached, !cached.models.isEmpty else {
+            return OpenRouterModelCatalogResult(
+                models: Self.merging([], fallbackIDs: fallbackIDs),
+                source: .fallback, fetchedAt: nil, warning: nil)
+        }
+        return OpenRouterModelCatalogResult(
+            models: Self.merging(cached.models, fallbackIDs: fallbackIDs),
+            source: .cache, fetchedAt: cached.fetchedAt, warning: nil)
+    }
+
+    /// Refresh only when the stored snapshot has aged out, and only once when
+    /// several surfaces ask at the same moment. Returns nil when the cache was
+    /// still fresh, so callers can skip a redundant UI update.
+    func refreshIfStale(baseURL: URL, apiKey: String?, fallbackIDs: Set<String>,
+                        maxAge: TimeInterval = defaultMaxAge) async
+        -> OpenRouterModelCatalogResult? {
+        enum Plan {
+            case fresh
+            case join(Task<OpenRouterModelCatalogResult, Never>)
+            case start(Task<OpenRouterModelCatalogResult, Never>)
+        }
+
+        let plan: Plan = lock.withLock {
+            if let inFlight { return .join(inFlight) }
+            if let cached = loadCacheLocked(), !cached.models.isEmpty,
+               Date().timeIntervalSince(cached.fetchedAt) < maxAge {
+                return .fresh
+            }
+            let task = Task {
+                await self.refresh(
+                    baseURL: baseURL, apiKey: apiKey, fallbackIDs: fallbackIDs)
+            }
+            inFlight = task
+            return .start(task)
+        }
+
+        switch plan {
+        case .fresh:
+            return nil
+        case .start(let task):
+            let result = await task.value
+            lock.withLock { inFlight = nil }
+            return result
+        case .join(let task):
+            // Someone else's fallback IDs shaped that result; re-merge ours.
+            let result = await task.value
+            return OpenRouterModelCatalogResult(
+                models: Self.merging(result.models, fallbackIDs: fallbackIDs),
+                source: result.source, fetchedAt: result.fetchedAt,
+                warning: result.warning)
+        }
     }
 
     func refresh(baseURL: URL, apiKey: String?, fallbackIDs: Set<String>) async
@@ -242,7 +316,11 @@ final class OpenRouterModelCatalog {
             URLQueryItem(name: "sort", value: "most-popular"),
         ]
         guard let url = components.url else { throw OpenRouterModelCatalogError.invalidResponse }
-        var request = URLRequest(url: url, timeoutInterval: 8)
+        // OpenRouter serves the catalog with `max-age=300,
+        // stale-while-revalidate=3600`, so the default protocol policy would
+        // hand back an hour-old body while we reported it as freshly live.
+        var request = URLRequest(
+            url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let apiKey, !apiKey.isEmpty {

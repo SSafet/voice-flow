@@ -731,7 +731,7 @@ private struct AssistantSettingsView: View {
         .formStyle(.grouped)
         .task {
             await refreshOpenCodeStatus()
-            await refreshOpenRouterModels()
+            await loadOpenRouterModels()
         }
     }
 
@@ -749,15 +749,38 @@ private struct AssistantSettingsView: View {
         }
     }
 
+    private var catalogBaseURL: URL {
+        let configured = store.agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        return URL(string: configured.isEmpty ? DefaultAgentBaseURL : configured)
+            ?? URL(string: DefaultAgentBaseURL)!
+    }
+
+    /// Opening the tab: refetch when the snapshot has aged out, otherwise show
+    /// what we already have. This view is built once at launch, so it cannot be
+    /// the only thing keeping the catalog current.
+    @MainActor
+    private func loadOpenRouterModels() async {
+        refreshingModels = true
+        defer { refreshingModels = false }
+        let fallbackIDs: Set<String> = [store.agentModel]
+        if let refreshed = await OpenRouterModelCatalog.shared.refreshIfStale(
+            baseURL: catalogBaseURL,
+            apiKey: KeychainStore.shared.loadAgentAPIKey(),
+            fallbackIDs: fallbackIDs) {
+            modelCatalog = refreshed
+        } else {
+            modelCatalog = OpenRouterModelCatalog.shared.cachedResult(including: fallbackIDs)
+        }
+    }
+
+    /// The ↻ button is the user saying "I know a model just dropped" — always
+    /// go to the network, never to a cache.
     @MainActor
     private func refreshOpenRouterModels() async {
         refreshingModels = true
         defer { refreshingModels = false }
-        let configured = store.agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseURL = URL(string: configured.isEmpty ? DefaultAgentBaseURL : configured)
-            ?? URL(string: DefaultAgentBaseURL)!
         modelCatalog = await OpenRouterModelCatalog.shared.refresh(
-            baseURL: baseURL,
+            baseURL: catalogBaseURL,
             apiKey: KeychainStore.shared.loadAgentAPIKey(),
             fallbackIDs: [store.agentModel])
     }

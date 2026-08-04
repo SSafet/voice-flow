@@ -153,6 +153,9 @@ protocol AgentsDataSource: AnyObject {
     func agentAssistantRows() -> [AgentAssistantRow]
     func agentJobRows() -> [AgentJobRow]
     func agentAutomationModels() -> [OpenRouterModel]
+    /// Catalog refresh behind the editor: calls back on main only when a
+    /// network refresh actually happened and produced models.
+    func refreshAgentAutomationModels(completion: @escaping ([OpenRouterModel]) -> Void)
     func agentAutomationDefaults() -> AgentAutomationDefaults
     func createAgentAutomation(_ draft: AgentAutomationDraft) throws -> String
     func updateAgentAutomation(id: String, draft: AgentAutomationDraft) throws
@@ -1658,10 +1661,19 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
         place(formLabel("OPENCODE MODEL"), below: &top, gap: 12)
         let model = OpenRouterModelComboBox()
+        let selectedModelID = existing?.modelID ?? defaults.modelID ?? ""
         model.configure(
             models: dataSource.agentAutomationModels(),
-            selectedID: existing?.modelID ?? defaults.modelID ?? "")
+            selectedID: selectedModelID)
         model.setAccessibilityLabel("OpenRouter model")
+        dataSource.refreshAgentAutomationModels { [weak model] models in
+            // Never yank the catalog out from under an open dropdown or a
+            // half-typed query — the next editor opens with the fresh list.
+            guard let model, !models.isEmpty, model.currentEditor() == nil else { return }
+            model.configure(
+                models: models,
+                selectedID: model.committedModelID ?? selectedModelID)
+        }
         model.heightAnchor.constraint(equalToConstant: 30).isActive = true
         automationModelCombo = model
         place(model, below: &top, gap: 5)

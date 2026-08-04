@@ -1040,6 +1040,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 vflog("agent jobs: \(missingJobConversations.values.reduce(0) { $0 + $1.count }) job reference(s) have missing conversations")
             }
             wireAgentJobTriggers()
+            // Nothing else re-fetches on its own: without this a long-running
+            // app served whatever snapshot the last Settings visit left behind.
+            refreshAgentModelCatalogIfStale()
             Task { [weak self] in
                 await supervisor.setStatusHandler { [weak self] update in
 #if VOICE_FLOW_QA
@@ -4955,10 +4958,43 @@ extension AppDelegate: AgentsDataSource {
     }
 
     func agentAutomationModels() -> [OpenRouterModel] {
+        OpenRouterModelCatalog.shared.cachedModels(including: agentCatalogFallbackIDs())
+    }
+
+    /// The automation picker used to render the cache and stop there, so a
+    /// model released after the last refresh was unreachable from this editor.
+    func refreshAgentAutomationModels(completion: @escaping ([OpenRouterModel]) -> Void) {
+        refreshAgentModelCatalogIfStale { [weak self] result in
+            guard let self, let result, !result.models.isEmpty else { return }
+            completion(self.agentAutomationModels())
+        }
+    }
+
+    private func agentCatalogFallbackIDs() -> Set<String> {
         let jobs = (try? agentJobStore?.jobs(limit: 500)) ?? []
         var fallback = Set(jobs.compactMap(\.modelID))
         fallback.insert(UserSettings.shared.agentModel)
-        return OpenRouterModelCatalog.shared.cachedModels(including: fallback)
+        return fallback
+    }
+
+    /// Single staleness-gated entry point for every surface that shows models.
+    /// `completion` runs on main with the refreshed result, or nil when the
+    /// stored snapshot was still fresh and no network call was made.
+    func refreshAgentModelCatalogIfStale(
+        completion: ((OpenRouterModelCatalogResult?) -> Void)? = nil) {
+        let configured = UserSettings.shared.agentBaseURL
+        let baseURL = URL(string: configured) ?? URL(string: DefaultAgentBaseURL)!
+        let fallbackIDs = agentCatalogFallbackIDs()
+        Task {
+            let result = await OpenRouterModelCatalog.shared.refreshIfStale(
+                baseURL: baseURL,
+                apiKey: KeychainStore.shared.loadAgentAPIKey(),
+                fallbackIDs: fallbackIDs)
+            if let result, result.source == .live {
+                vflog("openrouter catalog refreshed: \(result.models.count) models")
+            }
+            await MainActor.run { completion?(result) }
+        }
     }
 
     func agentAutomationDefaults() -> AgentAutomationDefaults {
