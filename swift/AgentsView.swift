@@ -772,7 +772,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 preview: detail,
                 time: DateFormatter.localizedString(
                     from: run.startedAt, dateStyle: .none, timeStyle: .short))
-            place(row, below: &top, gap: 0)
+            place(row, below: &top, gap: 6)
         }
         if job.runs.isEmpty { place(emptyLabel("No runs yet"), below: &top, gap: 10) }
 
@@ -861,7 +861,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             let snapshot = nowSnapshot()
             let rows = snapshot.needsYou.count + snapshot.running.count
             let sections = (snapshot.needsYou.isEmpty ? 0 : 1) + (snapshot.running.isEmpty ? 0 : 1)
-            preferredHeight = rows == 0 ? 126 : min(420, 64 + CGFloat(rows * 48 + sections * 28))
+            preferredHeight = rows == 0 ? 126 : min(420, 64 + CGFloat(rows * 60 + sections * 30))
         } else if case .destination(.automations) = mode {
             let all = dataSource?.agentJobRows() ?? []
             let visible = all.filter { automationMatches($0) }
@@ -878,7 +878,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             else if visible.isEmpty { preferredHeight = 220 }
             else {
                 preferredHeight = min(
-                    420, 100 + CGFloat(visible.count * 48 + sections * 28))
+                    420, 100 + CGFloat(visible.count * 60 + sections * 30))
             }
         } else {
             preferredHeight = 420
@@ -993,11 +993,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         } else {
             if !snapshot.needsYou.isEmpty {
                 place(sectionHeader("NEEDS YOU", count: snapshot.needsYou.count), below: &top, gap: 8)
-                for item in snapshot.needsYou { place(makeNowRow(item), below: &top, gap: 0) }
+                for item in snapshot.needsYou { place(makeNowRow(item), below: &top, gap: 6) }
             }
             if !snapshot.running.isEmpty {
                 place(sectionHeader("RUNNING NOW", count: snapshot.running.count), below: &top, gap: 14)
-                for item in snapshot.running { place(makeNowRow(item), below: &top, gap: 0) }
+                for item in snapshot.running { place(makeNowRow(item), below: &top, gap: 6) }
             }
         }
         finishContent(top)
@@ -1026,7 +1026,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 preview: assistant.description.isEmpty ? inventory : "\(assistant.description) · \(inventory)",
                 time: state)
             view.rowAction = .assistantWorkspace(assistant.slug)
-            place(view, below: &top, gap: 0)
+            place(view, below: &top, gap: 6)
         }
         if rows.isEmpty { place(emptyLabel("No assistants available"), below: &top, gap: 28) }
         finishContent(top)
@@ -1102,7 +1102,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 leading: WaveformIconView(), name: runningConversation.title,
                 unread: false, preview: "Working now", time: "")
             row.rowAction = .assistant(runningConversation.id)
-            place(row, below: &top, gap: 0)
+            place(row, below: &top, gap: 6)
         }
         for job in attentionJobs.prefix(2) {
             let title = job.prompt.components(separatedBy: .newlines).first ?? "Automation"
@@ -1110,7 +1110,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 leading: jobStateIcon(job.state), name: title,
                 unread: true, preview: job.state.rawValue, time: "")
             row.rowAction = .job(job.id)
-            place(row, below: &top, gap: 0)
+            place(row, below: &top, gap: 6)
         }
         if runningConversation == nil && attentionJobs.isEmpty {
             place(emptyLabel("Nothing active"), below: &top, gap: 12)
@@ -1121,7 +1121,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
               below: &top, gap: 18)
         for conversation in recent {
             let row = makeAssistantConversationRow(conversation)
-            place(row, below: &top, gap: 0)
+            place(row, below: &top, gap: 6)
         }
         if recent.isEmpty { place(emptyLabel("No conversations yet"), below: &top, gap: 10) }
 
@@ -1558,15 +1558,18 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             guard !members.isEmpty else { continue }
             place(sectionHeader(group.label.uppercased(), count: members.count), below: &top, gap: 12)
             for job in members {
+                let needsReview = job.isEnabled
+                    && (job.state == .blocked || job.state == .failed)
                 let view = makeRow(
                     leading: job.isEnabled
                         ? jobStateIcon(job.state)
                         : symbolIcon("pause.circle", description: "automation disabled"),
                     name: job.name,
                     unread: job.state == .blocked || job.state == .failed,
-                    preview: "\(job.assistantName) · \(job.preview)", time: job.time)
+                    preview: "\(job.assistantName) · \(job.preview)", time: job.time,
+                    action: needsReview ? "Review" : nil)
                 view.rowAction = .job(job.id)
-                place(view, below: &top, gap: 0)
+                place(view, below: &top, gap: 6)
             }
         }
         if jobs.isEmpty {
@@ -1870,13 +1873,16 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 let id = AgentsThreadID(
                     source: row.kind == .assistant ? .assistant : .mcp,
                     value: row.id)
+                let parts = (row.owner == row.name ? [] : [row.owner])
+                    + [threadEvidence(row), row.preview]
                 let view = makeRow(
                     leading: leadingIcon(for: row), name: row.name,
                     unread: row.unread || row.pendingAsk,
-                    preview: "\(row.owner) · \(threadEvidence(row)) · \(row.preview)",
-                    time: row.time)
+                    preview: parts.filter { !$0.isEmpty }.joined(separator: " · "),
+                    time: row.time,
+                    action: row.pendingAsk && !row.archived ? "Reply" : nil)
                 view.rowAction = .thread(id)
-                place(view, below: &top, gap: 0)
+                place(view, below: &top, gap: 6)
             }
         }
         if sections.isEmpty {
@@ -1924,9 +1930,19 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .assistant:
             leading = WaveformIconView()
         }
+        // A session's label doubles as its owner — repeating it reads as
+        // "tickets — VF53 · tickets — VF53".
+        let metadata = item.owner == item.title
+            ? item.summary : "\(item.owner) · \(item.summary)"
+        let verb: String?
+        switch item.kind {
+        case .pendingAsk: verb = "Reply"
+        case .blockedAutomation, .failedAutomation: verb = "Review"
+        case .runningAutomation, .runningThread: verb = nil
+        }
         let view = makeRow(
             leading: leading, name: item.title, unread: item.needsAttention,
-            preview: "\(item.owner) · \(item.summary)", time: "")
+            preview: metadata, time: "", action: verb)
         view.rowAction = .object(item.objectID)
         return view
     }
@@ -2019,7 +2035,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                         leading: icon, name: result.primaryText, unread: false,
                         preview: "\(result.destination.label) · \(result.secondaryText)", time: "")
                     row.rowAction = .object(result.objectID)
-                    place(row, below: &top, gap: 0)
+                    place(row, below: &top, gap: 6)
                 }
             }
         }
@@ -2085,52 +2101,68 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     private func makeRow(leading: NSView, name: String, unread: Bool,
-                         preview: String, time: String) -> AgentListRowView {
+                         preview: String, time: String,
+                         action: String? = nil) -> AgentListRowView {
         let row = AgentListRowView()
         row.wantsLayer = true
-        row.layer?.cornerRadius = 8
+        row.layer?.cornerRadius = 10
+        row.layer?.backgroundColor = Theme.card.cgColor
+        row.layer?.borderWidth = 1
+        row.layer?.borderColor = Theme.border.cgColor
 
         let nameLabel = NSTextField(labelWithString: name)
-        nameLabel.font = .systemFont(ofSize: 12.5, weight: unread ? .semibold : .regular)
-        nameLabel.textColor = unread ? Theme.text : Theme.text2
+        nameLabel.font = .systemFont(ofSize: 13, weight: unread ? .semibold : .medium)
+        nameLabel.textColor = Theme.text
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.maximumNumberOfLines = 1
         // Long titles/previews must truncate, never stretch the panel.
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let previewLabel = NSTextField(labelWithString: preview)
-        previewLabel.font = .systemFont(ofSize: 10.5)
+        // With a trailing action verb the timestamp moves into the metadata
+        // line, matching the mock's row grammar.
+        let metadata = action != nil && !time.isEmpty ? "\(preview) · \(time)" : preview
+        let previewLabel = NSTextField(labelWithString: metadata)
+        previewLabel.font = .systemFont(ofSize: 11)
         previewLabel.textColor = Theme.text3
         previewLabel.lineBreakMode = .byTruncatingTail
         previewLabel.maximumNumberOfLines = 1
         previewLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let timeLabel = NSTextField(labelWithString: time)
-        timeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        timeLabel.textColor = Theme.text3
-        timeLabel.setContentHuggingPriority(.required, for: .horizontal)
-        timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let trailing: NSView
+        if let action {
+            let verb = NSTextField(labelWithString: "\(action) ›")
+            verb.font = .systemFont(ofSize: 12, weight: .medium)
+            verb.textColor = Theme.accent
+            trailing = verb
+        } else {
+            let timeLabel = NSTextField(labelWithString: time)
+            timeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+            timeLabel.textColor = Theme.text3
+            trailing = timeLabel
+        }
+        trailing.setContentHuggingPriority(.required, for: .horizontal)
+        trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        for v in [leading, nameLabel, previewLabel, timeLabel] {
+        for v in [leading, nameLabel, previewLabel, trailing] {
             v.translatesAutoresizingMaskIntoConstraints = false
             row.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            leading.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 9),
+            leading.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
             leading.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            leading.widthAnchor.constraint(equalToConstant: 18),
+            leading.widthAnchor.constraint(equalToConstant: 22),
 
-            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 7),
-            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 34),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
+            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 10),
+            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 44),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -8),
 
-            previewLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+            previewLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 3),
             previewLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            previewLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
-            previewLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -7),
+            previewLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -8),
+            previewLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -10),
 
-            timeLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -9),
-            timeLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            trailing.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
+            trailing.centerYAnchor.constraint(equalTo: row.centerYAnchor),
         ])
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(rowClicked(_:)))
@@ -2270,7 +2302,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         title.textColor = Theme.text
         title.lineBreakMode = .byTruncatingTail
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let state = NSTextField(labelWithString: "\(detail.owner) · \(detail.state)")
+        let state = NSTextField(labelWithString: detail.owner == detail.title
+            ? detail.state : "\(detail.owner) · \(detail.state)")
         state.font = .systemFont(ofSize: 10.5)
         state.textColor = detail.live ? Theme.accent : Theme.text3
         state.lineBreakMode = .byTruncatingTail
@@ -2998,6 +3031,11 @@ private enum AgentListRowAction {
 
 private final class AgentListRowView: HoverRowView {
     var rowAction: AgentListRowAction?
+    // Rows are card surfaces: rest on Theme.card, brighten on hover.
+    override func setHovered(_ hovered: Bool) {
+        layer?.backgroundColor = hovered ? Theme.cardHover.cgColor : Theme.card.cgColor
+        layer?.borderColor = hovered ? Theme.borderHover.cgColor : Theme.border.cgColor
+    }
 }
 
 /// The ⌃⌥ number wrapped in an amber ring — "this session is connected

@@ -4928,26 +4928,28 @@ extension AppDelegate: AgentsDataSource {
         return jobs.map { job in
             let assistantName = AssistantsStore.shared.assistant(slug: job.assistantSlug)?.name
                 ?? job.assistantSlug
+            // The list row prepends the owning assistant itself — repeating
+            // the name here rendered "FLORA · Ready · FLORA".
             let preview: String
             if !job.isEnabled {
-                preview = "Off · \(assistantName) · \(job.trigger.rawValue)"
+                preview = "Off · \(job.trigger.rawValue)"
             } else {
                 switch job.state {
                 case .running:
-                    preview = "Running now · \(assistantName)"
+                    preview = "Running now"
                 case .blocked:
-                    preview = "Budget or permission blocked · \(assistantName)"
+                    preview = "Budget or permission blocked"
                 case .failed:
-                    preview = "Failed · \(assistantName)"
+                    preview = "Failed"
                 case .queued:
                     let next = job.nextRunAt.map(Self.pushTimeFormatter.string(from:)) ?? "soon"
-                    preview = "Next \(next) · \(assistantName)"
+                    preview = "Next \(next)"
                 case .completed:
                     preview = job.trigger == .manual
-                        ? "Ready · \(assistantName)"
-                        : "Listening · \(assistantName) · \(job.trigger.rawValue)"
+                        ? "Ready"
+                        : "Listening · \(job.trigger.rawValue)"
                 case .cancelled, .disabled:
-                    preview = "Off · \(assistantName)"
+                    preview = "Off"
                 }
             }
             let runRows = ((try? agentJobStore?.runs(jobID: job.id, limit: 12)) ?? []).map {
