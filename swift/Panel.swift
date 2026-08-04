@@ -43,8 +43,10 @@ final class ChatPanel {
     var onTTSStop: (() -> Void)?
 
     private let width: CGFloat = 440
-    private let maxHeight: CGFloat = 660
-    private var height: CGFloat = 660
+    // One hardcoded panel size for every view — no adaptive growing or
+    // shrinking per destination.
+    private let maxHeight: CGFloat = 520
+    private var height: CGFloat = 520
 
     private var panel: KeyablePanel!
     private var inboxTabButton: NSButton!
@@ -879,11 +881,8 @@ final class ChatPanel {
     }
 
     private func setPreferredAgentsContentHeight(_ contentHeight: CGFloat) {
-        let desired = min(maxHeight, max(286, contentHeight + 136))
-        guard abs(desired - height) > 0.5 else { return }
-        height = desired
-        guard panel.isVisible else { return }
-        position()
+        // Fixed-height panel: content taller than the frame scrolls; shorter
+        // content leaves quiet space. The panel itself never resizes.
     }
 
     /// Nav bar over the assistant thread: ‹ back, waveform + name centered,
