@@ -6,13 +6,20 @@
     <string>com.voiceflow.watcher-analyze</string>
     <key>ProgramArguments</key>
     <array>
+        <!-- sandbox-exec is the actual boundary (VF-46): writes confined to
+             the watcher dir, secret shapes unreadable, applied by the kernel
+             to every descendant. The profile lives one level ABOVE the
+             writable dir so the review cannot rewrite it. -->
+        <string>/usr/bin/sandbox-exec</string>
+        <string>-f</string>
+        <string>__HOME__/.config/voice-flow/watcher-analyze.sb</string>
         <string>__HOME__/.local/bin/claude</string>
         <string>-p</string>
         <string>Read ANALYZE.md in this directory and follow it exactly.</string>
         <string>--permission-mode</string>
         <string>manual</string>
         <string>--allowedTools</string>
-        <string>Read,Glob,Grep,WebSearch,Write(./ledger.md),Edit(./ledger.md),Write(./reviews/**),Edit(./reviews/**),Write(./proposals/**),Edit(./proposals/**),Bash(python3:*),mcp__voice-flow</string>
+        <string>Read,Glob,Grep,WebSearch,Write(./ledger.md),Edit(./ledger.md),Write(./reviews/**),Edit(./reviews/**),Write(./proposals/**),Edit(./proposals/**),Bash(python3 aggregate.py:*),mcp__voice-flow</string>
     </array>
     <key>WorkingDirectory</key>
     <string>__HOME__/.config/voice-flow/watcher</string>

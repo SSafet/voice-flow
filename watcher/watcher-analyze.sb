@@ -1,0 +1,63 @@
+(version 1)
+; Kernel confinement for the nightly watcher review (VF-46). Deployed by
+; install.sh (with __HOME__ substituted) to ~/.config/voice-flow/ — one
+; level ABOVE the watcher data dir on purpose: the profile must not live
+; inside the only tree the sandboxed process may write, or the review
+; could rewrite its own next-night confinement.
+;
+; This is load-bearing, not defense-in-depth: Claude Code's Write/Edit
+; deny rules were verified ineffective (2026-07-27), and an allowlisted
+; Bash grant cannot bound what a spawned interpreter does. The kernel
+; can. Shape mirrors AgentSandboxPolicy (swift/Sandbox.swift): allow
+; default, deny broad, re-allow narrow — SBPL resolves to the LAST
+; matching rule.
+(allow default)
+
+; ---- writes: the watcher archive, the runtime's own state, scratch.
+; Everything else on disk is read-only to this process tree.
+(deny file-write*)
+(allow file-write*
+  (subpath "__HOME__/.config/voice-flow/watcher")
+  ; Claude Code's own state: transcripts, shell snapshots, statsig, todos.
+  (subpath "__HOME__/.claude")
+  (regex #"^__HOME__/\.claude\.json")
+  ; Toolchain caches (node, npm, headless helpers).
+  (subpath "__HOME__/.cache")
+  (subpath "__HOME__/.npm")
+  (subpath "__HOME__/Library/Caches")
+  ; Scratch.
+  (subpath "/private/tmp")
+  (subpath "/private/var/folders")
+  (subpath "/tmp"))
+(allow file-write* (regex #"^/dev/"))
+
+; ---- secrets: unreadable regardless of Read-tool grants. The day folders
+; the review aggregates are harvested from arbitrary web pages; nothing
+; they say may lead anywhere near credentials.
+(deny file-read*
+  (regex #"/\.env")
+  (regex #"/\.ssh/")
+  (regex #"/\.aws/")
+  (regex #"/\.gnupg/")
+  (regex #"/\.netrc")
+  (regex #"/id_(rsa|dsa|ecdsa|ed25519)")
+  (regex #"\.pem$")
+  (regex #"\.p12$")
+  (regex #"/\.config/gh/")
+  (regex #"/\.git-credentials"))
+; Public certificate authorities collide with the shapes above
+; (/etc/ssl/cert.pem ends in .pem) — re-allow them or every TLS handshake
+; fails with an error that points nowhere near the cause.
+(allow file-read*
+  (subpath "/etc/ssl")
+  (subpath "/private/etc/ssl")
+  (subpath "/usr/share/ca-certificates")
+  (subpath "/opt/homebrew/etc/ca-certificates")
+  (subpath "/opt/homebrew/etc/openssl@3")
+  (subpath "/usr/local/etc/openssl@3")
+  (subpath "/System/Library/Keychains"))
+
+; Network stays open: the review needs api.anthropic.com, and WebSearch —
+; kept deliberately (the ticket's decision) — runs server-side over the
+; same connection. Exfiltration pressure is bounded by the write and
+; secret rules above plus the untrusted-data protocol in ANALYZE.md.

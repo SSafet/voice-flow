@@ -141,6 +141,12 @@ mkdir -p "$WATCHER_DATA/.claude" "$HOME/Library/LaunchAgents" \
 cp "$WATCHER_SRC/ANALYZE.md"                "$WATCHER_DATA/ANALYZE.md"
 cp "$WATCHER_SRC/CONSUMING.md"              "$WATCHER_DATA/CONSUMING.md"
 cp "$WATCHER_SRC/claude-settings.json"      "$WATCHER_DATA/.claude/settings.json"
+# The one aggregation entry point the review's Bash grant allows (VF-46).
+cp "$WATCHER_SRC/aggregate.py"              "$WATCHER_DATA/aggregate.py"
+# The kernel sandbox profile goes one level ABOVE the writable watcher dir
+# so the sandboxed review cannot rewrite its own confinement.
+sed "s|__HOME__|$HOME|g" "$WATCHER_SRC/watcher-analyze.sb" \
+    > "$HOME/.config/voice-flow/watcher-analyze.sb"
 # Sources live OUTSIDE the watcher data dir on purpose. That directory is an
 # archive the nightly agent writes into; sources are configuration, and will
 # eventually hold executables the app runs with its own TCC grants. Keeping
@@ -157,7 +163,7 @@ rsync -a --delete "$WATCHER_SRC/docs/"      "$WATCHER_DATA/docs/"
 # The ledger is the review's accumulated memory and the one thing here that
 # cannot be rebuilt — seed it only when starting from nothing, NEVER overwrite.
 [ -f "$WATCHER_DATA/ledger.md" ] || cp "$WATCHER_SRC/ledger-seed.md" "$WATCHER_DATA/ledger.md"
-mkdir -p "$WATCHER_DATA/reviews"
+mkdir -p "$WATCHER_DATA/reviews" "$WATCHER_DATA/proposals"
 cp "$WATCHER_SRC/screenwatch-skill/SKILL.md" "$HOME/.claude/skills/screenwatch/SKILL.md"
 cp "$WATCHER_SRC/screenwatch-skill/SKILL.md" "$HOME/.codex/skills/screenwatch/SKILL.md"
 sed "s|__HOME__|$HOME|g" "$WATCHER_SRC/$LA_NAME.plist" > "$LA_PLIST"

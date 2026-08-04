@@ -11,7 +11,7 @@
       "Edit(./reviews/**)",
       "Write(./proposals/**)",
       "Edit(./proposals/**)",
-      "Bash(python3:*)",
+      "Bash(python3 aggregate.py:*)",
       "mcp__voice-flow"
     ],
     "deny": [

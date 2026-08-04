@@ -18,8 +18,10 @@ amber pill ring) is `swift/Watcher.swift` plus wiring — see `CLAUDE.md`.
 | `sources/<name>/SOURCE.md` | `~/.config/voice-flow/sources/` (NOT under `watcher/`) | What each source captures and what its fields mean. A source owns *how* it captures; `CONSUMING.md` owns what happens to the data afterwards. |
 | `docs/*.md` | `~/.config/voice-flow/watcher/docs/` | Architecture, roadmap and research. Deployed so the nightly run can check the roadmap's kill-list before re-proposing something already measured and rejected. |
 | `ledger-seed.md` | `~/.config/voice-flow/watcher/ledger.md` | **Only when no ledger exists.** Never overwrites an existing one. |
-| `claude-settings.json` | `~/.config/voice-flow/watcher/.claude/settings.json` | Pre-approves the tools that run needs (read/write there, python3, web search, voice-flow MCP). |
-| `com.voiceflow.watcher-analyze.plist` | `~/Library/LaunchAgents/` (with `__HOME__` expanded) | launchd LaunchAgent: runs `claude -p` in the watcher dir daily at **21:37**. Shows as an "Anthropic PBC" background item in System Settings → Login Items. |
+| `claude-settings.json` | `~/.config/voice-flow/watcher/.claude/settings.json` | Pre-approves the tools that run needs (read/write there, `python3 aggregate.py`, web search, voice-flow MCP). |
+| `aggregate.py` | `~/.config/voice-flow/watcher/aggregate.py` | The one aggregation entry point the review may run — its Bash grant allows exactly this script, never free-form python (VF-46). |
+| `watcher-analyze.sb` | `~/.config/voice-flow/watcher-analyze.sb` (with `__HOME__` expanded — one level ABOVE the writable watcher dir, so the review can't rewrite its own confinement) | Kernel sandbox for the nightly run: writes confined to the watcher dir + runtime state, secret shapes unreadable, applied to every descendant (VF-46). |
+| `com.voiceflow.watcher-analyze.plist` | `~/Library/LaunchAgents/` (with `__HOME__` expanded) | launchd LaunchAgent: runs `sandbox-exec -f …watcher-analyze.sb claude -p` in the watcher dir daily at **21:37**. Shows as an "Anthropic PBC" background item in System Settings → Login Items. |
 | `screenwatch-skill/SKILL.md` | `~/.claude/skills/screenwatch/SKILL.md` and `~/.codex/skills/screenwatch/SKILL.md` | The on-demand `/screenwatch` skill (analyze / optimize / status), available to both Claude and Codex. |
 
 ## Rebuilding from nothing

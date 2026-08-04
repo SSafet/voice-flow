@@ -25,6 +25,7 @@ rm -f "$HOME/Library/LaunchAgents/$LA_NAME.plist"
 rm -rf "$HOME/.claude/skills/screenwatch"
 rm -rf "$HOME/.codex/skills/screenwatch"
 rm -f "$CONFIG_DIR/watcher/ANALYZE.md" "$CONFIG_DIR/watcher/.claude/settings.json"
+rm -f "$CONFIG_DIR/watcher/aggregate.py" "$CONFIG_DIR/watcher-analyze.sb"
 rmdir "$CONFIG_DIR/watcher/.claude" 2>/dev/null || true
 
 if [ "$REMOVE_USER_DATA" = true ]; then
