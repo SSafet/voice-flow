@@ -47,3 +47,39 @@ expectEqual(
     "an empty configured keyword must never match")
 
 print("assistant wake tests passed")
+
+// ── phone-note routing (VF-55) ──
+
+let phoneCandidates = [
+    AssistantWakeCandidate(slug: "flora", keyword: "FLORA"),
+    AssistantWakeCandidate(slug: "flora-watcher", keyword: "FLORA watcher"),
+]
+
+let routed = PhoneNoteRouting.match(
+    kind: "kept", text: "FLORA, add milk to the shopping list",
+    wakeEnabled: true, candidates: phoneCandidates)
+expectEqual(routed?.slug, "flora", "a kept phone note addressed to FLORA routes to her")
+expectEqual(routed?.prompt, "add milk to the shopping list",
+            "the wake name is stripped from the routed prompt")
+
+expectEqual(
+    PhoneNoteRouting.match(kind: "kept", text: "FLORA watcher, note my sleep",
+                           wakeEnabled: true, candidates: phoneCandidates)?.slug,
+    "flora-watcher", "longest wake name wins for variants, phone path included")
+
+expectEqual(
+    PhoneNoteRouting.match(kind: "pasted", text: "FLORA, add milk",
+                           wakeEnabled: true, candidates: phoneCandidates)?.slug, nil,
+    "pasted phone dictations were already delivered on the phone — never re-fire")
+
+expectEqual(
+    PhoneNoteRouting.match(kind: "kept", text: "FLORA, add milk",
+                           wakeEnabled: false, candidates: phoneCandidates)?.slug, nil,
+    "the wake-word setting gates the phone path too")
+
+expectEqual(
+    PhoneNoteRouting.match(kind: "kept", text: "buy flowers for the flora exhibit",
+                           wakeEnabled: true, candidates: phoneCandidates)?.slug, nil,
+    "a note merely mentioning the word is not addressed to the assistant")
+
+print("phone note routing tests passed")

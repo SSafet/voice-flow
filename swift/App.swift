@@ -849,8 +849,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return LocalAPIResponse.ok(["ok": true])
         }
         syncServer.onDictations = { [weak self] entries in
+            guard let self else { return }
+            let settings = UserSettings.shared
             for e in entries {
-                self?.chatPanel.upsertDictation(
+                // VF-55: a kept phone note addressed to an assistant by wake
+                // name triggers her here, exactly like a Mac dictation would
+                // — same matcher (boundary rules, Cyrillic fallback, variant
+                // routing), same serialized continuity-classified turn queue.
+                // handleSync's dedupe against stored history means an
+                // unchanged note never reaches this closure twice.
+                if let match = PhoneNoteRouting.match(
+                       kind: e.destination, text: e.text,
+                       wakeEnabled: settings.assistantWakeEnabled,
+                       candidates: self.assistantWakeCandidates()),
+                   let assistant = AssistantsStore.shared.assistant(slug: match.slug) {
+                    self.chatPanel.upsertDictation(
+                        id: e.id, text: e.text, time: e.time, timestamp: e.timestamp,
+                        destination: .assistant, seen: nil)
+                    self.enqueueAssistantWakeTurn(
+                        assistant: assistant,
+                        displayText: match.prompt,
+                        agentText: match.prompt,
+                        screenshots: [],
+                        attachmentNote: nil)
+                    continue
+                }
+                self.chatPanel.upsertDictation(
                     id: e.id, text: e.text, time: e.time, timestamp: e.timestamp,
                     destination: CaptureDestination(rawValue: e.destination) ?? .kept,
                     seen: e.destination == CaptureDestination.kept.rawValue ? false : nil)

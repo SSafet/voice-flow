@@ -73,3 +73,16 @@ extension AssistantWakeMatcher {
         return nil
     }
 }
+
+/// VF-55: routing decision for a phone-synced history entry. A *kept* note
+/// whose leading wake name resolves to an assistant becomes an assistant
+/// turn on the Mac; pasted dictations were already delivered into an app on
+/// the phone and never re-fire. Pure — the caller supplies the wake setting
+/// and candidates and owns storage + turn enqueueing.
+enum PhoneNoteRouting {
+    static func match(kind: String, text: String, wakeEnabled: Bool,
+                      candidates: [AssistantWakeCandidate]) -> (slug: String, prompt: String)? {
+        guard wakeEnabled, kind == "kept" else { return nil }
+        return AssistantWakeMatcher.resolve(in: text, candidates: candidates)
+    }
+}
