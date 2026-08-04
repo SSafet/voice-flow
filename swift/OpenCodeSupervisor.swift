@@ -467,6 +467,12 @@ actor OpenCodeSupervisor: OpenCodeServing {
             // The loopback services must not be proxied through the proxy.
             environment["NO_PROXY"] = "127.0.0.1,localhost"
             environment["no_proxy"] = "127.0.0.1,localhost"
+            // Node's global fetch (undici) ignores the proxy variables every
+            // other tool honours, so anything written in Node — the tickets
+            // CLI, most MCP servers — connected directly and died at the
+            // kernel with a bare EPERM, which the agent could only report as
+            // "network is blocked". This opt-in makes Node read them too.
+            environment["NODE_USE_ENV_PROXY"] = "1"
         }
         environment["XDG_CONFIG_HOME"] = configRoot.path
         environment["XDG_DATA_HOME"] = dataRoot.path

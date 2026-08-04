@@ -232,6 +232,55 @@ if FileManager.default.fileExists(atPath: loginKeychain) {
            "the user's login keychain is readable inside the sandbox")
 }
 
+// 6d. Node must route through the proxy rather than dying at the kernel.
+//     Node's global fetch (undici) ignores HTTPS_PROXY, which every other tool
+//     honours, so Node-based tooling — the tickets CLI, most MCP servers —
+//     connected directly, hit EPERM, and surfaced to the user as "network is
+//     blocked" with no way to tell why. NODE_USE_ENV_PROXY=1 is the opt-in that
+//     makes Node read the same variables; the supervisor sets it whenever the
+//     proxy is wired. Hermetic: the stub never dials out, it only observes.
+if FileManager.default.isExecutableFile(atPath: "/usr/bin/env") {
+    let stubPort = freeLoopbackPort()
+    let seen = scratch.appendingPathComponent("proxy-saw.txt")
+    let stub = Process()
+    stub.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+    stub.arguments = ["-c", """
+import socket
+srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(('127.0.0.1', \(stubPort))); srv.listen(4); srv.settimeout(20)
+try:
+    c, _ = srv.accept()
+    data = c.recv(200).decode('utf8', 'replace').split('\\r\\n')[0]
+    open(r"\(seen.path)", 'w').write(data)
+    c.close()
+except Exception:
+    pass
+"""]
+    try? stub.run()
+    Thread.sleep(forTimeInterval: 1.2)
+
+    let node = Process()
+    node.executableURL = URL(fileURLWithPath: prefix[0])
+    node.arguments = Array(prefix.dropFirst()) + [
+        "/usr/bin/env", "node", "-e",
+        "fetch('https://tickets.invalid/v1').catch(()=>{})",
+    ]
+    var nodeEnv = ProcessInfo.processInfo.environment
+    nodeEnv["HTTPS_PROXY"] = "http://127.0.0.1:\(stubPort)"
+    nodeEnv["HTTP_PROXY"] = "http://127.0.0.1:\(stubPort)"
+    nodeEnv["NODE_USE_ENV_PROXY"] = "1"
+    node.environment = nodeEnv
+    let sink = Pipe(); node.standardOutput = sink; node.standardError = sink
+    try? node.run()
+    node.waitUntilExit()
+    stub.waitUntilExit()
+
+    let observed = (try? String(contentsOf: seen, encoding: .utf8)) ?? ""
+    expect(observed.contains("tickets.invalid"),
+           "Node did not route through the proxy (saw: \(observed.isEmpty ? "nothing" : observed)) — "
+           + "Node-based tooling would fail with a bare EPERM the user cannot diagnose")
+}
+
 // 7. The dial must be enforced by the kernel, not by asking the model.
 AgentSandboxSettings.shared.configure {
     AgentSandboxSnapshot(
