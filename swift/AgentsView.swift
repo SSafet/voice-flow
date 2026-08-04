@@ -395,13 +395,23 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             underline.isHidden = true
             navigationUnderlines[destination] = underline
 
-            for subview in [button, badge, underline] {
+            // The visible label is small; the hit target must not be. An
+            // invisible overlay button spans the whole 44pt item, so the
+            // label, badge, underline, and surrounding air all take the tap.
+            let hitArea = NSButton(title: "", target: self,
+                                   action: #selector(destinationTapped(_:)))
+            hitArea.isBordered = false
+            hitArea.isTransparent = true
+            hitArea.identifier = NSUserInterfaceItemIdentifier(destination.rawValue)
+            hitArea.setAccessibilityElement(false)
+            for subview in [button, badge, underline, hitArea] {
                 subview.translatesAutoresizingMaskIntoConstraints = false
                 item.addSubview(subview)
             }
             NSLayoutConstraint.activate([
+                item.heightAnchor.constraint(equalToConstant: 44),
                 button.leadingAnchor.constraint(equalTo: item.leadingAnchor),
-                button.topAnchor.constraint(equalTo: item.topAnchor, constant: 4),
+                button.centerYAnchor.constraint(equalTo: item.centerYAnchor, constant: -3),
                 badge.leadingAnchor.constraint(equalTo: button.trailingAnchor, constant: 3),
                 badge.trailingAnchor.constraint(equalTo: item.trailingAnchor),
                 badge.centerYAnchor.constraint(equalTo: button.centerYAnchor),
@@ -409,9 +419,12 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 badge.heightAnchor.constraint(equalToConstant: 15),
                 underline.leadingAnchor.constraint(equalTo: button.leadingAnchor),
                 underline.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-                underline.topAnchor.constraint(equalTo: button.bottomAnchor, constant: 5),
                 underline.heightAnchor.constraint(equalToConstant: 2),
-                underline.bottomAnchor.constraint(equalTo: item.bottomAnchor),
+                underline.bottomAnchor.constraint(equalTo: item.bottomAnchor, constant: -4),
+                hitArea.leadingAnchor.constraint(equalTo: item.leadingAnchor, constant: -6),
+                hitArea.trailingAnchor.constraint(equalTo: item.trailingAnchor, constant: 6),
+                hitArea.topAnchor.constraint(equalTo: item.topAnchor),
+                hitArea.bottomAnchor.constraint(equalTo: item.bottomAnchor),
             ])
             stack.addArrangedSubview(item)
         }
@@ -425,7 +438,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         searchButton.toolTip = "Search assistants, automations, and threads"
         searchButton.setAccessibilityLabel("Search agents")
         searchButton.translatesAutoresizingMaskIntoConstraints = false
-        searchButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        searchButton.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        searchButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         stack.addArrangedSubview(searchButton)
 
         let line = NSView()
