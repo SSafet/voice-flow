@@ -109,6 +109,9 @@ compile_and_run watcher_bus swift/VoiceFlowPaths.swift swift/WatcherPolicy.swift
 compile_and_run hotkey_precedence "${APP_SUPPORT_SOURCES[@]}" tests/hotkey_precedence/main.swift \
     -framework Cocoa -framework AVFoundation -framework CoreGraphics -framework ApplicationServices \
     -framework Accelerate -framework Security -framework ScreenCaptureKit
+compile_and_run speech_speed "${APP_SUPPORT_SOURCES[@]}" tests/speech_speed/main.swift \
+    -framework Cocoa -framework AVFoundation -framework CoreGraphics -framework ApplicationServices \
+    -framework Accelerate -framework Security -framework ScreenCaptureKit -lsqlite3
 compile_and_run audio_recorder -D VOICE_FLOW_QA "${APP_SUPPORT_SOURCES[@]}" tests/audio_recorder/main.swift \
     -framework Cocoa -framework AVFoundation -framework CoreGraphics -framework ApplicationServices \
     -framework Accelerate -framework Security -framework ScreenCaptureKit -lsqlite3

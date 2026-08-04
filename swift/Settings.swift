@@ -114,6 +114,17 @@ final class SettingsStore: ObservableObject {
         loaded = true
     }
 
+    /// VF-56: voice/speed change outside this window too (the pill's speed
+    /// chip, the Speech drawer) — re-read them on every presentation so the
+    /// form never shows, then silently re-commits, stale values.
+    func reloadVoiceSettings() {
+        loaded = false
+        let settings = UserSettings.shared
+        ttsVoice = settings.ttsVoice
+        ttsSpeed = settings.ttsSpeed
+        loaded = true
+    }
+
     private func commit() {
         guard loaded else { return }
         let s = UserSettings.shared
@@ -486,7 +497,10 @@ private struct VoiceSettingsView: View {
 
                 LabeledContent {
                     HStack(spacing: 10) {
-                        Slider(value: $store.ttsSpeed, in: 0.5...2.0, step: 0.05)
+                        // Same range the engine clamps to (TTSRequest.normalized)
+                        // and the pill's speed chip can reach — a narrower
+                        // slider would silently rewrite a pill-set value.
+                        Slider(value: $store.ttsSpeed, in: 0.25...4.0, step: 0.05)
                             .frame(width: 180)
                         Text(String(format: "%.2f×", store.ttsSpeed))
                             .font(.caption.monospacedDigit())
@@ -1093,6 +1107,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     func prepareForPresentation() {
         store.reloadAssistantSettings()
+        store.reloadVoiceSettings()
     }
 
     private func addTab<V: View>(_ label: String, symbol: String, height: CGFloat, view: V) {

@@ -5920,7 +5920,17 @@ extension AppDelegate: AgentsDataSource {
 
     private func playerAdjustSpeed(_ delta: Double) {
         let current = ttsController.queuedSpeed ?? UserSettings.shared.ttsSpeed
-        ttsController.setQueuedSpeed(current + delta)
+        let clamped = max(0.25, min(4.0, current + delta))
+        ttsController.setQueuedSpeed(clamped)
+        // VF-56: the chip is a real setting, not a per-playback tweak — it
+        // persists, works with nothing playing, and the Speech drawer +
+        // Settings window read it back.
+        let settings = UserSettings.shared
+        settings.ttsSpeed = clamped
+        settings.save()
+        var request = chatPanel.currentTTSRequest()
+        request.speed = clamped
+        chatPanel.applyTTSRequest(request.normalized())
         // Generation runs ahead of playback, so already-fetched sentences
         // would keep the old pace (Safet QA: clicks seemed dead until a
         // skip). Regenerate from the playhead — the change is heard NOW.
