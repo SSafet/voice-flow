@@ -17,6 +17,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -1231,6 +1232,20 @@ class SignedAppGate:
                and png_channel_range(thread_image) >= 24,
                "Threads detail snapshot was blank or malformed")
 
+        # A half-typed reply survives navigating away and back: drafts are
+        # keyed by thread for the panel lifetime, and Escape/back/Cmd
+        # navigation must not eat them.
+        self.qa("POST", "/__qa/thread/compose", {"text": "half-typed reply"})
+        self.qa("POST", "/__qa/panel", {"tab": "agents", "agents_destination": "now"})
+        self.qa("POST", "/__qa/panel", {
+            "tab": "agents", "agents_destination": "threads",
+            "thread_source": "mcp", "thread_id": session_c,
+        })
+        draft_state = self.qa("GET", "/__qa/agents/navigation")
+        expect(draft_state.get("draft") == "half-typed reply",
+               f"navigation discarded the composer draft: {draft_state}")
+        self.qa("POST", "/__qa/thread/compose", {"text": ""})
+
         self.qa("POST", "/__qa/thread/action", {
             "source": "mcp", "id": session_c, "action": "complete",
         }, expect_status=202)
@@ -1259,6 +1274,59 @@ class SignedAppGate:
         expect(reopened_c["group"] == "recent"
                and reopened_c["retained_messages"] == retained_before,
                f"Reopen lost content or fabricated liveness: {reopened_c}")
+
+        # Reopen must lift the user-closed marker Complete set: a reply sent
+        # into the reopened thread reaches the session's next listener instead
+        # of a bogus "terminated" verdict that strands the queued message.
+        self.qa("POST", "/__qa/thread/action", {
+            "source": "mcp", "id": session_c, "action": "send",
+            "text": "reply after reopen",
+        }, expect_status=202)
+        reopened_listen = call("wait_for_message", {"timeout_seconds": 5},
+                               session=session_c)
+        expect("reply after reopen" in reopened_listen,
+               f"queued reply never reached the reopened session's listener: {reopened_listen}")
+
+        # Completing a thread whose agent is blocked on a question must
+        # confirm first — the un-confirmed ✓ may not cancel the waiting ask.
+        ask_box: dict[str, str] = {}
+
+        def blocked_ask() -> None:
+            ask_box["reply"] = call("report_to_user", {
+                "summary": "Ask before complete",
+                "details": "confirmation contract evidence",
+                "question": "proceed?",
+                "timeout_seconds": 30,
+            }, session=session_c)
+
+        ask_thread = threading.Thread(target=blocked_ask, daemon=True)
+        ask_thread.start()
+        wait_for("pending ask on Thread", lambda: next(
+            (row for row in self.state()["threads"]
+             if row["source"] == "mcp" and row["id"] == session_c
+             and row["pending"]), None))
+        self.qa("POST", "/__qa/panel", {
+            "tab": "agents", "agents_destination": "threads",
+            "thread_source": "mcp", "thread_id": session_c,
+        })
+        self.qa("POST", "/__qa/thread/ui_action", {"action": "lifecycle_tapped"})
+        confirm_state = self.qa("GET", "/__qa/agents/navigation")
+        expect(confirm_state.get("complete_confirmation_pending") is True
+               and confirm_state.get("mode") == "thread",
+               f"✓ with a live ask acted without confirmation: {confirm_state}")
+        still_pending = next(row for row in self.state()["threads"]
+                             if row["source"] == "mcp" and row["id"] == session_c)
+        expect(still_pending["pending"] is True and still_pending["archived"] is False,
+               "the un-confirmed ✓ already cancelled the waiting question")
+        self.qa("POST", "/__qa/thread/ui_action", {"action": "cancel_complete"})
+        self.qa("POST", "/__qa/thread/action", {
+            "source": "mcp", "id": session_c, "action": "send",
+            "text": "yes proceed",
+        }, expect_status=202)
+        ask_thread.join(timeout=10)
+        expect(not ask_thread.is_alive()
+               and "yes proceed" in ask_box.get("reply", ""),
+               "answering after the cancelled ✓ did not release the blocked ask")
 
         self.qa("POST", "/__qa/thread/action", {
             "source": "mcp", "id": session_c, "action": "delete",

@@ -569,6 +569,10 @@ final class ChatPanel {
     }
 
     var qaAgentsNavigationState: [String: Any] { agentsView.qaNavigationState }
+
+    func qaThreadUIAction(_ action: String) -> Bool { agentsView.qaThreadUIAction(action) }
+
+    func qaSetAgentsComposerText(_ text: String) -> Bool { agentsView.qaSetComposerText(text) }
 #endif
 
     private func openAssistant() {

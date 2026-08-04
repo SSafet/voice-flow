@@ -100,6 +100,10 @@ struct AgentsThreadProjectionInput: Equatable {
     let pendingAsk: Bool
     let live: Bool
     let archived: Bool
+    /// Evidence of active execution. Live means reachable (a connected
+    /// external session); running means work is verifiably happening. Only
+    /// running earns a place in Now's "Running now" section.
+    var running: Bool = false
 }
 
 enum AgentsThreadProjection {
@@ -338,7 +342,7 @@ enum AgentsNowProjection {
                     objectID: .thread(thread.id), kind: .pendingAsk,
                     title: thread.title, owner: thread.owner,
                     summary: thread.preview, updatedAt: thread.updatedAt))
-            } else if thread.live {
+            } else if thread.running {
                 running.append(AgentsNowItem(
                     objectID: .thread(thread.id), kind: .runningThread,
                     title: thread.title, owner: thread.owner,

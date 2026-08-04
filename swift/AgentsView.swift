@@ -33,6 +33,10 @@ struct AgentSessionRow {
     let unread: Bool
     let pendingAsk: Bool
     let live: Bool
+    /// Evidence of active execution (a local turn in flight). A merely
+    /// connected external session is Live, never Running — Now's "Running
+    /// now" section must not fill with idle sessions.
+    let running: Bool
     let archived: Bool
     /// Consumed thread kept as history (ticket #17) — tagged "completed".
     let completed: Bool
@@ -62,6 +66,9 @@ struct AgentThreadDetail {
     let messages: [AgentThreadMessage]
     let archived: Bool
     let live: Bool
+    /// A blocked question is waiting on the user. Completing the thread
+    /// cancels it, so the ✓ action must confirm first instead of acting.
+    let pendingAsk: Bool
     let canReply: Bool
     let canSpeak: Bool
     let canComplete: Bool
@@ -266,6 +273,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var automationSearchQuery = ""
     private var automationFilter: AutomationFilter = .all
     private var composerField: NSTextField?
+    private var composerThreadID: AgentsThreadID?
     private var automationNameField: NSTextField?
     private var automationInstructionsView: NSTextView?
     private var automationAssistantPopUp: NSPopUpButton?
@@ -287,6 +295,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var assistantSkillButtons: [String: NSButton] = [:]
     private var assistantDeleteConfirmationSlug: String?
     private var threadDeleteConfirmationID: AgentsThreadID?
+    private var threadCompleteConfirmationID: AgentsThreadID?
     private var threadDrafts: [AgentsThreadID: String] = [:]
     private var threadInlineError: String?
     private var pushedOrigin: Mode?
@@ -437,8 +446,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// can close the panel exactly as before.
     @discardableResult
     func handleMissionControlEscape() -> Bool {
-        if threadDeleteConfirmationID != nil {
+        if threadDeleteConfirmationID != nil || threadCompleteConfirmationID != nil {
             threadDeleteConfirmationID = nil
+            threadCompleteConfirmationID = nil
             threadInlineError = nil
             rebuild()
             return true
@@ -495,16 +505,33 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         return true
     }
 
+    func qaThreadUIAction(_ action: String) -> Bool {
+        switch action {
+        case "lifecycle_tapped": threadLifecycleTapped(); return true
+        case "confirm_complete": confirmCompleteThreadTapped(); return true
+        case "cancel_complete": cancelCompleteThreadTapped(); return true
+        default: return false
+        }
+    }
+
+    func qaSetComposerText(_ text: String) -> Bool {
+        guard let field = composerField else { return false }
+        field.stringValue = text
+        return true
+    }
+
     var qaNavigationState: [String: Any] {
         var state: [String: Any] = [
             "destination": currentDestination.rawValue,
             "thread_filter": threadFilter.label.lowercased(),
+            "complete_confirmation_pending": threadCompleteConfirmationID != nil,
         ]
         switch mode {
         case .thread(let id):
             state["mode"] = "thread"
             state["thread_source"] = id.source.rawValue
             state["thread_id"] = id.value
+            state["draft"] = composerField?.stringValue ?? threadDrafts[id] ?? ""
         case .search: state["mode"] = "search"
         case .destination: state["mode"] = "destination"
         case .job: state["mode"] = "automation_detail"
@@ -794,8 +821,13 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     // ── Rendering ───────────────────────────────────────
 
     private func rebuild() {
+        // Every navigation path funnels through here, so this is the one
+        // choke point where an in-progress reply can be captured before its
+        // field is torn down — Escape, back, Cmd shortcuts included.
+        stashComposerDraft()
         contentStack.subviews.forEach { $0.removeFromSuperview() }
         composerField = nil
+        composerThreadID = nil
         automationSearchField = nil
         automationNameField = nil
         automationInstructionsView = nil
@@ -930,7 +962,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 title: row.name, owner: row.owner, preview: row.preview,
                 updatedAt: row.updatedAt, unread: row.unread,
                 pendingAsk: row.pendingAsk, live: row.live,
-                archived: row.archived)
+                archived: row.archived, running: row.running)
         }
     }
 
@@ -2301,6 +2333,33 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         ])
         place(header, below: &top, gap: 0)
 
+        if threadCompleteConfirmationID == id {
+            let confirmation = NSView()
+            let copy = NSTextField(labelWithString: "Completing cancels its waiting question.")
+            copy.font = .systemFont(ofSize: 11.5, weight: .medium)
+            copy.textColor = Theme.text
+            let cancel = NSButton(title: "Cancel", target: self,
+                                  action: #selector(cancelCompleteThreadTapped))
+            let confirm = NSButton(title: "Complete", target: self,
+                                   action: #selector(confirmCompleteThreadTapped))
+            confirm.contentTintColor = Theme.accent
+            for view in [copy, cancel, confirm] {
+                view.translatesAutoresizingMaskIntoConstraints = false
+                confirmation.addSubview(view)
+            }
+            NSLayoutConstraint.activate([
+                copy.leadingAnchor.constraint(equalTo: confirmation.leadingAnchor, constant: 4),
+                copy.centerYAnchor.constraint(equalTo: confirmation.centerYAnchor),
+                cancel.leadingAnchor.constraint(greaterThanOrEqualTo: copy.trailingAnchor, constant: 8),
+                confirm.leadingAnchor.constraint(equalTo: cancel.trailingAnchor, constant: 6),
+                confirm.trailingAnchor.constraint(equalTo: confirmation.trailingAnchor),
+                cancel.centerYAnchor.constraint(equalTo: confirmation.centerYAnchor),
+                confirm.centerYAnchor.constraint(equalTo: confirmation.centerYAnchor),
+                confirmation.heightAnchor.constraint(equalToConstant: 34),
+            ])
+            place(confirmation, below: &top, gap: 6)
+        }
+
         if threadDeleteConfirmationID == id {
             let confirmation = NSView()
             let copy = NSTextField(labelWithString: "Delete permanently?")
@@ -2395,6 +2454,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             field.stringValue = threadDrafts[id] ?? ""
             place(row, below: &top, gap: 10)
             composerField = field
+            composerThreadID = id
         } else if let reason = detail.readOnlyReason {
             let notice = NSTextField(wrappingLabelWithString: reason)
             notice.font = .systemFont(ofSize: 11.5)
@@ -2470,6 +2530,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         assistantDeleteConfirmationSlug = nil
         automationDeleteConfirmationID = nil
         threadDeleteConfirmationID = nil
+        threadCompleteConfirmationID = nil
         threadInlineError = nil
         pushedOrigin = nil
         rebuild()
@@ -2600,6 +2661,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         assistantDeleteConfirmationSlug = nil
         automationDeleteConfirmationID = nil
         threadDeleteConfirmationID = nil
+        threadCompleteConfirmationID = nil
         threadInlineError = nil
         rebuild()
     }
@@ -2772,11 +2834,21 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     @objc private func threadLifecycleTapped() {
         guard let dataSource, case .thread(let id) = mode,
               let detail = dataSource.agentThreadDetail(for: id) else { return }
+        // Completing cancels a waiting question — that must never ride on a
+        // single click. A second ✓ press while the confirmation shows confirms.
+        if !detail.archived, detail.pendingAsk, threadCompleteConfirmationID != id {
+            threadCompleteConfirmationID = id
+            threadDeleteConfirmationID = nil
+            threadInlineError = nil
+            rebuild()
+            return
+        }
         do {
             if detail.archived { try dataSource.reopenThread(id) }
             else { try dataSource.completeThread(id) }
             threadInlineError = nil
             threadDeleteConfirmationID = nil
+            threadCompleteConfirmationID = nil
             threadFilter = detail.archived ? .open : .done
             mode = .destination(.threads)
             pushedOrigin = nil
@@ -2787,9 +2859,34 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
     }
 
+    @objc private func cancelCompleteThreadTapped() {
+        threadCompleteConfirmationID = nil
+        threadInlineError = nil
+        rebuild()
+    }
+
+    @objc private func confirmCompleteThreadTapped() {
+        guard let dataSource, case .thread(let id) = mode,
+              threadCompleteConfirmationID == id else { return }
+        do {
+            try dataSource.completeThread(id)
+            threadCompleteConfirmationID = nil
+            threadInlineError = nil
+            threadFilter = .done
+            mode = .destination(.threads)
+            pushedOrigin = nil
+            rebuild()
+        } catch {
+            threadCompleteConfirmationID = nil
+            threadInlineError = error.localizedDescription
+            rebuild()
+        }
+    }
+
     @objc private func deleteThreadTapped() {
         guard case .thread(let id) = mode else { return }
         threadDeleteConfirmationID = id
+        threadCompleteConfirmationID = nil
         threadInlineError = nil
         rebuild()
     }
@@ -2808,6 +2905,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             threadDeleteConfirmationID = nil
             threadInlineError = nil
             threadDrafts.removeValue(forKey: id)
+            // Drop the field reference first or the rebuild-entry stash
+            // resurrects the deleted thread's draft.
+            composerField = nil
+            composerThreadID = nil
             mode = .destination(.threads)
             pushedOrigin = nil
             rebuild()
@@ -2857,6 +2958,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     @objc private func sendTapped(_ sender: NSButton) {
         if let field = composerField { submit(field) }
+    }
+
+    private func stashComposerDraft() {
+        guard let field = composerField, let id = composerThreadID else { return }
+        threadDrafts[id] = field.stringValue
     }
 
     private func submit(_ field: NSTextField) {

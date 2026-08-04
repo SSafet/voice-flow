@@ -219,6 +219,24 @@ do {
            "old waiter must not steal replacement delivery")
 }
 
+// Complete → Reopen → reply: reopening (clearUserClosed) must lift the
+// closed-session tombstone, or the agent's next wait_for_message is told the
+// session terminated and the user's queued reply strands forever.
+do {
+    let inbox = makeInbox("reopen")
+    inbox.terminateWait(exactSession: "S")
+    let closed = inbox.wait(timeout: 0.1, session: "S")
+    expect(closed.terminated, "a completed session must terminate its waiters")
+
+    inbox.clearUserClosed("S")
+    inbox.add(text: "reply after reopen", attachments: [], session: "S")
+    let reopened = inbox.wait(timeout: 0.5, session: "S")
+    expect(!reopened.terminated,
+           "reopen did not lift the closed-session tombstone — the listener is still told terminated")
+    expect(texts(reopened.messages) == ["reply after reopen"],
+           "the queued reply was not delivered after reopen")
+}
+
 if failures > 0 {
     fputs("\(failures) inbox test(s) failed\n", stderr)
     exit(1)

@@ -3664,6 +3664,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             return .ok(["shown": tab ?? "current"])
+        case ("GET", "/__qa/agents/navigation"):
+            var state: [String: Any] = [:]
+            DispatchQueue.main.sync { state = self.chatPanel.qaAgentsNavigationState }
+            return .ok(state)
+        case ("POST", "/__qa/thread/ui_action"):
+            guard let action = payload["action"] as? String, !action.isEmpty else {
+                return .error(400, "action is required.")
+            }
+            var handled = false
+            DispatchQueue.main.sync { handled = self.chatPanel.qaThreadUIAction(action) }
+            return handled ? .ok(["action": action]) : .error(400, "unknown thread ui action.")
+        case ("POST", "/__qa/thread/compose"):
+            guard let text = payload["text"] as? String else {
+                return .error(400, "text is required.")
+            }
+            var composed = false
+            DispatchQueue.main.sync { composed = self.chatPanel.qaSetAgentsComposerText(text) }
+            return composed ? .ok(["ok": true]) : .error(409, "no thread composer is open.")
         case ("POST", "/__qa/thread/action"):
             guard let sourceRaw = payload["source"] as? String,
                   let source = AgentsThreadSource(rawValue: sourceRaw),
@@ -3849,7 +3867,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         id: id, title: row.name, owner: row.owner,
                         preview: row.preview, updatedAt: row.updatedAt,
                         unread: row.unread, pendingAsk: row.pendingAsk,
-                        live: row.live, archived: row.archived)).label.lowercased(),
+                        live: row.live, archived: row.archived,
+                        running: row.running)).label.lowercased(),
                     "unread": row.unread,
                     "pending": row.pendingAsk,
                     "live": row.live,
@@ -5275,6 +5294,7 @@ extension AppDelegate: AgentsDataSource {
                 unread: conversation.hasUnseenAssistantReply,
                 pendingAsk: conversation.turnState == .interrupted,
                 live: conversation.turnState == .running,
+                running: conversation.turnState == .running,
                 archived: conversation.completedAt != nil,
                 completed: conversation.completedAt != nil,
                 ghost: false)
@@ -5332,6 +5352,7 @@ extension AppDelegate: AgentsDataSource {
                 unread: queue.contains { !$0.seen },
                 pendingAsk: hasPendingAsk(for: session.id),
                 live: connected || listening,
+                running: false,
                 archived: archived,
                 completed: archived,
                 ghost: session.number != nil && mcpServer.sessions.session(session.id) == nil)
@@ -5391,6 +5412,7 @@ extension AppDelegate: AgentsDataSource {
                 id: id, title: conversation.title, owner: owner, state: state,
                 messages: messages, archived: conversation.completedAt != nil,
                 live: conversation.turnState == .running,
+                pendingAsk: conversation.turnState == .interrupted,
                 canReply: conversation.completedAt == nil && ownerAvailable && !agent.isRunning,
                 canSpeak: conversation.latestAssistantReply != nil,
                 canComplete: conversation.turnState != .running,
@@ -5429,6 +5451,7 @@ extension AppDelegate: AgentsDataSource {
                 id: id, title: row.name, owner: row.owner, state: state,
                 messages: messages, archived: row.archived,
                 live: listening || connected,
+                pendingAsk: row.pendingAsk,
                 canReply: !row.archived, canSpeak: !queue.isEmpty,
                 canComplete: true, canDelete: true,
                 claimsContextualFocus: !row.archived,
@@ -5492,6 +5515,7 @@ extension AppDelegate: AgentsDataSource {
                     archiveAfterAnswer: false)
                 return
             }
+            inbox.clearUserClosed(id.value)
             reopenStack(id.value)
             let live = inbox.hasWaiter(exactSession: id.value)
             inbox.add(text: text, attachments: [], session: id.value)
@@ -5563,6 +5587,10 @@ extension AppDelegate: AgentsDataSource {
             guard sessionPushes[id.value] != nil else {
                 throw threadActionError("No longer available")
             }
+            // Reopen is a deliberate re-engagement: lift the closed-session
+            // marker Complete set, or the agent's next wait_for_message is
+            // told the session terminated and queued replies strand.
+            inbox.clearUserClosed(id.value)
             reopenStack(id.value)
         }
         refreshSessionIndicator()

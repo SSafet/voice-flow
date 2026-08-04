@@ -13,11 +13,13 @@ private let mcpThread = AgentsThreadID(source: .mcp, value: "same-title")
 
 private func thread(_ id: AgentsThreadID, unread: Bool = false,
                     pending: Bool = false, live: Bool = false,
-                    archived: Bool = false, age: TimeInterval = 0) -> AgentsThreadProjectionInput {
+                    archived: Bool = false, running: Bool = false,
+                    age: TimeInterval = 0) -> AgentsThreadProjectionInput {
     AgentsThreadProjectionInput(
         id: id, title: "Shared title", owner: id.source.rawValue,
         preview: "preview", updatedAt: now.addingTimeInterval(-age),
-        unread: unread, pendingAsk: pending, live: live, archived: archived)
+        unread: unread, pendingAsk: pending, live: live, archived: archived,
+        running: running)
 }
 
 // State precedence is deterministic and archived rows never leak into Open.
@@ -83,13 +85,23 @@ let automations = [
 ]
 let nowSnapshot = AgentsNowProjection.snapshot(
     threads: [thread(mcpThread, unread: true, pending: true),
-              thread(assistantThread, live: true)],
+              thread(assistantThread, live: true, running: true)],
     automations: automations)
 expect(nowSnapshot.needsYou.map(\.kind) == [.pendingAsk, .blockedAutomation, .failedAutomation],
        "Now attention ordering or membership is wrong")
 expect(nowSnapshot.running.map(\.kind) == [.runningThread, .runningAutomation],
        "Now must contain running work only, ordered by recent activity")
 expect(nowSnapshot.attentionCount == 3, "Now badge must count unresolved objects once")
+
+// Live means reachable; running means verifiably working. An idle connected
+// external session must never occupy "Running now" (or Now can never reach
+// "All clear"), while it still groups as Live in the Threads destination.
+let idleConnected = thread(mcpThread, live: true)
+let idleSnapshot = AgentsNowProjection.snapshot(threads: [idleConnected], automations: [])
+expect(idleSnapshot.running.isEmpty && idleSnapshot.needsYou.isEmpty,
+       "an idle connected session leaked into Now")
+expect(AgentsThreadProjection.group(for: idleConnected) == .live,
+       "an idle connected session must still group as Live in Threads")
 
 // Equal titles remain distinct typed results and deep-link to their true store.
 let documents = [
