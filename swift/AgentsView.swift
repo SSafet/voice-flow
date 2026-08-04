@@ -1017,7 +1017,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         var top = contentStack.topAnchor
         let rows = dataSource?.agentAssistantRows() ?? []
         let create = makeRow(
-            leading: circled(symbolIcon("plus", description: "new assistant", pointSize: 15)),
+            leading: circled(symbolIcon("plus", description: "new assistant", pointSize: 12)),
             name: "New assistant", unread: false,
             preview: "Create a persistent identity, memory, skills, and workspace", time: "")
         create.rowAction = .newAssistantIdentity
@@ -1358,17 +1358,35 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         return label
     }
 
+    /// Swap in the padded cell, preserving the field's configuration.
+    private func applyPaddedCell(_ field: NSTextField, fontSize: CGFloat,
+                                 multiline: Bool = false) {
+        let cell = PaddedTextFieldCell(textCell: field.stringValue)
+        cell.placeholderString = field.placeholderString
+        cell.isEditable = true
+        cell.isSelectable = true
+        cell.isScrollable = !multiline
+        cell.usesSingleLineMode = !multiline
+        cell.wraps = multiline
+        cell.font = .systemFont(ofSize: fontSize)
+        field.cell = cell
+        field.font = .systemFont(ofSize: fontSize)
+        field.textColor = Theme.text
+        field.isBezeled = false
+        field.focusRingType = .none
+        // The rounded layer paints the background; the cell must not, or it
+        // covers the corner radius with an opaque square.
+        field.drawsBackground = false
+    }
+
     private func formField(placeholder: String) -> NSTextField {
         let field = NSTextField()
         field.placeholderString = placeholder
-        field.font = .systemFont(ofSize: 12)
-        field.textColor = Theme.text
-        field.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10)
-        field.isBezeled = false
-        field.focusRingType = .none
+        applyPaddedCell(field, fontSize: 12)
         field.wantsLayer = true
+        field.layer?.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10).cgColor
         field.layer?.cornerRadius = 7
-        field.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        field.heightAnchor.constraint(equalToConstant: 34).isActive = true
         return field
     }
 
@@ -1575,7 +1593,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                     leading: job.isEnabled
                         ? jobStateIcon(job.state)
                         : circled(symbolIcon("pause.circle", description: "automation disabled",
-                                             pointSize: 16)),
+                                             pointSize: 12)),
                     name: job.name,
                     unread: job.state == .blocked || job.state == .failed,
                     preview: "\(job.assistantName) · \(job.preview)", time: job.time,
@@ -1937,7 +1955,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 leading = leadingIcon(for: row)
             } else {
                 leading = circled(symbolIcon("text.bubble", description: "thread",
-                                             pointSize: 16))
+                                             pointSize: 12))
             }
         case .automation(let id):
             let state = dataSource?.agentJobRows().first(where: { $0.id == id })?.state ?? .failed
@@ -2033,13 +2051,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         let field = NSTextField()
         field.placeholderString = "Search assistants, automations, and threads"
         field.stringValue = searchQuery
-        field.font = .systemFont(ofSize: 12.5)
-        field.textColor = Theme.text
-        field.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10)
-        field.isBezeled = false
-        field.focusRingType = .none
+        applyPaddedCell(field, fontSize: 12.5)
         field.wantsLayer = true
+        field.layer?.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10).cgColor
         field.layer?.cornerRadius = 8
+        field.heightAnchor.constraint(equalToConstant: 34).isActive = true
         field.delegate = self
         field.setAccessibilityLabel("Search assistants, automations, and threads")
         searchField = field
@@ -2113,18 +2129,18 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// muted number, completed = quiet outlined check. No text suffixes.
     private func leadingIcon(for row: AgentSessionRow) -> NSView {
         if row.kind == .assistant {
-            if let number = row.number { return RingNumberView(number: number, side: 40) }
+            if let number = row.number { return RingNumberView(number: number, side: 24) }
             return circled(WaveformIconView())
         }
         if row.pendingAsk {
             let ask = symbolIcon("questionmark.bubble", description: "waiting question",
-                                 pointSize: 16)
+                                 pointSize: 12)
             (ask as? NSImageView)?.contentTintColor = Theme.accent
             return circled(ask)
         }
         guard let number = row.number else {
             return circled(symbolIcon("checkmark.circle", description: "completed",
-                                      pointSize: 16))
+                                      pointSize: 12))
         }
         if row.ghost {
             let label = NSTextField(labelWithString: "\(number)")
@@ -2132,7 +2148,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             label.textColor = Theme.text3
             return circled(label)
         }
-        return RingNumberView(number: number, side: 40)
+        return RingNumberView(number: number, side: 24)
     }
 
     private func makeRow(leading: NSView, name: String, unread: Bool,
@@ -2146,29 +2162,23 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         row.layer?.backgroundColor = Theme.card.cgColor
         row.layer?.borderWidth = 1
         row.layer?.borderColor = Theme.border.cgColor
+        // Single-line cards at a fixed height; the detail carries the rest.
+        // The metadata still surfaces on hover.
+        let details = [preview, stats].compactMap { $0 }.filter { !$0.isEmpty }
+        row.toolTip = details.isEmpty ? nil : details.joined(separator: "\n")
 
         let nameLabel = NSTextField(labelWithString: name)
-        nameLabel.font = .systemFont(ofSize: 15, weight: unread ? .semibold : .medium)
+        nameLabel.font = .systemFont(ofSize: 13.5, weight: unread ? .semibold : .medium)
         nameLabel.textColor = Theme.text
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.maximumNumberOfLines = 1
-        // Long titles/previews must truncate, never stretch the panel.
+        // Long titles must truncate, never stretch the panel.
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        // With a trailing action verb the timestamp moves into the metadata
-        // line, matching the mock's row grammar.
-        let metadata = action != nil && !time.isEmpty ? "\(preview) · \(time)" : preview
-        let previewLabel = NSTextField(labelWithString: metadata)
-        previewLabel.font = .systemFont(ofSize: 12)
-        previewLabel.textColor = Theme.text3
-        previewLabel.lineBreakMode = .byTruncatingTail
-        previewLabel.maximumNumberOfLines = 1
-        previewLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let trailing: NSView
         if let action {
             let verb = NSTextField(labelWithString: "\(action) ›")
-            verb.font = .systemFont(ofSize: 13.5, weight: .medium)
+            verb.font = .systemFont(ofSize: 12.5, weight: .medium)
             verb.textColor = Theme.accent
             trailing = verb
         } else {
@@ -2180,72 +2190,24 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         trailing.setContentHuggingPriority(.required, for: .horizontal)
         trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        for v in [leading, nameLabel, previewLabel, trailing] {
+        for v in [leading, nameLabel, trailing] {
             v.translatesAutoresizingMaskIntoConstraints = false
             row.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            leading.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 14),
-            leading.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            leading.widthAnchor.constraint(equalToConstant: 40),
+            row.heightAnchor.constraint(equalToConstant: 36),
 
-            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 13),
-            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 66),
+            leading.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 10),
+            leading.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            leading.widthAnchor.constraint(equalToConstant: 24),
+
+            nameLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 42),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -8),
 
-            previewLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
-            previewLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            previewLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -8),
-
-            trailing.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -14),
+            trailing.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
             trailing.centerYAnchor.constraint(equalTo: row.centerYAnchor),
         ])
-        var lastBaseline = previewLabel.bottomAnchor
-
-        if let stats {
-            let statsLabel = NSTextField(labelWithString: stats)
-            statsLabel.font = .systemFont(ofSize: 11.5)
-            statsLabel.textColor = Theme.text3
-            statsLabel.lineBreakMode = .byTruncatingTail
-            statsLabel.maximumNumberOfLines = 1
-            statsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            statsLabel.translatesAutoresizingMaskIntoConstraints = false
-            row.addSubview(statsLabel)
-            NSLayoutConstraint.activate([
-                statsLabel.topAnchor.constraint(equalTo: lastBaseline, constant: 4),
-                statsLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-                statsLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -8),
-            ])
-            lastBaseline = statsLabel.bottomAnchor
-        }
-
-        if let progress {
-            let track = NSView()
-            track.wantsLayer = true
-            track.layer?.backgroundColor = Theme.border.cgColor
-            track.layer?.cornerRadius = 1.5
-            let fill = NSView()
-            fill.wantsLayer = true
-            fill.layer?.backgroundColor = Theme.accent.cgColor
-            fill.layer?.cornerRadius = 1.5
-            for bar in [track, fill] {
-                bar.translatesAutoresizingMaskIntoConstraints = false
-                row.addSubview(bar)
-            }
-            let fraction = max(0.04, min(0.96, progress))
-            NSLayoutConstraint.activate([
-                track.topAnchor.constraint(equalTo: lastBaseline, constant: 7),
-                track.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-                track.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -14),
-                track.heightAnchor.constraint(equalToConstant: 3),
-                fill.leadingAnchor.constraint(equalTo: track.leadingAnchor),
-                fill.topAnchor.constraint(equalTo: track.topAnchor),
-                fill.bottomAnchor.constraint(equalTo: track.bottomAnchor),
-                fill.widthAnchor.constraint(equalTo: track.widthAnchor, multiplier: fraction),
-            ])
-            lastBaseline = track.bottomAnchor
-        }
-        lastBaseline.constraint(equalTo: row.bottomAnchor, constant: -13).isActive = true
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(rowClicked(_:)))
         row.addGestureRecognizer(click)
@@ -2253,7 +2215,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     /// The mock's leading icon: a thin amber-dim circle enclosing the glyph.
-    private func circled(_ inner: NSView, diameter: CGFloat = 40) -> NSView {
+    private func circled(_ inner: NSView, diameter: CGFloat = 24) -> NSView {
         let circle = NSView()
         circle.wantsLayer = true
         circle.layer?.cornerRadius = diameter / 2
@@ -2374,7 +2336,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .cancelled, .disabled: symbol = "pause.circle"
         }
         let view = symbolIcon(symbol, description: "automation \(state.rawValue)",
-                              pointSize: 16)
+                              pointSize: 12)
         (view as? NSImageView)?.contentTintColor = state == .blocked || state == .failed
             ? Theme.accent : Theme.text3
         return circled(view)
@@ -2625,17 +2587,13 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
         let field = NSTextField()
         field.placeholderString = placeholder
-        field.font = .systemFont(ofSize: 12.5)
-        field.textColor = Theme.text
-        field.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10)
-        field.isBezeled = false
-        field.focusRingType = .none
+        applyPaddedCell(field, fontSize: 12.5, multiline: true)
         field.wantsLayer = true
+        field.layer?.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10).cgColor
         field.layer?.cornerRadius = 8
         field.target = self
         field.action = #selector(composerSent(_:))
         field.lineBreakMode = .byWordWrapping
-        field.cell?.usesSingleLineMode = false
         // Multiline cells swallow Return instead of firing the action —
         // the delegate turns Return back into SEND (Option+Return = newline).
         field.delegate = self
@@ -3161,6 +3119,37 @@ private final class AgentListRowView: HoverRowView {
 
 /// The ⌃⌥ number wrapped in an amber ring — "this session is connected
 /// to an agent" (option A of design/agent-row-icons.html).
+/// Borderless fields top-align their text and start at the very edge of the
+/// frame. This cell insets the text 10pt and centers it vertically, for both
+/// display and the field editor.
+final class PaddedTextFieldCell: NSTextFieldCell {
+    private func adjusted(_ rect: NSRect) -> NSRect {
+        var inset = rect.insetBy(dx: 10, dy: 0)
+        let ideal = cellSize(forBounds: rect).height
+        let delta = inset.height - ideal
+        if delta > 0 {
+            inset.origin.y += delta / 2
+            inset.size.height -= delta
+        }
+        return inset
+    }
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        super.drawingRect(forBounds: adjusted(rect))
+    }
+    override func edit(withFrame rect: NSRect, in controlView: NSView,
+                       editor textObj: NSText, delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: adjusted(rect), in: controlView,
+                   editor: textObj, delegate: delegate, event: event)
+    }
+    override func select(withFrame rect: NSRect, in controlView: NSView,
+                         editor textObj: NSText, delegate: Any?,
+                         start selStart: Int, length selLength: Int) {
+        super.select(withFrame: adjusted(rect), in: controlView,
+                     editor: textObj, delegate: delegate,
+                     start: selStart, length: selLength)
+    }
+}
+
 final class RingNumberView: NSView {
     private let number: Int
     private let side: CGFloat
