@@ -79,6 +79,40 @@ do {
     expect(ticket.contains("VF-44"), "ticket numbers survive: \(ticket)")
 }
 
+// ── what removals leave behind (Safet QA, 2026-08-05) ──
+// Dropping an identifier used to strand the words that introduced it, and
+// both stumbles were audible on the session read-aloud path.
+do {
+    // Was spoken as a bare "Commit landed the fix."
+    let lead = SpeechSanitizer.sanitize(
+        "Commit a3f9c21e8b4d5f6071829304a5b6c7d8e9f01234 landed the fix.")
+    expect(lead.hasPrefix("A commit landed the fix"),
+           "a leading commit hash reads as a natural clause: \(lead)")
+
+    // Was spoken as a dangling "The session id is."
+    let dangling = SpeechSanitizer.sanitize(
+        "Deploy done. The session id is 0F09D32E-4D98-41DE-9433-2D9B363A6FA9.")
+    expect(dangling.contains("Deploy done."), "the real sentence survives: \(dangling)")
+    expect(!dangling.contains("session id"),
+           "a clause whose only payload was the identifier is dropped: \(dangling)")
+
+    // The narrowness of that rule matters more than the rule.
+    let question = SpeechSanitizer.sanitize("Do you want me to roll this to production?")
+    expect(question.contains("roll this to production?"),
+           "a question ending in a linking word is not scaffolding: \(question)")
+    let ok = SpeechSanitizer.sanitize("The build is ok.")
+    expect(ok.contains("The build is ok."), "a sentence with a payload survives: \(ok)")
+
+    // Mid-sentence the article stays lowercase.
+    let mid = SpeechSanitizer.sanitize("The fix in commit a3f9c21e8b4d landed today.")
+    expect(mid.contains("in a commit landed"), "a mid-sentence commit stays lowercase: \(mid)")
+
+    // Sentence splitting must not fire inside dotted tokens.
+    let dotted = SpeechSanitizer.sanitize("It touches swift/deep/CaptureRouting.swift now.")
+    expect(dotted.contains("CaptureRouting.swift"),
+           "a dotted filename is not split into sentences: \(dotted)")
+}
+
 // ── paths ──
 do {
     let path = SpeechSanitizer.sanitize("The bug lives in /Users/safet/repos/voice-flow/swift/App.swift today.")

@@ -113,7 +113,11 @@ enum SpeechSanitizer {
         text = text.replacingOccurrences(of: "~~", with: "")
         // Machine identifiers: UUIDs vanish, commit hashes become words.
         text = replace(text, uuidRegex, "")
-        text = replace(text, #"(?i)(commit\s+)"# + hashBody, "$1")
+        // "Commit <hash> landed the fix" → "A commit landed the fix".
+        // Keeping only the lead-in read as a bare "Commit landed the fix".
+        // Sentence-initial matches take the capital; the rest stay lowercase.
+        text = replace(text, #"(?i)(^|(?<=[.!?]\s))commit\s+"# + hashBody, "A commit")
+        text = replace(text, #"(?i)\bcommit\s+"# + hashBody, "a commit")
         text = replace(text, hashRegex, "a commit hash")
         // Deep paths → the last component ("swift/App.swift" survives as
         // "App.swift"; "either/or" has one slash and is untouched).
@@ -124,8 +128,58 @@ enum SpeechSanitizer {
         text = replace(text, #"[ \t]+([.,!?;:])"#, "$1")
         text = replace(text, #"[ \t]{2,}"#, " ")
         text = replace(text, #"\n{2,}"#, "\n")
+        text = dropEmptyScaffolding(text)
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    // ── post-removal repair ──
+
+    /// Removing an identifier can strand the words that introduced it:
+    /// "The session id is <uuid>." becomes "The session id is." A sentence
+    /// that is nothing but a lead-in to something we deleted carries no
+    /// speech at all, so it goes with it. Deliberately narrow — the sentence
+    /// must END on a linking word and must not be a question, so "Do you
+    /// want me to roll this to production?" and "The build is ok." both stay.
+    static func dropEmptyScaffolding(_ text: String) -> String {
+        text.components(separatedBy: "\n").map { line -> String in
+            sentences(in: line)
+                .filter { !isScaffolding($0) }
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+        }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
+    }
+
+    private static let scaffoldingPattern =
+        #"(?i)^[\w\s,'’-]{0,60}\b(?:is|are|was|were|at|to|from|of|see|via)\s*\.?$"#
+
+    private static func isScaffolding(_ sentence: String) -> Bool {
+        let trimmed = sentence.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return false }
+        return firstMatch(scaffoldingPattern, in: trimmed)
+    }
+
+    /// Splits on sentence terminators only when whitespace (or the end of the
+    /// line) follows, so "github.com" and "CaptureRouting.swift" stay whole.
+    private static func sentences(in line: String) -> [String] {
+        var result: [String] = []
+        var current = ""
+        let characters = Array(line)
+        for (index, character) in characters.enumerated() {
+            current.append(character)
+            guard ".!?".contains(character) else { continue }
+            let next = index + 1 < characters.count ? characters[index + 1] : " "
+            if next.isWhitespace {
+                result.append(current)
+                current = ""
+            }
+        }
+        if !current.trimmingCharacters(in: .whitespaces).isEmpty { result.append(current) }
+        return result
+    }
+
 
     // ── regex plumbing ──
 
