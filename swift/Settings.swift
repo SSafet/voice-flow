@@ -603,7 +603,7 @@ private struct AssistantSettingsView: View {
                 Text("Account")
             } footer: {
                 Text(store.agentBackend == AgentBackendCodex
-                     ? "Optional with the subscription backend — used as the fallback, and for anything Codex can't do."
+                     ? "Not used by the subscription backend — needed only if you switch to the OpenCode harness, or for automations pinned to it."
                      : "The assistant needs an OpenRouter key (openrouter.ai) to answer questions, see your screen, and help you work.")
             }
 

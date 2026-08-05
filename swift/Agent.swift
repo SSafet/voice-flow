@@ -3,7 +3,7 @@ import Cocoa
 import CoreGraphics
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  Agent (OpenRouter / OpenAI-compatible client + tool loop)
+//  Agent (foreground turns, dispatched to the codex/OpenCode runtimes)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 let DefaultAgentBaseURL = "https://openrouter.ai/api/v1"
@@ -17,7 +17,6 @@ let DefaultAgentModel = "anthropic/claude-sonnet-4.5"
 let DefaultAgentWorkspaceRoots = [
     "~/repos", "~/Desktop", "~/Downloads", "~/.config/voice-flow",
 ]
-private let AgentMaxTokens = 8_192
 
 enum AgentActivity: String {
     case idle, thinking, responding, acting
@@ -25,20 +24,17 @@ enum AgentActivity: String {
 
 enum AgentError: LocalizedError {
     case missingAPIKey
-    case requestFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .missingAPIKey:
             return "No agent API key. Add your OpenRouter key in Settings."
-        case .requestFailed(let message):
-            return message
         }
     }
 }
 
 // ── Agent Session ───────────────────────────────────────
-// Owns the conversation and runs the tool loop.
+// Owns the conversation and hands each turn to the selected runtime.
 
 final class AgentSession {
     var onActivityChanged: ((AgentActivity) -> Void)?
@@ -56,7 +52,6 @@ final class AgentSession {
     var allowControl: Bool { UserSettings.shared.assistantComputerUse }
 
     private(set) var isRunning = false
-    private var messages: [[String: Any]] = []
     private var interruptRequested = false
     private var activeTask: Task<Void, Never>?
     private var runningSessionId: String?
@@ -337,20 +332,6 @@ final class AgentSession {
     }
 
     private func loadRuntime(from conversation: AssistantConversation) {
-        messages = conversation.messages.compactMap { message in
-            switch message.role {
-            case .note:
-                return nil
-            case .assistant:
-                return ["role": "assistant", "content": message.text]
-            case .user:
-                var display = message.text
-                if let attachment = message.attachmentNote, !attachment.isEmpty {
-                    display = display.isEmpty ? attachment : "\(display)\n\(attachment)"
-                }
-                return ["role": "user", "content": [["type": "text", "text": display]]]
-            }
-        }
         codexThreadId = conversation.codexThreadId
         pendingCodexTurn = nil
         pendingOpenCodeTurn = nil
@@ -371,68 +352,7 @@ final class AgentSession {
         control.imageToScreenScale = frame.width / CGFloat(imageWidth)
     }
 
-    private var systemPrompt: String {
-        """
-        You are the Voice Flow companion — an assistant that lives in a small floating panel on the user's Mac and works alongside them.
-
-        What you receive:
-        - Screenshots of the user's screen, \(imageWidth)x\(imageHeight) pixels. The user can draw and type annotations directly on their screen (arrows, circles, notes); treat those marks as part of what they're telling you.
-        - Transcribed voice notes and typed messages.
-
-        How to respond:
-        - Your replies appear in a compact chat panel, so be concise and direct. A few short sentences beat a structured report. Plain text only — no markdown headings or tables.
-        - If something on screen is ambiguous, say what you see and ask one focused question.
-        - When the user asks you to act on their computer, work in small verified steps and stop as soon as the request is fulfilled.
-        - Never take destructive or irreversible actions (deleting data, sending messages or emails, completing purchases) unless the user explicitly asked for that exact action.
-        """ + assistantPersonaBlock + assistantMemoryBlock + assistantSkillBlock
-    }
-
-    private var computerToolDefinition: [String: Any] {
-        [
-            "type": "function",
-            "function": [
-                "name": "computer",
-                "description": """
-                Look at and control the user's Mac. Actions: `screenshot` (returns a fresh image of the screen), \
-                `left_click`, `right_click`, `middle_click`, `double_click`, `triple_click` (need `coordinate`), \
-                `left_click_drag` (needs `start_coordinate` and `coordinate`), `mouse_move` (needs `coordinate`), \
-                `type` (types `text` into the focused element), `key` (presses a key combo given in `text`, e.g. "cmd+s", "return", "escape"), \
-                `scroll` (needs `coordinate`, `scroll_direction`, `scroll_amount`), `wait` (pauses `duration` seconds), `cursor_position`. \
-                Coordinates are [x, y] pixels in the screenshot space.
-                """,
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "action": [
-                            "type": "string",
-                            "enum": [
-                                "screenshot", "left_click", "right_click", "middle_click",
-                                "double_click", "triple_click", "left_click_drag", "mouse_move",
-                                "type", "key", "scroll", "wait", "cursor_position",
-                            ],
-                        ],
-                        "coordinate": [
-                            "type": "array",
-                            "items": ["type": "integer"],
-                            "description": "[x, y] target position in screenshot pixels",
-                        ],
-                        "start_coordinate": [
-                            "type": "array",
-                            "items": ["type": "integer"],
-                            "description": "[x, y] drag start position",
-                        ],
-                        "text": ["type": "string", "description": "Text to type, or key combo for `key`"],
-                        "duration": ["type": "number", "description": "Seconds for `wait`"],
-                        "scroll_direction": ["type": "string", "enum": ["up", "down", "left", "right"]],
-                        "scroll_amount": ["type": "integer", "description": "Scroll ticks (1-30)"],
-                    ],
-                    "required": ["action"],
-                ],
-            ],
-        ]
-    }
-
-    /// Send a user turn (text and/or screenshots) and run the agent loop.
+    /// Send a user turn (text and/or screenshots) to the selected runtime.
     func send(text: String?, screenshots: [Data]) {
         guard !isRunning else {
             onError?("The agent is still working — stop it first or wait.")
@@ -454,19 +374,8 @@ final class AgentSession {
         interruptRequested = false
         isRunning = true
 
-        var content: [[String: Any]] = []
         let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmed.isEmpty {
-            content.append(["type": "text", "text": trimmed])
-        } else if !screenshots.isEmpty {
-            content.append(["type": "text", "text": "(No note — the screenshots are the message.)"])
-        }
-        for shot in screenshots {
-            if let block = imageBlock(from: shot) {
-                content.append(block)
-            }
-        }
-        guard !content.isEmpty else {
+        guard !trimmed.isEmpty || !screenshots.isEmpty else {
             isRunning = false
             return
         }
@@ -489,8 +398,6 @@ final class AgentSession {
         runningRuntimeKind = selectedRuntime
         runningTurnID = UUID()
         notifyHistoryChanged()
-        messages.append(["role": "user", "content": content])
-        pruneOldImages()
 
         let jpegs = screenshots.compactMap { ImageUtils.resizeExact($0, width: imageWidth, height: imageHeight) }
         if usingCodex {
@@ -544,6 +451,14 @@ final class AgentSession {
         }
     }
 
+    private func runLoop() async {
+        switch runningRuntimeKind {
+        case .opencode: await runOpenCodeTurn()
+        case .codex: await runCodexTurn()
+        case nil: finish(nil)
+        }
+    }
+
     private static func attachmentNote(count: Int) -> String? {
         switch count {
         case 0: return nil
@@ -552,94 +467,6 @@ final class AgentSession {
         }
     }
 
-    private func runLoop() async {
-        if runningRuntimeKind == .opencode {
-            await runOpenCodeTurn()
-            return
-        }
-        if runningRuntimeKind == .codex {
-            let fallBackToAPI = await runCodexTurn()
-            guard fallBackToAPI else { return }
-            // `messages` already holds the whole conversation, including this
-            // user turn — the API loop below continues it seamlessly.
-        }
-
-        var turns = 0
-        let maxTurns = 40  // hard stop for runaway tool loops
-
-        while turns < maxTurns {
-            turns += 1
-            activity = .thinking
-
-            let result: StreamResult
-            do {
-                result = try await streamOnce()
-            } catch is CancellationError {
-                handleInterruption()
-                return
-            } catch {
-                if interruptRequested {
-                    handleInterruption()
-                    return
-                }
-                let message = error.localizedDescription
-                recordNote(message)
-                DispatchQueue.main.async { self.onError?(message) }
-                finish(nil)
-                return
-            }
-
-            // Rebuild the assistant message for history
-            var assistantMessage: [String: Any] = ["role": "assistant"]
-            assistantMessage["content"] = result.text.isEmpty ? NSNull() : result.text
-            if !result.toolCalls.isEmpty {
-                assistantMessage["tool_calls"] = result.toolCalls.map { call in
-                    [
-                        "id": call.id,
-                        "type": "function",
-                        "function": ["name": call.name, "arguments": call.arguments],
-                    ] as [String: Any]
-                }
-            }
-            messages.append(assistantMessage)
-
-            if result.toolCalls.isEmpty {
-                finish(result.text)
-                return
-            }
-
-            // Execute requested tools
-            activity = .acting
-            var screenshotImages: [[String: Any]] = []
-            for call in result.toolCalls {
-                if interruptRequested {
-                    messages.append(toolMessage(call.id, "The user interrupted — stop and wait for their next message."))
-                    continue
-                }
-                let (text, image) = await executeTool(call)
-                messages.append(toolMessage(call.id, text))
-                if let image { screenshotImages.append(image) }
-            }
-            if !screenshotImages.isEmpty {
-                // OpenAI-compatible tool messages are text-only; attach the
-                // actual pixels as a follow-up user message.
-                var content: [[String: Any]] = [["type": "text", "text": "[Screenshot from the computer tool]"]]
-                content.append(contentsOf: screenshotImages)
-                messages.append(["role": "user", "content": content])
-            }
-            pruneOldImages()
-
-            if interruptRequested {
-                DispatchQueue.main.async { self.onToolActivity?("Stopped") }
-                finish(nil)
-                return
-            }
-        }
-
-        recordNote("Stopped — too many steps in one request.")
-        DispatchQueue.main.async { self.onError?("Stopped — too many steps in one request.") }
-        finish(nil)
-    }
 
     private func runOpenCodeTurn() async {
         activity = .thinking
@@ -743,7 +570,6 @@ final class AgentSession {
                 text: result.text,
                 externalSessionID: result.externalSessionID,
                 runtimeVersion: result.runtimeVersion)
-            messages.append(["role": "assistant", "content": result.text])
             finish(result.text, finalAlreadyPersisted: true)
         } catch is CancellationError {
             handleInterruption()
@@ -800,16 +626,17 @@ final class AgentSession {
 
     /// Runs one turn through the Codex CLI. Returns true when the turn should
     /// be retried through the API path instead (Codex failed and a key exists).
-    private func runCodexTurn() async -> Bool {
+    private func runCodexTurn() async {
         activity = .thinking
         guard let turn = pendingCodexTurn else {
             let message = "Codex turn was not prepared."
             recordNote(message)
             DispatchQueue.main.async { self.onError?(message) }
             finish(nil)
-            return false
+            return
         }
         pendingCodexTurn = nil
+
         codexThreadId = turn.preparation.resumeExternalSessionID
         let layers = AgentPromptComposer.layers(
             assistant: activeAssistant,
@@ -886,30 +713,18 @@ final class AgentSession {
                 text: result.text,
                 externalSessionID: codexThreadId,
                 runtimeVersion: result.runtimeVersion)
-            messages.append(["role": "assistant", "content": result.text])
             finish(result.text, finalAlreadyPersisted: true)
-            return false
         } catch is CancellationError {
             handleInterruption()
-            return false
         } catch {
             if interruptRequested {
                 handleInterruption()
-                return false
-            }
-            if KeychainStore.shared.loadAgentAPIKey() != nil {
-                vflog("codex turn failed, falling back to API: \(error.localizedDescription)")
-                DispatchQueue.main.async { self.onToolActivity?("Codex unavailable — using the API key") }
-                // The canonical user message stays, but the Codex binding is
-                // intentionally dirty. A legacy API final must not clean it.
-                runningRuntimeKind = nil
-                return true
+                return
             }
             let message = error.localizedDescription
             recordNote(message)
             DispatchQueue.main.async { self.onError?(message) }
             finish(nil)
-            return false
         }
     }
 
@@ -1023,15 +838,6 @@ final class AgentSession {
     }
 
     private func handleInterruption() {
-        // Keep history valid: answer any dangling tool calls.
-        if let last = messages.last,
-           (last["role"] as? String) == "assistant",
-           let calls = last["tool_calls"] as? [[String: Any]] {
-            for call in calls {
-                let id = call["id"] as? String ?? ""
-                messages.append(toolMessage(id, "The user interrupted — stop and wait for their next message."))
-            }
-        }
         recordNote("Stopped by the user.")
         DispatchQueue.main.async { self.onToolActivity?("Stopped") }
         finish(nil)
@@ -1043,11 +849,6 @@ final class AgentSession {
         notifyHistoryChanged()
     }
 
-    private func toolMessage(_ callId: String, _ text: String) -> [String: Any] {
-        ["role": "tool", "tool_call_id": callId, "content": text]
-    }
-
-    // ── Request / streaming ─────────────────────────────
 
     private struct ToolCall {
         var id: String
@@ -1055,118 +856,7 @@ final class AgentSession {
         var arguments: String
     }
 
-    private struct StreamResult {
-        let text: String
-        let toolCalls: [ToolCall]
-    }
 
-    private func requestBody() -> [String: Any] {
-        var payload: [[String: Any]] = [["role": "system", "content": systemPrompt]]
-        payload.append(contentsOf: messages)
-        return [
-            "model": UserSettings.shared.agentModel,
-            "max_tokens": AgentMaxTokens,
-            "stream": true,
-            "tools": [computerToolDefinition],
-            "messages": payload,
-        ]
-    }
-
-    private func streamOnce() async throws -> StreamResult {
-        guard let apiKey = KeychainStore.shared.loadAgentAPIKey() else {
-            throw AgentError.missingAPIKey
-        }
-
-        let base = UserSettings.shared.agentBaseURL
-        guard let url = URL(string: base.hasSuffix("/") ? base + "chat/completions" : base + "/chat/completions") else {
-            throw AgentError.requestFailed("Invalid agent API base URL.")
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 600
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("https://voiceflow.local", forHTTPHeaderField: "HTTP-Referer")
-        request.setValue("Voice Flow", forHTTPHeaderField: "X-Title")
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody())
-
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw AgentError.requestFailed("Invalid response from the agent API.")
-        }
-        if http.statusCode != 200 {
-            var body = Data()
-            for try await byte in bytes {
-                body.append(byte)
-                if body.count > 65_536 { break }
-            }
-            throw AgentError.requestFailed(apiErrorMessage(status: http.statusCode, body: body))
-        }
-
-        var text = ""
-        var toolCalls: [Int: ToolCall] = [:]
-        var startedResponding = false
-
-        for try await line in bytes.lines {
-            if interruptRequested { throw CancellationError() }
-            guard line.hasPrefix("data:") else { continue }
-            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            if payload == "[DONE]" { break }
-            guard let data = payload.data(using: .utf8),
-                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-
-            if let error = event["error"] as? [String: Any] {
-                throw AgentError.requestFailed(error["message"] as? String ?? "Unknown streaming error")
-            }
-            guard let choices = event["choices"] as? [[String: Any]],
-                  let first = choices.first,
-                  let delta = first["delta"] as? [String: Any] else { continue }
-
-            if let piece = delta["content"] as? String, !piece.isEmpty {
-                text += piece
-                if !startedResponding {
-                    startedResponding = true
-                    activity = .responding
-                    DispatchQueue.main.async { self.onAssistantStart?() }
-                }
-                DispatchQueue.main.async { self.onAssistantDelta?(piece) }
-            }
-
-            if let calls = delta["tool_calls"] as? [[String: Any]] {
-                for chunk in calls {
-                    let index = chunk["index"] as? Int ?? 0
-                    var call = toolCalls[index] ?? ToolCall(id: "", name: "", arguments: "")
-                    if let id = chunk["id"] as? String, !id.isEmpty { call.id = id }
-                    if let function = chunk["function"] as? [String: Any] {
-                        if let name = function["name"] as? String, !name.isEmpty { call.name = name }
-                        if let args = function["arguments"] as? String { call.arguments += args }
-                    }
-                    toolCalls[index] = call
-                }
-            }
-        }
-
-        let ordered = toolCalls.keys.sorted().compactMap { toolCalls[$0] }
-        return StreamResult(text: text, toolCalls: ordered)
-    }
-
-    private func apiErrorMessage(status: Int, body: Data) -> String {
-        if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
-            if let error = json["error"] as? [String: Any], let message = error["message"] as? String {
-                return message
-            }
-            if let message = json["message"] as? String {
-                return message
-            }
-        }
-        switch status {
-        case 401: return "The agent API key was rejected. Check it in Settings."
-        case 402: return "OpenRouter reports insufficient credits."
-        case 429: return "Rate limited by the agent API — try again in a moment."
-        default: return "Agent API request failed (\(status))."
-        }
-    }
 
     // ── Tool execution ──────────────────────────────────
 
@@ -1284,29 +974,6 @@ final class AgentSession {
         ]
     }
 
-    /// Keep only the most recent screenshots in history — old frames burn
-    /// context without adding much. Replaced with a short text marker.
-    /// 8 accommodates a full session bundle (buffered frames + final shot).
-    private func pruneOldImages(keep: Int = 8) {
-        var seen = 0
-        for index in stride(from: messages.count - 1, through: 0, by: -1) {
-            guard (messages[index]["role"] as? String) == "user",
-                  var content = messages[index]["content"] as? [[String: Any]] else { continue }
-            var changed = false
-            for blockIndex in stride(from: content.count - 1, through: 0, by: -1) {
-                if (content[blockIndex]["type"] as? String) == "image_url" {
-                    seen += 1
-                    if seen > keep {
-                        content[blockIndex] = ["type": "text", "text": "[earlier screenshot removed]"]
-                        changed = true
-                    }
-                }
-            }
-            if changed {
-                messages[index]["content"] = content
-            }
-        }
-    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

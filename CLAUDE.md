@@ -324,11 +324,11 @@ deployed copies are build outputs.
 | `Watcher.swift` | `WorkflowWatcher` | Ambient 5 s screen/app log feeding the nightly workflow review. |
 | `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
 | `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Claude Code. |
-| `Agent.swift` | `AgentSession`, `ComputerControl` | LLM loop that reasons over screenshots and issues screen-control tool calls. |
+| `Agent.swift` | `AgentSession`, `ComputerControl` | Foreground assistant turns: prepares each turn and hands it to the selected runtime, plus the screen-control implementation both runtimes call. |
 | `Sandbox.swift` | `AgentSandboxPolicy`, `AgentSandbox`, `AgentSandboxSettings` | The Seatbelt profile the agent runtime runs under — the real security boundary. |
 | `EgressProxy.swift` | `EgressProxyServer`, `EgressPolicy`, `EgressLog` | Loopback CONNECT proxy: the agent's only route out, logged by destination host. |
 | `AssistantContinuity.swift` | `AssistantContinuityClassifier`, `LocalAssistantSessionAdapter` | Ephemeral current-vs-new wake routing and the stable local picker identity for FLORA. |
-| `Codex.swift` | `CodexExecBackend` | ChatGPT-subscription assistant turns via `codex exec --json` (OAuth, thread resume, image attach); the default backend, API key is the fallback. |
+| `Codex.swift` | `CodexExecBackend` | ChatGPT-subscription assistant turns via `codex exec --json` (OAuth, thread resume, image attach); the default backend. A failed turn now surfaces as an error — there is no silent API-key fallback. |
 | `Annotation.swift` | `AnnotationOverlay` | Draw-on-screen overlay (pen + multiline text notes with size presets). |
 | `Settings.swift` | `SettingsStore`, `SettingsWindowController`, `PermissionsWindowController`, `KeyRecorderView` | SwiftUI settings & permissions windows. |
 | `ScreenCapture.swift` | `ScreenCapture`, `CaptureScheduler`, `ImageUtils` | ScreenCaptureKit screenshots for the agent. |
