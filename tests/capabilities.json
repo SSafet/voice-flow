@@ -1570,6 +1570,16 @@
       "tests": [
         "tests/opencode_updater/main.swift"
       ]
+    },
+    {
+      "id": "SYS-01",
+      "area": "system-agents",
+      "name": "The continuity router, speech cleanup, and speech agents are listed and retunable in the panel, and every run resolves the saved model, reasoning, and instructions",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/system_agents/main.swift"
+      ]
     }
   ]
 }

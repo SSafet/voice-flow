@@ -4,6 +4,10 @@ import Foundation
 // markdown become speakable; prose, decisions, questions and short
 // essential values survive untouched.
 
+// SystemAgents.swift (the cleanup agent's model/instructions) logs through
+// the app helper; this focused harness supplies the symbol without AppKit.
+func vflog(_ message: String) {}
+
 private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     guard condition() else {
         fputs("FAIL: \(message)\n", stderr)

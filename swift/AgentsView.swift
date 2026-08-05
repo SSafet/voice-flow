@@ -133,6 +133,27 @@ struct AgentAutomationDefaults {
     let modelID: String?
 }
 
+/// One of the three fixed agents the app runs on its own behalf (system
+/// agents). Both the list row and its editor read this: they are few and
+/// small, so a second round-trip for the detail would buy nothing.
+struct AgentSystemAgentRow {
+    let kind: String
+    let name: String
+    let purpose: String
+    let trigger: String
+    let runsOn: String
+    let model: String
+    let defaultModel: String
+    let effort: String
+    let effortLabel: String
+    let supportsEffort: Bool
+    let instructions: String
+    let editableInstructions: Bool
+    let instructionsNote: String?
+    let instructionsContract: String?
+    let usesDefaults: Bool
+}
+
 struct AgentAssistantRow {
     let slug: String
     let name: String
@@ -160,6 +181,15 @@ protocol AgentsDataSource: AnyObject {
     func reopenThread(_ id: AgentsThreadID) throws
     func deleteThread(_ id: AgentsThreadID) throws
     func agentAssistantRows() -> [AgentAssistantRow]
+    func agentSystemAgentRows() -> [AgentSystemAgentRow]
+    /// nil for a field means "leave as it is"; an empty model or effort means
+    /// "back to the shipped default".
+    func updateAgentSystemAgent(kind: String, model: String, effort: String?,
+                                instructions: String?) throws
+    func resetAgentSystemAgent(kind: String) throws
+    /// Run the agent's real path once with its saved config and report what
+    /// came back — the in-product proof that a retune actually works.
+    func testAgentSystemAgent(kind: String, completion: @escaping (String) -> Void)
     func agentJobRows() -> [AgentJobRow]
     func agentAutomationModels() -> [OpenRouterModel]
     /// Catalog refresh behind the editor: calls back on main only when a
@@ -206,6 +236,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case automationEdit(String)
         case assistantWorkspace(String, AssistantWorkspaceTab)
         case assistantCreate
+        case systemAgent(String)
     }
     private enum AutomationFilter: Int, CaseIterable {
         case all
@@ -297,6 +328,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var assistantInstructionsView: NSTextView?
     private var assistantMemoryView: NSTextView?
     private var assistantMemoryKind = "core"
+    private var systemAgentModelField: NSTextField?
+    private var systemAgentEffortPopUp: NSPopUpButton?
+    private var systemAgentInstructionsView: NSTextView?
+    private var systemAgentTestResult: String?
+    private var systemAgentTestRunning = false
     private var assistantMemoryRevision: String?
     private var assistantSkillButtons: [String: NSButton] = [:]
     private var assistantDeleteConfirmationSlug: String?
@@ -515,7 +551,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .destination:
             return false
         case .search, .thread, .job, .automationCreate, .automationEdit,
-             .assistantWorkspace, .assistantCreate:
+             .assistantWorkspace, .assistantCreate, .systemAgent:
             backTapped()
             return true
         }
@@ -597,6 +633,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .automationEdit: state["mode"] = "automation_edit"
         case .assistantWorkspace: state["mode"] = "assistant_workspace"
         case .assistantCreate: state["mode"] = "assistant_create"
+        case .systemAgent(let kind):
+            state["mode"] = "system_agent"
+            state["system_agent"] = kind
         }
         return state
     }
@@ -906,6 +945,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         assistantInstructionsView = nil
         assistantMemoryView = nil
         assistantSkillButtons = [:]
+        systemAgentModelField = nil
+        systemAgentEffortPopUp = nil
+        systemAgentInstructionsView = nil
         switch mode {
         case .destination(let destination): buildDestination(destination)
         case .search: buildSearch()
@@ -915,6 +957,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .automationEdit(let id): buildAutomationForm(jobID: id)
         case .assistantWorkspace(let slug, let tab): buildAssistantWorkspace(slug: slug, tab: tab)
         case .assistantCreate: buildAssistantCreate()
+        case .systemAgent(let kind): buildSystemAgent(kind: kind)
         }
         styleNavigation()
         // Content-fit height, the way the mocks are framed: every screen
@@ -1061,7 +1104,192 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             place(view, below: &top, gap: 6)
         }
         if rows.isEmpty { place(emptyLabel("No assistants available"), below: &top, gap: 28) }
+
+        // The three fixed agents the app runs on its own behalf. They have no
+        // Assistant, no memory and no thread — they exist so wake routing,
+        // read-aloud, and speech work — but their model, reasoning, and brief
+        // are yours, so they belong on this list rather than in the source.
+        let system = dataSource?.agentSystemAgentRows() ?? []
+        if !system.isEmpty {
+            place(sectionHeader("SYSTEM", count: system.count), below: &top, gap: 18)
+            for agent in system {
+                var meta = agent.model
+                if agent.supportsEffort, !agent.effortLabel.isEmpty {
+                    meta += " · \(agent.effortLabel)"
+                }
+                let view = makeRow(
+                    leading: circled(symbolIcon(
+                        systemAgentSymbol(agent.kind), description: agent.name, pointSize: 11)),
+                    name: agent.name, unread: false,
+                    preview: agent.purpose,
+                    time: agent.usesDefaults ? "default" : "tuned",
+                    stats: "\(meta) · \(agent.trigger)")
+                view.rowAction = .systemAgent(agent.kind)
+                place(view, below: &top, gap: 6)
+            }
+        }
         finishContent(top)
+    }
+
+    private func systemAgentSymbol(_ kind: String) -> String {
+        switch kind {
+        case SystemAgentKind.continuity.rawValue: return "arrow.triangle.branch"
+        case SystemAgentKind.speechCleanup.rawValue: return "text.badge.checkmark"
+        default: return "speaker.wave.2"
+        }
+    }
+
+    private func buildSystemAgent(kind: String) {
+        var top = contentStack.topAnchor
+        guard let agent = dataSource?.agentSystemAgentRows().first(where: { $0.kind == kind }) else {
+            place(assistantHeader(title: "Agent unavailable"), below: &top, gap: 0)
+            finishContent(top)
+            return
+        }
+        place(assistantHeader(title: agent.name), below: &top, gap: 0)
+
+        let purpose = NSTextField(wrappingLabelWithString: agent.purpose)
+        purpose.font = .systemFont(ofSize: 11.5)
+        purpose.textColor = Theme.text2
+        purpose.maximumNumberOfLines = 0
+        place(purpose, below: &top, gap: 12)
+
+        let context = NSTextField(wrappingLabelWithString:
+            "Runs on \(agent.runsOn).\nTriggered by: \(agent.trigger.lowercased()).")
+        context.font = .systemFont(ofSize: 10.5)
+        context.textColor = Theme.text3
+        context.maximumNumberOfLines = 0
+        place(context, below: &top, gap: 8)
+
+        if let inlineError { place(errorLabel(inlineError), below: &top, gap: 10) }
+
+        place(formLabel("MODEL"), below: &top, gap: 16)
+        let model = formField(placeholder: agent.defaultModel)
+        model.stringValue = agent.model
+        systemAgentModelField = model
+        place(model, below: &top, gap: 5)
+        let modelHint = NSTextField(labelWithString: "Default: \(agent.defaultModel) — clear the field to go back to it.")
+        modelHint.font = .systemFont(ofSize: 10)
+        modelHint.textColor = Theme.text3
+        place(modelHint, below: &top, gap: 5)
+
+        if agent.supportsEffort {
+            place(formLabel("REASONING"), below: &top, gap: 12)
+            let popUp = formPopUp()
+            for choice in AgentReasoningEffort.choices {
+                popUp.addItem(withTitle: choice.label)
+                popUp.lastItem?.representedObject = choice.value
+            }
+            select(popUp: popUp, representedObject: agent.effort)
+            systemAgentEffortPopUp = popUp
+            place(popUp, below: &top, gap: 5)
+        }
+
+        if agent.editableInstructions {
+            place(formLabel("INSTRUCTIONS"), below: &top, gap: 12)
+            let editor = makeTextEditor(text: agent.instructions, height: 150)
+            systemAgentInstructionsView = editor.textView
+            place(editor.view, below: &top, gap: 5)
+        } else if !agent.instructions.isEmpty {
+            place(formLabel("INSTRUCTIONS"), below: &top, gap: 12)
+            let shown = NSTextField(wrappingLabelWithString: agent.instructions)
+            shown.font = .systemFont(ofSize: 11)
+            shown.textColor = Theme.text2
+            shown.maximumNumberOfLines = 0
+            place(shown, below: &top, gap: 5)
+        }
+        if let note = agent.instructionsNote {
+            let label = NSTextField(wrappingLabelWithString: note)
+            label.font = .systemFont(ofSize: 10)
+            label.textColor = Theme.text3
+            label.maximumNumberOfLines = 0
+            place(label, below: &top, gap: 6)
+        }
+        if let contract = agent.instructionsContract {
+            let label = NSTextField(wrappingLabelWithString: contract)
+            label.font = .systemFont(ofSize: 10)
+            label.textColor = Theme.text3
+            label.maximumNumberOfLines = 0
+            place(label, below: &top, gap: 6)
+        }
+
+        let actions = NSStackView()
+        actions.orientation = .horizontal
+        actions.spacing = 8
+        let save = NSButton(title: "Save", target: self,
+                            action: #selector(saveSystemAgentTapped))
+        save.identifier = NSUserInterfaceItemIdentifier(agent.kind)
+        save.bezelStyle = .rounded
+        save.controlSize = .small
+        actions.addArrangedSubview(save)
+        let test = NSButton(title: systemAgentTestRunning ? "Testing…" : "Test now",
+                            target: self, action: #selector(testSystemAgentTapped))
+        test.identifier = NSUserInterfaceItemIdentifier(agent.kind)
+        test.bezelStyle = .rounded
+        test.controlSize = .small
+        test.isEnabled = !systemAgentTestRunning
+        actions.addArrangedSubview(test)
+        if !agent.usesDefaults {
+            let reset = NSButton(title: "Reset to default", target: self,
+                                 action: #selector(resetSystemAgentTapped))
+            reset.identifier = NSUserInterfaceItemIdentifier(agent.kind)
+            reset.bezelStyle = .inline
+            reset.controlSize = .small
+            actions.addArrangedSubview(reset)
+        }
+        place(actions, below: &top, gap: 16)
+
+        if let result = systemAgentTestResult {
+            let label = NSTextField(wrappingLabelWithString: result)
+            label.font = .systemFont(ofSize: 10.5)
+            label.textColor = Theme.text2
+            label.maximumNumberOfLines = 0
+            place(label, below: &top, gap: 10)
+        }
+        finishContent(top)
+    }
+
+    @objc private func saveSystemAgentTapped(_ sender: NSButton) {
+        guard let kind = sender.identifier?.rawValue else { return }
+        let effort = systemAgentEffortPopUp
+            .map { ($0.selectedItem?.representedObject as? String) ?? AgentReasoningEffort.unset }
+        do {
+            try dataSource?.updateAgentSystemAgent(
+                kind: kind,
+                model: systemAgentModelField?.stringValue ?? "",
+                effort: effort,
+                instructions: systemAgentInstructionsView?.string)
+            inlineError = nil
+            systemAgentTestResult = "Saved. The next run of this agent uses it."
+        } catch {
+            inlineError = error.localizedDescription
+        }
+        rebuild()
+    }
+
+    @objc private func resetSystemAgentTapped(_ sender: NSButton) {
+        guard let kind = sender.identifier?.rawValue else { return }
+        do {
+            try dataSource?.resetAgentSystemAgent(kind: kind)
+            inlineError = nil
+            systemAgentTestResult = "Back to the shipped defaults."
+        } catch {
+            inlineError = error.localizedDescription
+        }
+        rebuild()
+    }
+
+    @objc private func testSystemAgentTapped(_ sender: NSButton) {
+        guard let kind = sender.identifier?.rawValue, !systemAgentTestRunning else { return }
+        systemAgentTestRunning = true
+        systemAgentTestResult = "Running the real path with the saved config…"
+        rebuild()
+        dataSource?.testAgentSystemAgent(kind: kind) { [weak self] outcome in
+            guard let self else { return }
+            self.systemAgentTestRunning = false
+            self.systemAgentTestResult = outcome
+            if case .systemAgent = self.mode { self.rebuild() }
+        }
     }
 
     private func buildAssistantCreate() {
@@ -2333,6 +2561,12 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             mode = .assistantWorkspace(slug, .overview)
             inlineError = nil
             rebuild()
+        case .systemAgent(let kind):
+            currentDestination = .assistants
+            mode = .systemAgent(kind)
+            inlineError = nil
+            systemAgentTestResult = nil
+            rebuild()
         case .object(let objectID):
             open(objectID)
         }
@@ -2813,6 +3047,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         threadDeleteConfirmationID = nil
         threadCompleteConfirmationID = nil
         threadInlineError = nil
+        systemAgentTestResult = nil
         rebuild()
     }
 
@@ -3143,6 +3378,7 @@ private enum AgentListRowAction {
     case thread(AgentsThreadID)
     case job(String)
     case assistantWorkspace(String)
+    case systemAgent(String)
     case object(AgentsObjectID)
 }
 

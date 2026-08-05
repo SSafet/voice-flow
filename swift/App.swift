@@ -5296,6 +5296,130 @@ extension AppDelegate: AgentsDataSource {
         }
     }
 
+    // ── System agents (continuity router, speech cleanup, speech) ───────
+    // Fixed identities with no Assistant behind them. The store owns model
+    // and reasoning; the speech agent's instructions stay in `tts_instructions`
+    // so the panel and Settings → Speech never disagree about the voice.
+
+    func agentSystemAgentRows() -> [AgentSystemAgentRow] {
+        SystemAgentStore.specs.map { spec in
+            let config = SystemAgentStore.shared.config(for: spec.kind)
+            let usesTTSInstructions = spec.instructionsSource == .ttsSettings
+            let instructions = usesTTSInstructions
+                ? UserSettings.shared.ttsInstructions
+                : config.instructions
+            let instructionsAreDefault = usesTTSInstructions
+                ? UserSettings.shared.ttsInstructions == DefaultTTSInstructions
+                : config.usesDefaultInstructions
+            return AgentSystemAgentRow(
+                kind: spec.kind.rawValue,
+                name: spec.name,
+                purpose: spec.purpose,
+                trigger: spec.trigger,
+                runsOn: spec.runsOn,
+                model: config.model,
+                defaultModel: spec.defaultModel,
+                effort: config.effort ?? AgentReasoningEffort.unset,
+                effortLabel: spec.supportsEffort
+                    ? AgentReasoningEffort.label(for: config.effort) : "",
+                supportsEffort: spec.supportsEffort,
+                instructions: instructions,
+                editableInstructions: spec.instructionsSource != .none,
+                instructionsNote: usesTTSInstructions
+                    ? "Delivery instructions sent with every spoken request (the `tts_instructions` setting). Voice and speed live in Settings → Speech."
+                    : nil,
+                instructionsContract: spec.instructionsContract,
+                usesDefaults: config.usesDefaultModel && config.usesDefaultEffort
+                    && instructionsAreDefault)
+        }
+    }
+
+    func updateAgentSystemAgent(kind: String, model: String, effort: String?,
+                                instructions: String?) throws {
+        guard let agentKind = SystemAgentKind(rawValue: kind) else {
+            throw SystemAgentStoreError.notEditable("Unknown system agent \(kind).")
+        }
+        let spec = SystemAgentStore.spec(for: agentKind)
+        if spec.instructionsSource == .ttsSettings, let instructions {
+            let trimmed = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+            UserSettings.shared.ttsInstructions = trimmed.isEmpty
+                ? DefaultTTSInstructions : trimmed
+            UserSettings.shared.save()
+        }
+        try SystemAgentStore.shared.save(
+            kind: agentKind, model: model, effort: effort,
+            instructions: spec.instructionsSource == .store ? instructions : nil)
+    }
+
+    func resetAgentSystemAgent(kind: String) throws {
+        guard let agentKind = SystemAgentKind(rawValue: kind) else {
+            throw SystemAgentStoreError.notEditable("Unknown system agent \(kind).")
+        }
+        if SystemAgentStore.spec(for: agentKind).instructionsSource == .ttsSettings {
+            UserSettings.shared.ttsInstructions = DefaultTTSInstructions
+            UserSettings.shared.save()
+        }
+        try SystemAgentStore.shared.reset(kind: agentKind)
+    }
+
+    /// Exercise the agent's real code path once with whatever is saved, so a
+    /// retune can be verified in place instead of by waiting for the next
+    /// wake or read-aloud to misbehave.
+    func testAgentSystemAgent(kind: String, completion: @escaping (String) -> Void) {
+        guard let agentKind = SystemAgentKind(rawValue: kind) else {
+            completion("Unknown system agent.")
+            return
+        }
+        let config = SystemAgentStore.shared.config(for: agentKind)
+        let finish: (String) -> Void = { text in
+            DispatchQueue.main.async { completion(text) }
+        }
+        switch agentKind {
+        case .continuity:
+            let sample = AssistantConversation(
+                codexThreadId: "system-agent-test",
+                title: "Voice Flow panel work",
+                messages: [
+                    AssistantHistoryMessage(role: .user, text: "Add the system agents to the panel"),
+                    AssistantHistoryMessage(role: .assistant, text: "Added them under a SYSTEM section."),
+                ])
+            Task {
+                let started = Date()
+                let outcome = await AssistantContinuityClassifier().decide(
+                    current: sample, incoming: "Also make the reasoning editable")
+                let elapsed = String(format: "%.1fs", Date().timeIntervalSince(started))
+                if outcome.usedFallback {
+                    finish("\(config.model) did not answer in \(elapsed) — fell back to reusing the conversation. Reason: \(outcome.reason)")
+                } else {
+                    finish("\(config.model) · \(AgentReasoningEffort.label(for: config.effort)) → \(outcome.decision == .reuse ? "reuse" : "new") (confidence \(String(format: "%.2f", outcome.confidence))) in \(elapsed). A follow-up should read as reuse.")
+                }
+            }
+        case .speechCleanup:
+            Task {
+                let started = Date()
+                let sample = "Done — see `swift/AgentsView.swift:1042` and https://openrouter.ai/models for the catalog. Commit 9f3ac21 is on main."
+                let result = await SpeechCleanupLLM().cleanup(sample)
+                let elapsed = String(format: "%.1fs", Date().timeIntervalSince(started))
+                if let result {
+                    finish("\(config.model) in \(elapsed) → “\(result)”")
+                } else {
+                    finish("\(config.model) did not return usable text in \(elapsed) — read-aloud would use the deterministic sanitizer instead.")
+                }
+            }
+        case .speech:
+            do {
+                try ttsController.speak(request: TTSRequest(
+                    text: "System agent check. Speech is running on \(config.model).",
+                    voice: UserSettings.shared.ttsVoice,
+                    speed: UserSettings.shared.ttsSpeed,
+                    instructions: UserSettings.shared.ttsInstructions))
+                finish("Speaking now with \(config.model) · voice \(UserSettings.shared.ttsVoice). If you hear it, the model is live.")
+            } catch {
+                finish("\(config.model) could not speak: \(error.localizedDescription)")
+            }
+        }
+    }
+
     func runAgentJob(_ jobId: String) {
         Task { [weak self] in
             do {

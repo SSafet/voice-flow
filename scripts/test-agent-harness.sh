@@ -103,7 +103,10 @@ compile_and_run capture_store swift/VoiceFlowPaths.swift swift/DisplayContext.sw
     swift/ScreenCapture.swift swift/Capture.swift tests/capture_store/main.swift \
     -framework Cocoa -framework ScreenCaptureKit
 compile_and_run player swift/Player.swift tests/player/main.swift
-compile_and_run speech_sanitizer swift/SpeechSanitizer.swift tests/speech_sanitizer/main.swift
+compile_and_run speech_sanitizer swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
+    swift/SystemAgents.swift swift/SpeechSanitizer.swift tests/speech_sanitizer/main.swift
+compile_and_run system_agents swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
+    swift/SystemAgents.swift tests/system_agents/main.swift
 compile_and_run watcher_bus swift/VoiceFlowPaths.swift swift/WatcherPolicy.swift \
     swift/WatcherBus.swift tests/watcher_bus/main.swift
 compile_and_run hotkey_precedence "${APP_SUPPORT_SOURCES[@]}" tests/hotkey_precedence/main.swift \
@@ -157,7 +160,7 @@ compile_and_run agent_supervisor swift/VoiceFlowPaths.swift swift/AssistantWake.
 compile_and_run assistant_history swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
     swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift tests/assistant_history/main.swift
 compile_and_run assistant_continuity swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift \
-    swift/AssistantContinuity.swift tests/assistant_continuity/main.swift
+    swift/SystemAgents.swift swift/AssistantContinuity.swift tests/assistant_continuity/main.swift
 compile_and_run codex_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift swift/Codex.swift \
     swift/CodexAgentRuntime.swift tests/codex_runtime/main.swift

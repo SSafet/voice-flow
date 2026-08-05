@@ -3,7 +3,11 @@ import AVFoundation
 import Darwin
 import CryptoKit
 
+/// The shipped default. The live value is the Speech system agent's model,
+/// resolved per request so a change applies to the next thing spoken — and it
+/// is part of the cache key, so retuning it cannot serve stale audio.
 let OpenAITTSModel = "gpt-4o-mini-tts"
+var CurrentTTSModel: String { SystemAgentStore.shared.model(for: .speech) }
 let OpenAITTSVoices = ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse", "marin", "cedar"]
 let DefaultTTSInstructions = "Speak with bright, alert energy. Conversational and crisp. Keep a steady forward pace, clear emphasis, and short pauses. Avoid sleepy or drawn-out delivery."
 
@@ -761,7 +765,7 @@ final class TTSController: NSObject {
 
     private func makeOpenAIURLRequest(for request: TTSRequest, apiKey: String) throws -> URLRequest {
         var body: [String: Any] = [
-            "model": OpenAITTSModel,
+            "model": CurrentTTSModel,
             // gpt-4o-mini-tts reliably swallows the last words of its input
             // (verified by transcribing its own output: a final short
             // sentence was missing from the generated audio entirely). The
@@ -1178,7 +1182,7 @@ final class TTSController: NSObject {
 
     private func cacheURL(for request: TTSRequest) -> URL {
         let payload = [
-            OpenAITTSModel,
+            CurrentTTSModel,
             request.voice,
             String(format: "%.3f", request.speed),
             request.instructions,

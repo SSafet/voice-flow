@@ -568,6 +568,10 @@
       "runner": "unit"
     },
     {
+      "id": "tests/system_agents/main.swift",
+      "runner": "unit"
+    },
+    {
       "id": "tests/test_backend_protocol.py",
       "runner": "unit"
     },
