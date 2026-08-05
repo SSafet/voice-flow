@@ -94,6 +94,15 @@ let forcedDraft = drafts.createConversation(force: true)
 expect(forcedDraft.id != draftA.id && drafts.conversations().count == 2,
        "QA force-create could not establish isolated concurrency fixtures")
 
+// …but a draft the user completed is filed away: "new" must open a fresh
+// thread rather than resurrect it (ticket VF-61).
+expect(drafts.completeConversation(forcedDraft.id) != nil, "empty draft should be completable")
+let afterCompletedDraft = drafts.createConversation()
+expect(afterCompletedDraft.id != forcedDraft.id,
+       "new assistant reused a completed blank draft instead of starting fresh")
+expect(drafts.conversation(forcedDraft.id)?.completedAt != nil,
+       "the completed draft should stay archived")
+
 // A pre-store Voice Flow rollout imports once by its explicit preamble and
 // keeps all streamed agent messages as the single Assistant reply shown in UI.
 let legacyRoot = directory.appendingPathComponent("legacy/2026/07/19")

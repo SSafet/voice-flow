@@ -23,6 +23,27 @@ enum AssistantContinuityDecision: String, Codable, Equatable {
     case new
 }
 
+extension AssistantConversation {
+    /// Whether an ambient wake turn ("FLORA, …") may continue this thread
+    /// (ticket VF-61). An automation owns its conversation — every scheduled
+    /// run resumes that same thread with the job's runtime and model — and a
+    /// completed thread is one the user filed away. A dictation aimed at the
+    /// assistant from anywhere on the machine belongs in neither, so the wake
+    /// path opens a fresh conversation rather than appending to one of these.
+    /// Typing into an open thread stays explicit and is unaffected.
+    var acceptsWakeTurns: Bool {
+        automationReferenceIDs.isEmpty && completedAt == nil
+    }
+
+    fileprivate var wakeIneligibilityReason: String? {
+        if !automationReferenceIDs.isEmpty {
+            return "the current conversation belongs to an automation"
+        }
+        if completedAt != nil { return "the current conversation is completed" }
+        return nil
+    }
+}
+
 struct AssistantContinuityOutcome: Equatable {
     let decision: AssistantContinuityDecision
     let confidence: Double
@@ -78,6 +99,13 @@ final class AssistantContinuityClassifier {
     }
 
     func decide(current: AssistantConversation, incoming: String) async -> AssistantContinuityOutcome {
+        // An ineligible thread is decided here, before the empty-draft shortcut:
+        // an automation's conversation is still blank until its first run.
+        if let reason = current.wakeIneligibilityReason {
+            return AssistantContinuityOutcome(
+                decision: .new, confidence: 1, reason: reason, usedFallback: false)
+        }
+
         let relevant = current.messages.filter { $0.role != .note }
         guard !relevant.isEmpty || current.codexThreadId != nil else {
             return AssistantContinuityOutcome(

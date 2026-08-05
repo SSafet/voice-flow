@@ -102,6 +102,61 @@ let emptyClassifier = AssistantContinuityClassifier(runner: { _ in
 let empty = awaitOutcome(emptyClassifier, current: AssistantConversation(), incoming: "First message")
 expect(empty.decision == .reuse && calls.count == 0, "empty draft should reuse without a model call")
 
+// VF-61: an automation owns its conversation — the job resumes that thread on
+// every run — so an ambient wake turn must open a fresh one instead of being
+// appended to it, and must not spend a model call to decide that.
+let automationCalls = LockedCounter()
+func rejectingClassifier(_ counter: LockedCounter) -> AssistantContinuityClassifier {
+    AssistantContinuityClassifier(runner: { _ in
+        counter.increment()
+        return #"{"decision":"reuse","confidence":0.99,"reason":"should not run"}"#
+    })
+}
+let automation = AssistantConversation(
+    codexThreadId: "thread-automation",
+    title: "Morning",
+    messages: [
+        AssistantHistoryMessage(role: .user, text: "Say hi, and a joke. I'm testing triggers."),
+        AssistantHistoryMessage(role: .assistant, text: "Hi Safet. Here is your joke."),
+    ],
+    automationJobID: "job-morning")
+expect(!automation.acceptsWakeTurns, "an automation-owned conversation must not accept wake turns")
+let automationOutcome = awaitOutcome(
+    rejectingClassifier(automationCalls), current: automation,
+    incoming: "add to the queue that we need to pay for the kindergarten food")
+expect(automationOutcome.decision == .new && !automationOutcome.usedFallback,
+       "a wake turn must never be appended to an automation's conversation")
+expect(automationCalls.count == 0,
+       "an ineligible conversation should be rejected without a model call")
+
+// The reconciled many-to-one mirror is authoritative too, and an automation's
+// conversation is still blank before its first run — the empty-draft shortcut
+// must not claim it.
+let mirroredCalls = LockedCounter()
+let mirroredEmpty = AssistantConversation(
+    title: "Nightly review", automationJobIDs: ["job-nightly"])
+expect(!mirroredEmpty.acceptsWakeTurns,
+       "a mirrored automation reference must also block wake turns")
+let mirroredOutcome = awaitOutcome(
+    rejectingClassifier(mirroredCalls), current: mirroredEmpty, incoming: "remind me to call the bank")
+expect(mirroredOutcome.decision == .new && mirroredCalls.count == 0,
+       "an unrun automation conversation must not be mistaken for a blank draft")
+
+// A thread the user completed is filed away; a wake turn starts fresh.
+let completedCalls = LockedCounter()
+let completed = AssistantConversation(
+    title: "Pantrella next cohort retention",
+    messages: [AssistantHistoryMessage(role: .user, text: "Plan the follow-up")],
+    completedAt: Date())
+expect(!completed.acceptsWakeTurns, "a completed conversation must not accept wake turns")
+let completedOutcome = awaitOutcome(
+    rejectingClassifier(completedCalls), current: completed, incoming: "and the follow-up copy")
+expect(completedOutcome.decision == .new && completedCalls.count == 0,
+       "a wake turn must never reopen a completed conversation")
+
+expect(current.acceptsWakeTurns && AssistantConversation().acceptsWakeTurns,
+       "ordinary open conversations must stay eligible for continuity")
+
 var manyMessages: [AssistantHistoryMessage] = []
 for index in 1...8 {
     manyMessages.append(AssistantHistoryMessage(role: .user, text: "message-\(index)"))

@@ -263,11 +263,14 @@ final class AssistantHistoryStore {
                             activate: Bool = true) -> AssistantConversation {
         lock.withLock {
             // Repeated presses on "new assistant" must not manufacture empty
-            // history. Reuse only a blank draft owned by the same Assistant.
+            // history. Reuse only a blank draft owned by the same Assistant —
+            // never one an automation owns, and never one the user already
+            // completed, or "new" would resurrect a filed-away thread (VF-61).
             if activate, !force, let current = conversationLocked(envelope.activeSessionId),
                current.messages.isEmpty, current.codexThreadId == nil,
                current.turnState == .idle,
                current.assistantSlug == assistantSlug,
+               current.completedAt == nil,
                current.automationReferenceIDs.isEmpty {
                 return current
             }

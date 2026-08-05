@@ -74,6 +74,10 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
 - A plain Dictate whose leading wake name resolves to FLORA runs a bounded
   binary continuity preflight (`AssistantContinuityClassifier`): reuse only
   the current FLORA conversation or create a fresh one, never select history.
+  A conversation an automation owns (each run resumes that thread) or one the
+  user completed is ineligible for an ambient wake turn — `acceptsWakeTurns`
+  is false, so the preflight returns *new* without a model call. Typing into
+  an open thread stays explicit and still goes there.
   FLORA then appears as the stable local `assistant:flora` picker session.
   Closed-panel turns show only working/new-message receipts and unread state;
   the prompt and reply grow only after the user explicitly selects FLORA.
