@@ -281,6 +281,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         state = .loading
         backend.start()
 
+        // VF-60: a previous session that died without applicationWillTerminate
+        // (crash, force-quit, rebuild-under-a-running-app) leaves its runtime
+        // orphaned on launchd, still serving. Sweep before we start our own.
+        Task { await OpenCodeSupervisor.shared.reapOrphanedRuntimes() }
+
         // VF-44: recordings whose transcription never delivered survive as
         // WAVs — say so once per launch instead of losing them silently.
         let pendingAudio = PendingAudioStore.pendingFiles()

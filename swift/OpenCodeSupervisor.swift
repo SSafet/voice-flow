@@ -170,6 +170,8 @@ actor OpenCodeSupervisor: OpenCodeServing {
     private var instances: [AgentTrustProfile: Instance] = [:]
     private var startTasks: [AgentTrustProfile: Task<OpenCodeConnection, Error>] = [:]
     private var restartFailures: [AgentTrustProfile: (count: Int, notBefore: Date)] = [:]
+    /// VF-60: the launch-time orphan sweep runs once per app session.
+    private var hasReapedOrphans = false
     private var activeConnections: [AgentTrustProfile: Int] = [:]
     private let session: URLSession
 
@@ -301,6 +303,58 @@ actor OpenCodeSupervisor: OpenCodeServing {
         let profiles = Set(instances.keys).union(startTasks.keys)
         for profile in profiles { await stop(profile: profile) }
         restartFailures.removeAll()
+    }
+
+    /// Reap runtimes leaked by an earlier app session (VF-60).
+    ///
+    /// `applicationWillTerminate` tears the runtime down, but only when it
+    /// runs: a crash, a force-quit, or an `install.sh` rebuild that replaces
+    /// the binary under a running app all skip it. The runtime is then
+    /// reparented to launchd and keeps serving on its loopback port forever,
+    /// because nothing ever looked for it again — and it keeps whatever
+    /// sandbox profile and granted roots were current when it launched, long
+    /// after those settings changed.
+    ///
+    /// `process.pid` was already written per instance and removed on a clean
+    /// stop, so a file that outlives its writer IS the leak record. Runs once,
+    /// before this session starts any instance of its own; the executable path
+    /// is checked first so a recycled pid can never be killed by mistake.
+    func reapOrphanedRuntimes() async {
+        guard !hasReapedOrphans else { return }
+        hasReapedOrphans = true
+        // `instances` is only populated once a start FINISHES, while the pid
+        // file is written as soon as the process is up — so a start already in
+        // flight would look exactly like an orphan. Both must be empty.
+        guard instances.isEmpty, startTasks.isEmpty else { return }
+        let fm = FileManager.default
+        let base = VoiceFlowPaths.shared.directory("runtime/opencode")
+        guard let entries = try? fm.contentsOfDirectory(
+            at: base, includingPropertiesForKeys: nil) else { return }
+        for entry in entries {
+            let pidFile = entry.appendingPathComponent("process.pid")
+            guard let raw = try? String(contentsOf: pidFile, encoding: .utf8),
+                  let pid = pid_t(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+            else { continue }
+            try? fm.removeItem(at: pidFile)
+            guard pid > 0, Self.isBundledRuntime(pid) else { continue }
+            vflog("opencode: reaping leaked runtime pid \(pid) from a previous session")
+            let descendants = Self.descendants(of: pid)
+            descendants.reversed().forEach { kill($0, SIGTERM) }
+            kill(pid, SIGTERM)
+            for _ in 0..<20 where Self.isBundledRuntime(pid) {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+            descendants.reversed().forEach { kill($0, SIGKILL) }
+            if Self.isBundledRuntime(pid) { kill(pid, SIGKILL) }
+        }
+    }
+
+    /// True when `pid` is alive AND is the bundled OpenCode binary — the
+    /// identity guard that makes reaping a stale pid file safe.
+    private static func isBundledRuntime(_ pid: pid_t) -> Bool {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return false }
+        return String(cString: buffer).hasSuffix("/Runtime/OpenCode/opencode")
     }
 
     private func start(profile: AgentTrustProfile) async throws -> OpenCodeConnection {
