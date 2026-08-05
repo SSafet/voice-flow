@@ -294,6 +294,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             vflog("pending-audio: \(pendingAudio.count) unprocessed recording(s) from earlier runs")
             chatPanel.addNote("\(pendingAudio.count) unprocessed recording(s) kept in \(PendingAudioStore.directory().path)")
         }
+        scheduleOpenCodeUpdates()
         vflog("app started")
     }
 
@@ -1453,7 +1454,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         UserSettings.shared.workflowWatcherEnabled = !workflowWatcher.isRunning
         UserSettings.shared.save()
         syncWorkflowWatcher()
-        scheduleOpenCodeUpdates()
         replyBubble.showTransient(workflowWatcher.isRunning
             ? "Watching your workflow — activity log + deduped screenshots every 5s, reviewed by Claude nightly."
             : "Stopped watching your workflow.", seconds: 6)
