@@ -3761,11 +3761,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             jobID: payload["job_id"] as? String,
                             threadSource: payload["thread_source"] as? String,
                             threadID: payload["thread_id"] as? String,
-                            threadFilter: payload["thread_filter"] as? String)
+                            threadFilter: payload["thread_filter"] as? String,
+                            systemAgent: payload["system_agent"] as? String)
                     }
                 }
             }
             return .ok(["shown": tab ?? "current"])
+        case ("GET", "/__qa/system_agents"):
+            var state: [String: Any] = [:]
+            DispatchQueue.main.sync { state = self.chatPanel.qaSystemAgentState() }
+            return .ok(state)
+        case ("POST", "/__qa/system_agent"):
+            var handled = true
+            var state: [String: Any] = [:]
+            DispatchQueue.main.sync {
+                if payload["model"] != nil || payload["effort"] != nil
+                    || payload["instructions"] != nil {
+                    handled = self.chatPanel.qaSystemAgentEdit(
+                        model: payload["model"] as? String,
+                        effort: payload["effort"] as? String,
+                        instructions: payload["instructions"] as? String)
+                }
+                if handled, let action = payload["action"] as? String {
+                    handled = self.chatPanel.qaSystemAgentAction(action)
+                }
+                state = self.chatPanel.qaSystemAgentState()
+            }
+            return handled ? .ok(state) : .error(409, "no system agent editor is open.")
         case ("GET", "/__qa/agents/navigation"):
             var state: [String: Any] = [:]
             DispatchQueue.main.sync { state = self.chatPanel.qaAgentsNavigationState }
@@ -5362,6 +5384,31 @@ extension AppDelegate: AgentsDataSource {
         try SystemAgentStore.shared.reset(kind: agentKind)
     }
 
+    /// A runtime failure arrives as a whole codex transcript on stderr. The
+    /// panel wants the one line that says what went wrong — the usage limit,
+    /// the unknown model — not the dump around it.
+    private func systemAgentFailureLine(_ raw: String) -> String {
+        let lines = raw.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        // The LAST error line, not the first: a codex run prints startup
+        // warnings before the one that actually killed it.
+        return systemAgentOneLine(
+            lines.last { $0.localizedCaseInsensitiveContains("error") } ?? lines.last ?? raw)
+    }
+
+    /// One printable line: control characters and ANSI escapes out, runs of
+    /// whitespace collapsed, capped so a long answer cannot push the panel's
+    /// buttons off screen.
+    private func systemAgentOneLine(_ raw: String) -> String {
+        let printable = raw.components(separatedBy: .controlCharacters)
+            .joined(separator: " ")
+            .components(separatedBy: .whitespaces)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return String(printable.prefix(240))
+    }
+
     /// Exercise the agent's real code path once with whatever is saved, so a
     /// retune can be verified in place instead of by waiting for the next
     /// wake or read-aloud to misbehave.
@@ -5389,7 +5436,7 @@ extension AppDelegate: AgentsDataSource {
                     current: sample, incoming: "Also make the reasoning editable")
                 let elapsed = String(format: "%.1fs", Date().timeIntervalSince(started))
                 if outcome.usedFallback {
-                    finish("\(config.model) did not answer in \(elapsed) — fell back to reusing the conversation. Reason: \(outcome.reason)")
+                    finish("\(config.model) did not answer in \(elapsed) — fell back to reusing the conversation. \(self.systemAgentFailureLine(outcome.reason))")
                 } else {
                     finish("\(config.model) · \(AgentReasoningEffort.label(for: config.effort)) → \(outcome.decision == .reuse ? "reuse" : "new") (confidence \(String(format: "%.2f", outcome.confidence))) in \(elapsed). A follow-up should read as reuse.")
                 }
@@ -5401,7 +5448,7 @@ extension AppDelegate: AgentsDataSource {
                 let result = await SpeechCleanupLLM().cleanup(sample)
                 let elapsed = String(format: "%.1fs", Date().timeIntervalSince(started))
                 if let result {
-                    finish("\(config.model) in \(elapsed) → “\(result)”")
+                    finish("\(config.model) in \(elapsed) → “\(self.systemAgentOneLine(result))”")
                 } else {
                     finish("\(config.model) did not return usable text in \(elapsed) — read-aloud would use the deterministic sanitizer instead.")
                 }

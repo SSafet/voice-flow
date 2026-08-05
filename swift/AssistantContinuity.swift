@@ -221,6 +221,7 @@ final class AssistantContinuityClassifier {
         defer { try? errorHandle.close() }
 
         let resolved = config
+        vflog("continuity router: model=\(resolved.model) effort=\(resolved.effort ?? "provider default") brief=\(resolved.instructions.prefix(48))…")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         var arguments = [

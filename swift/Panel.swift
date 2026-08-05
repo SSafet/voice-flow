@@ -562,13 +562,21 @@ final class ChatPanel {
     @discardableResult
     func qaShowAgents(destination: String, automationAction: String?, jobID: String?,
                       threadSource: String?, threadID: String?,
-                      threadFilter: String?) -> Bool {
+                      threadFilter: String?, systemAgent: String? = nil) -> Bool {
         showAgentsList()
         return agentsView.qaNavigate(
             destination: destination, automationAction: automationAction, jobID: jobID,
             threadSource: threadSource, threadID: threadID,
-            threadFilter: threadFilter)
+            threadFilter: threadFilter, systemAgent: systemAgent)
     }
+
+    func qaSystemAgentState() -> [String: Any] { agentsView.qaSystemAgentState() }
+
+    func qaSystemAgentEdit(model: String?, effort: String?, instructions: String?) -> Bool {
+        agentsView.qaSystemAgentEdit(model: model, effort: effort, instructions: instructions)
+    }
+
+    func qaSystemAgentAction(_ action: String) -> Bool { agentsView.qaSystemAgentAction(action) }
 
     var qaAgentsNavigationState: [String: Any] { agentsView.qaNavigationState }
 

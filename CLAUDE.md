@@ -38,6 +38,16 @@ tabs (`ChatTab`, default **Agents** on open):
   `swift/AgentsView.swift`): one row per MCP session plus the assistant;
   opening a row shows that session's thread, and the assistant conversation
   (type / snap / talk, streamed replies) opens inside this tab too.
+  Its **Assistants** sub-tab also carries a **SYSTEM** section: the three
+  agents the app runs on its own behalf — continuity router, speech cleanup,
+  and speech (`SystemAgentStore`, `swift/SystemAgents.swift`). Identities are
+  fixed (no create/delete); model, reasoning, and the leading instructions
+  brief are editable, and every call site resolves its config at call time so
+  a change lands on the next run with no restart. The delimited data blocks
+  and JSON schema around the brief stay in code — dropping them would turn
+  each turn into a silent fallback. Each row's **Test now** runs the real path
+  once and reports what came back. The speech agent's instructions are the
+  existing `tts_instructions` setting, not a second copy.
 
 **Speech** is a drawer, not a tab: the ♪ button overlays `TTSView` (paste text,
 play it through the TTS engine) on whichever tab is current; an explicit tab
@@ -303,6 +313,9 @@ deployed copies are build outputs.
 - `pushes.json` — the live per-session push stacks (`sessionPushes`), saved on
   every mutation so unread messages survive app restarts as ghost entries.
 - `inbox.json` — queued contextual-capture messages for Claude (`MessageInbox`).
+- `system-agents.json` — per-agent overrides for the three system agents
+  (`SystemAgentStore`); only what differs from the shipped default is written,
+  and the file is re-read on change, so a hand edit works like the panel.
 - `overlays/*.json` — live on-screen elements (`OverlayManager`); `_schema.md` documents the format.
 - `queue/queue.json` — the **next queue** (`NextQueue`, `swift/Queue.swift`): the
   user's small "what's next" list, rendered as a `system`-flagged overlay panel
@@ -340,6 +353,7 @@ deployed copies are build outputs.
 | `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Claude Code. |
 | `Agent.swift` | `AgentSession`, `ComputerControl` | Foreground assistant turns: prepares each turn and hands it to the selected runtime, plus the screen-control implementation both runtimes call. |
 | `OpenCodeUpdater.swift` | `OpenCodeUpdater`, `OpenCodeVersion`, `StagedOpenCodeRuntime` | App-side OpenCode updates: verified download, sealed staging dir, no self-update. |
+| `SystemAgents.swift` | `SystemAgentStore`, `SystemAgentKind`, `SystemAgentSpec` | The three fixed app-owned agents (continuity router, speech cleanup, speech): specs, overrides, call-time resolution. |
 | `Sandbox.swift` | `AgentSandboxPolicy`, `AgentSandbox`, `AgentSandboxSettings` | The Seatbelt profile the agent runtime runs under — the real security boundary. |
 | `EgressProxy.swift` | `EgressProxyServer`, `EgressPolicy`, `EgressLog` | Loopback CONNECT proxy: the agent's only route out, logged by destination host. |
 | `AssistantContinuity.swift` | `AssistantContinuityClassifier`, `LocalAssistantSessionAdapter` | Ephemeral current-vs-new wake routing and the stable local picker identity for FLORA. |

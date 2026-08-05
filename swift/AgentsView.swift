@@ -560,7 +560,15 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 #if VOICE_FLOW_QA
     func qaNavigate(destination: String, automationAction: String?, jobID: String?,
                     threadSource: String?, threadID: String?,
-                    threadFilter: String?) -> Bool {
+                    threadFilter: String?, systemAgent: String? = nil) -> Bool {
+        if destination == "assistants", let systemAgent {
+            currentDestination = .assistants
+            mode = .systemAgent(systemAgent)
+            inlineError = nil
+            systemAgentTestResult = nil
+            rebuild()
+            return true
+        }
         if destination == "automations" {
             currentDestination = .automations
             if automationAction == "new" {
@@ -597,6 +605,56 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         mode = .destination(target)
         rebuild()
         return true
+    }
+
+    /// The SYSTEM section as the list actually renders it, plus whatever the
+    /// open editor holds — automation asserts on what a user would see, not
+    /// on the store behind it.
+    func qaSystemAgentState() -> [String: Any] {
+        var state: [String: Any] = [:]
+        state["rows"] = (dataSource?.agentSystemAgentRows() ?? []).map { row in
+            [
+                "kind": row.kind, "name": row.name, "model": row.model,
+                "effort": row.effort, "effort_label": row.effortLabel,
+                "trigger": row.trigger, "uses_defaults": row.usesDefaults,
+                "instructions": row.instructions,
+            ] as [String: Any]
+        }
+        state["listed"] = contentStack.subviews
+            .compactMap { $0 as? AgentListRowView }
+            .compactMap { row -> String? in
+                guard case .systemAgent(let kind)? = row.rowAction else { return nil }
+                return kind
+            }
+        if let field = systemAgentModelField { state["editor_model"] = field.stringValue }
+        if let popUp = systemAgentEffortPopUp {
+            state["editor_effort"] = (popUp.selectedItem?.representedObject as? String) ?? ""
+        }
+        if let view = systemAgentInstructionsView { state["editor_instructions"] = view.string }
+        if let inlineError { state["error"] = inlineError }
+        if let systemAgentTestResult { state["result"] = systemAgentTestResult }
+        state["testing"] = systemAgentTestRunning
+        return state
+    }
+
+    func qaSystemAgentEdit(model: String?, effort: String?, instructions: String?) -> Bool {
+        guard case .systemAgent = mode else { return false }
+        if let model { systemAgentModelField?.stringValue = model }
+        if let effort { select(popUp: systemAgentEffortPopUp, representedObject: effort) }
+        if let instructions { systemAgentInstructionsView?.string = instructions }
+        return true
+    }
+
+    func qaSystemAgentAction(_ action: String) -> Bool {
+        guard case .systemAgent(let kind) = mode else { return false }
+        let button = NSButton()
+        button.identifier = NSUserInterfaceItemIdentifier(kind)
+        switch action {
+        case "save": saveSystemAgentTapped(button); return true
+        case "reset": resetSystemAgentTapped(button); return true
+        case "test": testSystemAgentTapped(button); return true
+        default: return false
+        }
     }
 
     func qaThreadUIAction(_ action: String) -> Bool {
