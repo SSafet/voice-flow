@@ -180,6 +180,9 @@ class UserSettings {
     var agentReasoningEffort: String = AgentReasoningEffort.unset
     var agentBaseURL: String = DefaultAgentBaseURL
     var agentDailyBudgetUSD: Double = 5.0
+    // App-side OpenCode updates (the runtime never updates itself). Off means
+    // Voice Flow stays on the version its installer vendored.
+    var openCodeAutoUpdate: Bool = true
     // Default runtime for new Assistant conversations. Existing conversations
     // persist their own preferred runtime in assistant-sessions.json.
     var agentBackend: String = AgentBackendCodex
@@ -283,6 +286,7 @@ class UserSettings {
             ttsInstructions = DefaultTTSInstructions
         }
         if let v = dict["capture_interval"] as? Int { captureIntervalSeconds = max(1, v) }
+        if let v = dict["opencode_auto_update"] as? Bool { openCodeAutoUpdate = v }
         if let v = dict["agent_reasoning_effort"] as? String {
             agentReasoningEffort = AgentReasoningEffort.normalized(v) ?? AgentReasoningEffort.unset
         }
@@ -355,6 +359,7 @@ class UserSettings {
             "annotate_hotkey": annotateHotkey.toDict(),
             "agent_model": agentModel,
             "agent_reasoning_effort": agentReasoningEffort,
+            "opencode_auto_update": openCodeAutoUpdate,
             "agent_base_url": agentBaseURL,
             "agent_daily_budget_usd": agentDailyBudgetUSD,
             "agent_backend": agentBackend,

@@ -508,11 +508,11 @@
       "runner": "unit"
     },
     {
-      "id": "tests/capture_clipboard/main.swift",
+      "id": "tests/audio_recorder/main.swift",
       "runner": "unit"
     },
     {
-      "id": "tests/audio_recorder/main.swift",
+      "id": "tests/capture_clipboard/main.swift",
       "runner": "unit"
     },
     {
@@ -540,6 +540,10 @@
       "runner": "unit"
     },
     {
+      "id": "tests/opencode_updater/main.swift",
+      "runner": "unit"
+    },
+    {
       "id": "tests/openrouter_model_picker/main.swift",
       "runner": "unit"
     },
@@ -552,15 +556,15 @@
       "runner": "unit"
     },
     {
+      "id": "tests/sandbox_containment/main.swift",
+      "runner": "unit"
+    },
+    {
       "id": "tests/speech_sanitizer/main.swift",
       "runner": "unit"
     },
     {
       "id": "tests/speech_speed/main.swift",
-      "runner": "unit"
-    },
-    {
-      "id": "tests/sandbox_containment/main.swift",
       "runner": "unit"
     },
     {

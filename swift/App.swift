@@ -201,6 +201,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var screenCapture: ScreenCapture!
     var captureScheduler: CaptureScheduler!
     var workflowWatcher: WorkflowWatcher!
+    private var openCodeUpdateTimer: Timer?
     var agent: AgentSession!
     private var agentJobStore: AgentJobStore?
     private var assistantWorkspaceCoordinator: AssistantWorkspaceCoordinator!
@@ -1415,12 +1416,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if sessionActive { endSession() } else { startSession() }
     }
 
+    /// App-side OpenCode updates. The runtime is never allowed to update
+    /// itself (see OpenCodeUpdater), so this is the only path a newer version
+    /// arrives by: check on a delay after launch, then daily, and stage it.
+    /// The supervisor rolls onto a staged runtime when turns have drained.
+    private func scheduleOpenCodeUpdates() {
+        checkForOpenCodeUpdate()
+        openCodeUpdateTimer = Timer.scheduledTimer(
+            withTimeInterval: OpenCodeUpdater.checkInterval, repeats: true) { [weak self] _ in
+                self?.checkForOpenCodeUpdate()
+            }
+    }
+
+    private func checkForOpenCodeUpdate() {
+        guard UserSettings.shared.openCodeAutoUpdate else { return }
+        Task.detached(priority: .background) {
+            let current = OpenCodeUpdater.stagedVersion()
+                ?? OpenCodeSupervisor.vendoredVersion()
+                ?? "0.0.0"
+            do {
+                if let staged = try await OpenCodeUpdater.shared
+                    .updateIfAvailable(currentVersion: current) {
+                    vflog("opencode update staged: \(staged.version) (was \(current))")
+                }
+            } catch OpenCodeUpdaterError.notNewer {
+                // The common case; not worth a log line every day.
+            } catch {
+                vflog("opencode update check failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
     /// Ambient workflow watcher (menu bar / Settings) — logs the workday
     /// for the scheduled Claude review, independent of sessions.
     private func toggleWorkflowWatcher() {
         UserSettings.shared.workflowWatcherEnabled = !workflowWatcher.isRunning
         UserSettings.shared.save()
         syncWorkflowWatcher()
+        scheduleOpenCodeUpdates()
         replyBubble.showTransient(workflowWatcher.isRunning
             ? "Watching your workflow — activity log + deduped screenshots every 5s, reviewed by Claude nightly."
             : "Stopped watching your workflow.", seconds: 6)

@@ -128,7 +128,7 @@ compile_and_run sandbox_containment swift/VoiceFlowPaths.swift swift/AssistantWa
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
     swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift \
     swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift \
-    swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
+    swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
     tests/sandbox_containment/main.swift -framework Security
 compile_and_run agent_permissions swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
@@ -145,6 +145,8 @@ compile_and_run agent_jobs swift/VoiceFlowPaths.swift swift/AssistantWake.swift 
     tests/agent_jobs/main.swift -lsqlite3
 compile_and_run openrouter_models swift/VoiceFlowPaths.swift swift/OpenRouterModels.swift \
     tests/openrouter_models/main.swift
+compile_and_run opencode_updater swift/VoiceFlowPaths.swift swift/OpenCodeUpdater.swift \
+    tests/opencode_updater/main.swift
 compile_and_run openrouter_model_picker swift/VoiceFlowPaths.swift swift/OpenRouterModels.swift \
     swift/AgentRuntimeTypes.swift swift/OpenRouterModelPicker.swift swift/AgentJobEditor.swift \
     tests/openrouter_model_picker/main.swift -framework Cocoa
@@ -162,12 +164,12 @@ compile_and_run codex_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swi
 compile_and_run opencode_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
     swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
-    swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
+    swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
     tests/opencode_runtime/main.swift -framework Security
 compile_and_run opencode_http swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
     swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift \
-    swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeSupervisor.swift \
+    swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift \
     swift/OpenCodeHTTPClient.swift tests/opencode_http/main.swift -framework Security
 
 "$PROJECT_DIR/.venv/bin/python" tests/test_backend_protocol.py -q
@@ -209,7 +211,7 @@ case "$MODE" in
             swift/Assistants.swift swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift \
             swift/AgentRuntime.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
             swift/AgentPromptComposer.swift swift/AgentTools.swift swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift \
-            swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
+            swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
             tests/opencode_live_turn/main.swift -framework Security
         VOICE_FLOW_TEST_UPSTREAM="http://127.0.0.1:$UPSTREAM_PORT/v1" \
             VOICE_FLOW_CANARY_OPENCODE_REPORT="$BUILD_DIR/opencode-canary.json" \
@@ -220,7 +222,7 @@ case "$MODE" in
             swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
             swift/AssistantWake.swift swift/Assistants.swift swift/AgentCapabilities.swift \
             swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
-            swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeSupervisor.swift tests/opencode_supervisor/main.swift -framework Security
+            swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift tests/opencode_supervisor/main.swift -framework Security
         compile_only codex_live_turn swift/Codex.swift tests/codex_live_turn/main.swift
         VOICE_FLOW_CONFIG_ROOT="$BUILD_DIR/codex-live-config" \
             VOICE_FLOW_CANARY_CODEX_REPORT="$BUILD_DIR/codex-canary.json" \

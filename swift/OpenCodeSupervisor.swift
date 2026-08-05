@@ -165,6 +165,10 @@ actor OpenCodeSupervisor: OpenCodeServing {
         /// at exec time, so a changed policy means a new process — never a
         /// running one silently keeping the old, looser boundary.
         let sandboxPolicy: AgentSandboxPolicy
+        /// The exact runtime this process is: an app-side update stages a
+        /// newer binary beside the bundled one, and the running process keeps
+        /// serving until the next acquire finds a drained profile.
+        let binaryVersion: String
     }
 
     private var instances: [AgentTrustProfile: Instance] = [:]
@@ -226,9 +230,11 @@ actor OpenCodeSupervisor: OpenCodeServing {
         while true {
             try Task.checkCancellation()
             let desiredSandbox = Self.sandboxPolicy(profile: profile)
+            let desiredVersion = (try? loadManifest()).map(targetVersion(manifest:))
             if let instance = instances[profile], instance.process.isRunning,
                (modelID.map { !instance.allowedModels.contains($0) } ?? false)
-                 || instance.sandboxPolicy != desiredSandbox {
+                 || instance.sandboxPolicy != desiredSandbox
+                 || (desiredVersion.map { $0 != instance.binaryVersion } ?? false) {
                 // Same drain-then-roll rule the model catalog already uses: a
                 // tightened dial or a new granted root must not kill turns that
                 // are mid-flight, but it must apply before the next one starts.
@@ -360,12 +366,14 @@ actor OpenCodeSupervisor: OpenCodeServing {
     private func start(profile: AgentTrustProfile) async throws -> OpenCodeConnection {
         try Task.checkCancellation()
         let manifest = try loadManifest()
-        let binary = try resolveBinary(manifest: manifest)
+        let resolved = try resolveBinary(manifest: manifest)
+        let binary = resolved.path
         let actualVersion = try binaryVersion(binary)
-        guard actualVersion == manifest.version else {
+        guard actualVersion == resolved.expectedVersion else {
             throw OpenCodeSupervisorError.versionMismatch(
-                expected: manifest.version, actual: actualVersion)
+                expected: resolved.expectedVersion, actual: actualVersion)
         }
+        vflog("opencode runtime: \(actualVersion) from \(resolved.source)")
         guard let port = Self.allocateLoopbackPort() else {
             throw OpenCodeSupervisorError.portUnavailable
         }
@@ -587,7 +595,8 @@ actor OpenCodeSupervisor: OpenCodeServing {
             process: process, connection: connection, root: root,
             output: output, log: log,
             gateway: gateway, toolServer: toolServer, egress: egress,
-            allowedModels: allowedModels, sandboxPolicy: sandboxPolicy)
+            allowedModels: allowedModels, sandboxPolicy: sandboxPolicy,
+            binaryVersion: actualVersion)
 
         for _ in 0..<60 {
             if Task.isCancelled {
@@ -628,6 +637,24 @@ actor OpenCodeSupervisor: OpenCodeServing {
         }
     }
 
+    /// The version the installer vendored — the floor an app-side update must
+    /// beat before it is allowed to take over.
+    nonisolated static func vendoredVersion() -> String? {
+        let candidates: [URL?] = [
+            Bundle.main.url(forResource: "versions", withExtension: "json", subdirectory: "Runtime/OpenCode"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent("runtime/opencode/versions.json"),
+        ]
+        for candidate in candidates.compactMap({ $0 }) {
+            if let data = try? Data(contentsOf: candidate),
+               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let version = object["version"] as? String {
+                return version
+            }
+        }
+        return nil
+    }
+
     private func loadManifest() throws -> Manifest {
         let candidates: [URL?] = [
             Bundle.main.url(forResource: "versions", withExtension: "json", subdirectory: "Runtime/OpenCode"),
@@ -643,7 +670,29 @@ actor OpenCodeSupervisor: OpenCodeServing {
         throw OpenCodeSupervisorError.manifestInvalid
     }
 
-    private func resolveBinary(manifest: Manifest) throws -> String {
+    private struct ResolvedRuntime {
+        let path: String
+        let expectedVersion: String
+        let source: String
+    }
+
+    /// What the next launch would run, without hashing anything: the staged
+    /// update's manifest when present, else the vendored pin.
+    private func targetVersion(manifest: Manifest) -> String {
+        OpenCodeUpdater.stagedVersion().flatMap {
+            OpenCodeVersion.isNewer($0, than: manifest.version) ? $0 : nil
+        } ?? manifest.version
+    }
+
+    private func resolveBinary(manifest: Manifest) throws -> ResolvedRuntime {
+        // An app-side update wins over the bundled pin, but only while its
+        // seal holds: verifiedStagedBinary re-hashes it on every launch, so a
+        // staged file edited afterwards silently loses to the bundle.
+        if let staged = OpenCodeUpdater.verifiedStagedBinary(),
+           OpenCodeVersion.isNewer(staged.version, than: manifest.version) {
+            return ResolvedRuntime(
+                path: staged.path, expectedVersion: staged.version, source: "staged update")
+        }
         if let bundled = Bundle.main.url(
             forResource: "opencode", withExtension: nil, subdirectory: "Runtime/OpenCode"),
            FileManager.default.isExecutableFile(atPath: bundled.path) {
@@ -656,7 +705,8 @@ actor OpenCodeSupervisor: OpenCodeServing {
                 throw OpenCodeSupervisorError.launchFailed(
                     "bundled OpenCode binary failed its sealed installation check")
             }
-            return bundled.path
+            return ResolvedRuntime(
+                path: bundled.path, expectedVersion: manifest.version, source: "bundle")
         }
         let architecture = Self.architecture
         if let fallback = manifest.developerFallbacks[architecture],
@@ -666,7 +716,9 @@ actor OpenCodeSupervisor: OpenCodeServing {
                 throw OpenCodeSupervisorError.launchFailed(
                     "developer OpenCode binary failed its SHA-256 check")
             }
-            return fallback.path
+            return ResolvedRuntime(
+                path: fallback.path, expectedVersion: manifest.version,
+                source: "developer fallback")
         }
         throw OpenCodeSupervisorError.binaryNotFound
     }

@@ -1550,6 +1550,26 @@
       "tests": [
         "tests/speech_speed/main.swift"
       ]
+    },
+    {
+      "id": "RUN-13",
+      "area": "runtime",
+      "name": "Stage an app-side OpenCode update only from a publisher-checksummed asset, never a downgrade",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/opencode_updater/main.swift"
+      ]
+    },
+    {
+      "id": "SEC-19",
+      "area": "security",
+      "name": "Re-verify a staged OpenCode runtime's seal on every launch and refuse a binary edited after staging",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/opencode_updater/main.swift"
+      ]
     }
   ]
 }

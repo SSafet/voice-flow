@@ -227,6 +227,20 @@ unconfined.
   route out, wired via `HTTPS_PROXY`/`HTTP_PROXY` (already on the env
   allowlist), logging destination hosts to `agent-egress.jsonl` without
   intercepting payloads. Anything bypassing the proxy fails at the socket.
+- **Updates are the app's job, never the runtime's.**
+  `OPENCODE_DISABLE_AUTOUPDATE` stays on and the sandbox denies writes to the
+  runtime's own executable — a process that can rewrite the binary that runs
+  next session owns a persistence channel nobody reviews. `OpenCodeUpdater`
+  (`swift/OpenCodeUpdater.swift`) does it instead, outside the sandbox and
+  outside the signed bundle: daily release-feed check → verify the publisher's
+  published sha256 for the asset → unpack to
+  `~/.config/voice-flow/runtime/opencode-staged/<version>/` → confirm the
+  binary reports that version → seal it with its own hash. The seal is
+  re-checked on **every** launch, so a staged file edited afterwards silently
+  loses to the vendored bundle; downgrades are refused. The supervisor prefers
+  a valid staged runtime and rolls onto it under the same drain rule as a dial
+  change. Kill switch: Settings → Assistant → "Keep OpenCode updated"
+  (`opencode_auto_update`), which also shows the staged version.
 - **The dial** (`agent_run_commands`, `agent_reach_network`,
   `assistant_computer_use` → `AgentCapabilityDial`) replaces the old bundled
   trust presets as the user-facing restriction, and each switch maps to a
@@ -325,6 +339,7 @@ deployed copies are build outputs.
 | `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
 | `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Claude Code. |
 | `Agent.swift` | `AgentSession`, `ComputerControl` | Foreground assistant turns: prepares each turn and hands it to the selected runtime, plus the screen-control implementation both runtimes call. |
+| `OpenCodeUpdater.swift` | `OpenCodeUpdater`, `OpenCodeVersion`, `StagedOpenCodeRuntime` | App-side OpenCode updates: verified download, sealed staging dir, no self-update. |
 | `Sandbox.swift` | `AgentSandboxPolicy`, `AgentSandbox`, `AgentSandboxSettings` | The Seatbelt profile the agent runtime runs under — the real security boundary. |
 | `EgressProxy.swift` | `EgressProxyServer`, `EgressPolicy`, `EgressLog` | Loopback CONNECT proxy: the agent's only route out, logged by destination host. |
 | `AssistantContinuity.swift` | `AssistantContinuityClassifier`, `LocalAssistantSessionAdapter` | Ephemeral current-vs-new wake routing and the stable local picker identity for FLORA. |

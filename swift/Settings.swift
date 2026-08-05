@@ -26,6 +26,7 @@ final class SettingsStore: ObservableObject {
     @Published var ttsSpeed: Double { didSet { commit() } }
     @Published var agentModel: String { didSet { commit() } }
     @Published var agentReasoningEffort: String { didSet { commit() } }
+    @Published var openCodeAutoUpdate: Bool { didSet { commit() } }
     @Published var agentBaseURL: String { didSet { commit() } }
     @Published var agentDailyBudgetUSD: Double { didSet { commit() } }
     @Published var agentBackend: String { didSet { commit() } }
@@ -75,6 +76,7 @@ final class SettingsStore: ObservableObject {
         ttsSpeed = s.ttsSpeed
         agentModel = s.agentModel
         agentReasoningEffort = s.agentReasoningEffort
+        openCodeAutoUpdate = s.openCodeAutoUpdate
         agentBaseURL = s.agentBaseURL
         agentDailyBudgetUSD = s.agentDailyBudgetUSD
         agentBackend = s.agentBackend
@@ -110,6 +112,7 @@ final class SettingsStore: ObservableObject {
         let settings = UserSettings.shared
         agentModel = settings.agentModel
         agentReasoningEffort = settings.agentReasoningEffort
+        openCodeAutoUpdate = settings.openCodeAutoUpdate
         agentBaseURL = settings.agentBaseURL
         agentDailyBudgetUSD = settings.agentDailyBudgetUSD
         agentBackend = settings.agentBackend
@@ -147,6 +150,7 @@ final class SettingsStore: ObservableObject {
         s.agentModel = model.isEmpty ? DefaultAgentModel : model
         s.agentReasoningEffort =
             AgentReasoningEffort.normalized(agentReasoningEffort) ?? AgentReasoningEffort.unset
+        s.openCodeAutoUpdate = openCodeAutoUpdate
         let url = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         s.agentBaseURL = url.isEmpty ? DefaultAgentBaseURL : url
         s.agentDailyBudgetUSD = min(max(agentDailyBudgetUSD, 0.25), 500)
@@ -534,6 +538,18 @@ private struct AssistantSettingsView: View {
         models: [], source: .fallback, fetchedAt: nil, warning: nil)
     @State private var refreshingModels = false
 
+    /// The kill switch says what it is actually doing, including the version
+    /// waiting to take over on the next idle roll (surface-invisible-systems).
+    private var openCodeUpdateSubtitle: String {
+        guard store.openCodeAutoUpdate else {
+            return "Off — Voice Flow stays on the version it shipped with"
+        }
+        if let staged = OpenCodeUpdater.stagedVersion() {
+            return "Checked daily · \(staged) staged, applies when the runtime is idle"
+        }
+        return "Checked daily · verified against the publisher's checksum before use"
+    }
+
     private var codexStatus: String {
         guard CodexExecBackend.findBinary() != nil else { return "Not installed" }
         return CodexExecBackend.isLoggedIn ? "Signed in with ChatGPT" : "Installed — not signed in"
@@ -586,6 +602,11 @@ private struct AssistantSettingsView: View {
                     } label: {
                         SettingRowLabel(title: "OpenCode",
                                         subtitle: "Supervised by Voice Flow; model requests use your key below")
+                    }
+                    Toggle(isOn: $store.openCodeAutoUpdate) {
+                        SettingRowLabel(
+                            title: "Keep OpenCode updated",
+                            subtitle: openCodeUpdateSubtitle)
                     }
                 }
             } header: {
