@@ -95,6 +95,14 @@ expect(AgentReasoningEffort.normalized("  HIGH ") == "high"
         && AgentReasoningEffort.normalized("turbo") == nil
         && AgentReasoningEffort.normalized("") == nil,
        "effort normalization accepted a value no provider would understand")
+// The ladder both shipping binaries accept, top level included.
+expect(AgentReasoningEffort.choices.map(\.value)
+        == ["", "minimal", "low", "medium", "high", "xhigh", "max"],
+       "the effort ladder lost a level the runtimes accept")
+expect(AgentReasoningEffort.normalized("xhigh") == "xhigh"
+        && AgentReasoningEffort.normalized("MAX") == "max"
+        && AgentReasoningEffort.normalized("ultra") == nil,
+       "xhigh/max must pass through, and codex-only ultra must not")
 
 let combo = OpenRouterModelComboBox(frame: NSRect(x: 0, y: 0, width: 470, height: 26))
 combo.configure(models: original, selectedID: "test/original-one")
