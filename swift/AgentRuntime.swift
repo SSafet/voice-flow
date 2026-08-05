@@ -11,6 +11,18 @@ struct AgentRuntimeCapabilities: Equatable {
 struct AgentModelSelection: Codable, Equatable {
     let provider: String
     let model: String
+    /// How hard the model should think, when the model exposes the knob.
+    /// Provider-specific and deliberately a free string — OpenCode calls this
+    /// a model *variant* ("minimal"/"low"/"high"/"max" depending on provider),
+    /// codex takes the same idea as `model_reasoning_effort`. Nil means the
+    /// provider default, so an unset config behaves exactly as before.
+    let reasoningEffort: String?
+
+    init(provider: String, model: String, reasoningEffort: String? = nil) {
+        self.provider = provider
+        self.model = model
+        self.reasoningEffort = reasoningEffort
+    }
 }
 
 struct AgentTurnRequest {

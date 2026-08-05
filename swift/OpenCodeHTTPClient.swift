@@ -225,6 +225,12 @@ final class OpenCodeHTTPClient: OpenCodeClienting {
         var body: [String: Any] = ["parts": parts]
         if let model = turn.model {
             body["model"] = ["providerID": model.provider, "modelID": model.model]
+            // OpenCode's name for reasoning effort is the model variant, and
+            // it is per message — so a turn can think harder or cheaper than
+            // the session default without reconfiguring the server.
+            if let effort = model.reasoningEffort, !effort.isEmpty {
+                body["variant"] = effort
+            }
         }
         let data = try await request(
             method: "POST", path: "session/\(sessionID)/message",

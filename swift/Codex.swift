@@ -78,7 +78,7 @@ final class CodexExecBackend {
 
     static func executionArguments(
         prompt: String, imagePaths: [String], resumeThread: String?,
-        extraWritableRoots: [String]) -> [String] {
+        extraWritableRoots: [String], reasoningEffort: String? = nil) -> [String] {
         // `exec` and `exec resume` diverge slightly in supported flags
         // (resume has no --sandbox/-C), so permissions go through -c. The
         // Assistant needs outbound access for user-requested integrations
@@ -99,6 +99,10 @@ final class CodexExecBackend {
                 .map { "\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
                 .joined(separator: ", ")
             args.append(contentsOf: ["-c", "sandbox_workspace_write.writable_roots=[\(toml)]"])
+        }
+        if let effort = reasoningEffort, !effort.isEmpty {
+            // Same knob OpenCode calls the model variant, spelled the codex way.
+            args.append(contentsOf: ["-c", "model_reasoning_effort=\"\(effort)\""])
         }
         imagePaths.forEach { args.append(contentsOf: ["-i", $0]) }
         args.append(prompt)
@@ -133,6 +137,7 @@ final class CodexExecBackend {
              resumeThread: String?,
              workingDirectory: URL? = nil,
              extraWritableRoots: [String] = [],
+             reasoningEffort: String? = nil,
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
              onAgentText: @escaping (String) -> Void) async throws -> TurnResult {
@@ -150,7 +155,7 @@ final class CodexExecBackend {
 
         let args = Self.executionArguments(
             prompt: prompt, imagePaths: imagePaths, resumeThread: resumeThread,
-            extraWritableRoots: extraWritableRoots)
+            extraWritableRoots: extraWritableRoots, reasoningEffort: reasoningEffort)
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
@@ -299,6 +304,7 @@ protocol CodexExecuting: AnyObject {
              resumeThread: String?,
              workingDirectory: URL?,
              extraWritableRoots: [String],
+             reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
              onAgentText: @escaping (String) -> Void) async throws -> CodexExecBackend.TurnResult

@@ -14,15 +14,39 @@ private final class StubProtocol: URLProtocol {
     }
     private static let lock = NSLock()
     private static var value: Mode = .normal
+    private static var lastMessageBody: [String: Any] = [:]
 
     static func set(_ mode: Mode) { lock.withLock { value = mode } }
     private static func mode() -> Mode { lock.withLock { value } }
+    static func sentMessageBody() -> [String: Any] { lock.withLock { lastMessageBody } }
+
+    /// URLSession hands URLProtocol the body as a stream, not httpBody.
+    private static func bodyObject(of request: URLRequest) -> [String: Any]? {
+        var data = request.httpBody
+        if data == nil, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var collected = Data()
+            var buffer = [UInt8](repeating: 0, count: 4_096)
+            while stream.hasBytesAvailable {
+                let read = stream.read(&buffer, maxLength: buffer.count)
+                if read <= 0 { break }
+                collected.append(buffer, count: read)
+            }
+            data = collected
+        }
+        guard let data else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
         let path = request.url?.path ?? ""
+        if path.hasSuffix("/message"), let body = Self.bodyObject(of: request) {
+            Self.lock.withLock { Self.lastMessageBody = body }
+        }
         switch Self.mode() {
         case .stall:
             return
@@ -165,6 +189,23 @@ expect(deltas == ["Hi"],
        "duplicate, reordered, or prompt SSE parts were not reduced exactly once: \(deltas)")
 expect(failures == ["injected SSE failure"],
        "OpenCode SSE session failure was not normalized")
+let plainBody = StubProtocol.sentMessageBody()
+expect((plainBody["model"] as? [String: Any])?["modelID"] as? String == "model",
+       "the model selection was not sent to OpenCode")
+expect(plainBody["variant"] == nil,
+       "an unset reasoning effort must not be sent as a variant")
+
+// Reasoning effort travels as OpenCode's per-message model variant.
+let effortRequest = AgentTurnRequest(
+    turnID: UUID(), conversationID: "conversation-a", assistant: nil,
+    priorMessages: [], prompt: "task", screenshots: [],
+    workingDirectory: directory, extraWritableRoots: [], trustProfile: .workspace,
+    model: AgentModelSelection(
+        provider: "test", model: "model", reasoningEffort: "low"))
+_ = try await client.sendMessage(
+    sessionID: "session-a", directory: directory, request: effortRequest) { _ in }
+expect(StubProtocol.sentMessageBody()["variant"] as? String == "low",
+       "the shared reasoning-effort config should reach OpenCode as the model variant")
 
 StubProtocol.set(.stall)
 let stalledClient = makeClient()

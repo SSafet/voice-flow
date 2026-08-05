@@ -25,23 +25,33 @@ expect(codexArguments.contains("mcp_servers={}"),
        "Codex external MCP configuration is not neutralized")
 expect(codexArguments.suffix(3) == ["-i", "/tmp/shot.jpg", "task"],
        "Codex image or task argument ordering changed")
+expect(!codexArguments.contains("model_reasoning_effort=\"\""),
+       "an unset reasoning effort must not reach the CLI at all")
+let codexEffortArguments = CodexExecBackend.executionArguments(
+    prompt: "task", imagePaths: [], resumeThread: nil,
+    extraWritableRoots: [], reasoningEffort: "low")
+expect(codexEffortArguments.contains("model_reasoning_effort=\"low\""),
+       "the shared reasoning-effort config should reach codex as its own config key")
 
 final class FakeCodex: CodexExecuting {
     var receivedPrompt = ""
     var receivedImages = 0
     var receivedResume: String?
+    var receivedEffort: String?
     var interrupted = false
 
     func interrupt() { interrupted = true }
 
     func run(prompt: String, images: [Data], resumeThread: String?,
              workingDirectory: URL?, extraWritableRoots: [String],
+             reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
              onAgentText: @escaping (String) -> Void) async throws -> CodexExecBackend.TurnResult {
         receivedPrompt = prompt
         receivedImages = images.count
         receivedResume = resumeThread
+        receivedEffort = reasoningEffort
         onThreadStarted("codex-new")
         onToolActivity("Reading files")
         onAgentText("first ")
@@ -56,7 +66,9 @@ let request = AgentTurnRequest(
     turnID: UUID(), conversationID: "conversation-a", assistant: nil,
     priorMessages: [], prompt: "Do the task", screenshots: [Data([1, 2, 3])],
     workingDirectory: FileManager.default.temporaryDirectory,
-    extraWritableRoots: ["/tmp/allowed"], trustProfile: .workspace, model: nil)
+    extraWritableRoots: ["/tmp/allowed"], trustProfile: .workspace,
+    model: AgentModelSelection(
+        provider: "openai", model: "gpt-5.6-luna", reasoningEffort: "low"))
 let binding = RuntimeBinding(
     externalSessionID: "codex-old", syncedThroughMessageID: UUID(),
     state: .clean)
@@ -86,6 +98,8 @@ expect(failure == nil, "runtime unexpectedly failed")
 expect(fake.receivedPrompt == "Do the task", "adapter changed the prepared prompt")
 expect(fake.receivedImages == 1, "adapter dropped image input")
 expect(fake.receivedResume == "codex-old", "adapter dropped the resume binding")
+expect(fake.receivedEffort == "low",
+       "adapter dropped the reasoning effort from the shared model config")
 expect(result?.externalSessionID == "codex-new", "adapter did not return authoritative thread id")
 expect(result?.text == "first second", "adapter changed final text")
 expect(events == [

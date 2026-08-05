@@ -36,6 +36,7 @@ final class CodexAgentRuntime: AgentRuntime {
                 resumeThread: binding?.externalSessionID,
                 workingDirectory: request.workingDirectory,
                 extraWritableRoots: request.extraWritableRoots,
+                reasoningEffort: request.model?.reasoningEffort,
                 onThreadStarted: { id in
                     externalSessionID = id
                     emit(.started(externalSessionID: id))
