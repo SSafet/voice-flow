@@ -750,7 +750,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         AgentJobRuntimeConfiguration.shared.configure {
             AgentModelSelection(
-                provider: "openrouter", model: UserSettings.shared.agentModel)
+                provider: "openrouter", model: UserSettings.shared.agentModel,
+                reasoningEffort: UserSettings.shared.agentReasoningEffort)
         }
         recorder = AudioRecorder()
         paster = Paster()
@@ -1201,7 +1202,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Cancel")
         let editor = AgentJobEditorView(
             models: models, preferredRuntime: agent.preferredRuntime,
-            defaultModelID: defaultModel)
+            defaultModelID: defaultModel,
+            defaultReasoningEffort: UserSettings.shared.agentReasoningEffort)
         alert.accessoryView = editor
 #if VOICE_FLOW_QA
         activeAgentJobAlert = alert
@@ -1246,6 +1248,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             conversationID: conversation.id,
             runtime: selectedRuntime, trigger: selectedTrigger,
             modelID: selectedModel,
+            reasoningEffort: editor.selectedReasoningEffort,
             prompt: task, trustProfile: .unattended,
             state: nextRun == nil ? .completed : .queued,
             nextRunAt: nextRun,
@@ -3400,9 +3403,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     await MainActor.run {
                         let editor = AgentJobEditorView(
                             models: models, preferredRuntime: self.agent.preferredRuntime,
-                            defaultModelID: defaultModel)
+                            defaultModelID: defaultModel,
+                            defaultReasoningEffort: UserSettings.shared.agentReasoningEffort)
                         let window = NSPanel(
-                            contentRect: NSRect(x: 0, y: 0, width: 500, height: 246),
+                            contentRect: NSRect(x: 0, y: 0, width: 500, height: 277),
                             styleMask: [.titled, .closable], backing: .buffered,
                             defer: false)
                         window.title = "New automation"
@@ -3992,6 +3996,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     "model_enabled": editor.qaModelEnabled,
                     "model_status": editor.qaModelStatus,
                     "model_text": editor.modelCombo.stringValue,
+                    "effort_title": editor.effortPopUp.titleOfSelectedItem ?? "",
+                    "selected_effort": editor.selectedReasoningEffort ?? "",
                 ] as [String: Any]
             }
             state["settings_assistant_visible"] = self.settingsWindow.qaAssistantVisible

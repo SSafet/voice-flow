@@ -2,18 +2,6 @@ import Cocoa
 
 func vflog(_ message: String) {}
 
-enum AgentRuntimeKind: String, CaseIterable {
-    case codex
-    case opencode
-
-    var label: String {
-        switch self {
-        case .codex: return "Codex"
-        case .opencode: return "OpenCode"
-        }
-    }
-}
-
 enum AgentJobTriggerKind: String {
     case manual
     case interval
@@ -79,6 +67,34 @@ expect(editor.modelCombo.isEnabled,
        "real runtime selection event did not enable the OpenCode model picker")
 expect(editor.selectedModelID == "openai/gpt-5.6-luna",
        "OpenCode runtime selection lost the configured model ID")
+
+// Reasoning effort sits beside the model and, unlike the model, applies to
+// both runtimes — codex still picks its own model but takes the effort.
+expect(editor.selectedReasoningEffort == nil,
+       "an automation should default to the provider's own effort")
+let lowIndex = AgentReasoningEffort.choices.firstIndex { $0.value == "low" }!
+editor.effortPopUp.selectItem(at: lowIndex)
+expect(editor.selectedReasoningEffort == "low",
+       "the effort popup did not commit the visible choice")
+editor.runtimePopUp.selectItem(at: 0)
+editor.runtimePopUp.sendAction(
+    editor.runtimePopUp.action, to: editor.runtimePopUp.target)
+RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+expect(editor.selectedRuntime == .codex && editor.selectedReasoningEffort == "low",
+       "switching back to codex dropped the reasoning effort")
+
+let preset = AgentJobEditorView(
+    models: OpenRouterModelCatalogResult(
+        models: original, source: .live, fetchedAt: Date(), warning: nil),
+    preferredRuntime: .opencode,
+    defaultModelID: "openai/gpt-5.6-luna",
+    defaultReasoningEffort: "high")
+expect(preset.selectedReasoningEffort == "high",
+       "the editor did not preselect the configured default effort")
+expect(AgentReasoningEffort.normalized("  HIGH ") == "high"
+        && AgentReasoningEffort.normalized("turbo") == nil
+        && AgentReasoningEffort.normalized("") == nil,
+       "effort normalization accepted a value no provider would understand")
 
 let combo = OpenRouterModelComboBox(frame: NSRect(x: 0, y: 0, width: 470, height: 26))
 combo.configure(models: original, selectedID: "test/original-one")

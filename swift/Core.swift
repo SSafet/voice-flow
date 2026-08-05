@@ -175,6 +175,9 @@ class UserSettings {
     var snapshotHotkey = HotkeySpec(keyCode: 101, modifiers: [], label: "F9")
     var annotateHotkey = HotkeySpec(keyCode: 96, modifiers: [], label: "F5")
     var agentModel: String = DefaultAgentModel
+    // How hard the assistant's model should think by default. "" = let the
+    // provider decide; automations pin their own alongside their model.
+    var agentReasoningEffort: String = AgentReasoningEffort.unset
     var agentBaseURL: String = DefaultAgentBaseURL
     var agentDailyBudgetUSD: Double = 5.0
     // Default runtime for new Assistant conversations. Existing conversations
@@ -280,6 +283,9 @@ class UserSettings {
             ttsInstructions = DefaultTTSInstructions
         }
         if let v = dict["capture_interval"] as? Int { captureIntervalSeconds = max(1, v) }
+        if let v = dict["agent_reasoning_effort"] as? String {
+            agentReasoningEffort = AgentReasoningEffort.normalized(v) ?? AgentReasoningEffort.unset
+        }
         if let v = dict["agent_model"] as? String {
             agentModel = Self.trimmed(v, fallback: DefaultAgentModel)
         }
@@ -348,6 +354,7 @@ class UserSettings {
             "snapshot_hotkey": snapshotHotkey.toDict(),
             "annotate_hotkey": annotateHotkey.toDict(),
             "agent_model": agentModel,
+            "agent_reasoning_effort": agentReasoningEffort,
             "agent_base_url": agentBaseURL,
             "agent_daily_budget_usd": agentDailyBudgetUSD,
             "agent_backend": agentBackend,

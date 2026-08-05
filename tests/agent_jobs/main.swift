@@ -84,6 +84,7 @@ let jobA = AgentJob(
     id: "job-a", name: "Morning brief",
     assistantSlug: "flora", conversationID: "conversation-a",
     runtime: .opencode, trigger: .manual, modelID: "test/model-fast",
+    reasoningEffort: "low",
     prompt: "A", nextRunAt: now,
     dailyBudgetUSD: 2, maxAttempts: 3, createdAt: now, updatedAt: now)
 let jobConflict = AgentJob(
@@ -98,6 +99,18 @@ let jobB = AgentJob(
     createdAt: now.addingTimeInterval(2), updatedAt: now.addingTimeInterval(2))
 try store.put(jobA)
 try store.put(jobConflict)
+// An automation pins its effort next to its model, and both survive the
+// round-trip through SQLite; an unusable value is stored as "provider decides".
+let storedEffortJob = try store.job(id: "job-a")
+let storedUnsetEffortJob = try store.job(id: "job-conflict")
+expect(storedEffortJob?.reasoningEffort == "low",
+       "the pinned reasoning effort did not survive the job round-trip")
+expect(storedUnsetEffortJob?.reasoningEffort == nil,
+       "an unset reasoning effort should stay unset")
+expect(AgentJob(assistantSlug: "flora", conversationID: "c",
+                runtime: .codex, trigger: .manual, reasoningEffort: "turbo",
+                prompt: "p").reasoningEffort == nil,
+       "an unknown effort should normalize to the provider default")
 try store.put(jobB)
 let initialReferences = try store.jobReferencesByConversation()
 expect(initialReferences["conversation-a"] == Set(["job-a", "job-conflict"]),

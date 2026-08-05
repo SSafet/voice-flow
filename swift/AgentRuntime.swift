@@ -21,7 +21,15 @@ struct AgentModelSelection: Codable, Equatable {
     init(provider: String, model: String, reasoningEffort: String? = nil) {
         self.provider = provider
         self.model = model
-        self.reasoningEffort = reasoningEffort
+        self.reasoningEffort = AgentReasoningEffort.normalized(reasoningEffort)
+    }
+
+    /// Codex picks its model from the user's own codex settings — Voice Flow
+    /// only ever overrides how hard it thinks. Nil when there is nothing to
+    /// override, so that path keeps sending no model config at all.
+    static func codex(reasoningEffort: String?) -> AgentModelSelection? {
+        guard let effort = AgentReasoningEffort.normalized(reasoningEffort) else { return nil }
+        return AgentModelSelection(provider: "codex", model: "", reasoningEffort: effort)
     }
 }
 

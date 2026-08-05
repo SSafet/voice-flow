@@ -25,6 +25,7 @@ final class SettingsStore: ObservableObject {
     @Published var ttsVoice: String { didSet { commit() } }
     @Published var ttsSpeed: Double { didSet { commit() } }
     @Published var agentModel: String { didSet { commit() } }
+    @Published var agentReasoningEffort: String { didSet { commit() } }
     @Published var agentBaseURL: String { didSet { commit() } }
     @Published var agentDailyBudgetUSD: Double { didSet { commit() } }
     @Published var agentBackend: String { didSet { commit() } }
@@ -73,6 +74,7 @@ final class SettingsStore: ObservableObject {
         ttsVoice = s.ttsVoice
         ttsSpeed = s.ttsSpeed
         agentModel = s.agentModel
+        agentReasoningEffort = s.agentReasoningEffort
         agentBaseURL = s.agentBaseURL
         agentDailyBudgetUSD = s.agentDailyBudgetUSD
         agentBackend = s.agentBackend
@@ -107,6 +109,7 @@ final class SettingsStore: ObservableObject {
         loaded = false
         let settings = UserSettings.shared
         agentModel = settings.agentModel
+        agentReasoningEffort = settings.agentReasoningEffort
         agentBaseURL = settings.agentBaseURL
         agentDailyBudgetUSD = settings.agentDailyBudgetUSD
         agentBackend = settings.agentBackend
@@ -142,6 +145,8 @@ final class SettingsStore: ObservableObject {
         s.ttsSpeed = ttsSpeed
         let model = agentModel.trimmingCharacters(in: .whitespacesAndNewlines)
         s.agentModel = model.isEmpty ? DefaultAgentModel : model
+        s.agentReasoningEffort =
+            AgentReasoningEffort.normalized(agentReasoningEffort) ?? AgentReasoningEffort.unset
         let url = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         s.agentBaseURL = url.isEmpty ? DefaultAgentBaseURL : url
         s.agentDailyBudgetUSD = min(max(agentDailyBudgetUSD, 0.25), 500)
@@ -610,10 +615,25 @@ private struct AssistantSettingsView: View {
             Section {
                 LabeledContent {
                     VStack(alignment: .trailing, spacing: 5) {
-                        OpenRouterModelPicker(
-                            selection: $store.agentModel,
-                            models: pickerModels)
-                            .frame(minWidth: 360, minHeight: 26)
+                        HStack(spacing: 8) {
+                            OpenRouterModelPicker(
+                                selection: $store.agentModel,
+                                models: pickerModels)
+                                .frame(minWidth: 260, minHeight: 26)
+                            Picker(selection: $store.agentReasoningEffort) {
+                                ForEach(AgentReasoningEffort.choices, id: \.value) { choice in
+                                    Text(choice.label).tag(choice.value)
+                                }
+                            } label: {
+                                Text("Effort")
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .frame(width: 130)
+                            .help("How hard the model should think. Provider-specific; ignored by models without the knob.")
+                            .accessibilityLabel("Reasoning effort")
+                        }
+                        .frame(minWidth: 360)
                         HStack(spacing: 8) {
                             Text(selectedModelDetail)
                                 .lineLimit(1)

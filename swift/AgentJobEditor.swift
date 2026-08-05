@@ -20,6 +20,7 @@ final class AgentJobEditorView: NSView {
     let dailyTimeField = NSTextField(string: "08:00")
     let budgetField = NSTextField(string: "1.00")
     let modelCombo = OpenRouterModelComboBox()
+    let effortPopUp = NSPopUpButton()
 
     private let modelStatus = NSTextField(wrappingLabelWithString: "")
     private let modelDetail = NSTextField(labelWithString: "")
@@ -28,10 +29,11 @@ final class AgentJobEditorView: NSView {
 
     init(models: OpenRouterModelCatalogResult,
          preferredRuntime: AgentRuntimeKind,
-         defaultModelID: String) {
+         defaultModelID: String,
+         defaultReasoningEffort: String = AgentReasoningEffort.unset) {
         allModels = models.models
         catalogStatus = models.statusText
-        super.init(frame: NSRect(x: 0, y: 0, width: 590, height: 244))
+        super.init(frame: NSRect(x: 0, y: 0, width: 590, height: 275))
         appearance = NSAppearance(named: .darkAqua)
 
         promptField.placeholderString = "What should the assistant do?"
@@ -45,7 +47,16 @@ final class AgentJobEditorView: NSView {
         triggerPopUp.addItems(withTitles: Self.triggerChoices.map(\.label))
         triggerPopUp.selectItem(at: 0)
         triggerPopUp.setAccessibilityLabel("Automation trigger")
-        for popUp in [runtimePopUp, triggerPopUp] {
+        effortPopUp.addItems(withTitles: AgentReasoningEffort.choices.map(\.label))
+        effortPopUp.selectItem(
+            at: AgentReasoningEffort.choices.firstIndex {
+                $0.value == (AgentReasoningEffort.normalized(defaultReasoningEffort)
+                             ?? AgentReasoningEffort.unset)
+            } ?? 0)
+        effortPopUp.setAccessibilityLabel("Automation reasoning effort")
+        effortPopUp.toolTip =
+            "How hard the model should think on every run. Provider-specific; ignored by models without the knob."
+        for popUp in [runtimePopUp, triggerPopUp, effortPopUp] {
             popUp.font = .systemFont(ofSize: 12)
             popUp.isBordered = false
             popUp.alignment = .left
@@ -84,6 +95,7 @@ final class AgentJobEditorView: NSView {
             [NSTextField(labelWithString: "Runtime"), runtimePopUp],
             [NSTextField(labelWithString: "Model"), modelCombo],
             [NSTextField(labelWithString: ""), modelDetail],
+            [NSTextField(labelWithString: "Reasoning"), effortPopUp],
             [NSTextField(labelWithString: "Trigger"), triggerPopUp],
             [NSTextField(labelWithString: "Interval min"), intervalField],
             [NSTextField(labelWithString: "Daily at (HH:MM)"), dailyTimeField],
@@ -102,7 +114,7 @@ final class AgentJobEditorView: NSView {
             grid.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
         ])
         grid.column(at: 1).width = 470
-        for control in [runtimePopUp, triggerPopUp] {
+        for control in [runtimePopUp, triggerPopUp, effortPopUp] {
             control.translatesAutoresizingMaskIntoConstraints = false
             control.widthAnchor.constraint(equalToConstant: 240).isActive = true
         }
@@ -148,6 +160,19 @@ final class AgentJobEditorView: NSView {
     var selectedModelID: String? {
         guard selectedRuntime == .opencode else { return nil }
         return modelCombo.selectedModelID
+    }
+
+    /// Unlike the model, effort applies to both runtimes — codex takes it as
+    /// `model_reasoning_effort` while still choosing its own model.
+    var selectedReasoningEffort: String? {
+        let visibleValue = (effortPopUp.titleOfSelectedItem ?? effortPopUp.title)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let choice = AgentReasoningEffort.choices.first {
+            $0.label.caseInsensitiveCompare(visibleValue) == .orderedSame
+        } ?? AgentReasoningEffort.choices[
+            min(max(effortPopUp.indexOfSelectedItem, 0),
+                AgentReasoningEffort.choices.count - 1)]
+        return AgentReasoningEffort.normalized(choice.value)
     }
 
     @objc private func runtimeChanged() {

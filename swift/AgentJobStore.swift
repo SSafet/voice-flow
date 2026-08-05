@@ -54,6 +54,9 @@ struct AgentJob: Equatable {
     let conversationID: String
     let runtime: AgentRuntimeKind
     let modelID: String?
+    /// Pinned alongside the model: an automation that runs unattended should
+    /// keep thinking as hard (and costing as much) as when it was set up.
+    let reasoningEffort: String?
     let trigger: AgentJobTriggerKind
     let prompt: String
     let trustProfile: AgentTrustProfile
@@ -73,7 +76,7 @@ struct AgentJob: Equatable {
     init(id: String = UUID().uuidString, name: String? = nil,
          assistantSlug: String, conversationID: String,
          runtime: AgentRuntimeKind, trigger: AgentJobTriggerKind,
-         modelID: String? = nil,
+         modelID: String? = nil, reasoningEffort: String? = nil,
          prompt: String, trustProfile: AgentTrustProfile = .unattended,
          state: AgentJobState = .queued, nextRunAt: Date? = Date(),
          isEnabled: Bool? = nil, generation: Int = 1,
@@ -91,6 +94,7 @@ struct AgentJob: Equatable {
         self.runtime = runtime
         let trimmedModel = modelID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.modelID = trimmedModel.isEmpty ? nil : trimmedModel
+        self.reasoningEffort = AgentReasoningEffort.normalized(reasoningEffort)
         self.trigger = trigger
         self.prompt = prompt
         self.trustProfile = trustProfile
@@ -264,8 +268,9 @@ final class AgentJobStore {
               prompt, trust_profile, state, next_run_at, interval_seconds,
               concurrency_key, daily_budget_usd, max_duration_seconds,
               max_attempts, created_at, updated_at, model_id, name,
-              is_enabled, execution_generation, daily_time_minutes
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              is_enabled, execution_generation, daily_time_minutes,
+              reasoning_effort
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               assistant_slug=excluded.assistant_slug,
               conversation_id=excluded.conversation_id,
@@ -280,7 +285,8 @@ final class AgentJobStore {
               model_id=excluded.model_id, name=excluded.name,
               is_enabled=excluded.is_enabled,
               execution_generation=excluded.execution_generation,
-              daily_time_minutes=excluded.daily_time_minutes
+              daily_time_minutes=excluded.daily_time_minutes,
+              reasoning_effort=excluded.reasoning_effort
             """
             try withStatement(sql) { statement in
                 bind(job, to: statement)
@@ -1129,6 +1135,7 @@ final class AgentJobStore {
             runtime: AgentRuntimeKind(rawValue: text(statement, 3)) ?? .codex,
             trigger: AgentJobTriggerKind(rawValue: text(statement, 4)) ?? .manual,
             modelID: optionalText(statement, 17),
+            reasoningEffort: optionalText(statement, 22),
             prompt: text(statement, 5),
             trustProfile: AgentTrustProfile(rawValue: text(statement, 6)) ?? .unattended,
             state: AgentJobState(rawValue: text(statement, 7)) ?? .failed,
@@ -1262,6 +1269,11 @@ final class AgentJobStore {
         try addColumnIfMissing(
             table: "agent_jobs", column: "daily_time_minutes",
             definition: "daily_time_minutes REAL")
+        // Same rule as the column above: appended last, never in CREATE TABLE,
+        // so index 22 is stable across fresh and upgraded databases.
+        try addColumnIfMissing(
+            table: "agent_jobs", column: "reasoning_effort",
+            definition: "reasoning_effort TEXT")
         // An older build toggles enablement through `state` alone and never
         // touches `is_enabled`, so the two can diverge after a downgrade
         // round-trip. Reconcile on every open, not just at migration:
@@ -1401,6 +1413,7 @@ final class AgentJobStore {
         sqlite3_bind_int(statement, 19, job.isEnabled ? 1 : 0)
         sqlite3_bind_int(statement, 20, Int32(job.generation))
         bindOptionalDouble(job.dailyTimeMinutes.map(Double.init), at: 21, to: statement)
+        bindOptionalText(AgentReasoningEffort.normalized(job.reasoningEffort), at: 22, to: statement)
     }
 
     private func bindText(_ value: String, at index: Int32, to statement: OpaquePointer) {

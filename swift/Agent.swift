@@ -513,7 +513,8 @@ final class AgentSession {
             workingDirectory: workingDirectory,
             extraWritableRoots: [], trustProfile: foregroundTrustProfile,
             model: AgentModelSelection(
-                provider: "openrouter", model: UserSettings.shared.agentModel))
+                provider: "openrouter", model: UserSettings.shared.agentModel,
+                reasoningEffort: UserSettings.shared.agentReasoningEffort))
 
         AgentToolSessionRegistry.shared.prepare(
             turnID: turnID,
@@ -665,7 +666,8 @@ final class AgentSession {
             workingDirectory: workingDirectory,
             extraWritableRoots: activeAssistant == nil ? [] : [ticketsDir, queueDir],
             trustProfile: foregroundTrustProfile,
-            model: nil)
+            model: AgentModelSelection.codex(
+                reasoningEffort: UserSettings.shared.agentReasoningEffort))
         let resumeBinding = turn.preparation.resumeExternalSessionID.map {
             RuntimeBinding(
                 externalSessionID: $0,

@@ -70,8 +70,9 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
             model: job.runtime == .opencode
                 ? AgentModelSelection(
                     provider: "openrouter",
-                    model: job.modelID ?? AgentJobRuntimeConfiguration.shared.model().model)
-                : nil)
+                    model: job.modelID ?? AgentJobRuntimeConfiguration.shared.model().model,
+                    reasoningEffort: job.reasoningEffort)
+                : AgentModelSelection.codex(reasoningEffort: job.reasoningEffort))
         let binding = preparation.resumeExternalSessionID.map {
             RuntimeBinding(
                 externalSessionID: $0,

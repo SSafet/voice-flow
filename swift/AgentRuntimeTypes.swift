@@ -46,6 +46,35 @@ struct RuntimeBinding: Codable, Equatable {
     }
 }
 
+/// The effort choices offered in the UI. Deliberately the intersection both
+/// backends understand — OpenCode passes the raw string on as the model
+/// variant, codex as `model_reasoning_effort` — with "" meaning *the provider
+/// decides*, which is what every model did before this setting existed.
+enum AgentReasoningEffort {
+    static let unset = ""
+    static let choices: [(value: String, label: String)] = [
+        (unset, "Provider default"),
+        ("minimal", "Minimal"),
+        ("low", "Low"),
+        ("medium", "Medium"),
+        ("high", "High"),
+    ]
+
+    static func label(for value: String?) -> String {
+        let normalized = normalized(value) ?? unset
+        return choices.first { $0.value == normalized }?.label ?? normalized
+    }
+
+    /// Empty, blank, or unknown values mean "provider default" rather than a
+    /// string the runtime would forward and the provider would reject.
+    static func normalized(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        let lowered = trimmed.lowercased()
+        return choices.contains { $0.value == lowered } ? lowered : nil
+    }
+}
+
 enum AgentTrustProfile: String, Codable, CaseIterable {
     case observe
     case workspace
