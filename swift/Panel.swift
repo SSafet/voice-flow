@@ -122,6 +122,14 @@ final class ChatPanel {
         }
         if focusInput {
             selectTab(.agents)             // the panel lands on the agent list
+            // Accessory app + nonactivating panel: the panel can be key while
+            // another app stays active, and synthetic keystrokes from clipboard
+            // managers (Maccy's auto-paste, expanders) go to the ACTIVE app —
+            // so a paste aimed at the composer landed in whatever was behind.
+            // An explicit open is user-initiated, so take activation here. The
+            // focusInput: false paths — a push, settings, restore — never do,
+            // which is what keeps an agent message from stealing the screen.
+            NSApp.activate(ignoringOtherApps: true)
             panel.makeKey()
         }
         agentsView.refresh()
