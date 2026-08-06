@@ -19,7 +19,8 @@ enum ChatTab: Int {
 
 final class ChatPanel {
     var onShown: (() -> Void)?
-    var onSendText: ((String) -> Void)?
+    /// Typed message plus the file paths of any images pasted into it.
+    var onSendText: ((String, [String]) -> Void)?
     var onSnap: (() -> Void)?
     var onToggleSession: (() -> Void)?
     var onToggleAnnotate: (() -> Void)?
@@ -778,7 +779,7 @@ final class ChatPanel {
         inputField = ComposerView(
             placeholder: "message the assistant… (or hold ⌃⌥ and talk)",
             fontSize: 13, leading: snapButton)
-        inputField.onSend = { [weak self] text in self?.send(text) }
+        inputField.onSend = { [weak self] text, images in self?.send(text, images) }
         sendButton = inputField.sendControl
 
         inputRow = NSStackView(views: [inputField])
@@ -1079,9 +1080,9 @@ final class ChatPanel {
 
     // ── Actions ─────────────────────────────────────────
 
-    private func send(_ text: String) {
-        inputField.text = ""
-        onSendText?(text)
+    private func send(_ text: String, _ images: [String]) {
+        inputField.clear()
+        onSendText?(text, images)
     }
 
     @objc private func snapTapped() { onSnap?() }

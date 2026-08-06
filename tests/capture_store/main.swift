@@ -7,8 +7,8 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     guard condition() else { fputs("FAIL: \(message)\n", stderr); exit(1) }
 }
 
-private func png(red: UInt8, green: UInt8, blue: UInt8) -> Data {
-    let width = 32, height = 24
+private func png(red: UInt8, green: UInt8, blue: UInt8,
+                 width: Int = 32, height: Int = 24) -> Data {
     let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     let context = CGContext(
         data: nil, width: width, height: height, bitsPerComponent: 8,
@@ -92,5 +92,24 @@ _ = pruningStore.endSession(transcript: "prune now")
 waitFor("capture bundle retention did not converge to 40") {
     CaptureStore.listBundles(limit: 100).count == 40
 }
+
+// A pasted image is not a screen frame: it keeps its own aspect ratio and
+// only has its long edge bounded, or a wide screenshot pasted into the
+// composer would reach the agent squashed.
+let wide = png(red: 10, green: 200, blue: 90, width: 640, height: 160)
+guard let pastedPath = CaptureStore.savePastedImage(wide) else {
+    fputs("FAIL: pasted image was not saved\n", stderr); exit(1)
+}
+expect(FileManager.default.fileExists(atPath: pastedPath),
+       "pasted image path does not exist on disk")
+expect((pastedPath as NSString).lastPathComponent.hasPrefix("pasted-"),
+       "pasted image did not land under its own name")
+guard let saved = NSImage(contentsOfFile: pastedPath),
+      let rep = saved.representations.first else {
+    fputs("FAIL: pasted image is not readable\n", stderr); exit(1)
+}
+let ratio = Double(rep.pixelsWide) / Double(rep.pixelsHigh)
+expect(abs(ratio - 4.0) < 0.05,
+       "pasted image lost its aspect ratio (got \(rep.pixelsWide)x\(rep.pixelsHigh))")
 
 print("capture store tests passed")

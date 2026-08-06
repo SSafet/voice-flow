@@ -599,7 +599,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.chatPanel.restoreAssistantConversation(conversation, open: true)
             self.replyBubble.showTransient("Assistant will use \(runtime.label)", seconds: 3)
         }
-        chatPanel.onSendText = { [weak self] text in self?.sendTypedMessage(text) }
+        chatPanel.onSendText = { [weak self] text, images in
+            self?.sendTypedMessage(text, images: images)
+        }
         chatPanel.onEscape = { [weak self] in self?.handleVoiceFlowEscape() }
         chatPanel.onContinueDictation = { [weak self] entryId in
             self?.continueDictation(appendingTo: entryId)
@@ -2224,13 +2226,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return await assistantContinuityDecision(incoming: incoming, staleRetries: staleRetries - 1)
     }
 
-    private func sendTypedMessage(_ text: String) {
+    private func sendTypedMessage(_ text: String, images: [String] = []) {
         if let interaction = pendingInteraction {
             chatPanel.addNote("Sent to Claude.")
-            fulfillInteraction(interaction, text: text, includeScreenshot: false)
+            fulfillInteraction(interaction, text: text, includeScreenshot: false,
+                               extraAttachments: images)
             return
         }
-        sendToAgent(text: text, includeFreshScreenshot: sessionActive)
+        sendToAgent(text: text, includeFreshScreenshot: sessionActive,
+                    extraImagePaths: images)
     }
 
     /// Hand the user's answer to the MCP tool call that's blocked on it.
@@ -2238,9 +2242,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// so Claude still gets it on its next check-in.
     private func fulfillInteraction(_ interaction: PendingInteraction, text: String,
                                     includeScreenshot: Bool,
-                                    archiveAfterAnswer: Bool = true) {
+                                    archiveAfterAnswer: Bool = true,
+                                    extraAttachments: [String] = []) {
         Task { @MainActor in
-            var attachments: [String] = []
+            var attachments: [String] = extraAttachments
             let display = DisplayTopology.underMouse ?? DisplayTopology.primary
             if includeScreenshot,
                let raw = try? await screenCapture.captureScreen(on: display),
@@ -2327,7 +2332,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         sendToAgent(text: nil, includeFreshScreenshot: true, forceScreenshot: true)
     }
 
-    private func sendToAgent(text: String?, includeFreshScreenshot: Bool, forceScreenshot: Bool = false) {
+    private func sendToAgent(text: String?, includeFreshScreenshot: Bool,
+                             forceScreenshot: Bool = false,
+                             extraImagePaths: [String] = []) {
         assistantTurnUsesReceiptPresentation = false
         if !chatPanel.isVisible {
             currentPushSessionId = nil   // grown shows agent content now
@@ -2335,7 +2342,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         Task { @MainActor in
-            var screenshots: [Data] = []
+            // Images the user pasted into the composer ride the same channel
+            // as a snapshot — the model sees them, not a path it has to open.
+            var screenshots: [Data] = extraImagePaths.compactMap {
+                FileManager.default.contents(atPath: $0)
+            }
             if includeFreshScreenshot || forceScreenshot {
                 if let fresh = try? await screenCapture.captureScreen() {
                     screenshots.append(fresh)
@@ -2343,7 +2354,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
 
-            self.chatPanel.addUserMessage(text ?? "", attachmentNote: Self.attachmentNote(count: screenshots.count))
+            self.chatPanel.addUserMessage(
+                text ?? "",
+                attachmentNote: Self.attachmentNote(
+                    count: screenshots.count,
+                    noun: extraImagePaths.isEmpty ? "screenshot" : "image"))
             self.agent.send(text: text, screenshots: screenshots)
         }
     }
@@ -2362,11 +2377,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         agent.send(text: text, screenshots: screenshots)
     }
 
-    private static func attachmentNote(count: Int) -> String? {
+    private static func attachmentNote(count: Int, noun: String = "screenshot") -> String? {
         switch count {
         case 0: return nil
-        case 1: return "📎 1 screenshot"
-        default: return "📎 \(count) screenshots"
+        case 1: return "📎 1 \(noun)"
+        default: return "📎 \(count) \(noun)s"
         }
     }
 
@@ -5774,7 +5789,8 @@ extension AppDelegate: AgentsDataSource {
         return interaction.sessionId == sessionId && !interaction.resolved
     }
 
-    func sendMessage(toThread id: AgentsThreadID, text: String) throws {
+    func sendMessage(toThread id: AgentsThreadID, text: String,
+                     attachments: [String] = []) throws {
         switch id.source {
         case .assistant:
             guard let snapshot = agent.conversation(id.value) else {
@@ -5790,7 +5806,8 @@ extension AppDelegate: AgentsDataSource {
             }
             chatPanel.restoreAssistantConversation(conversation)
             assistantTurnUsesReceiptPresentation = false
-            sendToAgent(text: text, includeFreshScreenshot: false)
+            sendToAgent(text: text, includeFreshScreenshot: false,
+                        extraImagePaths: attachments)
         case .mcp:
             guard agentThreadDetail(for: id) != nil else {
                 throw threadActionError("No longer available")
@@ -5799,13 +5816,13 @@ extension AppDelegate: AgentsDataSource {
                interaction.sessionId == id.value, !interaction.resolved {
                 fulfillInteraction(
                     interaction, text: text, includeScreenshot: false,
-                    archiveAfterAnswer: false)
+                    archiveAfterAnswer: false, extraAttachments: attachments)
                 return
             }
             inbox.clearUserClosed(id.value)
             reopenStack(id.value)
             let live = inbox.hasWaiter(exactSession: id.value)
-            inbox.add(text: text, attachments: [], session: id.value)
+            inbox.add(text: text, attachments: attachments, session: id.value)
             if var queue = sessionPushes[id.value], let index = queue.indices.last {
                 if queue[index].answer == nil { queue[index].answer = text }
                 else { queue[index].answer! += "\n↳ " + text }

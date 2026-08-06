@@ -295,6 +295,24 @@ final class CaptureStore {
         return (url.path, width, height)
     }
 
+    /// An image pasted into the composer. Same shots/ folder, but the aspect
+    /// ratio is preserved and only the long edge is bounded — this is whatever
+    /// the user copied, not a fixed-geometry frame of their screen.
+    static func savePastedImage(_ raw: Data) -> String? {
+        guard let jpeg = ImageUtils.compress(raw) else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss-SSS"
+        let url = shotsDir.appendingPathComponent("pasted-\(formatter.string(from: Date())).jpg")
+        do {
+            try jpeg.write(to: url, options: .atomic)
+        } catch {
+            vflog("capture: pasted image write failed: \(error)")
+            return nil
+        }
+        pruneShots()
+        return url.path
+    }
+
     private static func pruneShots() {
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: shotsDir, includingPropertiesForKeys: nil) else { return }

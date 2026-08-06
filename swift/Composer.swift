@@ -15,17 +15,22 @@ import Cocoa
 //  buttons sit low so they stay beside the last line as the field grows.
 
 final class ComposerView: NSView {
-    /// Fired with the trimmed text on Return or send. Clearing is the
-    /// caller's call — a send that fails keeps the draft.
-    var onSend: ((String) -> Void)?
+    /// Fired on Return or send with the trimmed text and the file paths of
+    /// any pasted images. Clearing is the caller's call — a send that fails
+    /// keeps the draft and its attachments.
+    var onSend: ((String, [String]) -> Void)?
     /// Per-keystroke hook, for stashing drafts.
     var onTextChanged: (() -> Void)?
 
     private let textView = ComposerTextView()
+    private let attachmentsRow = NSStackView()
+    private var attachmentPaths: [String] = []
     private let scroll = NSScrollView()
     private let placeholderLabel = NSTextField(labelWithString: "")
     private let sendButton = NSButton()
     private var heightConstraint: NSLayoutConstraint!
+    private var attachmentsHeight: NSLayoutConstraint!
+    private var attachmentsGap: NSLayoutConstraint!
     private let minHeight: CGFloat
     private let maxHeight: CGFloat
     private let inset: CGFloat
@@ -45,7 +50,7 @@ final class ComposerView: NSView {
     }
 
     var isEmpty: Bool {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachmentPaths.isEmpty
     }
 
     /// The send button, for callers that inspect or restyle it.
@@ -109,7 +114,12 @@ final class ComposerView: NSView {
         sendButton.setAccessibilityLabel("Send")
         sendButton.toolTip = "Send"
 
-        var views: [NSView] = [scroll, placeholderLabel, sendButton]
+        attachmentsRow.orientation = .horizontal
+        attachmentsRow.spacing = 6
+        attachmentsRow.isHidden = true
+        attachmentsRow.setAccessibilityLabel("Attached images")
+
+        var views: [NSView] = [scroll, placeholderLabel, sendButton, attachmentsRow]
         if let leading { views.append(leading) }
         for view in views {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -117,9 +127,16 @@ final class ComposerView: NSView {
         }
 
         heightConstraint = scroll.heightAnchor.constraint(equalToConstant: minHeight)
+        attachmentsHeight = attachmentsRow.heightAnchor.constraint(equalToConstant: 0)
+        attachmentsGap = scroll.topAnchor.constraint(equalTo: attachmentsRow.bottomAnchor,
+                                                     constant: 0)
         var constraints: [NSLayoutConstraint] = [
             heightConstraint,
-            scroll.topAnchor.constraint(equalTo: topAnchor),
+            attachmentsHeight,
+            attachmentsGap,
+            attachmentsRow.topAnchor.constraint(equalTo: topAnchor),
+            attachmentsRow.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
+            attachmentsRow.trailingAnchor.constraint(lessThanOrEqualTo: scroll.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             scroll.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -6),
             // Low rather than centered: as the field grows the buttons stay
@@ -164,8 +181,89 @@ final class ComposerView: NSView {
 
     private func submit() {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        onSend?(value)
+        // An image on its own is a message; text is not required.
+        guard !value.isEmpty || !attachmentPaths.isEmpty else { return }
+        onSend?(value, attachmentPaths)
+    }
+
+    /// Empty the composer after a send the caller accepted.
+    func clear() {
+        text = ""
+        attachmentPaths = []
+        rebuildAttachments()
+    }
+
+    // ── Pasted images ───────────────────────────────────
+
+    /// Called by the text view before it pastes. Returns true when the
+    /// pasteboard held images and we consumed them instead.
+    fileprivate func consumePastedImages() -> Bool {
+        let pasteboard = NSPasteboard.general
+        // Text wins whenever it is on offer: copying from a rich editor puts
+        // BOTH a string and a rendered image on the pasteboard, and the user
+        // pressing ⌘V there means the words.
+        if pasteboard.canReadObject(forClasses: [NSString.self], options: nil) { return false }
+        guard let images = pasteboard.readObjects(forClasses: [NSImage.self],
+                                                  options: nil) as? [NSImage],
+              !images.isEmpty else { return false }
+
+        var added = false
+        for image in images {
+            // Prefer the pasteboard's own bytes; fall back to re-encoding the
+            // NSImage when the type is one CoreGraphics gave us indirectly.
+            let raw = pasteboard.data(forType: .png)
+                ?? pasteboard.data(forType: .tiff)
+                ?? image.tiffRepresentation
+            guard let raw, let path = CaptureStore.savePastedImage(raw) else {
+                vflog("composer: could not save a pasted image")
+                continue
+            }
+            attachmentPaths.append(path)
+            added = true
+        }
+        guard added else { return false }
+        rebuildAttachments()
+        return true
+    }
+
+    private func rebuildAttachments() {
+        for view in attachmentsRow.arrangedSubviews {
+            attachmentsRow.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for (index, path) in attachmentPaths.enumerated() {
+            let chip = NSButton()
+            chip.image = NSImage(contentsOfFile: path)
+            chip.imageScaling = .scaleProportionallyUpOrDown
+            chip.isBordered = false
+            chip.title = ""
+            chip.tag = index
+            chip.target = self
+            chip.action = #selector(attachmentTapped(_:))
+            chip.wantsLayer = true
+            chip.layer?.cornerRadius = 5
+            chip.layer?.borderWidth = 1
+            chip.layer?.borderColor = Theme.border.cgColor
+            chip.layer?.masksToBounds = true
+            chip.toolTip = "Click to remove — \((path as NSString).lastPathComponent)"
+            chip.setAccessibilityLabel("Remove attached image \(index + 1)")
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                chip.widthAnchor.constraint(equalToConstant: 46),
+                chip.heightAnchor.constraint(equalToConstant: 32),
+            ])
+            attachmentsRow.addArrangedSubview(chip)
+        }
+        let showing = !attachmentPaths.isEmpty
+        attachmentsRow.isHidden = !showing
+        attachmentsHeight.constant = showing ? 32 : 0
+        attachmentsGap.constant = showing ? 6 : 0
+    }
+
+    @objc private func attachmentTapped(_ sender: NSButton) {
+        guard attachmentPaths.indices.contains(sender.tag) else { return }
+        attachmentPaths.remove(at: sender.tag)
+        rebuildAttachments()
     }
 
     private func syncPlaceholder() {
@@ -208,6 +306,23 @@ extension ComposerView: NSTextViewDelegate {
 /// NSTextView eats Escape (it means "cancel completion"), but in this app
 /// Escape is the panic button — it has to reach the panel.
 private final class ComposerTextView: NSTextView {
+    /// An image on the pasteboard becomes an attachment instead of being
+    /// dropped on the floor (this view is plain-text, so AppKit would paste
+    /// nothing at all).
+    override func paste(_ sender: Any?) {
+        if (enclosingComposer?.consumePastedImages() ?? false) { return }
+        super.paste(sender)
+    }
+
+    private var enclosingComposer: ComposerView? {
+        var view: NSView? = superview
+        while let current = view {
+            if let composer = current as? ComposerView { return composer }
+            view = current.superview
+        }
+        return nil
+    }
+
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
             nextResponder?.keyDown(with: event)

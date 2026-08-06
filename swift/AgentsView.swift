@@ -175,7 +175,7 @@ protocol AgentsDataSource: AnyObject {
     /// Route a typed message through the exact source adapter. Assistant
     /// turns use canonical history; external messages resolve a live ask or
     /// queue for only that session.
-    func sendMessage(toThread id: AgentsThreadID, text: String) throws
+    func sendMessage(toThread id: AgentsThreadID, text: String, attachments: [String]) throws
     func speakThread(_ id: AgentsThreadID)
     func completeThread(_ id: AgentsThreadID) throws
     func reopenThread(_ id: AgentsThreadID) throws
@@ -2913,7 +2913,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     private func makeComposer(placeholder: String) -> ComposerView {
         let composer = ComposerView(placeholder: placeholder, fontSize: 12.5)
-        composer.onSend = { [weak self] text in self?.submit(text) }
+        composer.onSend = { [weak self] text, images in self?.submit(text, images: images) }
         return composer
     }
 
@@ -3356,13 +3356,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         threadDrafts[id] = composer.text
     }
 
-    private func submit(_ text: String) {
-        guard !text.isEmpty, case .thread(let id) = mode, let dataSource else { return }
+    private func submit(_ text: String, images: [String] = []) {
+        guard !text.isEmpty || !images.isEmpty,
+              case .thread(let id) = mode, let dataSource else { return }
         threadDrafts[id] = text
         do {
-            try dataSource.sendMessage(toThread: id, text: text)
+            try dataSource.sendMessage(toThread: id, text: text, attachments: images)
             threadDrafts[id] = ""
-            composerField?.text = ""
+            composerField?.clear()
             threadInlineError = nil
             DispatchQueue.main.async { self.refresh() }
         } catch {
