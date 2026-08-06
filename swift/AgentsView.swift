@@ -308,7 +308,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var automationSearchField: NSTextField?
     private var automationSearchQuery = ""
     private var automationFilter: AutomationFilter = .all
-    private var composerField: NSTextField?
+    private var composerField: ComposerView?
     private var composerThreadID: AgentsThreadID?
     private var automationNameField: NSTextField?
     private var automationInstructionsView: NSTextView?
@@ -667,8 +667,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     func qaSetComposerText(_ text: String) -> Bool {
-        guard let field = composerField else { return false }
-        field.stringValue = text
+        guard let composer = composerField else { return false }
+        composer.text = text
         return true
     }
 
@@ -683,7 +683,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             state["mode"] = "thread"
             state["thread_source"] = id.source.rawValue
             state["thread_id"] = id.value
-            state["draft"] = composerField?.stringValue ?? threadDrafts[id] ?? ""
+            state["draft"] = composerField?.text ?? threadDrafts[id] ?? ""
         case .search: state["mode"] = "search"
         case .destination: state["mode"] = "destination"
         case .job: state["mode"] = "automation_detail"
@@ -745,7 +745,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// other sessions must never eat what the user is typing.
     func refresh() {
         if case .thread(let id) = mode {
-            if let field = composerField { threadDrafts[id] = field.stringValue }
+            if let composer = composerField { threadDrafts[id] = composer.text }
             if dataSource?.agentThreadDetail(for: id) == nil {
                 mode = .destination(currentDestination)
             }
@@ -759,7 +759,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                   (try? dataSource?.assistantWorkspace(slug: slug)) == nil {
             mode = .destination(.assistants)
         }
-        let draft = composerField?.stringValue ?? ""
+        let draft = composerField?.text ?? ""
         let assistantDraft = (
             assistantNameField?.stringValue,
             assistantDescriptionField?.stringValue,
@@ -772,23 +772,17 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             default: return nil
             }
         }()
-        let hadFocus = composerField.map { field in
-            (field.window?.firstResponder as? NSText)?.delegate === field
-        } ?? false
+        let hadFocus = composerField?.hasFocus ?? false
         rebuild()
-        if let field = composerField {
+        if let composer = composerField {
             if case .thread(let id) = mode {
-                field.stringValue = threadDrafts[id] ?? draft
+                composer.text = threadDrafts[id] ?? draft
             } else if !draft.isEmpty {
-                field.stringValue = draft
+                composer.text = draft
             }
-            if hadFocus {
-                // rebuild() made a brand-new field; it still has a zero frame
-                // until layout runs. Focusing it there installs the field
-                // editor into degenerate geometry.
-                field.window?.layoutIfNeeded()
-                field.window?.makeFirstResponder(field)
-            }
+            // rebuild() made a brand-new composer; focus() lays the window out
+            // first, so the text view never takes focus at a zero frame.
+            if hadFocus { composer.focus() }
         }
         if let value = assistantDraft.0 { assistantNameField?.stringValue = value }
         if let value = assistantDraft.1 { assistantDescriptionField?.stringValue = value }
@@ -1672,15 +1666,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     /// Swap in the padded cell, preserving the field's configuration.
-    private func applyPaddedCell(_ field: NSTextField, fontSize: CGFloat,
-                                 multiline: Bool = false) {
+    private func applyPaddedCell(_ field: NSTextField, fontSize: CGFloat) {
         let cell = PaddedTextFieldCell(textCell: field.stringValue)
         cell.placeholderString = field.placeholderString
         cell.isEditable = true
         cell.isSelectable = true
-        cell.isScrollable = !multiline
-        cell.usesSingleLineMode = !multiline
-        cell.wraps = multiline
+        cell.isScrollable = true
+        cell.usesSingleLineMode = true
+        cell.wraps = false
         cell.font = .systemFont(ofSize: fontSize)
         field.cell = cell
         field.font = .systemFont(ofSize: fontSize)
@@ -2901,11 +2894,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         if detail.archived {
             place(emptyLabel("Reopen this thread to reply"), below: &top, gap: 14)
         } else if detail.canReply {
-            let (row, field) = makeComposer(
+            let composer = makeComposer(
                 placeholder: id.source == .assistant ? "Message \(detail.owner)…" : "Message this thread…")
-            field.stringValue = threadDrafts[id] ?? ""
-            place(row, below: &top, gap: 10)
-            composerField = field
+            composer.text = threadDrafts[id] ?? ""
+            place(composer, below: &top, gap: 10)
+            composerField = composer
             composerThreadID = id
         } else if let reason = detail.readOnlyReason {
             let notice = NSTextField(wrappingLabelWithString: reason)
@@ -2918,42 +2911,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         finishContent(top)
     }
 
-    private func makeComposer(placeholder: String) -> (NSView, NSTextField) {
-        let row = NSView()
-
-        let field = NSTextField()
-        field.placeholderString = placeholder
-        applyPaddedCell(field, fontSize: 12.5, multiline: true)
-        field.wantsLayer = true
-        field.layer?.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10).cgColor
-        field.layer?.cornerRadius = 8
-        field.target = self
-        field.action = #selector(composerSent(_:))
-        field.lineBreakMode = .byWordWrapping
-        // Multiline cells swallow Return instead of firing the action —
-        // the delegate turns Return back into SEND (Option+Return = newline).
-        field.delegate = self
-
-        let send = NSButton(image: NSImage(systemSymbolName: "arrow.up.circle.fill",
-                                           accessibilityDescription: nil) ?? NSImage(),
-                            target: self, action: #selector(sendTapped(_:)))
-        send.isBordered = false
-        send.contentTintColor = Theme.accent
-
-        for v in [field, send] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            row.addSubview(v)
-        }
-        NSLayoutConstraint.activate([
-            field.topAnchor.constraint(equalTo: row.topAnchor),
-            field.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-            field.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-            field.heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
-            send.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: 6),
-            send.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            send.centerYAnchor.constraint(equalTo: field.centerYAnchor),
-        ])
-        return (row, field)
+    private func makeComposer(placeholder: String) -> ComposerView {
+        let composer = ComposerView(placeholder: placeholder, fontSize: 12.5)
+        composer.onSend = { [weak self] text in self?.submit(text) }
+        return composer
     }
 
     private func place(_ view: NSView, below top: inout NSLayoutYAxisAnchor, gap: CGFloat) {
@@ -3367,21 +3328,6 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
     }
 
-    @objc private func composerSent(_ sender: NSTextField) { submit(sender) }
-
-    /// Return sends; Option+Return inserts a newline.
-    func control(_ control: NSControl, textView: NSTextView,
-                 doCommandBy commandSelector: Selector) -> Bool {
-        guard commandSelector == #selector(NSResponder.insertNewline(_:)),
-              let field = control as? NSTextField else { return false }
-        if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
-            textView.insertNewlineIgnoringFieldEditor(nil)
-            return true
-        }
-        submit(field)
-        return true
-    }
-
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
         if field === searchField {
@@ -3405,28 +3351,23 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
     }
 
-    @objc private func sendTapped(_ sender: NSButton) {
-        if let field = composerField { submit(field) }
-    }
-
     private func stashComposerDraft() {
-        guard let field = composerField, let id = composerThreadID else { return }
-        threadDrafts[id] = field.stringValue
+        guard let composer = composerField, let id = composerThreadID else { return }
+        threadDrafts[id] = composer.text
     }
 
-    private func submit(_ field: NSTextField) {
-        let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func submit(_ text: String) {
         guard !text.isEmpty, case .thread(let id) = mode, let dataSource else { return }
         threadDrafts[id] = text
         do {
             try dataSource.sendMessage(toThread: id, text: text)
             threadDrafts[id] = ""
-            field.stringValue = ""
+            composerField?.text = ""
             threadInlineError = nil
             DispatchQueue.main.async { self.refresh() }
         } catch {
             threadInlineError = error.localizedDescription
-            field.stringValue = text
+            composerField?.text = text
             rebuild()
         }
     }

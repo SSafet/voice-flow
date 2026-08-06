@@ -70,7 +70,7 @@ final class ChatPanel {
     private var bubbleStack: NSStackView!
     private var scrollView: NSScrollView!
     private var emptyLabel: NSTextField!
-    private var inputField: ChatInputField!
+    private var inputField: ComposerView!
     private var sendButton: NSButton!
     private var statusLabel: NSTextField!
     private var stopButton: NSButton!
@@ -392,7 +392,7 @@ final class ChatPanel {
 
     func focusInput() {
         panel.makeKey()
-        panel.makeFirstResponder(inputField)
+        inputField.focus()
     }
 
     // ── Tabs ────────────────────────────────────────────
@@ -473,7 +473,7 @@ final class ChatPanel {
         styleTabs()
         updateEmptyLabel()
         if assistant {
-            panel.makeFirstResponder(inputField)
+            inputField.focus()
             scrollToBottom()
         }
         if agentsList {
@@ -772,25 +772,16 @@ final class ChatPanel {
         statusRow.heightAnchor.constraint(equalToConstant: 18).isActive = true
 
         // Input row -----------------------------------------------------------
-        inputField = ChatInputField()
-        inputField.placeholderString = "message the assistant… (or hold ⌃⌥ and talk)"
-        inputField.font = .systemFont(ofSize: 13)
-        inputField.textColor = Theme.text
-        inputField.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10)
-        inputField.isBezeled = false
-        inputField.focusRingType = .none
-        inputField.wantsLayer = true
-        inputField.layer?.cornerRadius = 8
-        inputField.target = self
-        inputField.action = #selector(sendTapped)
-        inputField.translatesAutoresizingMaskIntoConstraints = false
-        inputField.heightAnchor.constraint(equalToConstant: 30).isActive = true
-
+        // The same ComposerView the Agents thread uses: it grows with the
+        // text instead of hiding a long paste in a one-line field.
         let snapButton = iconButton("camera.viewfinder", action: #selector(snapTapped), tip: "Snap the screen and send")
-        sendButton = iconButton("arrow.up.circle.fill", action: #selector(sendTapped), tip: "Send")
-        sendButton.contentTintColor = Theme.accent
+        inputField = ComposerView(
+            placeholder: "message the assistant… (or hold ⌃⌥ and talk)",
+            fontSize: 13, leading: snapButton)
+        inputField.onSend = { [weak self] text in self?.send(text) }
+        sendButton = inputField.sendControl
 
-        inputRow = NSStackView(views: [snapButton, inputField, sendButton])
+        inputRow = NSStackView(views: [inputField])
         inputRow.orientation = .horizontal
         inputRow.spacing = 8
         inputRow.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 12, right: 12)
@@ -1088,10 +1079,8 @@ final class ChatPanel {
 
     // ── Actions ─────────────────────────────────────────
 
-    @objc private func sendTapped() {
-        let text = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        inputField.stringValue = ""
+    private func send(_ text: String) {
+        inputField.text = ""
         onSendText?(text)
     }
 
@@ -1168,12 +1157,4 @@ final class KeyablePanel: NSPanel {
     }
 }
 
-private final class ChatInputField: NSTextField {
-    override func becomeFirstResponder() -> Bool {
-        let result = super.becomeFirstResponder()
-        if result {
-            currentEditor()?.selectedRange = NSRange(location: stringValue.count, length: 0)
-        }
-        return result
-    }
-}
+
