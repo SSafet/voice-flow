@@ -1128,7 +1128,31 @@ final class KeyablePanel: NSPanel {
            onCommand?(key) == true {
             return true
         }
+        if let action = KeyablePanel.editingAction(for: event),
+           NSApp.sendAction(action, to: nil, from: self) {
+            return true
+        }
         return super.performKeyEquivalent(with: event)
+    }
+
+    /// This is a `.nonactivatingPanel` in an `.accessory` app: it takes key
+    /// focus without activating us, so the frontmost app keeps the menu bar
+    /// and our own Edit menu's ⌘V / ⌘C / ⌘X / ⌘A / ⌘Z never fires. Typing
+    /// works (keys go to the key window), pasting did not. Send the standard
+    /// editing actions down the responder chain ourselves instead.
+    private static func editingAction(for event: NSEvent) -> Selector? {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags == .command || flags == [.command, .shift],
+              let key = event.charactersIgnoringModifiers?.lowercased() else { return nil }
+        let shifted = flags.contains(.shift)
+        switch key {
+        case "v" where !shifted: return #selector(NSText.paste(_:))
+        case "c" where !shifted: return #selector(NSText.copy(_:))
+        case "x" where !shifted: return #selector(NSText.cut(_:))
+        case "a" where !shifted: return #selector(NSResponder.selectAll(_:))
+        case "z": return Selector((shifted ? "redo:" : "undo:"))
+        default: return nil
+        }
     }
 
     override func cancelOperation(_ sender: Any?) {
