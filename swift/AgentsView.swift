@@ -782,7 +782,13 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             } else if !draft.isEmpty {
                 field.stringValue = draft
             }
-            if hadFocus { field.window?.makeFirstResponder(field) }
+            if hadFocus {
+                // rebuild() made a brand-new field; it still has a zero frame
+                // until layout runs. Focusing it there installs the field
+                // editor into degenerate geometry.
+                field.window?.layoutIfNeeded()
+                field.window?.makeFirstResponder(field)
+            }
         }
         if let value = assistantDraft.0 { assistantNameField?.stringValue = value }
         if let value = assistantDraft.1 { assistantDescriptionField?.stringValue = value }
@@ -3456,10 +3462,17 @@ private final class AgentListRowView: HoverRowView {
 /// display and the field editor.
 final class PaddedTextFieldCell: NSTextFieldCell {
     private func adjusted(_ rect: NSRect) -> NSRect {
+        // The field editor can be installed before layout has given the field
+        // a real frame. Insetting a degenerate rect hands AppKit a negative
+        // width, and the text view it puts in the clip view then traps with
+        // "Invalid view geometry: width is NaN". Pass such rects through.
+        guard rect.origin.x.isFinite, rect.origin.y.isFinite,
+              rect.width.isFinite, rect.height.isFinite,
+              rect.width > 20 else { return rect }
         var inset = rect.insetBy(dx: 10, dy: 0)
         let ideal = cellSize(forBounds: rect).height
         let delta = inset.height - ideal
-        if delta > 0 {
+        if delta > 0, delta.isFinite {
             inset.origin.y += delta / 2
             inset.size.height -= delta
         }
