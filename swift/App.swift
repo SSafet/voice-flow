@@ -2723,7 +2723,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             captureRuns[id] = run
             chatPanel.addNote(message)
             agent.note("\(message) Raw audio kept in \(PendingAudioStore.directory().path)")
-            replyBubble.showTransient("couldn't transcribe — capture kept from being misrouted",
+            let audioURL = PendingAudioStore.directory().appendingPathComponent("\(id.uuidString).wav")
+            let recoveryMessage = FileManager.default.fileExists(atPath: audioURL.path)
+                ? "couldn't transcribe — recording saved for recovery"
+                : "couldn't transcribe — \(message)"
+            replyBubble.showTransient(recoveryMessage,
                                       seconds: 6, isError: true)
         }
         if activeRunId == nil { state = .idle }

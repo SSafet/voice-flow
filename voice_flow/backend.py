@@ -94,6 +94,10 @@ def main():
                         sample_rate=sample_rate,
                         vocabulary=vocabulary or None,
                         wake_word=wake_word,
+                        on_retry=lambda attempt, total: _send({
+                            "event": "status", "request_id": request_id,
+                            "message": f"Transcription interrupted — retrying ({attempt}/{total})...",
+                        }),
                     )
                 else:
                     if not transcriber.is_loaded:
@@ -154,6 +158,9 @@ def main():
                         sample_rate=sample_rate,
                         vocabulary=vocabulary or None,
                         wake_word=wake_word,
+                        # A newer preview supersedes this one; do not hold up
+                        # the final dictation by retrying stale partial audio.
+                        max_attempts=1,
                     )
                 else:
                     if not transcriber.is_loaded:

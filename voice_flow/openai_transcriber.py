@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import io
+import http.client
 import json
 import re
+import time
 import uuid
 import urllib.error
 import urllib.request
 import wave
+from collections.abc import Callable
 
 import numpy as np
 
@@ -26,6 +29,8 @@ class OpenAITranscriber:
         sample_rate: int = SAMPLE_RATE,
         vocabulary: list[str] | None = None,
         wake_word: str | None = None,
+        max_attempts: int = 3,
+        on_retry: Callable[[int, int], None] | None = None,
     ) -> str:
         if not api_key.strip():
             raise ValueError("Missing OpenAI API key")
@@ -59,19 +64,35 @@ class OpenAITranscriber:
             method="POST",
         )
 
-        try:
-            with urllib.request.urlopen(request, timeout=90) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
+        # Replay the same saved request on transient transport/provider errors.
+        # RemoteDisconnected is NOT a URLError: it was escaping immediately and
+        # turning a single dropped connection into a failed final dictation.
+        attempts = max(1, min(max_attempts, 3))
+        for attempt in range(1, attempts + 1):
             try:
-                parsed = json.loads(detail)
-                message = parsed.get("error", {}).get("message", detail)
-            except json.JSONDecodeError:
-                message = detail
-            raise RuntimeError(f"OpenAI transcription failed ({exc.code}): {message}") from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"OpenAI transcription failed: {exc.reason}") from exc
+                with urllib.request.urlopen(request, timeout=90) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                exc.close()
+                try:
+                    parsed = json.loads(detail)
+                    message = parsed.get("error", {}).get("message", detail)
+                except (json.JSONDecodeError, AttributeError):
+                    message = detail
+                retryable = exc.code in (408, 429) or 500 <= exc.code < 600
+                if not retryable or attempt == attempts:
+                    raise RuntimeError(f"OpenAI transcription failed ({exc.code}): {message}") from exc
+            except (urllib.error.URLError, ConnectionError, TimeoutError,
+                    http.client.IncompleteRead) as exc:
+                if attempt == attempts:
+                    reason = getattr(exc, "reason", str(exc))
+                    raise RuntimeError(
+                        f"OpenAI transcription failed after {attempt} attempt(s): {reason}") from exc
+            if on_retry:
+                on_retry(attempt + 1, attempts)
+            time.sleep(attempt)
 
         text = str(payload.get("text", "")).strip()
         if text.lower().strip(".,!?") in FILLER_ONLY:
