@@ -845,6 +845,11 @@ final class AgentSession {
         finish(nil)
     }
 
+    /// A note the app wants kept in the current conversation's transcript
+    /// (launch leftovers, permission prompts, embedded-tool reports) — it
+    /// renders as a NOTE block in the thread and survives restarts.
+    func note(_ text: String) { recordNote(text) }
+
     private func recordNote(_ text: String) {
         history.appendMessage(sessionId: runningSessionId ?? currentSessionId,
                               role: .note, text: text)

@@ -292,7 +292,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let pendingAudio = PendingAudioStore.pendingFiles()
         if !pendingAudio.isEmpty {
             vflog("pending-audio: \(pendingAudio.count) unprocessed recording(s) from earlier runs")
-            chatPanel.addNote("\(pendingAudio.count) unprocessed recording(s) kept in \(PendingAudioStore.directory().path)")
+            agent.note("\(pendingAudio.count) unprocessed recording(s) kept in \(PendingAudioStore.directory().path)")
         }
         scheduleOpenCodeUpdates()
         vflog("app started")
@@ -577,36 +577,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.agent.markCurrentAssistantRepliesSeen()
             self.refreshUnreadIndicator()
         }
-        chatPanel.onDeleteAssistant = { [weak self] in
+        chatPanel.onSelectAssistantRuntime = { [weak self] runtime, conversationID in
             guard let self else { return }
-            guard let conversation = self.agent.deleteConversation(self.agent.currentSessionId) else {
+            // The picker belongs to the thread on screen, which need not be
+            // the agent's current conversation — make it current first.
+            guard self.agent.activateConversation(conversationID) != nil,
+                  let conversation = self.agent.setPreferredRuntime(runtime) else {
+                self.chatPanel.refreshAgents()
                 self.replyBubble.showTransient("wait for the Assistant to finish first", seconds: 4)
                 return
             }
-            self.chatPanel.restoreAssistantConversation(conversation)
-            self.chatPanel.showAgentsList()
-            self.chatPanel.refreshAgents()
-            self.replyBubble.showTransient("Assistant session deleted", seconds: 4)
-        }
-        chatPanel.onSelectAssistantRuntime = { [weak self] runtime in
-            guard let self else { return }
-            guard let conversation = self.agent.setPreferredRuntime(runtime) else {
-                self.chatPanel.setAssistantRuntime(self.agent.preferredRuntime, enabled: false)
-                self.replyBubble.showTransient("wait for the Assistant to finish first", seconds: 4)
-                return
-            }
-            self.chatPanel.setAssistantRuntime(runtime, enabled: true)
             self.chatPanel.restoreAssistantConversation(conversation, open: true)
             self.replyBubble.showTransient("Assistant will use \(runtime.label)", seconds: 3)
-        }
-        chatPanel.onSendText = { [weak self] text, images in
-            self?.sendTypedMessage(text, images: images)
         }
         chatPanel.onEscape = { [weak self] in self?.handleVoiceFlowEscape() }
         chatPanel.onContinueDictation = { [weak self] entryId in
             self?.continueDictation(appendingTo: entryId)
         }
-        chatPanel.onSnap = { [weak self] in self?.snapAndSend() }
+        chatPanel.onSnap = { [weak self] conversationID in
+            guard let self else { return }
+            guard self.agent.activateConversation(conversationID) != nil else {
+                self.replyBubble.showTransient("wait for the Assistant to finish first", seconds: 4)
+                return
+            }
+            self.snapAndSend()
+        }
         chatPanel.onToggleSession = { [weak self] in self?.toggleSession() }
         chatPanel.onToggleAnnotate = { [weak self] in self?.annotationOverlay.toggleEditing() }
         chatPanel.onToggleVoiceReplies = { on in
@@ -619,15 +614,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             UserSettings.shared.assistantComputerUse = on
             UserSettings.shared.save()
         }
-        chatPanel.onStop = { [weak self] in
-            self?.agent.interrupt()
-            self?.stopSpeechPlayback()
+        chatPanel.onStop = { [weak self] conversationID in
+            guard let self, self.agent.currentSessionId == conversationID else { return }
+            self.agent.interrupt()
+            self.stopSpeechPlayback()
         }
         chatPanel.onClear = { [weak self] in
             guard let self else { return }
             let conversation = self.agent.reset()
             self.chatPanel.restoreAssistantConversation(conversation, open: true)
-            self.chatPanel.setActivity(.idle)
+            self.chatPanel.setActivity(.idle, conversationID: conversation.id)
             self.chatPanel.refreshAgents()
         }
         chatPanel.onOpenSettings = { [weak self] in self?.showSettings() }
@@ -930,9 +926,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         agent.onHistoryChanged = { [weak self] in
             guard let self else { return }
             self.replySpeaker.voiceOverride = self.agent.activeAssistant?.voice
-            self.chatPanel.setAssistantTitle(self.agent.currentConversation.title)
-            self.chatPanel.setAssistantRuntime(
-                self.agent.preferredRuntime, enabled: !self.agent.isRunning)
             self.chatPanel.refreshAgents()
         }
         agent.onActivityChanged = { [weak self] activity in
@@ -941,7 +934,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             QAEventRecorder.shared.append("agent_activity", ["activity": activity.rawValue])
 #endif
             self.indicator.setAgentActivity(activity)
-            self.chatPanel.setActivity(activity)
+            self.chatPanel.setActivity(activity, conversationID: self.agent.currentSessionId)
             switch activity {
             case .idle:
                 // Safety net: turns that end without a final text (interrupt,
@@ -961,7 +954,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 #if VOICE_FLOW_QA
             QAEventRecorder.shared.append("assistant_started")
 #endif
-            self.chatPanel.beginAssistantMessage()
             self.chatPanel.beginAssistantThreadStream(
                 conversationID: self.agent.currentSessionId)
             if !self.chatPanel.isVisible && !self.assistantTurnUsesReceiptPresentation {
@@ -990,7 +982,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 #if VOICE_FLOW_QA
             QAEventRecorder.shared.append("assistant_delta", ["text": delta])
 #endif
-            self.chatPanel.appendAssistantDelta(delta)
             self.chatPanel.appendAssistantThreadDelta(
                 delta, conversationID: self.agent.currentSessionId)
             if !self.assistantTurnUsesReceiptPresentation {
@@ -1005,7 +996,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 #if VOICE_FLOW_QA
             QAEventRecorder.shared.append("assistant_completed", ["text": text])
 #endif
-            self.chatPanel.finishAssistantMessage(text)
             self.chatPanel.finishAssistantThreadStream(
                 conversationID: self.agent.currentSessionId)
             let receiptPresentation = self.assistantTurnUsesReceiptPresentation
@@ -1036,7 +1026,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 #if VOICE_FLOW_QA
             QAEventRecorder.shared.append("tool_activity", ["detail": detail])
 #endif
-            self?.chatPanel.setToolDetail(detail)
+            if let self {
+                self.chatPanel.setToolDetail(detail, conversationID: self.agent.currentSessionId)
+            }
             self?.replyBubble.setStatus(detail)
         }
         agent.onError = { [weak self] message in
@@ -1288,7 +1280,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 #endif
-        chatPanel.addNote("Permission requested · \(prompt.title)")
+        agent.note("Permission requested · \(prompt.title)")
         indicator.flashMessage("Assistant needs approval", seconds: 8)
 
         let alert = NSAlert()
@@ -2217,7 +2209,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 self.assistantTurnUsesReceiptPresentation = self.chatPanel.conversationFocus != .assistant
-                self.chatPanel.addUserMessage(turn.displayText, attachmentNote: turn.attachmentNote)
                 self.agent.send(text: turn.agentText, screenshots: turn.screenshots)
 
                 // Preserve bursts: the next queued dictation is classified
@@ -2384,11 +2375,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
 
-            self.chatPanel.addUserMessage(
-                text ?? "",
-                attachmentNote: Self.attachmentNote(
-                    count: screenshots.count,
-                    noun: extraImagePaths.isEmpty ? "screenshot" : "image"))
             self.agent.send(text: text, screenshots: screenshots)
         }
     }
@@ -2736,7 +2722,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             run.phase = .failed
             captureRuns[id] = run
             chatPanel.addNote(message)
-            chatPanel.addNote("Raw audio kept in \(PendingAudioStore.directory().path)")
+            agent.note("\(message) Raw audio kept in \(PendingAudioStore.directory().path)")
             replyBubble.showTransient("couldn't transcribe — capture kept from being misrouted",
                                       seconds: 6, isError: true)
         }
@@ -2851,9 +2837,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if !chatPanel.isVisible {
                     replyBubble.showThinking(echo: assistantNote.isEmpty ? "Screen capture" : assistantNote)
                 }
-                chatPanel.addUserMessage(
-                    assistantNote,
-                    attachmentNote: Self.attachmentNote(count: screenshotData.count))
                 deliverToAgent(assistantText, screenshots: screenshotData, retriesLeft: 2)
             }
         case .session(let sessionId, let interaction):

@@ -136,7 +136,7 @@ extension AppDelegate {
             }
             let text = details.isEmpty ? summary : "\(summary)\n\n\(details)"
             await MainActor.run {
-                self.chatPanel.addNote("\(self.assistantPickerLabel): \(text)")
+                self.agent.note("\(self.assistantPickerLabel): \(text)")
                 if !self.surfaceBusy {
                     self.indicator.flashMessage("\(self.assistantPickerLabel) · update", seconds: 6)
                 }
@@ -161,7 +161,7 @@ extension AppDelegate {
                 self.pendingInteraction = value
                 interaction = value
                 self.replyBubble.showAsk(prompt: prompt, hint: self.askHint())
-                self.chatPanel.addNote("\(self.assistantPickerLabel) asks: \(prompt)")
+                self.agent.note("\(self.assistantPickerLabel) asks: \(prompt)")
             }
             guard let interaction else {
                 throw AgentToolError.unavailable("another user question is already pending")

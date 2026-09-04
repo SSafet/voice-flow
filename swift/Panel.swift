@@ -6,12 +6,6 @@ import Cocoa
 //  Messages pop out of the little floating pill: read, type, snap, talk —
 //  no separate window to manage.
 
-enum ChatBubbleKind {
-    case user
-    case assistant
-    case note      // small centered status/error text
-}
-
 enum ChatTab: Int {
     case inbox = 0    // everything you said, with a destination (filter chips)
     case agents = 1   // every agent talking to you: sessions + the assistant
@@ -19,19 +13,17 @@ enum ChatTab: Int {
 
 final class ChatPanel {
     var onShown: (() -> Void)?
-    /// Typed message plus the file paths of any images pasted into it.
-    var onSendText: ((String, [String]) -> Void)?
-    var onSnap: (() -> Void)?
+    /// Assistant-thread actions carry the conversation id they were tapped in.
+    var onSnap: ((String) -> Void)?
     var onToggleSession: (() -> Void)?
     var onToggleAnnotate: (() -> Void)?
     var onToggleVoiceReplies: ((Bool) -> Void)?
     var onToggleControl: ((Bool) -> Void)?
-    var onStop: (() -> Void)?
+    var onStop: ((String) -> Void)?
     var onClear: (() -> Void)?
     var onNewAssistant: (() -> Void)?
     var onOpenAssistantSession: ((String) -> Void)?
-    var onDeleteAssistant: (() -> Void)?
-    var onSelectAssistantRuntime: ((AgentRuntimeKind) -> Void)?
+    var onSelectAssistantRuntime: ((AgentRuntimeKind, String) -> Void)?
     var onEscape: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenSession: ((String) -> Void)?
@@ -55,38 +47,18 @@ final class ChatPanel {
     private var messagesView: MessagesView!    // messages.json archive — store only, no longer a tab
     private var dictationsView: DictationsView!
     private var agentsView: AgentsView!
-    private var assistantHeader: NSView!
-    private var assistantTitleLabel: NSTextField!
-    private var assistantRuntimeButton: NSPopUpButton!
     private var speechButton: NSButton!
     private var ttsView: TTSView!
     private var currentTab: ChatTab = .agents
-    /// Inside the Agents tab: the assistant thread (the old Chat) is open.
-    private var assistantOpen = false
     /// The ♪ toggle — the Speech drawer covers whichever tab is current.
     private var speechOpen = false
-    private var lastAssistantText = ""
-    private var statusRow: NSStackView!
-    private var inputRow: NSStackView!
-    private var bubbleStack: NSStackView!
-    private var scrollView: NSScrollView!
-    private var emptyLabel: NSTextField!
-    private var inputField: ComposerView!
-    private var sendButton: NSButton!
-    private var statusLabel: NSTextField!
-    private var stopButton: NSButton!
     private var sessionButton: NSButton!
     private var annotateButton: NSButton!
     private var voiceButton: NSButton!
     private var controlButton: NSButton!
     private var clearButton: NSButton!
 
-    private var streamingLabel: NSTextField?
-    /// Coalesce repeated layout/scroll requests while a persisted conversation
-    /// is being restored. A long history can enqueue hundreds of requests in a
-    /// single run-loop turn; retaining each closure until it executes creates a
-    /// visible memory ramp during repeated conversation switching.
-    private var scrollToBottomScheduled = false
+    private var lastActivity: AgentActivity = .idle
     private var voiceRepliesOn = false
     private var controlOn = false
     private var sessionActive = false
@@ -106,7 +78,6 @@ final class ChatPanel {
     /// never from the last selected/picker target after this panel disappears.
     var conversationFocus: ConversationFocus {
         guard isVisible, currentTab == .agents, !speechOpen else { return .none }
-        if assistantOpen { return .assistant }
         if agentsView.openAssistantThreadClaimsFocus { return .assistant }
         if let id = agentsView.openSessionId { return .session(id) }
         return .none
@@ -184,15 +155,18 @@ final class ChatPanel {
 #if VOICE_FLOW_QA
     var qaControlState: [String: Any] {
         let controls: [NSControl] = [
-            assistantRuntimeButton, sendButton, stopButton, sessionButton,
-            annotateButton, voiceButton, controlButton,
+            sessionButton, annotateButton, voiceButton, controlButton, clearButton,
         ].compactMap { $0 }
+        let assistant = agentsView.qaAssistantControlState
+        var labels = controls.compactMap {
+            $0.accessibilityLabel()?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+        labels.append(contentsOf: assistant["accessibility_labels"] as? [String] ?? [])
         return [
-            "runtime_enabled": assistantRuntimeButton?.isEnabled ?? false,
-            "runtime_title": assistantRuntimeButton?.titleOfSelectedItem ?? "",
-            "accessibility_labels": controls.compactMap {
-                $0.accessibilityLabel()?.trimmingCharacters(in: .whitespacesAndNewlines)
-            }.filter { !$0.isEmpty },
+            "runtime_present": assistant["runtime_present"] ?? false,
+            "runtime_enabled": assistant["runtime_enabled"] ?? false,
+            "runtime_title": assistant["runtime_title"] ?? "",
+            "accessibility_labels": labels,
         ]
     }
 
@@ -249,98 +223,37 @@ final class ChatPanel {
 
     // ── Content updates ─────────────────────────────────
 
-    func addUserMessage(_ text: String, attachmentNote: String? = nil) {
-        finishStreaming()
-        var display = text
-        if let attachmentNote, !attachmentNote.isEmpty {
-            display = display.isEmpty ? attachmentNote : "\(display)\n\(attachmentNote)"
-        }
-        appendBubble(kind: .user, text: display)
-    }
+    // ── The assistant conversation ─────────────────────
+    // One surface: the Agents thread view. The panel only routes.
 
-    func beginAssistantMessage() {
-        finishStreaming()
-        streamingLabel = appendBubble(kind: .assistant, text: "")
-    }
-
-    func appendAssistantDelta(_ delta: String) {
-        if streamingLabel == nil {
-            beginAssistantMessage()
-        }
-        guard let label = streamingLabel else { return }
-        label.stringValue += delta
-        scrollToBottom()
-    }
-
-    func finishAssistantMessage(_ fullText: String) {
-        if let label = streamingLabel {
-            label.stringValue = fullText
-        } else if !fullText.isEmpty {
-            appendBubble(kind: .assistant, text: fullText)
-        }
-        if !fullText.isEmpty { lastAssistantText = fullText }
-        streamingLabel = nil
-        scrollToBottom()
-    }
-
-    func addNote(_ text: String) {
-        finishStreaming()
-        appendBubble(kind: .note, text: text)
-    }
-
-    func clearConversation() {
-        streamingLabel = nil
-        bubbleStack.arrangedSubviews.forEach { view in
-            bubbleStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        updateEmptyLabel()
-    }
-
-    /// Rebuild the existing Assistant surface from the durable conversation
-    /// model. This is used both at launch and when a history row is selected.
+    /// Show this conversation as the open thread (deep link, new/cleared
+    /// conversation, runtime switch). `open: false` just repaints.
     func restoreAssistantConversation(_ conversation: AssistantConversation, open: Bool = false) {
-        clearConversation()
-        assistantTitleLabel?.stringValue = conversation.title
-        let runtime = conversation.preferredRuntime
-            ?? (UserSettings.shared.agentBackend == AgentBackendOpenCode ? .opencode : .codex)
-        setAssistantRuntime(runtime, enabled: conversation.turnState != .running)
-        lastAssistantText = ""
-        for message in conversation.messages {
-            switch message.role {
-            case .user:
-                var display = message.text
-                if let attachment = message.attachmentNote, !attachment.isEmpty {
-                    display = display.isEmpty ? attachment : "\(display)\n\(attachment)"
-                }
-                appendBubble(kind: .user, text: display)
-            case .assistant:
-                appendBubble(kind: .assistant, text: message.text)
-                lastAssistantText = message.text
-            case .note:
-                appendBubble(kind: .note, text: message.text)
-            }
-        }
-        if open { openAssistant() }
-        updateEmptyLabel()
-        scrollToBottom()
+        if open { openAssistantConversation(conversation.id) } else { refreshAgents() }
     }
 
-    func setAssistantTitle(_ title: String) {
-        assistantTitleLabel?.stringValue = title
+    func openAssistantConversation(_ id: String) {
+        speechOpen = false
+        agentsView.openThread(AgentsThreadID(source: .assistant, value: id))
+        applyTab(.agents)
+        // The old chat put the caret in its input whenever it came up.
+        DispatchQueue.main.async { [weak self] in self?.agentsView.focusComposer() }
     }
 
-    func setAssistantRuntime(_ runtime: AgentRuntimeKind, enabled: Bool) {
-        guard assistantRuntimeButton != nil else { return }
-        assistantRuntimeButton.selectItem(at: runtime == .codex ? 0 : 1)
-        assistantRuntimeButton.isEnabled = enabled
-        assistantRuntimeButton.toolTip = enabled
-            ? "Runtime for this Assistant conversation"
-            : "Wait for this turn to finish before switching runtimes"
+    /// App-level notice ("Sent to Claude.", "Stopped by Escape"): a brief
+    /// strip on the Agents surface. Errors the agent itself raises are
+    /// persisted as notes in the conversation and render in the thread.
+    func addNote(_ text: String) {
+        agentsView.showTransientNote(text)
     }
 
-    private func finishStreaming() {
-        streamingLabel = nil
+    func setActivity(_ activity: AgentActivity, detail: String? = nil, conversationID: String) {
+        lastActivity = activity
+        agentsView.setAssistantActivity(activity, detail: detail, conversationID: conversationID)
+    }
+
+    func setToolDetail(_ text: String, conversationID: String) {
+        agentsView.setAssistantActivity(lastActivity, detail: text, conversationID: conversationID)
     }
 
     // ── State reflection ────────────────────────────────
@@ -371,38 +284,6 @@ final class ChatPanel {
         controlButton.toolTip = on
             ? "The agent may control this Mac"
             : "Computer control off — the agent can only look"
-    }
-
-    func setActivity(_ activity: AgentActivity, detail: String? = nil) {
-        assistantRuntimeButton?.isEnabled = activity == .idle
-        switch activity {
-        case .idle:
-            statusLabel.stringValue = ""
-            statusLabel.isHidden = true
-            stopButton.isHidden = true
-        case .thinking:
-            statusLabel.stringValue = detail ?? "Thinking…"
-            statusLabel.isHidden = false
-            stopButton.isHidden = false
-        case .responding:
-            statusLabel.stringValue = detail ?? "Replying…"
-            statusLabel.isHidden = false
-            stopButton.isHidden = false
-        case .acting:
-            statusLabel.stringValue = detail ?? "Working on your screen…"
-            statusLabel.isHidden = false
-            stopButton.isHidden = false
-        }
-    }
-
-    func setToolDetail(_ text: String) {
-        statusLabel.stringValue = text
-        statusLabel.isHidden = false
-    }
-
-    func focusInput() {
-        panel.makeKey()
-        inputField.focus()
     }
 
     // ── Tabs ────────────────────────────────────────────
@@ -470,23 +351,13 @@ final class ChatPanel {
 
     private func applyTab(_ tab: ChatTab) {
         currentTab = tab
-        let assistant = tab == .agents && assistantOpen && !speechOpen
-        let agentsList = tab == .agents && !assistantOpen && !speechOpen
-        scrollView.isHidden = !assistant
-        statusRow.isHidden = !assistant
-        inputRow.isHidden = !assistant
-        assistantHeader.isHidden = !assistant
+        let agentsList = tab == .agents && !speechOpen
         agentsView.isHidden = !agentsList
         dictationsView.isHidden = !(tab == .inbox && !speechOpen)
         ttsView.isHidden = !speechOpen
         speechButton.contentTintColor = speechOpen ? Theme.accent : Theme.text3
         styleTabs()
         updateHeaderScope()
-        updateEmptyLabel()
-        if assistant {
-            inputField.focus()
-            scrollToBottom()
-        }
         if agentsList {
             agentsView.refresh()
         } else {
@@ -501,16 +372,10 @@ final class ChatPanel {
     /// what the panel shows. Annotate and Settings are global and stay.
     private func updateHeaderScope() {
         let assistantVisible = currentTab == .agents && !speechOpen
-            && (assistantOpen || agentsView.openThreadID?.source == .assistant)
+            && agentsView.openThreadID?.source == .assistant
         for button in [voiceButton, controlButton, clearButton] as [NSButton?] {
             button?.isHidden = !assistantVisible
         }
-    }
-
-    private func updateEmptyLabel() {
-        let hasMessages = !bubbleStack.arrangedSubviews.isEmpty
-        let assistant = currentTab == .agents && assistantOpen && !speechOpen
-        emptyLabel.isHidden = !assistant || hasMessages
     }
 
     // ── Messages + Dictations + Speech passthroughs ─────
@@ -542,14 +407,12 @@ final class ChatPanel {
     /// ⌃⌥N while the panel is open: deep-link straight into that session's
     /// thread instead of growing the pill behind the panel.
     func openAgentThread(_ sessionId: String) {
-        assistantOpen = false
         speechOpen = false
         applyTab(.agents)
         agentsView.openThread(sessionId)
     }
 
     func openAgentThread(_ id: AgentsThreadID) {
-        assistantOpen = false
         speechOpen = false
         applyTab(.agents)
         agentsView.openThread(id)
@@ -568,7 +431,6 @@ final class ChatPanel {
     }
 
     func showAgentsList() {
-        assistantOpen = false
         speechOpen = false
         agentsView.showList()
         applyTab(.agents)
@@ -579,11 +441,6 @@ final class ChatPanel {
         guard isVisible, currentTab == .agents else { return false }
         if speechOpen {
             speechOpen = false
-            applyTab(.agents)
-            return true
-        }
-        if assistantOpen {
-            assistantOpen = false
             applyTab(.agents)
             return true
         }
@@ -616,23 +473,6 @@ final class ChatPanel {
 
     func qaSetAgentsComposerText(_ text: String) -> Bool { agentsView.qaSetComposerText(text) }
 #endif
-
-    private func openAssistant() {
-        assistantOpen = true
-        applyTab(.agents)
-    }
-
-    @objc private func assistantBackTapped() {
-        assistantOpen = false
-        applyTab(.agents)
-    }
-
-    @objc private func assistantSpeakTapped() {
-        guard !lastAssistantText.isEmpty else { return }
-        var request = ttsView.currentTTSRequest()
-        request.text = lastAssistantText
-        onTTSSpeak?(request)
-    }
 
     @objc private func speechTapped() {
         speechOpen.toggle()
@@ -738,79 +578,6 @@ final class ChatPanel {
         headerLine.translatesAutoresizingMaskIntoConstraints = false
         headerLine.heightAnchor.constraint(equalToConstant: 1).isActive = true
 
-        // Conversation --------------------------------------------------------
-        bubbleStack = NSStackView()
-        bubbleStack.orientation = .vertical
-        bubbleStack.alignment = .leading
-        bubbleStack.spacing = 8
-        bubbleStack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
-        bubbleStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let documentView = FlippedView()
-        documentView.translatesAutoresizingMaskIntoConstraints = false
-        documentView.addSubview(bubbleStack)
-        NSLayoutConstraint.activate([
-            bubbleStack.topAnchor.constraint(equalTo: documentView.topAnchor),
-            bubbleStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
-            bubbleStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
-            bubbleStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
-        ])
-
-        scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
-        scrollView.scrollerStyle = .overlay
-        scrollView.documentView = documentView
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        emptyLabel = NSTextField(wrappingLabelWithString: "Talk, type, or snap your screen.")
-        emptyLabel.font = .systemFont(ofSize: 12)
-        emptyLabel.textColor = Theme.text3
-        emptyLabel.alignment = .center
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        // Status row ----------------------------------------------------------
-        statusLabel = NSTextField(labelWithString: "")
-        statusLabel.font = .systemFont(ofSize: 11)
-        statusLabel.textColor = Theme.accent
-        statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.maximumNumberOfLines = 1
-        // Long tool detail must truncate, never widen the panel window.
-        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        statusLabel.isHidden = true
-
-        stopButton = NSButton(title: "Stop", target: self, action: #selector(stopTapped))
-        stopButton.bezelStyle = .inline
-        stopButton.controlSize = .small
-        stopButton.font = .systemFont(ofSize: 11, weight: .semibold)
-        stopButton.isHidden = true
-
-        let statusSpacer = NSView()
-        statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        statusRow = NSStackView(views: [statusLabel, statusSpacer, stopButton])
-        statusRow.orientation = .horizontal
-        statusRow.spacing = 8
-        statusRow.edgeInsets = NSEdgeInsets(top: 0, left: 16, bottom: 0, right: 14)
-        statusRow.translatesAutoresizingMaskIntoConstraints = false
-        statusRow.heightAnchor.constraint(equalToConstant: 18).isActive = true
-
-        // Input row -----------------------------------------------------------
-        // The same ComposerView the Agents thread uses: it grows with the
-        // text instead of hiding a long paste in a one-line field.
-        let snapButton = iconButton("camera.viewfinder", action: #selector(snapTapped), tip: "Snap the screen and send")
-        inputField = ComposerView(
-            placeholder: "message the assistant… (or hold ⌃⌥ and talk)",
-            fontSize: 13, leading: snapButton)
-        inputField.onSend = { [weak self] text, images in self?.send(text, images) }
-        sendButton = inputField.sendControl
-
-        inputRow = NSStackView(views: [inputField])
-        inputRow.orientation = .horizontal
-        inputRow.spacing = 8
-        inputRow.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 12, right: 12)
-        inputRow.translatesAutoresizingMaskIntoConstraints = false
-
         // Tabs: two content surfaces + the ♪ speech toggle — custom warm strip
         // (the mock's full-width amber tabs with unread counts; never the
         // system-blue segmented control).
@@ -863,10 +630,14 @@ final class ChatPanel {
         agentsView.onPreferredHeightChanged = { [weak self] contentHeight in
             self?.setPreferredAgentsContentHeight(contentHeight)
         }
+        agentsView.onSnap = { [weak self] id in self?.onSnap?(id.value) }
+        agentsView.onStop = { [weak self] id in self?.onStop?(id.value) }
+        agentsView.onSelectAssistantRuntime = { [weak self] runtime, id in
+            self?.onSelectAssistantRuntime?(runtime, id.value)
+        }
         panel.onCommand = { [weak self] key in
             guard let self,
                   self.agentsView.handleMissionControlCommand(key) else { return false }
-            self.assistantOpen = false
             self.speechOpen = false
             self.applyTab(.agents)
             return true
@@ -878,32 +649,24 @@ final class ChatPanel {
         ttsView.onSeek = { [weak self] position in self?.onTTSSeek?(position) }
         ttsView.onStop = { [weak self] in self?.onTTSStop?() }
 
-        assistantHeader = buildAssistantHeader()
-        assistantHeader.isHidden = true
-
         // Assemble ------------------------------------------------------------
-        let column = NSStackView(views: [header, headerLine, tabBar, assistantHeader, scrollView, agentsView, dictationsView, ttsView, statusRow, inputRow])
+        let column = NSStackView(views: [header, headerLine, tabBar, agentsView, dictationsView, ttsView])
         column.orientation = .vertical
         column.spacing = 4
         column.distribution = .fill
         column.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(column)
-        root.addSubview(emptyLabel)
 
         NSLayoutConstraint.activate([
             column.topAnchor.constraint(equalTo: root.topAnchor),
             column.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             column.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             column.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            emptyLabel.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: root.centerYAnchor),
-            emptyLabel.widthAnchor.constraint(lessThanOrEqualToConstant: width - 60),
         ])
-        for view in [header, headerLine, tabBar, assistantHeader, scrollView, agentsView, dictationsView, ttsView, statusRow, inputRow] as [NSView] {
+        for view in [header, headerLine, tabBar, agentsView, dictationsView, ttsView] as [NSView] {
             view.leadingAnchor.constraint(equalTo: column.leadingAnchor).isActive = true
             view.trailingAnchor.constraint(equalTo: column.trailingAnchor).isActive = true
         }
-        documentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor).isActive = true
 
         panel.contentView = root
         setVoiceReplies(false)
@@ -915,83 +678,6 @@ final class ChatPanel {
     private func setPreferredAgentsContentHeight(_ contentHeight: CGFloat) {
         // Fixed-height panel: content taller than the frame scrolls; shorter
         // content leaves quiet space. The panel itself never resizes.
-    }
-
-    /// Nav bar over the assistant thread: ‹ back, waveform + name centered,
-    /// 🔊 reads the last reply aloud.
-    private func buildAssistantHeader() -> NSView {
-        let headerView = NSView()
-        headerView.translatesAutoresizingMaskIntoConstraints = false
-
-        let back = NSButton(title: "‹", target: self, action: #selector(assistantBackTapped))
-        back.isBordered = false
-        back.font = .systemFont(ofSize: 16, weight: .medium)
-        back.contentTintColor = Theme.text2
-
-        let icon = WaveformIconView()
-        assistantTitleLabel = NSTextField(labelWithString: "New assistant")
-        assistantTitleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        assistantTitleLabel.textColor = Theme.text
-        assistantTitleLabel.lineBreakMode = .byTruncatingTail
-        assistantTitleLabel.maximumNumberOfLines = 1
-        assistantTitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        assistantRuntimeButton = NSPopUpButton(frame: .zero, pullsDown: false)
-        assistantRuntimeButton.addItems(withTitles: ["Codex", "OpenCode"])
-        assistantRuntimeButton.target = self
-        assistantRuntimeButton.action = #selector(assistantRuntimeChanged)
-        assistantRuntimeButton.controlSize = .mini
-        assistantRuntimeButton.font = .systemFont(ofSize: 10, weight: .medium)
-        assistantRuntimeButton.toolTip = "Runtime for this Assistant conversation"
-        assistantRuntimeButton.setAccessibilityLabel("Assistant runtime")
-
-        let mid = NSStackView(views: [icon, assistantTitleLabel, assistantRuntimeButton])
-        mid.orientation = .horizontal
-        mid.spacing = 7
-
-        let delete = NSButton(image: symbol("trash") ?? NSImage(),
-                              target: self, action: #selector(assistantDeleteTapped))
-        delete.isBordered = false
-        delete.contentTintColor = Theme.text3
-        delete.toolTip = "Delete this Assistant session"
-
-        let speak = NSButton(image: symbol("speaker.wave.2") ?? NSImage(),
-                             target: self, action: #selector(assistantSpeakTapped))
-        speak.isBordered = false
-        speak.contentTintColor = Theme.text3
-
-        let line = NSView()
-        line.wantsLayer = true
-        line.layer?.backgroundColor = Theme.border.cgColor
-
-        for v in [back, mid, delete, speak, line] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            headerView.addSubview(v)
-        }
-        NSLayoutConstraint.activate([
-            headerView.heightAnchor.constraint(equalToConstant: 30),
-            back.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 14),
-            back.centerYAnchor.constraint(equalTo: headerView.centerYAnchor, constant: -3),
-            mid.centerXAnchor.constraint(equalTo: headerView.centerXAnchor),
-            mid.centerYAnchor.constraint(equalTo: headerView.centerYAnchor, constant: -3),
-            mid.leadingAnchor.constraint(greaterThanOrEqualTo: back.trailingAnchor, constant: 8),
-            mid.trailingAnchor.constraint(lessThanOrEqualTo: delete.leadingAnchor, constant: -8),
-            delete.trailingAnchor.constraint(equalTo: speak.leadingAnchor, constant: -8),
-            delete.centerYAnchor.constraint(equalTo: headerView.centerYAnchor, constant: -3),
-            speak.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -14),
-            speak.centerYAnchor.constraint(equalTo: headerView.centerYAnchor, constant: -3),
-            line.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 12),
-            line.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -12),
-            line.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
-            line.heightAnchor.constraint(equalToConstant: 1),
-        ])
-        return headerView
-    }
-
-    @objc private func assistantRuntimeChanged() {
-        let runtime: AgentRuntimeKind = assistantRuntimeButton.indexOfSelectedItem == 1
-            ? .opencode : .codex
-        onSelectAssistantRuntime?(runtime)
     }
 
     private func iconButton(_ symbolName: String, action: Selector, tip: String) -> NSButton {
@@ -1013,108 +699,11 @@ final class ChatPanel {
     // ── Bubbles ─────────────────────────────────────────
 
     @discardableResult
-    private func appendBubble(kind: ChatBubbleKind, text: String) -> NSTextField {
-        emptyLabel.isHidden = true
-
-        let label = NSTextField(wrappingLabelWithString: text)
-        label.font = .systemFont(ofSize: 12.5)
-        label.textColor = Theme.text
-        label.isSelectable = true
-        label.preferredMaxLayoutWidth = width - 112
-
-        switch kind {
-        case .note:
-            label.font = .systemFont(ofSize: 11)
-            label.textColor = Theme.text3
-            label.alignment = .center
-            let wrapper = NSView()
-            wrapper.translatesAutoresizingMaskIntoConstraints = false
-            wrapper.addSubview(label)
-            label.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                label.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor),
-                label.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 2),
-                label.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -2),
-                label.widthAnchor.constraint(lessThanOrEqualToConstant: width - 80),
-            ])
-            bubbleStack.addArrangedSubview(wrapper)
-            wrapper.widthAnchor.constraint(equalTo: bubbleStack.widthAnchor, constant: -24).isActive = true
-            scrollToBottom()
-            return label
-
-        case .user, .assistant:
-            // Flat thread (design remarks 14/16): no cards, no bubbles —
-            // the ↳ marks the user's words, everything else is the assistant.
-            let isUser = kind == .user
-            let row = NSView()
-            row.translatesAutoresizingMaskIntoConstraints = false
-            label.translatesAutoresizingMaskIntoConstraints = false
-
-            if isUser {
-                label.font = .systemFont(ofSize: 11.5)
-                label.textColor = Theme.text2
-                let arrow = NSTextField(labelWithString: "↳")
-                arrow.font = .systemFont(ofSize: 11.5, weight: .bold)
-                arrow.textColor = Theme.accent
-                arrow.translatesAutoresizingMaskIntoConstraints = false
-                row.addSubview(arrow)
-                row.addSubview(label)
-                NSLayoutConstraint.activate([
-                    arrow.topAnchor.constraint(equalTo: row.topAnchor, constant: 3),
-                    arrow.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
-                    label.topAnchor.constraint(equalTo: row.topAnchor, constant: 3),
-                    label.leadingAnchor.constraint(equalTo: arrow.trailingAnchor, constant: 7),
-                    label.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -2),
-                    label.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -3),
-                ])
-            } else {
-                label.font = .systemFont(ofSize: 12.5)
-                label.textColor = Theme.text
-                row.addSubview(label)
-                NSLayoutConstraint.activate([
-                    label.topAnchor.constraint(equalTo: row.topAnchor, constant: 4),
-                    label.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 2),
-                    label.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -2),
-                    label.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -4),
-                ])
-            }
-
-            bubbleStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: bubbleStack.widthAnchor, constant: -24).isActive = true
-            scrollToBottom()
-            return label
-        }
-    }
-
-    private func scrollToBottom() {
-        guard !scrollToBottomScheduled else { return }
-        scrollToBottomScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.scrollToBottomScheduled = false
-            guard let documentView = self.scrollView.documentView else { return }
-            documentView.layoutSubtreeIfNeeded()
-            let height = documentView.frame.height
-            let clipHeight = self.scrollView.contentView.bounds.height
-            if height > clipHeight {
-                documentView.scroll(NSPoint(x: 0, y: height - clipHeight))
-            }
-        }
-    }
-
     // ── Actions ─────────────────────────────────────────
 
-    private func send(_ text: String, _ images: [String]) {
-        inputField.clear()
-        onSendText?(text, images)
-    }
-
-    @objc private func snapTapped() { onSnap?() }
     @objc private func sessionTapped() { onToggleSession?() }
     @objc private func annotateTapped() { onToggleAnnotate?() }
-    @objc private func stopTapped() { onStop?() }
     @objc private func clearTapped() { onClear?() }
-    @objc private func assistantDeleteTapped() { onDeleteAssistant?() }
     @objc private func settingsTapped() { onOpenSettings?() }
 
     @objc private func voiceTapped() {

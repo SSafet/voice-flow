@@ -70,20 +70,52 @@ swiftc swift/*.swift -framework Cocoa -framework AVFoundation -framework CoreGra
 ## Primary surface: the ChatPanel
 
 The app's main window is **`ChatPanel`** (`swift/Panel.swift`) — a borderless
-floating panel anchored to the little pill (`FloatingIndicator`). It has four
-tabs (`ChatTab`):
+floating panel anchored to the little pill (`FloatingIndicator`). It has two
+tabs (`ChatTab`, default **Agents** on open):
 
-- **Messages** — the MAIN tab (default on open): persistent history of
-  everything agents pushed over MCP (reports / asks), kept in
-  `messages.json` so it outlives the sessions and app restarts that produced it.
-- **Chat** — converse with the screen agent (type / snap / talk), streamed replies.
-- **Dictations** — browsable, copyable history of past dictations.
-- **Speech** — paste text and play it through the TTS engine (voice / preset / speed).
+- **Inbox** — everything the user said, with a destination: the dictation
+  history (`DictationsView` in `swift/UI.swift`), filtered by destination chips.
+- **Agents** — every agent talking to the user (`AgentsView` in
+  `swift/AgentsView.swift`): one row per MCP session plus the assistant;
+  opening a row shows that session's thread. The assistant conversation is
+  **that same thread view** — the only assistant surface: its header row
+  carries the runtime picker (Codex/OpenCode), the live turn status
+  ("Thinking…", tool activity) and Stop, and its composer has the snap
+  accessory. `ChatPanel` no longer owns a chat of its own; it routes
+  (`openAssistantConversation`, `setActivity`, `addNote` → a 6 s strip).
+  Its nav bar is **Now · Threads · Setup** (`AgentsDestination.navigation`):
+  two reading surfaces, then one setup surface. The panel lands on **Now**,
+  which answers "what is here for me?": NEEDS YOU (asks, blocked/failed
+  automations), RUNNING NOW, and UNREAD (open threads with unseen output,
+  newest first — `AgentsNowSnapshot` in `swift/AgentsNavigation.swift`).
+  "All clear" appears only when all three are empty; the Now badge still
+  counts asks/blocks only. **Setup** is assistants + the SYSTEM agents +
+  automations on one screen (`buildSetup`); the `.automations` destination
+  still exists for deep links and lights the Setup item, and the automation
+  search field and filter chips appear only from 6 automations up.
+  `AgentsView.refresh()` memoizes: on a read surface (destination, thread,
+  search) identical row inputs skip the rebuild (`RefreshInputs`), so the
+  ~20 refresh call sites cost nothing when nothing changed.
+  The panel header's voice-replies / computer-control / Clear icons act on
+  the assistant conversation and show only while it is on screen
+  (`ChatPanel.updateHeaderScope`); Annotate and Settings are always there.
+  Its **Assistants** sub-tab also carries a **SYSTEM** section: the three
+  agents the app runs on its own behalf — continuity router, speech cleanup,
+  and speech (`SystemAgentStore`, `swift/SystemAgents.swift`). Identities are
+  fixed (no create/delete); model, reasoning, and the leading instructions
+  brief are editable, and every call site resolves its config at call time so
+  a change lands on the next run with no restart. The delimited data blocks
+  and JSON schema around the brief stay in code — dropping them would turn
+  each turn into a silent fallback. Each row's **Test now** runs the real path
+  once and reports what came back. The speech agent's instructions are the
+  existing `tts_instructions` setting, not a second copy.
 
-The Messages, Dictations and Speech tab contents are the `MessagesView`,
-`DictationsView` and `TTSView` classes in `swift/UI.swift`. (They previously lived in a separate
-`HistoryWindowController` window, now retired.) The menu-bar "Dictation History"
-item and the pill's context menu open the panel on the Dictations tab.
+**Speech** is a drawer, not a tab: the ♪ button overlays `TTSView` (paste text,
+play it through the TTS engine) on whichever tab is current; an explicit tab
+select closes it. `MessagesView` (`swift/UI.swift`) still exists but is
+store-only — it writes the `messages.json` archive and is never added to the
+view hierarchy. The menu-bar "Dictation History" item and the pill's context
+menu open the panel on the Inbox tab.
 
 ## Hotkey-driven agent flows (no panel required)
 
@@ -295,13 +327,16 @@ deployed copies are build outputs.
 | File | Key types | Responsibility |
 |------|-----------|----------------|
 | `main.swift` | — | Entry point: `NSApplication` + `AppDelegate`. |
-| `App.swift` | `AppDelegate` | Owns & wires everything: components, hotkeys, capability-first capture/delivery, TTS flow, agent session, windows. |
+| `App.swift` | `AppDelegate` | Owns & wires everything: components, hotkeys, capability-first capture/delivery, TTS flow, agent session, windows. Its members are internal (not `private`) where the three extension files below need them. |
+| `App+MCPTools.swift` | `extension AppDelegate` | `handleMCPTool` and every MCP tool handler (talking, overlays, captures); runs on HTTP threads, hops to main for UI. |
+| `App+AgentsDataSource.swift` | `extension AppDelegate: AgentsDataSource` | The panel's window onto sessions, threads, assistants, automations, system agents: rows, details, actions. |
+| `App+QA.swift` | `extension AppDelegate` (QA build only) | The `/__qa/*` control endpoints the signed test build serves for `tests/e2e_agent_harness.py`. |
 | `CaptureRouting.swift` | `CaptureRun`, `CaptureRouter`, `CaptureCorrelation` | Immutable per-run capability/route state and UUID-based async callback correlation. |
 | `CaptureClipboard.swift` | `CaptureClipboard` | One-item plain/HTML/RTFD serialization for copying capture text with embedded image evidence. |
 | `WindowPlacement.swift` | `PanelAnchor`, `AnchoredPanelPlacement` | Same-display pill→ChatPanel geometry with visible-frame clamping. |
 | `Core.swift` | `UserSettings`, `KeychainStore`, `HotkeyManager`, `AudioRecorder`, `BackendBridge`, `Paster`, `HotkeySpec` | Audio capture, Python STT bridge (subprocess), paste/stream into the frontmost app, settings, global hotkeys. |
 | `UI.swift` | `Theme`, `MenuBarManager`, `FloatingIndicator`, `FloatingTranscriptPanel`, `MessagesView`, `DictationsView`, `TTSView`, `HoverCardView`, `KeyRecorderButton` | Menu bar, pill, live transcript overlay, and the Messages/Dictations/Speech tab surfaces. |
-| `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel and its tabs. |
+| `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel, its tabs, and the header; routes assistant state into `AgentsView` rather than rendering a chat itself. |
 | `ReplyBubble.swift` | `ReplyBubble` | Facade over the pill's grown surface (no window of its own) — forwards messages/asks/streaming to `FloatingIndicator`. |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
 | `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of contextual-capture messages for Codex (check/wait semantics). |

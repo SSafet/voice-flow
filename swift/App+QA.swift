@@ -74,7 +74,7 @@ extension AppDelegate {
             DispatchQueue.main.sync {
                 self.agent.qaTrustProfile = trust
                 if self.agent.setPreferredRuntime(runtime) != nil {
-                    self.chatPanel.setAssistantRuntime(runtime, enabled: true)
+                    self.chatPanel.refreshAgents()
                     response = .ok(["runtime": runtime.rawValue, "trust_profile": trust.rawValue])
                 }
             }
@@ -767,7 +767,16 @@ extension AppDelegate {
                 "conversation_focus": String(describing: self.chatPanel.conversationFocus),
                 "agent_session_rows": self.agentSessionRows().count,
                 "job_rows": self.agentJobRows().count,
-                "controls": self.chatPanel.qaControlState,
+                "controls": {
+                    // The runtime widget lives in the open assistant thread;
+                    // with no thread open the harness still asks the model.
+                    var controls = self.chatPanel.qaControlState
+                    if (controls["runtime_present"] as? Bool) != true {
+                        controls["runtime_enabled"] = !self.agent.isRunning
+                        controls["runtime_title"] = self.agent.preferredRuntime.label
+                    }
+                    return controls
+                }(),
                 "agents_navigation": self.chatPanel.qaAgentsNavigationState,
             ] as [String: Any]
             state["threads"] = self.agentSessionRows().map { row in

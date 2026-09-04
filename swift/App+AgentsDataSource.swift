@@ -672,7 +672,12 @@ extension AppDelegate: AgentsDataSource {
                     && conversation.id == agent.currentSessionId
                     && conversation.completedAt == nil,
                 readOnlyReason: readOnlyReason,
-                linkedAutomationCount: jobs.count)
+                linkedAutomationCount: jobs.count,
+                runtime: conversation.preferredRuntime
+                    ?? (UserSettings.shared.agentBackend == AgentBackendOpenCode ? .opencode : .codex),
+                runtimeSwitchable: conversation.turnState != .running && !agent.isRunning,
+                activity: conversation.id == agent.currentSessionId ? agent.activity : .idle,
+                canSnap: ownerAvailable && conversation.completedAt == nil)
         case .mcp:
             guard let row = agentSessionRows().first(where: {
                 $0.kind == .mcp && $0.id == id.value

@@ -76,6 +76,13 @@ struct AgentThreadDetail {
     let claimsContextualFocus: Bool
     let readOnlyReason: String?
     let linkedAutomationCount: Int
+    /// Assistant conversations only: which runtime the next turn uses and
+    /// whether it may be switched right now; what the current turn is doing;
+    /// whether the composer offers "snap the screen and send".
+    var runtime: AgentRuntimeKind? = nil
+    var runtimeSwitchable: Bool = false
+    var activity: AgentActivity = .idle
+    var canSnap: Bool = false
 }
 
 struct AgentJobRow: Equatable {
@@ -229,6 +236,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// Fired after every rebuild — the mode (list, thread, form…) may have
     /// changed and the panel's chrome scopes itself to what is showing.
     var onModeChanged: (() -> Void)?
+    /// Assistant-thread controls: snap-and-send, stop the running turn,
+    /// switch the runtime for this conversation.
+    var onSnap: ((AgentsThreadID) -> Void)?
+    var onStop: ((AgentsThreadID) -> Void)?
+    var onSelectAssistantRuntime: ((AgentRuntimeKind, AgentsThreadID) -> Void)?
 
     private enum Mode: Equatable {
         case destination(AgentsDestination)
@@ -361,6 +373,19 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var pushedOrigin: Mode?
     private var assistantThreadStreams: [String: String] = [:]
     private weak var assistantThreadStreamingLabel: NSTextField?
+    /// Live turn state for the open assistant thread — updated in place
+    /// (no rebuild) as the agent thinks, acts, and replies.
+    private var assistantActivity: AgentActivity = .idle
+    private var assistantActivityDetail: String?
+    private var assistantRuntimeSwitchable = false
+    /// A turn tears the composer down (canReply is false while it runs) and
+    /// rebuilds it when the reply lands; the caret must come back with it.
+    private var composerFocusPending = false
+    private weak var assistantStatusLabel: NSTextField?
+    private weak var assistantStopButton: NSButton?
+    private weak var assistantRuntimePopUp: NSPopUpButton?
+    private var transientNoteLabel: NSTextField?
+    private var transientNoteTimer: Timer?
     private var inlineError: String?
     private var scrollObserver: NSObjectProtocol?
 
@@ -814,7 +839,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             default: return nil
             }
         }()
-        let hadFocus = composerField?.hasFocus ?? false
+        let hadFocus = (composerField?.hasFocus ?? false) || composerFocusPending
         rebuild()
         lastRefreshInputs = readSurface ? inputs : nil
         if let composer = composerField {
@@ -826,6 +851,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             // rebuild() made a brand-new composer; focus() lays the window out
             // first, so the text view never takes focus at a zero frame.
             if hadFocus { composer.focus() }
+            composerFocusPending = false
+        } else if case .thread = mode {
+            composerFocusPending = hadFocus
+        } else {
+            composerFocusPending = false
         }
         if let value = assistantDraft.0 { assistantNameField?.stringValue = value }
         if let value = assistantDraft.1 { assistantDescriptionField?.stringValue = value }
@@ -1050,6 +1080,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         systemAgentModelField = nil
         systemAgentEffortPopUp = nil
         systemAgentInstructionsView = nil
+        assistantStatusLabel = nil
+        assistantStopButton = nil
+        assistantRuntimePopUp = nil
         switch mode {
         case .destination(let destination): buildDestination(destination)
         case .search: buildSearch()
@@ -2824,6 +2857,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         ])
         place(header, below: &top, gap: 0)
 
+        if id.source == .assistant, !detail.archived {
+            place(makeAssistantStatusRow(detail), below: &top, gap: 4)
+        }
+
         if threadCompleteConfirmationID == id {
             let confirmation = NSView()
             let copy = NSTextField(labelWithString: "Completing cancels its waiting question.")
@@ -2941,7 +2978,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             place(emptyLabel("Reopen this thread to reply"), below: &top, gap: 14)
         } else if detail.canReply {
             let composer = makeComposer(
-                placeholder: id.source == .assistant ? "Message \(detail.owner)…" : "Message this thread…")
+                placeholder: id.source == .assistant ? "Message \(detail.owner)…" : "Message this thread…",
+                snap: detail.canSnap)
             composer.text = threadDrafts[id] ?? ""
             place(composer, below: &top, gap: 10)
             composerField = composer
@@ -2957,8 +2995,157 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         finishContent(top)
     }
 
-    private func makeComposer(placeholder: String) -> ComposerView {
-        let composer = ComposerView(placeholder: placeholder, fontSize: 12.5)
+    /// Runtime picker · live status · Stop, under the assistant thread's
+    /// header. The old panel chat carried these; the thread is now the one
+    /// assistant surface, so they live here.
+    private func makeAssistantStatusRow(_ detail: AgentThreadDetail) -> NSView {
+        let runtime = NSPopUpButton(frame: .zero, pullsDown: false)
+        runtime.addItems(withTitles: ["Codex", "OpenCode"])
+        runtime.selectItem(at: detail.runtime == .opencode ? 1 : 0)
+        runtime.target = self
+        runtime.action = #selector(assistantRuntimeChanged(_:))
+        runtime.controlSize = .mini
+        runtime.font = .systemFont(ofSize: 10, weight: .medium)
+        runtime.toolTip = "Runtime for this Assistant conversation"
+        runtime.setAccessibilityLabel("Assistant runtime")
+        assistantRuntimeSwitchable = detail.runtimeSwitchable
+        assistantRuntimePopUp = runtime
+
+        let status = NSTextField(labelWithString: "")
+        status.font = .systemFont(ofSize: 11)
+        status.textColor = Theme.accent
+        status.lineBreakMode = .byTruncatingTail
+        status.maximumNumberOfLines = 1
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        assistantStatusLabel = status
+
+        let stop = NSButton(title: "Stop", target: self, action: #selector(assistantStopTapped))
+        stop.bezelStyle = .inline
+        stop.controlSize = .small
+        stop.font = .systemFont(ofSize: 11, weight: .semibold)
+        stop.setAccessibilityLabel("Stop the assistant")
+        assistantStopButton = stop
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [runtime, status, spacer, stop])
+        row.orientation = .horizontal
+        row.spacing = 8
+        row.alignment = .centerY
+        row.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 2)
+        row.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        assistantActivity = detail.activity
+        applyAssistantActivity()
+        return row
+    }
+
+    private func applyAssistantActivity() {
+        let text: String
+        switch assistantActivity {
+        case .idle: text = ""
+        case .thinking: text = assistantActivityDetail ?? "Thinking…"
+        case .responding: text = assistantActivityDetail ?? "Replying…"
+        case .acting: text = assistantActivityDetail ?? "Working on your screen…"
+        }
+        assistantStatusLabel?.stringValue = text
+        assistantStatusLabel?.isHidden = text.isEmpty
+        assistantStopButton?.isHidden = assistantActivity == .idle
+        assistantRuntimePopUp?.isEnabled = assistantActivity == .idle && assistantRuntimeSwitchable
+    }
+
+    /// The agent's activity for `conversationID`, from AppDelegate. Updates
+    /// the status row in place — only when that conversation is the open
+    /// thread; another conversation's turn must not paint over this one.
+    /// The rebuild at turn end comes through the history change (rows flip
+    /// running → idle), via the panel's visibility-guarded refresh.
+    func setAssistantActivity(_ activity: AgentActivity, detail: String? = nil,
+                              conversationID: String) {
+        guard case .thread(let id) = mode, id.source == .assistant,
+              id.value == conversationID else { return }
+        if activity != assistantActivity { assistantActivityDetail = nil }
+        assistantActivity = activity
+        if let detail { assistantActivityDetail = detail }
+        applyAssistantActivity()
+    }
+
+    /// One-line app notice ("Sent to Claude.", "Stopped by Escape") shown
+    /// briefly at the bottom of the Agents surface, whatever it shows.
+    func showTransientNote(_ text: String) {
+        transientNoteTimer?.invalidate()
+        let label: NSTextField
+        if let existing = transientNoteLabel {
+            label = existing
+        } else {
+            label = PassThroughLabel(labelWithString: "")
+            label.font = .systemFont(ofSize: 11, weight: .medium)
+            label.textColor = Theme.text
+            label.alignment = .center
+            label.lineBreakMode = .byTruncatingTail
+            label.maximumNumberOfLines = 1
+            label.wantsLayer = true
+            label.layer?.backgroundColor = Theme.cardHover.cgColor
+            label.layer?.cornerRadius = 8
+            label.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(label)
+            NSLayoutConstraint.activate([
+                label.centerXAnchor.constraint(equalTo: centerXAnchor),
+                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+                label.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -48),
+                label.heightAnchor.constraint(equalToConstant: 24),
+            ])
+            transientNoteLabel = label
+        }
+        label.stringValue = "  \(text)  "
+        label.toolTip = text
+        label.isHidden = false
+        transientNoteTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+            self?.transientNoteLabel?.isHidden = true
+        }
+    }
+
+    func focusComposer() { composerField?.focus() }
+
+#if VOICE_FLOW_QA
+    var qaAssistantControlState: [String: Any] {
+        let controls: [NSControl] = [assistantRuntimePopUp, assistantStopButton].compactMap { $0 }
+        return [
+            "runtime_present": assistantRuntimePopUp != nil,
+            "runtime_enabled": assistantRuntimePopUp?.isEnabled ?? false,
+            "runtime_title": assistantRuntimePopUp?.titleOfSelectedItem ?? "",
+            "accessibility_labels": controls.compactMap {
+                $0.accessibilityLabel()?.trimmingCharacters(in: .whitespacesAndNewlines)
+            }.filter { !$0.isEmpty },
+        ]
+    }
+#endif
+
+    @objc private func assistantRuntimeChanged(_ sender: NSPopUpButton) {
+        guard let id = openThreadID else { return }
+        onSelectAssistantRuntime?(sender.indexOfSelectedItem == 1 ? .opencode : .codex, id)
+    }
+
+    @objc private func assistantStopTapped() {
+        if let id = openThreadID { onStop?(id) }
+    }
+
+    @objc private func assistantSnapTapped() {
+        if let id = openThreadID { onSnap?(id) }
+    }
+
+    private func makeComposer(placeholder: String, snap: Bool = false) -> ComposerView {
+        var leading: NSButton?
+        if snap {
+            let button = NSButton(
+                image: NSImage(systemSymbolName: "camera.viewfinder",
+                               accessibilityDescription: "Snap the screen and send") ?? NSImage(),
+                target: self, action: #selector(assistantSnapTapped))
+            button.isBordered = false
+            button.contentTintColor = Theme.text2
+            button.toolTip = "Snap the screen and send"
+            button.setAccessibilityLabel("Snap the screen and send")
+            leading = button
+        }
+        let composer = ComposerView(placeholder: placeholder, fontSize: 12.5, leading: leading)
         composer.onSend = { [weak self] text, images in self?.submit(text, images: images) }
         return composer
     }
@@ -3565,4 +3752,10 @@ final class WaveformIconView: NSView {
                    controlPoint2: NSPoint(x: x0 + w * 0.8, y: midY - 5))
         wave.stroke()
     }
+}
+
+/// A notice that never takes a click: the transient note strip sits over
+/// the composer for a few seconds and must not swallow the tap meant for it.
+final class PassThroughLabel: NSTextField {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

@@ -1584,7 +1584,11 @@ class SignedAppGate:
                and png_channel_range(runtime_screenshot) >= 32,
                "Assistant runtime-selector snapshot was blank or degenerate")
 
-        self.qa("POST", "/__qa/panel", {"tab": "agents"})
+        # The runtime selector lives in the open assistant thread now.
+        self.qa("POST", "/__qa/panel", {
+            "tab": "agents", "agents_destination": "threads",
+            "thread_source": "assistant", "thread_id": codex_conversation,
+        })
         state = wait_for(
             "Agents panel",
             lambda: (lambda value: value if value["ui"]["panel_visible"]

@@ -40,8 +40,12 @@ tabs (`ChatTab`, default **Agents** on open):
   history (`DictationsView` in `swift/UI.swift`), filtered by destination chips.
 - **Agents** — every agent talking to the user (`AgentsView` in
   `swift/AgentsView.swift`): one row per MCP session plus the assistant;
-  opening a row shows that session's thread, and the assistant conversation
-  (type / snap / talk, streamed replies) opens inside this tab too.
+  opening a row shows that session's thread. The assistant conversation is
+  **that same thread view** — the only assistant surface: its header row
+  carries the runtime picker (Codex/OpenCode), the live turn status
+  ("Thinking…", tool activity) and Stop, and its composer has the snap
+  accessory. `ChatPanel` no longer owns a chat of its own; it routes
+  (`openAssistantConversation`, `setActivity`, `addNote` → a 6 s strip).
   Its nav bar is **Now · Threads · Setup** (`AgentsDestination.navigation`):
   two reading surfaces, then one setup surface. The panel lands on **Now**,
   which answers "what is here for me?": NEEDS YOU (asks, blocked/failed
@@ -372,7 +376,7 @@ deployed copies are build outputs.
 | `WindowPlacement.swift` | `PanelAnchor`, `AnchoredPanelPlacement` | Same-display pill→ChatPanel geometry with visible-frame clamping. |
 | `Core.swift` | `UserSettings`, `KeychainStore`, `HotkeyManager`, `AudioRecorder`, `BackendBridge`, `Paster`, `HotkeySpec` | Audio capture, Python STT bridge (subprocess), paste/stream into the frontmost app, settings, global hotkeys. |
 | `UI.swift` | `Theme`, `MenuBarManager`, `FloatingIndicator`, `FloatingTranscriptPanel`, `MessagesView`, `DictationsView`, `TTSView`, `HoverCardView`, `KeyRecorderButton` | Menu bar, pill, live transcript overlay, the Inbox (dictations) and Speech surfaces, and the store-only `MessagesView`. |
-| `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel and its tabs. |
+| `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel, its tabs, and the header; routes assistant state into `AgentsView` rather than rendering a chat itself. |
 | `Composer.swift` | `ComposerView` | The one message input: auto-growing multi-line text area, Return-sends, send button, optional leading accessory. Used by the Agents thread and the assistant input row — do not hand-build another. |
 | `ReplyBubble.swift` | `ReplyBubble` | Facade over the pill's grown surface (no window of its own) — forwards messages/asks/streaming to `FloatingIndicator`. |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
