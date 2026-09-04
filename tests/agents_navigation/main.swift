@@ -93,6 +93,30 @@ expect(nowSnapshot.running.map(\.kind) == [.runningThread, .runningAutomation],
        "Now must contain running work only, ordered by recent activity")
 expect(nowSnapshot.attentionCount == 3, "Now badge must count unresolved objects once")
 
+// Unread replies are for the user: they belong in Now, after asks and running
+// work, newest first — but they never inflate the attention badge, and an
+// archived or asking thread is never listed twice.
+let unreadSnapshot = AgentsNowProjection.snapshot(
+    threads: [thread(AgentsThreadID(source: .mcp, value: "older"), unread: true, age: 5),
+              thread(AgentsThreadID(source: .assistant, value: "newer"), unread: true, age: 1),
+              thread(mcpThread, unread: true, pending: true),
+              thread(AgentsThreadID(source: .mcp, value: "done"), unread: true, archived: true),
+              thread(AgentsThreadID(source: .mcp, value: "quiet"))],
+    automations: [])
+expect(unreadSnapshot.unread.map(\.objectID) == [
+    .thread(AgentsThreadID(source: .assistant, value: "newer")),
+    .thread(AgentsThreadID(source: .mcp, value: "older"))],
+       "Now must list open unread threads newest first, without asks or archive")
+expect(unreadSnapshot.needsYou.map(\.objectID) == [.thread(mcpThread)],
+       "an unread ask stays in Needs you only")
+expect(unreadSnapshot.attentionCount == 1,
+       "unread threads must not inflate the attention badge")
+let onlyUnread = AgentsNowProjection.snapshot(
+    threads: [thread(AgentsThreadID(source: .mcp, value: "only-unread"), unread: true)],
+    automations: [])
+expect(onlyUnread.needsYou.isEmpty && onlyUnread.running.isEmpty && !onlyUnread.isEmpty,
+       "Now must not read All clear while an unread reply is waiting")
+
 // Live means reachable; running means verifiably working. An idle connected
 // external session must never occupy "Running now" (or Now can never reach
 // "All clear"), while it still groups as Live in the Threads destination.

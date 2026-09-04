@@ -79,6 +79,7 @@ final class ChatPanel {
     private var annotateButton: NSButton!
     private var voiceButton: NSButton!
     private var controlButton: NSButton!
+    private var clearButton: NSButton!
 
     private var streamingLabel: NSTextField?
     /// Coalesce repeated layout/scroll requests while a persisted conversation
@@ -92,6 +93,14 @@ final class ChatPanel {
     private var clickOutsideMonitor: Any?
 
     var isVisible: Bool { panel?.isVisible ?? false }
+
+    /// The MCP thread the Agents tab currently shows, read or not — history
+    /// pruning must never pull a thread out from under the reader.
+    var openAgentThreadId: String? {
+        guard isVisible, currentTab == .agents, !speechOpen,
+              let id = agentsView.openThreadID, id.source == .mcp else { return nil }
+        return id.value
+    }
 
     /// Delivery context is intentionally derived from what is visibly open,
     /// never from the last selected/picker target after this panel disappears.
@@ -472,6 +481,7 @@ final class ChatPanel {
         ttsView.isHidden = !speechOpen
         speechButton.contentTintColor = speechOpen ? Theme.accent : Theme.text3
         styleTabs()
+        updateHeaderScope()
         updateEmptyLabel()
         if assistant {
             inputField.focus()
@@ -481,6 +491,19 @@ final class ChatPanel {
             agentsView.refresh()
         } else {
             setPreferredAgentsContentHeight(maxHeight - 136)
+        }
+    }
+
+    /// Voice replies, computer control, and Clear act on the assistant
+    /// conversation only. Showing them over the Inbox, the session list, or
+    /// an MCP thread (which has its own trash) is noise at best and a
+    /// misfire at worst — so they appear only while that conversation is
+    /// what the panel shows. Annotate and Settings are global and stay.
+    private func updateHeaderScope() {
+        let assistantVisible = currentTab == .agents && !speechOpen
+            && (assistantOpen || agentsView.openThreadID?.source == .assistant)
+        for button in [voiceButton, controlButton, clearButton] as [NSButton?] {
+            button?.isHidden = !assistantVisible
         }
     }
 
@@ -691,7 +714,7 @@ final class ChatPanel {
         annotateButton = iconButton("pencil.tip", action: #selector(annotateTapped), tip: "Annotate the screen")
         voiceButton = iconButton("speaker.slash", action: #selector(voiceTapped), tip: "Voice replies off")
         controlButton = iconButton("hand.raised.slash", action: #selector(controlTapped), tip: "Computer control off")
-        let clearButton = iconButton("trash", action: #selector(clearTapped), tip: "Clear conversation")
+        clearButton = iconButton("trash", action: #selector(clearTapped), tip: "Clear conversation")
         let settingsButton = iconButton("gearshape", action: #selector(settingsTapped), tip: "Settings")
 
         let headerSpacer = NSView()
@@ -831,6 +854,7 @@ final class ChatPanel {
         dictationsView.onUnreadChanged = { [weak self] _ in self?.styleTabs() }
         dictationsView.onContinueRequested = { [weak self] id in self?.onContinueDictation?(id) }
         agentsView = AgentsView()
+        agentsView.onModeChanged = { [weak self] in self?.updateHeaderScope() }
         agentsView.isHidden = true
         agentsView.setContentHuggingPriority(.defaultLow, for: .vertical)
         agentsView.onNewAssistant = { [weak self] in self?.onNewAssistant?() }

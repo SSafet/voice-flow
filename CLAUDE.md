@@ -38,6 +38,14 @@ tabs (`ChatTab`, default **Agents** on open):
   `swift/AgentsView.swift`): one row per MCP session plus the assistant;
   opening a row shows that session's thread, and the assistant conversation
   (type / snap / talk, streamed replies) opens inside this tab too.
+  The panel lands on its **Now** sub-tab, which answers "what is here for
+  me?": NEEDS YOU (asks, blocked/failed automations), RUNNING NOW, and
+  UNREAD (open threads with unseen output, newest first — `AgentsNowSnapshot`
+  in `swift/AgentsNavigation.swift`). "All clear" appears only when all
+  three are empty; the Now badge still counts asks/blocks only.
+  The panel header's voice-replies / computer-control / Clear icons act on
+  the assistant conversation and show only while it is on screen
+  (`ChatPanel.updateHeaderScope`); Annotate and Settings are always there.
   Its **Assistants** sub-tab also carries a **SYSTEM** section: the three
   agents the app runs on its own behalf — continuity router, speech cleanup,
   and speech (`SystemAgentStore`, `swift/SystemAgents.swift`). Identities are
@@ -157,9 +165,12 @@ as ghosts (a live one self-heals — its next request is re-adopted by
 expires with active (not-done) pushes stays in the picker as a readable
 ghost entry (sticky label kept from when it was alive, else derived from
 its newest push), and stacks persist in `pushes.json` across app restarts;
-the 60 s sweep never deletes stacks (they stay as the panel's thread
-history) — it only drops empty queues, prunes orphan overlays/labels,
-re-targets off dead entries, and repaints the number dot / unread ring.
+the 60 s sweep never deletes an unread, pending, or connected stack — it
+drops empty queues, prunes orphan overlays/labels, re-targets off dead
+entries, and repaints the number dot / unread ring. Fully-consumed
+disconnected stacks (every push done) are history under Threads → Done and
+are bounded to the newest 40 (`pruneConsumedHistory`); the sweep rewrites
+`pushes.json` only when it actually dropped something.
 Capture hotkeys feed only the
 **visibly open conversation** (`ChatPanel.conversationFocus`, or the grown
 pill's concrete push session); `AppDelegate.targetSessionId`, changed via
@@ -326,7 +337,10 @@ deployed copies are build outputs.
   and the user edit it directly; `queue/_schema.md` documents it, and
   `queue/config.json` overrides the surfacing tunables. Never auto-populate it:
   the user plans it himself. Settings → Assistant toggle (`queue_enabled`);
-  ✕ dismissal backs off 10–30 min. The whole feature is a side-attachment —
+  ✕ on a filled panel backs off 10 min; ✕ on the Empty panel keeps it down
+  for the rest of that sitting — it returns only after the user has been
+  away ≥ `idle_resume_minutes` (or on relaunch), never on the 30-min clock
+  (`emptyNagSuppressed`). The whole feature is a side-attachment —
   delete `swift/Queue.swift` plus ~20 wiring lines to remove it.
 - `watcher/` — ambient workflow log (`WorkflowWatcher`): per-day `activity.jsonl` + deduped frames, plus `ANALYZE.md` / `ledger.md` / `reviews/` for the nightly review.
 - `app.log` — `vflog` output.

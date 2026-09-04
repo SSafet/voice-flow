@@ -1920,7 +1920,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// seen — ghosts included: unread messages outlive their session and
     /// stay reachable via the picker until read or trashed. Main thread.
     private func unseenSessions(excluding excluded: String? = nil) -> Int {
-        sessionPushes = sessionPushes.filter { !$0.value.isEmpty }
+        // Read-only: assigning sessionPushes here rewrote pushes.json on every
+        // one of the ~35 unread-indicator refreshes. Empty queues are dropped
+        // by the 60 s sweep; skipping them is enough for the count.
         var count = sessionPushes.filter { sid, queue in
             sid != excluded && queue.contains { !$0.seen }
         }.count
@@ -1951,6 +1953,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// next queued session. Live sessions never retire this way (they are
     /// active workers), and neither does anything unseen, asking, on screen,
     /// or still being read aloud. Main thread.
+    /// Done history is bounded like every other store (captures 40, pushes
+    /// per session 40): the newest `maxKeptConsumedSessions` fully-consumed,
+    /// disconnected stacks stay browsable under Threads → Done; older ones go,
+    /// and the label sweep drops their names. Anything unread, pending, being
+    /// read, or still connected is never touched — this only trims history
+    /// the user has already dealt with, which had grown to 150+ sessions.
+    private let maxKeptConsumedSessions = 40
+    private func pruneConsumedHistory() {
+        let openInPanel = chatPanel.openAgentThreadId
+        let consumed = sessionPushes.filter { sid, queue in
+            mcpServer.sessions.session(sid) == nil
+                && sid != currentPushSessionId
+                && sid != playerContext?.sessionId
+                && sid != openInPanel
+                && !queue.isEmpty
+                && queue.allSatisfy { $0.done == true }
+        }
+        guard consumed.count > maxKeptConsumedSessions else { return }
+        let stale = consumed
+            .sorted { ($0.value.last?.at ?? .distantPast) > ($1.value.last?.at ?? .distantPast) }
+            .dropFirst(maxKeptConsumedSessions)
+            .map { $0.key }
+        var kept = sessionPushes
+        for sid in stale { kept.removeValue(forKey: sid) }
+        sessionPushes = kept
+        vflog("sessions: pruned \(stale.count) consumed stacks beyond the newest \(maxKeptConsumedSessions)")
+    }
+
     private func retireConsumedGhosts() {
         for (sid, queue) in sessionPushes {
             guard mcpServer.sessions.session(sid) == nil,
@@ -2973,6 +3003,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func requestInitialPermissionsIfNeeded() {
         guard !initialPermissionsRequested else { return }
         initialPermissionsRequested = true
+#if VOICE_FLOW_QA
+        // A synthetic-input QA copy runs beside the real app and never needs
+        // Accessibility; its permissions window would only land on the user.
+        if HotkeyManager.qaSyntheticInputIsolationEnabled { return }
+#endif
         refreshPermissionWindow()
         if !allPermissionsGranted() {
             showPermissions()
@@ -4224,12 +4259,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // only drops empty queues and re-targets off dead entries.
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.sessionPushes = self.sessionPushes.filter { _, queue in
-                !queue.isEmpty
-            }
+            // Assigning sessionPushes rewrites pushes.json (hundreds of KB);
+            // only do it when the sweep actually drops something.
+            let nonEmpty = self.sessionPushes.filter { _, queue in !queue.isEmpty }
+            if nonEmpty.count != self.sessionPushes.count { self.sessionPushes = nonEmpty }
             // Consumed, finished sessions leave the picker so their slot
             // numbers free for the queue (ticket VF-48).
             self.retireConsumedGhosts()
+            self.pruneConsumedHistory()
             // Overlays whose owning session no longer exists are orphans the
             // user has no affordance to clear — sweep them (ticket #14).
             let known = Set(self.mcpServer.sessions.ordered().map { $0.id })

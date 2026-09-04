@@ -305,6 +305,7 @@ enum AgentsNowKind: Int {
     case failedAutomation
     case runningAutomation
     case runningThread
+    case unreadThread
 }
 
 struct AgentsNowItem: Equatable {
@@ -318,7 +319,7 @@ struct AgentsNowItem: Equatable {
     var needsAttention: Bool {
         switch kind {
         case .pendingAsk, .blockedAutomation, .failedAutomation: return true
-        case .runningAutomation, .runningThread: return false
+        case .runningAutomation, .runningThread, .unreadThread: return false
         }
     }
 }
@@ -326,8 +327,13 @@ struct AgentsNowItem: Equatable {
 struct AgentsNowSnapshot: Equatable {
     let needsYou: [AgentsNowItem]
     let running: [AgentsNowItem]
+    /// Open threads with unseen output. Now answers "what is here for me?",
+    /// and an unread reply is for the user just as much as an ask is — the
+    /// panel must never open on "All clear" while replies wait unread.
+    let unread: [AgentsNowItem]
 
     var attentionCount: Int { needsYou.count }
+    var isEmpty: Bool { needsYou.isEmpty && running.isEmpty && unread.isEmpty }
 }
 
 enum AgentsNowProjection {
@@ -335,6 +341,7 @@ enum AgentsNowProjection {
                          automations: [AgentsAutomationProjectionInput]) -> AgentsNowSnapshot {
         var needs: [AgentsNowItem] = []
         var running: [AgentsNowItem] = []
+        var unread: [AgentsNowItem] = []
 
         for thread in threads where !thread.archived {
             if thread.pendingAsk {
@@ -345,6 +352,11 @@ enum AgentsNowProjection {
             } else if thread.running {
                 running.append(AgentsNowItem(
                     objectID: .thread(thread.id), kind: .runningThread,
+                    title: thread.title, owner: thread.owner,
+                    summary: thread.preview, updatedAt: thread.updatedAt))
+            } else if thread.unread {
+                unread.append(AgentsNowItem(
+                    objectID: .thread(thread.id), kind: .unreadThread,
                     title: thread.title, owner: thread.owner,
                     summary: thread.preview, updatedAt: thread.updatedAt))
             }
@@ -375,7 +387,8 @@ enum AgentsNowProjection {
 
         needs.sort(by: sortAttention)
         running.sort(by: sortRunning)
-        return AgentsNowSnapshot(needsYou: needs, running: running)
+        unread.sort(by: sortRunning)
+        return AgentsNowSnapshot(needsYou: needs, running: running, unread: unread)
     }
 
     private static func sortAttention(_ lhs: AgentsNowItem, _ rhs: AgentsNowItem) -> Bool {

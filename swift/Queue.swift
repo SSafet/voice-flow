@@ -59,6 +59,10 @@ final class NextQueue {
     private var lastClockShow = Date()          // don't clock-fire right at launch
     private var dismissCooldownUntil = Date.distantPast
     private var emptySince: Date?
+    /// The user closed the Empty panel this sitting. It stays down until they
+    /// leave and come back (or the app restarts): the log showed the 30-minute
+    /// re-show being dismissed within seconds, ~15 times a day, for a month.
+    private var emptyNagSuppressed = false
     private var wasIdleSince: Date?
     private var recentActivations: [Date] = []
     private var shownContentKey: String?
@@ -134,15 +138,27 @@ final class NextQueue {
         if idle >= idleResumeMinutes * 60 {
             if wasIdleSince == nil { wasIdleSince = now.addingTimeInterval(-idle) }
         }
+        // A fresh sitting earns one fresh "what's next?" nudge.
+        if let idleStart = wasIdleSince, idle < activeIdleCutoff,
+           now.timeIntervalSince(idleStart) >= idleResumeMinutes * 60,
+           emptyNagSuppressed {
+            emptyNagSuppressed = false
+            vflog("queue: back after \(Int(now.timeIntervalSince(idleStart) / 60))m away — empty nudge re-armed")
+        }
         recentActivations.removeAll { now.timeIntervalSince($0) > switchBurstWindow }
 
         // The user closed the panel (✕ deletes the overlay file): back off.
         if case .hidden = surface {} else if !FileManager.default.fileExists(atPath: overlayURL.path) {
-            let minutes: Double
-            if case .persistentEmpty = surface { minutes = 30 } else { minutes = 10 }
-            dismissCooldownUntil = now.addingTimeInterval(minutes * 60)
+            if case .persistentEmpty = surface {
+                // No clock here: only a fresh sitting (idle-return) or a
+                // relaunch brings the Empty panel back.
+                emptyNagSuppressed = true
+                vflog("queue: empty panel dismissed, quiet until the next sitting")
+            } else {
+                dismissCooldownUntil = now.addingTimeInterval(10 * 60)
+                vflog("queue: dismissed by user, quiet for 10m")
+            }
             surface = .hidden
-            vflog("queue: dismissed by user, quiet for \(Int(minutes))m")
         }
 
         switch surface {
@@ -171,6 +187,7 @@ final class NextQueue {
         case .hidden:
             guard active, !isBusy(), now >= dismissCooldownUntil else { break }
             if open.isEmpty {
+                if emptyNagSuppressed { break }
                 if emptySince == nil { emptySince = now }
                 if now.timeIntervalSince(emptySince!) >= emptyGraceSeconds {
                     showPersistentEmpty()

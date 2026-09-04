@@ -226,6 +226,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// A concrete session row was chosen. ChatPanel/AppDelegate use this to
     /// align visible conversation focus with overlay/picker targeting.
     var onOpenSession: ((String) -> Void)?
+    /// Fired after every rebuild — the mode (list, thread, form…) may have
+    /// changed and the panel's chrome scopes itself to what is showing.
+    var onModeChanged: (() -> Void)?
 
     private enum Mode {
         case destination(AgentsDestination)
@@ -1018,6 +1021,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .systemAgent(let kind): buildSystemAgent(kind: kind)
         }
         styleNavigation()
+        onModeChanged?()
         // Content-fit height, the way the mocks are framed: every screen
         // measures its real content and the panel ends just after the last
         // card, clamped by the panel's own floor/ceiling.
@@ -1116,8 +1120,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func buildNow() {
         var top = contentStack.topAnchor
         let snapshot = nowSnapshot()
-        if snapshot.needsYou.isEmpty && snapshot.running.isEmpty {
-            let empty = NSTextField(wrappingLabelWithString: "All clear\nNothing needs you and no agent is running.")
+        if snapshot.isEmpty {
+            let empty = NSTextField(wrappingLabelWithString: "All clear\nNothing needs you, nothing is unread, and no agent is running.")
             empty.font = .systemFont(ofSize: 12.5, weight: .medium)
             empty.textColor = Theme.text2
             empty.alignment = .center
@@ -1130,6 +1134,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             if !snapshot.running.isEmpty {
                 place(sectionHeader("RUNNING NOW", count: snapshot.running.count), below: &top, gap: 14)
                 for item in snapshot.running { place(makeNowRow(item), below: &top, gap: 6) }
+            }
+            if !snapshot.unread.isEmpty {
+                place(sectionHeader("UNREAD", count: snapshot.unread.count), below: &top, gap: 14)
+                for item in snapshot.unread { place(makeNowRow(item), below: &top, gap: 6) }
             }
         }
         finishContent(top)
@@ -2296,6 +2304,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .pendingAsk: verb = "Reply"
         case .blockedAutomation, .failedAutomation: verb = "Review"
         case .runningAutomation, .runningThread: verb = nil
+        case .unreadThread: verb = "Read"
         }
         var progress: Double?
         if case .automation(let jobID) = item.objectID, item.kind == .runningAutomation,
@@ -2303,7 +2312,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             progress = jobProgress(job)
         }
         let view = makeRow(
-            leading: leading, name: item.title, unread: item.needsAttention,
+            leading: leading, name: item.title,
+            unread: item.needsAttention || item.kind == .unreadThread,
             preview: parts.filter { !$0.isEmpty }.joined(separator: " · "),
             time: "", action: verb, progress: progress)
         view.rowAction = .object(item.objectID)
