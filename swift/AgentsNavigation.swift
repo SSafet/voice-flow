@@ -11,11 +11,20 @@ enum AgentsDestination: String, CaseIterable {
     var label: String {
         switch self {
         case .now: return "Now"
-        case .assistants: return "Assistants"
+        case .assistants: return "Setup"
         case .automations: return "Automations"
         case .threads: return "Threads"
         }
     }
+
+    /// What the nav bar shows: the two reading surfaces first, then one
+    /// setup surface. Assistants and automations are both configuration —
+    /// in daily use they hold one assistant and no automations — so they
+    /// share the Setup screen instead of each owning a top-level tab.
+    static let navigation: [AgentsDestination] = [.now, .threads, .assistants]
+
+    /// The nav item that lights up for this destination.
+    var navigationItem: AgentsDestination { self == .automations ? .assistants : self }
 }
 
 enum AgentsThreadSource: String, Hashable {

@@ -10,13 +10,17 @@ subprocess pipe.
 ```bash
 uv sync                 # once — creates .venv with the Python backend deps
 ./install.sh            # compiles swift/*.swift → "/Applications/Voice Flow.app", codesigns
+./install.sh --relaunch # same, then restarts a running Voice Flow on the new build
 open "/Applications/Voice Flow.app"
 ./uninstall.sh          # remove
 ```
 
 `install.sh` compiles every file in `swift/` into one binary and prefers a stable
 **Developer ID** signing identity so macOS keeps TCC / Keychain grants across
-rebuilds (falls back to ad-hoc, which resets permissions each build).
+rebuilds (falls back to ad-hoc, which resets permissions each build). It
+builds and signs a staging bundle next to the destination and swaps it in
+with two renames, so a running app is never killed (it keeps the previous
+build until relaunched) and a failed build leaves the installed app intact.
 
 Quick type-check without installing:
 
@@ -38,11 +42,19 @@ tabs (`ChatTab`, default **Agents** on open):
   `swift/AgentsView.swift`): one row per MCP session plus the assistant;
   opening a row shows that session's thread, and the assistant conversation
   (type / snap / talk, streamed replies) opens inside this tab too.
-  The panel lands on its **Now** sub-tab, which answers "what is here for
-  me?": NEEDS YOU (asks, blocked/failed automations), RUNNING NOW, and
-  UNREAD (open threads with unseen output, newest first — `AgentsNowSnapshot`
-  in `swift/AgentsNavigation.swift`). "All clear" appears only when all
-  three are empty; the Now badge still counts asks/blocks only.
+  Its nav bar is **Now · Threads · Setup** (`AgentsDestination.navigation`):
+  two reading surfaces, then one setup surface. The panel lands on **Now**,
+  which answers "what is here for me?": NEEDS YOU (asks, blocked/failed
+  automations), RUNNING NOW, and UNREAD (open threads with unseen output,
+  newest first — `AgentsNowSnapshot` in `swift/AgentsNavigation.swift`).
+  "All clear" appears only when all three are empty; the Now badge still
+  counts asks/blocks only. **Setup** is assistants + the SYSTEM agents +
+  automations on one screen (`buildSetup`); the `.automations` destination
+  still exists for deep links and lights the Setup item, and the automation
+  search field and filter chips appear only from 6 automations up.
+  `AgentsView.refresh()` memoizes: on a read surface (destination, thread,
+  search) identical row inputs skip the rebuild (`RefreshInputs`), so the
+  ~20 refresh call sites cost nothing when nothing changed.
   The panel header's voice-replies / computer-control / Clear icons act on
   the assistant conversation and show only while it is on screen
   (`ChatPanel.updateHeaderScope`); Annotate and Settings are always there.

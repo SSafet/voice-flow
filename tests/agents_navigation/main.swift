@@ -149,3 +149,12 @@ expect(AgentsSearchIndex.search("flora transcript", in: documents).map(\.objectI
 expect(AgentsSearchIndex.search("", in: documents).isEmpty, "empty query must not dump inventory")
 
 print("agents navigation: ok")
+
+// The nav bar shows reading surfaces first and one Setup surface; automations
+// deep-link into Setup rather than owning a tab.
+expect(AgentsDestination.navigation == [.now, .threads, .assistants],
+       "nav bar must be Now · Threads · Setup")
+expect(AgentsDestination.automations.navigationItem == .assistants
+       && AgentsDestination.threads.navigationItem == .threads,
+       "automations must light the Setup item; every other destination lights itself")
+expect(AgentsDestination.assistants.label == "Setup", "the shared setup surface is labelled Setup")

@@ -5,9 +5,17 @@ set -e
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="Voice Flow"
 APP_DEST="/Applications/$APP_NAME.app"
+# The bundle is built and signed here, on the same volume, then swapped into
+# place with two renames. Building inside the live bundle used to require
+# killing the running app first (uninstall.sh's pkill) and left a half-written
+# bundle on any failure; a swap leaves the running app untouched until the
+# user relaunches, and a failed build leaves the installed app as it was.
+BUILD_DEST="$APP_DEST.staging"
 VENV="$PROJECT_DIR/.venv"
 RUNTIME_STAGE="$(mktemp -d /tmp/voice-flow-runtime.XXXXXX)"
-cleanup() { rm -rf "$RUNTIME_STAGE"; }
+RELAUNCH=false
+[ "${1:-}" = "--relaunch" ] && RELAUNCH=true
+cleanup() { rm -rf "$RUNTIME_STAGE" "$BUILD_DEST"; }
 trap cleanup EXIT
 
 echo "Installing $APP_NAME..."
@@ -27,33 +35,31 @@ fi
 echo "  Preparing pinned OpenCode runtime..."
 "$PROJECT_DIR/scripts/prepare-opencode-runtime.sh" "$RUNTIME_STAGE/OpenCode"
 
-# ── remove old installation ────────────────────────────
-"$PROJECT_DIR/uninstall.sh"
-
-# ── copy the .app template ─────────────────────────────
-cp -R "$PROJECT_DIR/$APP_NAME.app" "$APP_DEST"
+# ── copy the .app template into the staging bundle ─────
+rm -rf "$BUILD_DEST"
+cp -R "$PROJECT_DIR/$APP_NAME.app" "$BUILD_DEST"
 
 # Remove the old bash launcher (replaced by compiled Swift binary)
-rm -f "$APP_DEST/Contents/MacOS/voice-flow"
+rm -f "$BUILD_DEST/Contents/MacOS/voice-flow"
 
 # ── copy assets into bundle Resources ──────────────────
-cp "$PROJECT_DIR/assets/StatusBarIconTemplate@2x.png" "$APP_DEST/Contents/Resources/" 2>/dev/null || true
-cp "$PROJECT_DIR/assets/StatusBarIconTemplate.png"     "$APP_DEST/Contents/Resources/" 2>/dev/null || true
-cp "$PROJECT_DIR/assets/icon.icns"                     "$APP_DEST/Contents/Resources/" 2>/dev/null || true
-mkdir -p "$APP_DEST/Contents/Resources/Runtime/OpenCode"
-cp "$RUNTIME_STAGE/OpenCode/opencode" "$APP_DEST/Contents/Resources/Runtime/OpenCode/opencode"
-cp "$RUNTIME_STAGE/OpenCode/versions.json" "$APP_DEST/Contents/Resources/Runtime/OpenCode/versions.json"
-chmod 755 "$APP_DEST/Contents/Resources/Runtime/OpenCode/opencode"
+cp "$PROJECT_DIR/assets/StatusBarIconTemplate@2x.png" "$BUILD_DEST/Contents/Resources/" 2>/dev/null || true
+cp "$PROJECT_DIR/assets/StatusBarIconTemplate.png"     "$BUILD_DEST/Contents/Resources/" 2>/dev/null || true
+cp "$PROJECT_DIR/assets/icon.icns"                     "$BUILD_DEST/Contents/Resources/" 2>/dev/null || true
+mkdir -p "$BUILD_DEST/Contents/Resources/Runtime/OpenCode"
+cp "$RUNTIME_STAGE/OpenCode/opencode" "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/opencode"
+cp "$RUNTIME_STAGE/OpenCode/versions.json" "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/versions.json"
+chmod 755 "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/opencode"
 
 # Write project directory path into bundle (used to locate .venv).
 # VF_PROJECT_DIR overrides it when compiling from a throwaway snapshot
 # (e.g. a git worktree) so the app keeps pointing at the real repo.
-echo -n "${VF_PROJECT_DIR:-$PROJECT_DIR}" > "$APP_DEST/Contents/Resources/project_dir.txt"
+echo -n "${VF_PROJECT_DIR:-$PROJECT_DIR}" > "$BUILD_DEST/Contents/Resources/project_dir.txt"
 
 # Bundle Python source so the app is self-contained
-rm -rf "$APP_DEST/Contents/Resources/voice_flow"
-cp -R "$PROJECT_DIR/voice_flow" "$APP_DEST/Contents/Resources/voice_flow"
-find "$APP_DEST/Contents/Resources/voice_flow" -type d -name __pycache__ -prune -exec rm -rf {} +
+rm -rf "$BUILD_DEST/Contents/Resources/voice_flow"
+cp -R "$PROJECT_DIR/voice_flow" "$BUILD_DEST/Contents/Resources/voice_flow"
+find "$BUILD_DEST/Contents/Resources/voice_flow" -type d -name __pycache__ -prune -exec rm -rf {} +
 
 # ── compile Swift ──────────────────────────────────────
 echo "  Compiling Swift..."
@@ -64,7 +70,7 @@ else
     SDK="$(xcrun --show-sdk-path)"
 fi
 
-swiftc -o "$APP_DEST/Contents/MacOS/voice-flow" \
+swiftc -o "$BUILD_DEST/Contents/MacOS/voice-flow" \
     "$PROJECT_DIR"/swift/*.swift \
     -framework Cocoa \
     -framework AVFoundation \
@@ -78,7 +84,7 @@ swiftc -o "$APP_DEST/Contents/MacOS/voice-flow" \
     -O \
     -suppress-warnings
 
-chmod +x "$APP_DEST/Contents/MacOS/voice-flow"
+chmod +x "$BUILD_DEST/Contents/MacOS/voice-flow"
 echo "  ✓ Swift binary compiled"
 
 # ── codesign ───────────────────────────────────────────
@@ -110,22 +116,32 @@ if [ "$SIGN_ID" != "-" ]; then
 fi
 
 codesign --force "${SIGN_TIMESTAMP_ARGS[@]}" --sign "$SIGN_ID" --identifier "com.voiceflow.app" \
-    "$APP_DEST/Contents/MacOS/voice-flow"
+    "$BUILD_DEST/Contents/MacOS/voice-flow"
 codesign --force "${SIGN_TIMESTAMP_ARGS[@]}" --sign "$SIGN_ID" \
-    "$APP_DEST/Contents/Resources/Runtime/OpenCode/opencode"
+    "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/opencode"
 RUNTIME_ARCH="$(uname -m)"
 [ "$RUNTIME_ARCH" = "x86_64" ] || RUNTIME_ARCH="arm64"
 SOURCE_RUNTIME_SHA="$(plutil -extract "assets.$RUNTIME_ARCH.binarySHA256" raw \
-    "$APP_DEST/Contents/Resources/Runtime/OpenCode/versions.json")"
+    "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/versions.json")"
 RUNTIME_VERSION="$(plutil -extract version raw \
-    "$APP_DEST/Contents/Resources/Runtime/OpenCode/versions.json")"
+    "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/versions.json")"
 INSTALLED_RUNTIME_SHA="$(shasum -a 256 \
-    "$APP_DEST/Contents/Resources/Runtime/OpenCode/opencode" | awk '{print $1}')"
+    "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/opencode" | awk '{print $1}')"
 printf '{"version":"%s","architecture":"%s","sourceBinarySHA256":"%s","installedBinarySHA256":"%s"}\n' \
     "$RUNTIME_VERSION" "$RUNTIME_ARCH" "$SOURCE_RUNTIME_SHA" "$INSTALLED_RUNTIME_SHA" \
-    > "$APP_DEST/Contents/Resources/Runtime/OpenCode/installed.json"
-codesign --force --deep "${SIGN_TIMESTAMP_ARGS[@]}" --sign "$SIGN_ID" "$APP_DEST"
-codesign --verify --deep --strict "$APP_DEST"
+    > "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/installed.json"
+codesign --force --deep "${SIGN_TIMESTAMP_ARGS[@]}" --sign "$SIGN_ID" "$BUILD_DEST"
+codesign --verify --deep --strict "$BUILD_DEST"
+
+# ── swap the finished bundle into place ────────────────
+# Two renames on one volume: the old bundle is never partially overwritten,
+# and a running app keeps its (now unlinked) binary until it relaunches.
+PREVIOUS="$APP_DEST.previous"
+rm -rf "$PREVIOUS"
+[ -d "$APP_DEST" ] && mv "$APP_DEST" "$PREVIOUS"
+mv "$BUILD_DEST" "$APP_DEST"
+rm -rf "$PREVIOUS"
+echo "  ✓ Bundle swapped into place"
 
 # ── deploy watcher assets ──────────────────────────────
 # Canonical sources for the workflow-watcher pieces that live outside the
@@ -174,6 +190,17 @@ launchctl bootstrap "gui/$(id -u)" "$LA_PLIST" \
 
 echo ""
 echo "✓ Installed to $APP_DEST"
+if pgrep -x voice-flow >/dev/null 2>&1; then
+    if [ "$RELAUNCH" = true ]; then
+        pkill -x voice-flow 2>/dev/null || true
+        sleep 1
+        open "$APP_DEST"
+        echo "  ↻ Relaunched Voice Flow on the new build"
+    else
+        echo "  ⓘ Voice Flow is still running the previous build — quit and reopen it"
+        echo "    when convenient, or run ./install.sh --relaunch next time."
+    fi
+fi
 echo ""
 echo "Launch: open /Applications/Voice\\ Flow.app"
 echo "Uninstall: $PROJECT_DIR/uninstall.sh"

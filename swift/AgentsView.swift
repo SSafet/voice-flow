@@ -20,7 +20,7 @@ enum AgentSessionKind: Equatable {
     case mcp
 }
 
-struct AgentSessionRow {
+struct AgentSessionRow: Equatable {
     let id: String
     let kind: AgentSessionKind
     let number: Int?         // ≡ pill picker / ⌃⌥ numbering; nil = consumed
@@ -78,7 +78,7 @@ struct AgentThreadDetail {
     let linkedAutomationCount: Int
 }
 
-struct AgentJobRow {
+struct AgentJobRow: Equatable {
     let id: String
     let name: String
     let preview: String
@@ -103,7 +103,7 @@ struct AgentJobRow {
     let runs: [AgentRunRow]
 }
 
-struct AgentRunRow {
+struct AgentRunRow: Equatable {
     let id: String
     let state: AgentRunState
     let startedAt: Date
@@ -136,7 +136,7 @@ struct AgentAutomationDefaults {
 /// One of the three fixed agents the app runs on its own behalf (system
 /// agents). Both the list row and its editor read this: they are few and
 /// small, so a second round-trip for the detail would buy nothing.
-struct AgentSystemAgentRow {
+struct AgentSystemAgentRow: Equatable {
     let kind: String
     let name: String
     let purpose: String
@@ -154,7 +154,7 @@ struct AgentSystemAgentRow {
     let usesDefaults: Bool
 }
 
-struct AgentAssistantRow {
+struct AgentAssistantRow: Equatable {
     let slug: String
     let name: String
     let description: String
@@ -230,7 +230,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// changed and the panel's chrome scopes itself to what is showing.
     var onModeChanged: (() -> Void)?
 
-    private enum Mode {
+    private enum Mode: Equatable {
         case destination(AgentsDestination)
         case search
         case thread(AgentsThreadID)
@@ -278,6 +278,21 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case settings = "Settings"
     }
     private var mode: Mode = .destination(.now)
+    /// Everything a read surface (destination, thread, search) renders from.
+    /// refresh() is called from ~20 sites, often several times per event,
+    /// and every call used to tear down and rebuild the whole hierarchy.
+    /// Equal inputs mean an identical screen, so the rebuild is skipped.
+    private struct RefreshInputs: Equatable {
+        let mode: Mode
+        let sessions: [AgentSessionRow]
+        let jobs: [AgentJobRow]
+        let assistants: [AgentAssistantRow]
+        let system: [AgentSystemAgentRow]
+        let threadFilter: AgentsThreadFilter
+        let searchQuery: String
+        let streamingThreads: [String]
+    }
+    private var lastRefreshInputs: RefreshInputs?
     private var currentDestination: AgentsDestination = .now
     private var threadFilter: AgentsThreadFilter = .open
 
@@ -410,7 +425,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         stack.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(stack)
 
-        for destination in AgentsDestination.allCases {
+        for destination in AgentsDestination.navigation {
             let item = NSView()
             let button = NSButton(
                 title: destination.label, target: self,
@@ -513,8 +528,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     @discardableResult
     func handleMissionControlCommand(_ key: String) -> Bool {
-        if let index = Int(key), (1...4).contains(index) {
-            let destination = AgentsDestination.allCases[index - 1]
+        if let index = Int(key), (1...AgentsDestination.navigation.count).contains(index) {
+            let destination = AgentsDestination.navigation[index - 1]
             currentDestination = destination
             mode = .destination(destination)
             pushedOrigin = nil
@@ -762,6 +777,30 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                   (try? dataSource?.assistantWorkspace(slug: slug)) == nil {
             mode = .destination(.assistants)
         }
+        let readSurface: Bool = {
+            switch mode {
+            case .destination, .thread, .search: return true
+            default: return false
+            }
+        }()
+        let inputs = RefreshInputs(
+            mode: mode,
+            sessions: dataSource?.agentSessionRows() ?? [],
+            jobs: dataSource?.agentJobRows() ?? [],
+            assistants: dataSource?.agentAssistantRows() ?? [],
+            system: dataSource?.agentSystemAgentRows() ?? [],
+            threadFilter: threadFilter,
+            searchQuery: searchQuery,
+            streamingThreads: assistantThreadStreams.keys.sorted())
+        if readSurface, inputs == lastRefreshInputs {
+#if VOICE_FLOW_QA
+            QAEventRecorder.shared.append("agents_refresh", ["rebuilt": false])
+#endif
+            return
+        }
+#if VOICE_FLOW_QA
+        QAEventRecorder.shared.append("agents_refresh", ["rebuilt": true])
+#endif
         let draft = composerField?.text ?? ""
         let assistantDraft = (
             assistantNameField?.stringValue,
@@ -777,6 +816,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }()
         let hadFocus = composerField?.hasFocus ?? false
         rebuild()
+        lastRefreshInputs = readSurface ? inputs : nil
         if let composer = composerField {
             if case .thread(let id) = mode {
                 composer.text = threadDrafts[id] ?? draft
@@ -799,7 +839,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         guard let dataSource,
               let job = dataSource.agentJobRows().first(where: { $0.id == jobId }) else {
             mode = .destination(.automations)
-            buildAutomations()
+            buildSetup()
             return
         }
         var top = contentStack.topAnchor
@@ -984,6 +1024,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         // Every navigation path funnels through here, so this is the one
         // choke point where an in-progress reply can be captured before its
         // field is torn down — Escape, back, Cmd shortcuts included.
+        lastRefreshInputs = nil
         stashComposerDraft()
         contentStack.subviews.forEach { $0.removeFromSuperview() }
         composerField = nil
@@ -1056,8 +1097,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         currentDestination = destination
         switch destination {
         case .now: buildNow()
-        case .assistants: buildAssistants()
-        case .automations: buildAutomations()
+        case .assistants, .automations: buildSetup()
         case .threads: buildThreads()
         }
     }
@@ -1065,7 +1105,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func styleNavigation() {
         let threadAttention = AgentsThreadProjection.attentionCount(threadProjectionInputs())
         let attention = nowSnapshot().attentionCount
-        for destination in AgentsDestination.allCases {
+        for destination in AgentsDestination.navigation {
             guard let button = navigationButtons[destination] else { continue }
             let count: Int
             switch destination {
@@ -1073,7 +1113,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             case .threads: count = threadAttention
             case .assistants, .automations: count = 0
             }
-            let selected = destination == currentDestination
+            let selected = destination == currentDestination.navigationItem
             button.attributedTitle = NSAttributedString(
                 string: destination.label, attributes: [
                     .font: NSFont.systemFont(ofSize: 13, weight: selected ? .semibold : .medium),
@@ -1143,7 +1183,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         finishContent(top)
     }
 
-    private func buildAssistants() {
+    /// Setup = assistants, the three system agents, and automations on one
+    /// scrolling screen. Search and filter chips for automations appear only
+    /// once there are enough of them to need finding.
+    private func buildSetup() {
         var top = contentStack.topAnchor
         let rows = dataSource?.agentAssistantRows() ?? []
         let create = makeRow(
@@ -1194,6 +1237,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 place(view, below: &top, gap: 6)
             }
         }
+        placeAutomations(below: &top)
         finishContent(top)
     }
 
@@ -1862,42 +1906,37 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         popUp?.selectItem(at: index)
     }
 
-    private func buildAutomations() {
-        var top = contentStack.topAnchor
-        let tools = NSView()
-        let search = formField(placeholder: "Search automations")
-        search.stringValue = automationSearchQuery
-        search.delegate = self
-        search.setAccessibilityLabel("Search automations")
-        automationSearchField = search
-        let create = NSButton(title: "+ New", target: self,
-                              action: #selector(newAutomationTapped))
-        create.bezelStyle = .rounded
-        create.controlSize = .small
-        create.setAccessibilityLabel("New automation")
-        for view in [search, create] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            tools.addSubview(view)
-        }
-        NSLayoutConstraint.activate([
-            search.leadingAnchor.constraint(equalTo: tools.leadingAnchor),
-            search.topAnchor.constraint(equalTo: tools.topAnchor),
-            search.bottomAnchor.constraint(equalTo: tools.bottomAnchor),
-            create.leadingAnchor.constraint(equalTo: search.trailingAnchor, constant: 8),
-            create.trailingAnchor.constraint(equalTo: tools.trailingAnchor),
-            create.centerYAnchor.constraint(equalTo: search.centerYAnchor),
-            create.widthAnchor.constraint(equalToConstant: 58),
-        ])
-        place(tools, below: &top, gap: 6)
+    private static let automationToolsThreshold = 6
 
-        let filter = makeFilterStrip(
-            labels: AutomationFilter.allCases.map(\.label),
-            selected: automationFilter.rawValue,
-            action: #selector(automationFilterChanged(_:)))
-        filter.setAccessibilityLabel("Filter automations")
-        place(filter, below: &top, gap: 8)
-
+    private func placeAutomations(below top: inout NSLayoutYAxisAnchor) {
         let allJobs = dataSource?.agentJobRows() ?? []
+        place(sectionHeader("AUTOMATIONS", count: allJobs.count), below: &top, gap: 18)
+        let create = makeRow(
+            leading: circled(symbolIcon("plus", description: "new automation", pointSize: 12)),
+            name: "New automation", unread: false,
+            preview: "A prompt an assistant runs on a schedule or on demand", time: "")
+        create.rowAction = .newJob
+        place(create, below: &top, gap: 6)
+
+        let showTools = allJobs.count >= Self.automationToolsThreshold
+        if showTools {
+            let search = formField(placeholder: "Search automations")
+            search.stringValue = automationSearchQuery
+            search.delegate = self
+            search.setAccessibilityLabel("Search automations")
+            automationSearchField = search
+            place(search, below: &top, gap: 10)
+            let filter = makeFilterStrip(
+                labels: AutomationFilter.allCases.map(\.label),
+                selected: automationFilter.rawValue,
+                action: #selector(automationFilterChanged(_:)))
+            filter.setAccessibilityLabel("Filter automations")
+            place(filter, below: &top, gap: 8)
+        } else {
+            automationSearchQuery = ""
+            automationFilter = .all
+        }
+
         let jobs = allJobs.filter { automationMatches($0) }
         let projections = jobs.compactMap { row -> AgentsAutomationProjectionInput? in
             guard let state = AgentsAutomationState(rawValue: row.state.rawValue) else { return nil }
@@ -1928,12 +1967,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 place(view, below: &top, gap: 6)
             }
         }
-        if jobs.isEmpty {
-            let message = allJobs.isEmpty
-                ? "No automations yet" : "No automations match this view"
-            place(emptyLabel(message), below: &top, gap: 30)
+        if jobs.isEmpty, !allJobs.isEmpty {
+            place(emptyLabel("No automations match this view"), below: &top, gap: 16)
         }
-        finishContent(top)
     }
 
     private func automationMatches(_ job: AgentJobRow) -> Bool {
@@ -1975,7 +2011,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
         if jobID != nil, existing == nil {
             mode = .destination(.automations)
-            buildAutomations()
+            buildSetup()
             return
         }
         let defaults = dataSource.agentAutomationDefaults()
