@@ -363,7 +363,10 @@ deployed copies are build outputs.
 | File | Key types | Responsibility |
 |------|-----------|----------------|
 | `main.swift` | — | Entry point: `NSApplication` + `AppDelegate`. |
-| `App.swift` | `AppDelegate` | Owns & wires everything: components, hotkeys, capability-first capture/delivery, TTS flow, agent session, windows. |
+| `App.swift` | `AppDelegate` | Owns & wires everything: components, hotkeys, capability-first capture/delivery, TTS flow, agent session, windows. Its members are internal (not `private`) where the three extension files below need them. |
+| `App+MCPTools.swift` | `extension AppDelegate` | `handleMCPTool` and every MCP tool handler (talking, overlays, captures); runs on HTTP threads, hops to main for UI. |
+| `App+AgentsDataSource.swift` | `extension AppDelegate: AgentsDataSource` | The panel's window onto sessions, threads, assistants, automations, system agents: rows, details, actions. |
+| `App+QA.swift` | `extension AppDelegate` (QA build only) | The `/__qa/*` control endpoints the signed test build serves for `tests/e2e_agent_harness.py`. |
 | `CaptureRouting.swift` | `CaptureRun`, `CaptureRouter`, `CaptureCorrelation` | Immutable per-run capability/route state and UUID-based async callback correlation. |
 | `CaptureClipboard.swift` | `CaptureClipboard` | One-item plain/HTML/RTFD serialization for copying capture text with embedded image evidence. |
 | `WindowPlacement.swift` | `PanelAnchor`, `AnchoredPanelPlacement` | Same-display pill→ChatPanel geometry with visible-frame clamping. |
