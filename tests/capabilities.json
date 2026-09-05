@@ -1580,6 +1580,46 @@
       "tests": [
         "tests/system_agents/main.swift"
       ]
+    },
+    {
+      "id": "DATA-01",
+      "area": "sources",
+      "name": "Collect and inspect immutable website, folder, email and built-in source copies",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/data_sources/main.swift"
+      ]
+    },
+    {
+      "id": "DATA-02",
+      "area": "sources",
+      "name": "Persist explicit independent assistant and automation source selections",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/source_review/main.swift"
+      ]
+    },
+    {
+      "id": "DATA-03",
+      "area": "sources",
+      "name": "Review selected copies without tools or mailbox actions",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/source_review/main.swift"
+      ]
+    },
+    {
+      "id": "DATA-04",
+      "area": "sources",
+      "name": "Source drafts survive navigation and collection updates; collected items and history are inspectable",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/data_sources/ui/main.swift"
+      ]
     }
   ]
 }

@@ -1,0 +1,25 @@
+{
+  "verified_at": "2026-09-05T00:14:10.342382+00:00",
+  "sources": {
+    "builtin-captures": {
+      "item_count": 7,
+      "last_error": null,
+      "collected_successfully": true
+    },
+    "builtin-desktop": {
+      "item_count": 0,
+      "last_error": null,
+      "collected_successfully": true
+    },
+    "builtin-assistantHistory": {
+      "item_count": 27,
+      "last_error": null,
+      "collected_successfully": true
+    },
+    "builtin-dictations": {
+      "item_count": 200,
+      "last_error": null,
+      "collected_successfully": true
+    }
+  }
+}

@@ -44,6 +44,8 @@ struct AgentTurnRequest {
     let extraWritableRoots: [String]
     let trustProfile: AgentTrustProfile
     let model: AgentModelSelection?
+    var sourceContext: String = ""
+    var sourceAccessMode: AgentSourceAccessMode = .standard
 
     func replacingPrompt(_ value: String) -> AgentTurnRequest {
         AgentTurnRequest(
@@ -52,7 +54,8 @@ struct AgentTurnRequest {
             prompt: value, screenshots: screenshots,
             workingDirectory: workingDirectory,
             extraWritableRoots: extraWritableRoots,
-            trustProfile: trustProfile, model: model)
+            trustProfile: trustProfile, model: model,
+            sourceContext: sourceContext, sourceAccessMode: sourceAccessMode)
     }
 }
 

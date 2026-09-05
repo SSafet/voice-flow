@@ -1,0 +1,388 @@
+{
+  "version": 1,
+  "mode": "unit",
+  "generated_at": "2026-09-05T00:04:09.035318+00:00",
+  "revision": "",
+  "tests": [
+    {
+      "id": "contract:capture_bundle",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:capture_frame_dedupe",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:capture_pruning",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:capture_recent_list",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:dirty_turn_recovery",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_budget",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_cancel",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_concurrency",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_exclusion",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_idempotency",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_leases",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_model_pin",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_retry_attempts",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:memory_ledger",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:memory_revision",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:model_catalog",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:overlay_documents",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:prompt_layers",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:runtime_binding_switch",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:skill_manifest",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:skill_projection",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:skill_validation",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:tool_results",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:tool_schemas",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_activity",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_camera",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_capture",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_lock",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_retention",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_review",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "failure:job_lease_recovery",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "failure:job_timeout",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "scripts/test-agent-harness.sh:compile_app",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "security:child_environment",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "security:log_redaction",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "security:loopback_bind",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "security:mcp_allowlist",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "security:memory_boundaries",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "security:model_catalog_secret",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "security:path_containment",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "security:release_qa_absent",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "security:skill_isolation",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "security:tool_session_isolation",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/agent_permissions/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/agents_navigation/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/assistant_continuity/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/assistant_history/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/assistant_wake/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/assistants/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/audio_recorder/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/capture_clipboard/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/capture_routing/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/codex_runtime/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/hotkey_precedence/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/model_gateway/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/opencode_runtime/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/opencode_supervisor/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/opencode_updater/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/openrouter_model_picker/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/openrouter_models/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/player/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/sandbox_containment/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/speech_sanitizer/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/speech_speed/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/system_agents/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/test_backend_protocol.py",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/voice_flow_paths/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tool:computer_control",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tool:computer_screenshot",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tool:context",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tool:memory",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tool:overlay",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tool:user_interaction",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/data_sources/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/source_review/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    },
+    {
+      "id": "tests/data_sources/ui/main.swift",
+      "runner": "unit",
+      "status": "passed"
+    }
+  ]
+}

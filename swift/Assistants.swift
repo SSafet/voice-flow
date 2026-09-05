@@ -22,6 +22,8 @@ struct AssistantDefinition {
     let instructions: String  // assistant.md body — the user-authored persona
     let directory: URL
     let selectedSkills: [String]
+    var selectedSourceIDs: [String] = []
+    var sourceAccessMode: AgentSourceAccessMode = .standard
 
     var memoryDirectory: URL { directory.appendingPathComponent("memory") }
     var coreMemoryURL: URL { memoryDirectory.appendingPathComponent("core.md") }
@@ -52,14 +54,19 @@ struct AssistantDraft {
     let voice: String?
     let instructions: String
     let selectedSkills: [String]
+    let selectedSourceIDs: [String]
+    let sourceAccessMode: AgentSourceAccessMode
 
     init(name: String, description: String = "", voice: String? = nil,
-         instructions: String = "", selectedSkills: [String] = []) {
+         instructions: String = "", selectedSkills: [String] = [],
+         selectedSourceIDs: [String] = [], sourceAccessMode: AgentSourceAccessMode = .standard) {
         self.name = name
         self.description = description
         self.voice = voice
         self.instructions = instructions
         self.selectedSkills = selectedSkills
+        self.selectedSourceIDs = AgentSourceSelection.normalized(selectedSourceIDs)
+        self.sourceAccessMode = sourceAccessMode
     }
 }
 
@@ -79,6 +86,7 @@ enum AssistantStoreError: LocalizedError, Equatable {
     case invalidDescription(String)
     case invalidInstructions(String)
     case invalidSkill(String)
+    case invalidSource(String)
     case duplicateWakeName(String)
     case revisionConflict
     case cannotDeleteLast
@@ -91,6 +99,7 @@ enum AssistantStoreError: LocalizedError, Equatable {
         case .invalidName(let detail): return "Assistant name is invalid: \(detail)"
         case .invalidDescription(let detail): return "Assistant description is invalid: \(detail)"
         case .invalidInstructions(let detail): return "Assistant instructions are invalid: \(detail)"
+        case .invalidSource(let detail): return "Assistant source selection is invalid: \(detail)"
         case .invalidSkill(let detail): return "Assistant skill selection is invalid: \(detail)"
         case .duplicateWakeName(let name): return "Another Assistant already uses the wake name \(name)."
         case .revisionConflict: return "Assistant changed on disk. Reload before saving."
@@ -224,7 +233,9 @@ final class AssistantsStore {
                 description: source.definition.description,
                 voice: source.definition.voice,
                 instructions: source.definition.instructions,
-                selectedSkills: source.definition.selectedSkills)
+                selectedSkills: source.definition.selectedSkills,
+                selectedSourceIDs: source.definition.selectedSourceIDs,
+                sourceAccessMode: source.definition.sourceAccessMode)
             return try createLocked(draft, copiedSkillsFrom: source.definition)
         }
     }
@@ -243,6 +254,8 @@ final class AssistantsStore {
             fields["description"] = validated.description
             fields["voice"] = validated.voice ?? ""
             fields["skills"] = validated.selectedSkills.joined(separator: ", ")
+            fields["sources"] = validated.selectedSourceIDs.joined(separator: ", ")
+            fields["source_access"] = validated.sourceAccessMode.rawValue
             let text = Self.render(
                 fields: fields, fieldOrder: current.fieldOrder,
                 body: validated.instructions)
@@ -352,7 +365,10 @@ final class AssistantsStore {
             slug: slug, name: name,
             description: parsed.fields["description"] ?? "",
             voice: voice, instructions: parsed.body, directory: directory,
-            selectedSkills: selectedSkills)
+            selectedSkills: selectedSkills,
+            selectedSourceIDs: AgentSourceSelection.normalized((parsed.fields["sources"] ?? "")
+                .split(separator: ",").map(String.init)),
+            sourceAccessMode: AgentSourceAccessMode.persisted(parsed.fields["source_access"]))
         return AssistantDocument(
             definition: definition, fields: parsed.fields,
             fieldOrder: parsed.fieldOrder,
@@ -397,10 +413,12 @@ final class AssistantsStore {
                 "description": validated.description,
                 "voice": validated.voice ?? "",
                 "skills": validated.selectedSkills.joined(separator: ", "),
+                "sources": validated.selectedSourceIDs.joined(separator: ", "),
+                "source_access": validated.sourceAccessMode.rawValue,
             ]
             let assistantText = Self.render(
                 fields: fields,
-                fieldOrder: ["name", "description", "voice", "skills"],
+                fieldOrder: ["name", "description", "voice", "skills", "sources", "source_access"],
                 body: validated.instructions)
             try Data(assistantText.utf8).write(
                 to: staging.appendingPathComponent("assistant.md"), options: .atomic)
@@ -455,6 +473,9 @@ final class AssistantsStore {
         }) {
             throw AssistantStoreError.duplicateWakeName(name)
         }
+        for id in draft.selectedSourceIDs where !AgentSourceSelection.isValidID(id) {
+            throw AssistantStoreError.invalidSource(id)
+        }
         var skills: [String] = []
         for raw in draft.selectedSkills {
             let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -470,7 +491,8 @@ final class AssistantsStore {
             name: name, description: description,
             voice: voice?.isEmpty == true ? nil : voice,
             instructions: draft.instructions,
-            selectedSkills: skills)
+            selectedSkills: skills, selectedSourceIDs: draft.selectedSourceIDs,
+            sourceAccessMode: draft.sourceAccessMode)
     }
 
     private func nextSlugLocked(name: String) -> String {
@@ -544,7 +566,7 @@ final class AssistantsStore {
     private static func render(fields: [String: String], fieldOrder: [String],
                                body: String) -> String {
         var order = fieldOrder
-        for key in ["name", "description", "voice", "skills"] where !order.contains(key) {
+        for key in ["name", "description", "voice", "skills", "sources", "source_access"] where !order.contains(key) {
             order.append(key)
         }
         var lines = ["---"]

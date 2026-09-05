@@ -192,3 +192,79 @@ evidence spans in `reviews/` and `ledger.md`.
 Known property: capture runs while Voice Flow runs (login item; gaps = closed
 lid). Ordering, effort and the remaining decisions live in
 `sources-roadmap.md`.
+
+## VF-64 — inspectable local source copies (September 2026)
+
+The app now has a Sources registry and immutable, inspectable snapshots, backed
+by `swift/DataSources.swift` and `swift/SourceCollector.swift`. This is a bounded
+native collection path, not the proposed arbitrary `run.sh` poll plugin runtime.
+The existing desktop source, scheduler, watcher day folders, hotkeys, and capture
+settings keep their current behavior.
+
+User connection configuration and authored source guidance live in
+`~/.config/voice-flow/sources-registry.json`; collection health lives in
+`source-collection-status.json`. Saved copies live in
+`source-snapshots/<source-id>/<snapshot-id>/`: `snapshot.json` lists every
+inspectable text document, capture time, bytes, and skipped count. Original
+website/file/email bytes are saved beside extracted text when available. These
+paths are outside `sources/`, because install.sh deploys the bundled source
+field dictionaries there with `rsync --delete`.
+
+The registry starts with four actual local data projections: today's Desktop
+activity/actions, Dictations, Capture bundles, and Assistant conversations.
+Their automatic copy refresh is once per minute. The Sources enable control
+only controls copying; it does not enable or disable the original recorder.
+Original stores retain their established ownership and retention rules.
+
+The three user-created connection types are complete read-only paths:
+
+- **Website URL:** a direct HTTP(S) GET using an ephemeral URLSession without
+  stored cookies or credentials. HTML is converted to readable text; scripts
+  and styles are excluded. Text and JSON endpoints also work. This does not
+  sign in or render JavaScript applications. Non-success responses, timeouts,
+  binary responses, and responses above 2 MB surface a collection error.
+- **Local folder:** readable text and code documents are copied. Hidden files,
+  packages, unsupported formats, and symbolic links are excluded. No process
+  or plugin is executed. Directory traversal is limited to five levels and
+  5,000 visited entries; a collection retains at most 200 documents, 2 MB per
+  original file, and 12 MB of original file bytes. Skipped count is visible;
+  at a traversal ceiling it is a lower bound, not a claim to have scanned the
+  remainder. Choose a narrower folder when the limit is reached.
+- **Email copies:** `.eml` and `.mbox` exports from a selected folder are read
+  locally. The reader supports folded/encoded headers, MIME multipart text,
+  base64, and quoted-printable. Multipart alternatives prefer the first text
+  body. Attachment bodies are excluded from agent context and remain in the
+  saved original message. This has no live mailbox connection or write path.
+
+Collection has its own coordinator, independent of the Workflow Watcher
+switch. Refreshes run on a bounded background queue. A manual refresh works
+while automatic collection is paused. Pausing cancels publication of any
+in-flight result; an already-sent network request may take up to its 25-second
+resource timeout to stop. Errors retain previous successful evidence within
+retention. Status separately records attempt time, successful collection time,
+next refresh, counts, skipped items, and error, so an error does not make old
+copies appear newly collected.
+
+Snapshots are written in a staging directory and atomically published only
+after every document and its manifest is complete. Copies expire at the
+source's configured 1–365-day retention, with a hard ceiling of 100 snapshots
+per source. Removal disconnects collection and retains copies unless the user
+explicitly requests deleting them; expiry never deletes original files or
+modifies the imported mailbox export.
+
+Assistant and automation source selections resolve to a `SourceContextSnapshot`
+once per turn. Its immutable values preserve the precise document text seen by
+the turn even if collection changes later. The default content budget is
+24,000 characters, including authored source instructions, across at most 50
+selected sources. Missing copies and truncation are explicit issues. Imported
+documents are JSON-encoded string values labelled as untrusted evidence, kept
+separate from user-authored guidance. A source never grants tools, filesystem
+write scope, mailbox actions, or permission to obey captured instructions.
+
+Standalone evidence: compile `VoiceFlowPaths.swift`, `DataSources.swift`,
+`SourceCollector.swift`, and `tests/data_sources/main.swift`, then run from the
+repository root. The test starts a real loopback HTTP server and exercises
+success, changed content, HTTP errors, oversize responses, paused completion,
+independent automatic polling, immutable context, restart persistence, folder
+bounds/symlinks, MIME EML/mbox imports, built-in recorded timestamps, retention,
+and disconnect-with-copies-kept.

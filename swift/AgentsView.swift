@@ -83,6 +83,7 @@ struct AgentThreadDetail {
     var runtimeSwitchable: Bool = false
     var activity: AgentActivity = .idle
     var canSnap: Bool = false
+    var sourceReviewOnly: Bool = false
 }
 
 struct AgentJobRow: Equatable {
@@ -108,6 +109,8 @@ struct AgentJobRow: Equatable {
     let maxAttempts: Int
     let hasPendingTrigger: Bool
     let runs: [AgentRunRow]
+    var selectedSourceIDs: [String] = []
+    var sourceAccessMode: AgentSourceAccessMode = .standard
 }
 
 struct AgentRunRow: Equatable {
@@ -133,6 +136,8 @@ struct AgentAutomationDraft {
     let maxDurationSeconds: TimeInterval
     let maxAttempts: Int
     let enabled: Bool
+    var selectedSourceIDs: [String] = []
+    var sourceAccessMode: AgentSourceAccessMode = .standard
 }
 
 struct AgentAutomationDefaults {
@@ -175,6 +180,8 @@ struct AgentAssistantRow: Equatable {
 }
 
 protocol AgentsDataSource: AnyObject {
+    func agentDataSourceOptions() -> [SourceSelectionOption]
+    func openAgentDataSources()
     func agentSessionRows() -> [AgentSessionRow]
     func agentThreadDetail(for id: AgentsThreadID) -> AgentThreadDetail?
     @discardableResult func activateThread(_ id: AgentsThreadID) -> Bool
@@ -219,6 +226,11 @@ protocol AgentsDataSource: AnyObject {
                                     expectedRevision: String) throws -> AgentMemoryDocument
     func createAgentAssistantConversation(slug: String) throws -> String
     func deleteAgentAssistant(slug: String) throws -> AssistantDeletionOutcome
+}
+
+extension AgentsDataSource {
+    func agentDataSourceOptions() -> [SourceSelectionOption] { [] }
+    func openAgentDataSources() {}
 }
 
 final class AgentsView: NSView, NSTextFieldDelegate {
@@ -282,6 +294,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         let budget: String
         let duration: String
         let attempts: String
+        var selectedSourceIDs: [String] = []
+        var sourceAccessMode: AgentSourceAccessMode = .standard
     }
     private enum AssistantWorkspaceTab: String, CaseIterable {
         case overview = "Overview"
@@ -303,6 +317,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         let threadFilter: AgentsThreadFilter
         let searchQuery: String
         let streamingThreads: [String]
+        let sourceReviewOnly: Bool?
     }
     private var lastRefreshInputs: RefreshInputs?
     private var currentDestination: AgentsDestination = .now
@@ -329,6 +344,141 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var contentStack: NSView!          // flipped document view
     private var scrollView: NSScrollView!
     private var navigationBar: NSView!
+    private var workspaceNavigation = false
+    private var navigationHeight: NSLayoutConstraint!
+    private var contentTop: NSLayoutConstraint!
+    private var workspaceCombinedSetup = false
+    var onWorkspaceOriginBack: (() -> Void)?
+    private var workspaceExternalOrigin: AgentsObjectID?
+
+    func showSourceConsumer(_ object: AgentsObjectID) {
+        workspaceExternalOrigin = object
+        pushedOrigin = nil
+        inlineError = nil
+        switch object {
+        case .assistant(let slug):
+            currentDestination = .assistants
+            mode = .assistantWorkspace(slug, .settings)
+        case .automation(let id):
+            currentDestination = .automations
+            mode = .automationEdit(id)
+        case .thread(let id):
+            currentDestination = .threads
+            mode = .thread(id)
+        }
+        rebuild()
+    }
+
+    private var workspaceRoutes: [String: Mode] = [:]
+    private struct WorkspaceDraft {
+        var fields: [String]
+        var editors: [String]
+        var choices: [String: NSControl.StateValue]
+        var popups: [String?]
+        var scroll: NSPoint
+    }
+    private var workspaceDrafts: [String: WorkspaceDraft] = [:]
+    private var renderedWorkspaceMode: Mode?
+
+    private func workspaceDescendants(_ view: NSView) -> [NSView] {
+        view.subviews.flatMap { [$0] + workspaceDescendants($0) }
+    }
+
+    private func workspaceDraftKey(_ mode: Mode) -> String? {
+        switch mode {
+        case .assistantCreate, .assistantWorkspace, .automationCreate, .automationEdit, .systemAgent:
+            return String(describing: mode)
+        default: return nil
+        }
+    }
+
+    private func captureWorkspaceDraft() -> WorkspaceDraft {
+        let views = workspaceDescendants(contentStack)
+        var choices: [String: NSControl.StateValue] = [:]
+        for button in views.compactMap({ $0 as? NSButton }) where !(button is NSPopUpButton) {
+            let key = button.identifier?.rawValue ?? button.title
+            if !key.isEmpty { choices[key] = button.state }
+        }
+        return WorkspaceDraft(
+            fields: views.compactMap { $0 as? NSTextField }.filter { $0.isEditable }.map(\.stringValue),
+            editors: views.compactMap { $0 as? NSTextView }.filter { $0.isEditable }.map(\.string),
+            choices: choices,
+            popups: views.compactMap { $0 as? NSPopUpButton }.map(\.titleOfSelectedItem),
+            scroll: scrollView.contentView.bounds.origin)
+    }
+
+    private func restoreWorkspaceDraft(_ draft: WorkspaceDraft) {
+        let views = workspaceDescendants(contentStack)
+        let fields = views.compactMap { $0 as? NSTextField }.filter { $0.isEditable }
+        for (field, value) in zip(fields, draft.fields) { field.stringValue = value }
+        let editors = views.compactMap { $0 as? NSTextView }.filter { $0.isEditable }
+        for (editor, value) in zip(editors, draft.editors) { editor.string = value }
+        for button in views.compactMap({ $0 as? NSButton }) where !(button is NSPopUpButton) {
+            let key = button.identifier?.rawValue ?? button.title
+            if let state = draft.choices[key], button.isEnabled { button.state = state }
+        }
+        for (popup, title) in zip(views.compactMap({ $0 as? NSPopUpButton }), draft.popups) {
+            if let title { popup.selectItem(withTitle: title) }
+        }
+        contentStack.layoutSubtreeIfNeeded()
+        scrollView.contentView.scroll(to: draft.scroll)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+
+    var workspaceDestination: WorkspaceDestination {
+        switch mode {
+        case .assistantWorkspace, .assistantCreate, .systemAgent: return .assistants
+        case .job, .automationCreate, .automationEdit: return .automations
+        case .thread: return currentDestination == .now ? .now : .threads
+        default:
+            switch currentDestination {
+            case .now: return .now
+            case .threads: return .threads
+            case .assistants: return .assistants
+            case .automations: return .automations
+            }
+        }
+    }
+
+    var workspaceAttentionCount: Int { nowSnapshot().attentionCount }
+
+    func useWorkspaceNavigation() {
+        workspaceNavigation = true
+        navigationBar.isHidden = true
+        // Remove the old strip's fixed-height children before collapsing its
+        // container; hidden NSViews still participate in Auto Layout.
+        navigationBar.subviews.forEach { $0.removeFromSuperview() }
+        navigationHeight.constant = 0
+        contentTop.constant = 0
+        rebuild()
+    }
+
+    /// Sidebar hops retain the selected object in each workspace section.
+    func showWorkspaceRoot(_ destination: AgentsDestination) {
+        workspaceExternalOrigin = nil
+        let previous = workspaceDestination.rawValue
+        workspaceRoutes[previous] = mode
+        stashComposerDraft()
+        workspaceCombinedSetup = false
+        currentDestination = destination
+        let key: String
+        switch destination {
+        case .now: key = "now"
+        case .threads: key = "threads"
+        case .assistants: key = "assistants"
+        case .automations: key = "automations"
+        }
+        // Reselecting the active section returns to its root; returning from
+        // another section restores its current detail.
+        mode = previous == key ? .destination(destination)
+            : workspaceRoutes[key] ?? .destination(destination)
+        pushedOrigin = nil
+        inlineError = nil
+        threadInlineError = nil
+        rebuild()
+    }
+
     private var navigationButtons: [AgentsDestination: NSButton] = [:]
     private var navigationBadges: [AgentsDestination: NSTextField] = [:]
     private var navigationUnderlines: [AgentsDestination: NSView] = [:]
@@ -365,6 +515,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var systemAgentTestRunning = false
     private var assistantMemoryRevision: String?
     private var assistantSkillButtons: [String: NSButton] = [:]
+    private var assistantSources: SourceSelectionView?
+    private var automationSources: SourceSelectionView?
     private var assistantDeleteConfirmationSlug: String?
     private var threadDeleteConfirmationID: AgentsThreadID?
     private var threadCompleteConfirmationID: AgentsThreadID?
@@ -424,12 +576,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         navigationBar = buildNavigationBar()
         addSubview(navigationBar)
         addSubview(scrollView)
+        navigationHeight = navigationBar.heightAnchor.constraint(equalToConstant: 36)
+        contentTop = scrollView.topAnchor.constraint(equalTo: navigationBar.bottomAnchor, constant: 2)
         NSLayoutConstraint.activate([
             navigationBar.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             navigationBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             navigationBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            navigationBar.heightAnchor.constraint(equalToConstant: 36),
-            scrollView.topAnchor.constraint(equalTo: navigationBar.bottomAnchor, constant: 2),
+            navigationHeight,
+            contentTop,
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
@@ -555,6 +709,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     func handleMissionControlCommand(_ key: String) -> Bool {
         if let index = Int(key), (1...AgentsDestination.navigation.count).contains(index) {
             let destination = AgentsDestination.navigation[index - 1]
+            workspaceCombinedSetup = destination == .assistants
             currentDestination = destination
             mode = .destination(destination)
             pushedOrigin = nil
@@ -816,7 +971,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             system: dataSource?.agentSystemAgentRows() ?? [],
             threadFilter: threadFilter,
             searchQuery: searchQuery,
-            streamingThreads: assistantThreadStreams.keys.sorted())
+            streamingThreads: assistantThreadStreams.keys.sorted(),
+            sourceReviewOnly: openThreadID.flatMap { dataSource?.agentThreadDetail(for: $0)?.sourceReviewOnly })
         if readSurface, inputs == lastRefreshInputs {
 #if VOICE_FLOW_QA
             QAEventRecorder.shared.append("agents_refresh", ["rebuilt": false])
@@ -827,6 +983,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         QAEventRecorder.shared.append("agents_refresh", ["rebuilt": true])
 #endif
         let draft = composerField?.text ?? ""
+        let assistantSourceDraft = assistantSources.map { ($0.selectedIDs, $0.selectedMode) }
         let assistantDraft = (
             assistantNameField?.stringValue,
             assistantDescriptionField?.stringValue,
@@ -857,6 +1014,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         } else {
             composerFocusPending = false
         }
+        if let value = assistantSourceDraft { assistantSources?.select(ids: value.0, mode: value.1) }
         if let value = assistantDraft.0 { assistantNameField?.stringValue = value }
         if let value = assistantDraft.1 { assistantDescriptionField?.stringValue = value }
         if let value = assistantDraft.2 { assistantVoiceField?.stringValue = value }
@@ -1051,6 +1209,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     // ── Rendering ───────────────────────────────────────
 
     private func rebuild() {
+        let workspaceRouteChanged = renderedWorkspaceMode != mode
+        if workspaceNavigation, workspaceRouteChanged,
+           let previous = renderedWorkspaceMode, let key = workspaceDraftKey(previous) {
+            workspaceDrafts[key] = captureWorkspaceDraft()
+        }
         // Every navigation path funnels through here, so this is the one
         // choke point where an in-progress reply can be captured before its
         // field is torn down — Escape, back, Cmd shortcuts included.
@@ -1071,6 +1234,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         automationBudgetField = nil
         automationDurationField = nil
         automationAttemptsField = nil
+        assistantSources = nil
+        automationSources = nil
         assistantNameField = nil
         assistantDescriptionField = nil
         assistantVoiceField = nil
@@ -1094,6 +1259,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .assistantCreate: buildAssistantCreate()
         case .systemAgent(let kind): buildSystemAgent(kind: kind)
         }
+        if workspaceNavigation, workspaceRouteChanged,
+           let key = workspaceDraftKey(mode), let draft = workspaceDrafts[key] {
+            restoreWorkspaceDraft(draft)
+        }
+        renderedWorkspaceMode = mode
         styleNavigation()
         onModeChanged?()
         // Content-fit height, the way the mocks are framed: every screen
@@ -1130,7 +1300,13 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         currentDestination = destination
         switch destination {
         case .now: buildNow()
-        case .assistants, .automations: buildSetup()
+        case .assistants: buildSetup()
+        case .automations:
+            if workspaceNavigation {
+                var top = contentStack.topAnchor
+                placeAutomations(below: &top)
+                finishContent(top)
+            } else { buildSetup() }
         case .threads: buildThreads()
         }
     }
@@ -1270,7 +1446,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 place(view, below: &top, gap: 6)
             }
         }
-        placeAutomations(below: &top)
+        if !workspaceNavigation || workspaceCombinedSetup { placeAutomations(below: &top) }
         finishContent(top)
     }
 
@@ -1638,6 +1814,15 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         assistantInstructionsView = editor.textView
         place(editor.view, below: &top, gap: 5)
 
+        place(formLabel("DATA"), below: &top, gap: 18)
+        let sources = SourceSelectionView(options: dataSource?.agentDataSourceOptions() ?? [],
+            selectedIDs: definition.selectedSourceIDs, mode: definition.sourceAccessMode)
+        assistantSources = sources
+        place(sources, below: &top, gap: 8)
+        let manage = NSButton(title: "Manage sources", target: self, action: #selector(manageSourcesTapped))
+        manage.bezelStyle = .rounded
+        place(manage, below: &top, gap: 8)
+
         let save = NSButton(title: "Save settings", target: self,
                             action: #selector(saveAssistantSettingsTapped))
         save.identifier = NSUserInterfaceItemIdentifier(snapshot.document.revision)
@@ -1814,6 +1999,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         let voice = assistantVoiceField?.stringValue
         let instructions = assistantInstructionsView?.string
         let memory = assistantMemoryView?.string
+        let sourceIDs = assistantSources?.selectedIDs
+        let sourceMode = assistantSources?.selectedMode
         let skillStates = assistantSkillButtons.mapValues(\.state)
         rebuild()
         if let name { assistantNameField?.stringValue = name }
@@ -1822,6 +2009,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         if let instructions { assistantInstructionsView?.string = instructions }
         if let memory { assistantMemoryView?.string = memory }
         for (name, state) in skillStates { assistantSkillButtons[name]?.state = state }
+        if let sourceIDs, let sourceMode { assistantSources?.select(ids: sourceIDs, mode: sourceMode) }
     }
 
     private func currentAutomationFormValues() -> AutomationFormValues {
@@ -1836,7 +2024,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             dailyTime: automationDailyTimeField?.stringValue ?? "",
             budget: automationBudgetField?.stringValue ?? "",
             duration: automationDurationField?.stringValue ?? "",
-            attempts: automationAttemptsField?.stringValue ?? "")
+            attempts: automationAttemptsField?.stringValue ?? "",
+            selectedSourceIDs: automationSources?.selectedIDs ?? [],
+            sourceAccessMode: automationSources?.selectedMode ?? .standard)
     }
 
     private func automationDraft(from values: AutomationFormValues) -> AgentAutomationDraft? {
@@ -1890,7 +2080,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             return nil
         }
         let model = automationModelCombo?.selectedModelID
-        if runtime == .opencode && model == nil {
+        if (runtime == .opencode || values.sourceAccessMode == .reviewCopies) && model == nil {
             inlineError = "Choose a catalog model or enter an exact provider/model ID."
             return nil
         }
@@ -1902,13 +2092,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }()
         return AgentAutomationDraft(
             name: name, assistantSlug: assistantSlug,
-            runtime: runtime, modelID: runtime == .opencode ? model : nil,
+            runtime: runtime, modelID: (runtime == .opencode || values.sourceAccessMode == .reviewCopies) ? model : nil,
             trigger: trigger, prompt: prompt,
             intervalSeconds: trigger == .interval ? intervalMinutes * 60 : nil,
             dailyTimeMinutes: dailyTimeMinutes,
             dailyBudgetUSD: budget,
             maxDurationSeconds: durationMinutes * 60,
-            maxAttempts: attempts, enabled: enabled)
+            maxAttempts: attempts, enabled: enabled, selectedSourceIDs: values.selectedSourceIDs,
+            sourceAccessMode: values.sourceAccessMode)
     }
 
     private func rebuildPreservingAutomationForm(_ values: AutomationFormValues) {
@@ -1917,6 +2108,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     private func restoreAutomationForm(_ values: AutomationFormValues) {
+        automationSources?.select(ids: values.selectedSourceIDs, mode: values.sourceAccessMode)
         automationNameField?.stringValue = values.name
         automationInstructionsView?.string = values.instructions
         select(popUp: automationAssistantPopUp, representedObject: values.assistantSlug)
@@ -2112,7 +2304,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         automationTriggerPopUp = trigger
 
         let interval = formField(placeholder: "60")
-        interval.stringValue = String(format: "%.0f", (existing?.intervalSeconds ?? 3_600) / 60)
+        interval.stringValue = String(format: "%g", (existing?.intervalSeconds ?? 3_600) / 60)
         interval.setAccessibilityLabel("Automation interval in minutes")
         automationIntervalField = interval
         let dailyTime = formField(placeholder: "08:00")
@@ -2123,7 +2315,22 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             ("TRIGGER", trigger), ("EVERY (MIN)", interval), ("AT (HH:MM)", dailyTime),
         ]), below: &top, gap: 12)
 
-        place(formLabel("OPENCODE MODEL"), below: &top, gap: 12)
+        place(formLabel("DATA"), below: &top, gap: 16)
+        let assistantDefinition = (try? dataSource.assistantWorkspace(slug: selectedAssistant))?.document.definition
+        let sources = SourceSelectionView(options: dataSource.agentDataSourceOptions(),
+            selectedIDs: existing?.selectedSourceIDs ?? assistantDefinition?.selectedSourceIDs ?? [],
+            mode: existing?.sourceAccessMode ?? assistantDefinition?.sourceAccessMode ?? .standard)
+        automationSources = sources
+        sources.onChange = { [weak self] in self?.updateAutomationFormAvailability() }
+        place(sources, below: &top, gap: 8)
+        if existing == nil {
+            place(errorLabel("Selections start from this Assistant and are saved independently for this automation."), below: &top, gap: 5)
+        }
+        let manage = NSButton(title: "Manage sources", target: self, action: #selector(manageSourcesTapped))
+        manage.bezelStyle = .rounded
+        place(manage, below: &top, gap: 6)
+
+        place(formLabel("OPENROUTER MODEL"), below: &top, gap: 12)
         let model = OpenRouterModelComboBox()
         let selectedModelID = existing?.modelID ?? defaults.modelID ?? ""
         model.configure(
@@ -2147,7 +2354,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         budget.setAccessibilityLabel("Daily budget in dollars")
         automationBudgetField = budget
         let duration = formField(placeholder: "15")
-        duration.stringValue = String(format: "%.0f", (existing?.maxDurationSeconds ?? 900) / 60)
+        duration.stringValue = String(format: "%g", (existing?.maxDurationSeconds ?? 900) / 60)
         duration.setAccessibilityLabel("Maximum runtime in minutes")
         automationDurationField = duration
         let attempts = formField(placeholder: "3")
@@ -2246,7 +2453,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     private func updateAutomationFormAvailability() {
         let runtime = automationRuntimePopUp?.selectedItem?.representedObject as? String
-        automationModelCombo?.isEnabled = runtime == AgentRuntimeKind.opencode.rawValue
+        automationModelCombo?.isEnabled = runtime == AgentRuntimeKind.opencode.rawValue || automationSources?.selectedMode == .reviewCopies
         let trigger = automationTriggerPopUp?.selectedItem?.representedObject as? String
         automationIntervalField?.isEnabled = trigger == AgentJobTriggerKind.interval.rawValue
         automationDailyTimeField?.isEnabled = trigger == AgentJobTriggerKind.daily.rawValue
@@ -3002,13 +3209,17 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         let runtime = NSPopUpButton(frame: .zero, pullsDown: false)
         runtime.addItems(withTitles: ["Codex", "OpenCode"])
         runtime.selectItem(at: detail.runtime == .opencode ? 1 : 0)
+        if detail.sourceReviewOnly {
+            runtime.removeAllItems()
+            runtime.addItem(withTitle: "Review copies · OpenRouter")
+        }
         runtime.target = self
         runtime.action = #selector(assistantRuntimeChanged(_:))
         runtime.controlSize = .mini
         runtime.font = .systemFont(ofSize: 10, weight: .medium)
         runtime.toolTip = "Runtime for this Assistant conversation"
         runtime.setAccessibilityLabel("Assistant runtime")
-        assistantRuntimeSwitchable = detail.runtimeSwitchable
+        assistantRuntimeSwitchable = detail.runtimeSwitchable && !detail.sourceReviewOnly
         assistantRuntimePopUp = runtime
 
         let status = NSTextField(labelWithString: "")
@@ -3293,6 +3504,20 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func backTapped() {
+        if let origin = workspaceExternalOrigin {
+            let returnsToSource: Bool
+            switch (origin, mode) {
+            case (.assistant(let slug), .assistantWorkspace(let current, _)): returnsToSource = slug == current
+            case (.automation(let id), .automationEdit(let current)): returnsToSource = id == current
+            case (.thread(let id), .thread(let current)): returnsToSource = id == current
+            default: returnsToSource = false
+            }
+            if returnsToSource {
+                workspaceExternalOrigin = nil
+                onWorkspaceOriginBack?()
+                return
+            }
+        }
         if let origin = pushedOrigin {
             mode = origin
             pushedOrigin = nil
@@ -3343,6 +3568,36 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
     }
 
+    @objc private func manageSourcesTapped() { dataSource?.openAgentDataSources() }
+
+#if VOICE_FLOW_QA
+    func qaSourceSelection(_ payload: [String: Any]) -> [String: Any] {
+        let selection = assistantSources ?? automationSources
+        if let ids = payload["selected_source_ids"] as? [String] {
+            selection?.select(ids: ids, mode: (payload["source_access_mode"] as? String)
+                .flatMap(AgentSourceAccessMode.init(rawValue:)) ?? selection?.selectedMode ?? .standard)
+        }
+        if payload["save"] as? Bool == true {
+            if case .assistantWorkspace(let slug, _) = mode,
+               let snapshot = try? dataSource?.assistantWorkspace(slug: slug) {
+                let sender = NSButton()
+                sender.identifier = NSUserInterfaceItemIdentifier(snapshot.document.revision)
+                saveAssistantSettingsTapped(sender)
+            } else if case .automationEdit(let id) = mode {
+                let sender = NSButton(); sender.identifier = NSUserInterfaceItemIdentifier(id)
+                saveAutomationTapped(sender)
+            }
+        }
+        if let visibleSelection = assistantSources ?? automationSources {
+            layoutSubtreeIfNeeded()
+            visibleSelection.scrollToVisible(visibleSelection.bounds)
+        }
+        return ["selected_source_ids": (assistantSources ?? automationSources)?.selectedIDs ?? [],
+                "source_access_mode": (assistantSources ?? automationSources)?.selectedMode.rawValue ?? "",
+                "error": inlineError ?? ""]
+    }
+#endif
+
     @objc private func saveAssistantSettingsTapped(_ sender: NSButton) {
         guard let dataSource,
               case .assistantWorkspace(let slug, _) = mode,
@@ -3353,7 +3608,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             description: assistantDescriptionField?.stringValue ?? snapshot.document.definition.description,
             voice: assistantVoiceField?.stringValue,
             instructions: assistantInstructionsView?.string ?? snapshot.document.definition.instructions,
-            selectedSkills: snapshot.document.definition.selectedSkills)
+            selectedSkills: snapshot.document.definition.selectedSkills,
+            selectedSourceIDs: assistantSources?.selectedIDs ?? snapshot.document.definition.selectedSourceIDs,
+            sourceAccessMode: assistantSources?.selectedMode ?? snapshot.document.definition.sourceAccessMode)
         do {
             try dataSource.updateAgentAssistant(
                 slug: slug, draft: draft, expectedRevision: revision)
@@ -3393,7 +3650,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         let draft = AssistantDraft(
             name: definition.name, description: definition.description,
             voice: definition.voice, instructions: definition.instructions,
-            selectedSkills: selected)
+            selectedSkills: selected, selectedSourceIDs: definition.selectedSourceIDs,
+            sourceAccessMode: definition.sourceAccessMode)
         do {
             try dataSource.updateAgentAssistant(
                 slug: slug, draft: draft,

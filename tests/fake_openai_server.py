@@ -102,6 +102,11 @@ class Handler(BaseHTTPRequestHandler):
                 "body_bytes": len(raw_body),
                 "body_sha256": hashlib.sha256(raw_body).hexdigest(),
                 "message_count": len(request.get("messages", [])),
+                "stream": request.get("stream", True),
+                "tool_count": len(request.get("tools", [])),
+                "vf64_email_evidence": b"VF64_EMAIL_EVIDENCE" in raw_body,
+                "vf64_document_evidence": b"VF64_DOCUMENT_EVIDENCE" in raw_body,
+                "vf64_source_instructions": b"VF64_SOURCE_INSTRUCTIONS" in raw_body,
                 "contains_provider_secret": os.environ.get(
                     "VOICE_FLOW_FAKE_PROVIDER_KEY", "provider-secret").encode() in raw_body,
                 "contains_openai_secret": os.environ.get(
@@ -282,6 +287,38 @@ class Handler(BaseHTTPRequestHandler):
             chunks = [chunk({"role": "assistant", "content": "gateway "}),
                       chunk({"content": "ok"}), final,
                       b"data: [DONE]\n\n"]
+        if request.get("stream") is False:
+            # The app's copies-only review deliberately requests one ordinary
+            # completion. Honor that protocol while reusing the same fixture
+            # outcomes as the runtime streaming path.
+            message: dict = {"role": "assistant", "content": ""}
+            finish_reason = "stop"
+            usage = None
+            for event in chunks:
+                if event == b"data: [DONE]\n\n":
+                    continue
+                value = json.loads(event.removeprefix(b"data: "))
+                choice = value["choices"][0]
+                delta = choice["delta"]
+                message["content"] += delta.get("content", "")
+                if "tool_calls" in delta:
+                    message["tool_calls"] = [
+                        {key: item for key, item in call.items() if key != "index"}
+                        for call in delta["tool_calls"]]
+                finish_reason = choice.get("finish_reason") or finish_reason
+                usage = value.get("usage", usage)
+            response = {"id": "chatcmpl-voice-flow-test", "object": "chat.completion",
+                "created": 1_800_000_000, "model": request.get("model"),
+                "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
+                "usage": usage or {"prompt_tokens": 11, "completion_tokens": 7,
+                    "cost": self.server.response_cost}}
+            body = json.dumps(response).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         body = b"".join(chunks)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")

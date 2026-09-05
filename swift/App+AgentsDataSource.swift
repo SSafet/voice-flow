@@ -65,7 +65,8 @@ extension AppDelegate: AgentsDataSource {
                 maxDurationSeconds: job.maxDurationSeconds,
                 maxAttempts: job.maxAttempts,
                 hasPendingTrigger: (try? agentJobStore?.hasPendingTrigger(jobID: job.id)) ?? false,
-                runs: runRows)
+                runs: runRows, selectedSourceIDs: job.selectedSourceIDs,
+                sourceAccessMode: job.sourceAccessMode)
         }
     }
 
@@ -126,7 +127,7 @@ extension AppDelegate: AgentsDataSource {
         guard !prompt.isEmpty else {
             throw AgentJobStoreError.invalidState("instructions cannot be empty")
         }
-        if draft.runtime == .opencode,
+        if draft.runtime == .opencode || draft.sourceAccessMode == .reviewCopies,
            draft.modelID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             throw AgentJobStoreError.invalidState("choose an OpenRouter model")
         }
@@ -145,7 +146,7 @@ extension AppDelegate: AgentsDataSource {
             id: jobID, name: draft.name,
             assistantSlug: assistant.slug, conversationID: conversation.id,
             runtime: draft.runtime, trigger: draft.trigger,
-            modelID: draft.runtime == .opencode ? draft.modelID : nil,
+            modelID: (draft.runtime == .opencode || draft.sourceAccessMode == .reviewCopies) ? draft.modelID : nil,
             prompt: prompt, trustProfile: .unattended,
             state: draft.enabled ? (nextRun == nil ? .completed : .queued) : .disabled,
             nextRunAt: draft.enabled ? nextRun : nil,
@@ -155,7 +156,8 @@ extension AppDelegate: AgentsDataSource {
             dailyBudgetUSD: min(max(0, draft.dailyBudgetUSD), 10_000),
             maxDurationSeconds: min(max(30, draft.maxDurationSeconds), 14_400),
             maxAttempts: min(max(1, draft.maxAttempts), 10),
-            createdAt: now, updatedAt: now)
+            createdAt: now, updatedAt: now, selectedSourceIDs: draft.selectedSourceIDs,
+            sourceAccessMode: draft.sourceAccessMode)
         do {
             try agentJobStore.put(job)
             _ = agent.reconcileAutomationReferences(
@@ -181,7 +183,7 @@ extension AppDelegate: AgentsDataSource {
         guard !draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AgentJobStoreError.invalidState("instructions cannot be empty")
         }
-        if draft.runtime == .opencode,
+        if draft.runtime == .opencode || draft.sourceAccessMode == .reviewCopies,
            draft.modelID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             throw AgentJobStoreError.invalidState("choose an OpenRouter model")
         }
@@ -196,7 +198,7 @@ extension AppDelegate: AgentsDataSource {
                 configuration: AgentJobConfiguration(
                     name: draft.name, assistantSlug: draft.assistantSlug,
                     conversationID: current.conversationID, runtime: draft.runtime,
-                    modelID: draft.runtime == .opencode ? draft.modelID : nil,
+                    modelID: (draft.runtime == .opencode || draft.sourceAccessMode == .reviewCopies) ? draft.modelID : nil,
                     trigger: draft.trigger, prompt: draft.prompt,
                     trustProfile: current.trustProfile,
                     intervalSeconds: draft.trigger == .interval
@@ -206,7 +208,8 @@ extension AppDelegate: AgentsDataSource {
                     concurrencyKey: current.concurrencyKey,
                     dailyBudgetUSD: min(max(0, draft.dailyBudgetUSD), 10_000),
                     maxDurationSeconds: min(max(30, draft.maxDurationSeconds), 14_400),
-                    maxAttempts: min(max(1, draft.maxAttempts), 10)))
+                    maxAttempts: min(max(1, draft.maxAttempts), 10),
+                    selectedSourceIDs: draft.selectedSourceIDs, sourceAccessMode: draft.sourceAccessMode))
         } catch {
             if moved {
                 try? assistantWorkspaceCoordinator.moveConversation(
@@ -231,7 +234,8 @@ extension AppDelegate: AgentsDataSource {
             dailyTimeMinutes: source.dailyTimeMinutes,
             dailyBudgetUSD: source.dailyBudgetUSD,
             maxDurationSeconds: source.maxDurationSeconds,
-            maxAttempts: source.maxAttempts, enabled: false))
+            maxAttempts: source.maxAttempts, enabled: false,
+            selectedSourceIDs: source.selectedSourceIDs, sourceAccessMode: source.sourceAccessMode))
     }
 
     func deleteAgentAutomation(id: String) throws {
@@ -677,7 +681,11 @@ extension AppDelegate: AgentsDataSource {
                     ?? (UserSettings.shared.agentBackend == AgentBackendOpenCode ? .opencode : .codex),
                 runtimeSwitchable: conversation.turnState != .running && !agent.isRunning,
                 activity: conversation.id == agent.currentSessionId ? agent.activity : .idle,
-                canSnap: ownerAvailable && conversation.completedAt == nil)
+                canSnap: ownerAvailable && conversation.completedAt == nil,
+                sourceReviewOnly: (jobs.first(where: { $0.state == .running })?.sourceAccessMode
+                    ?? agent.sourceAccessModeForActiveTurn(conversationID: conversation.id)
+                    ?? AssistantsStore.shared.assistant(slug: conversation.assistantSlug ?? AssistantsStore.shared.base?.slug ?? "")?.sourceAccessMode
+                    ?? .standard) == .reviewCopies)
         case .mcp:
             guard let row = agentSessionRows().first(where: {
                 $0.kind == .mcp && $0.id == id.value

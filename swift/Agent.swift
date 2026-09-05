@@ -78,6 +78,8 @@ final class AgentSession {
     )?
     private var runningRuntimeKind: AgentRuntimeKind?
     private var runningTurnID: UUID?
+    private var pendingSourceContext = ""
+    private var sourceTurnAssistant: AssistantDefinition?
 
     // Screenshot geometry: everything sent to the model uses one fixed size
     // so computer-tool coordinates stay consistent across the session.
@@ -300,11 +302,19 @@ final class AgentSession {
         markAssistantRepliesSeen(for: currentSessionId)
     }
 
+    /// UI must describe the authority frozen when this turn began, even if
+    /// the Assistant's saved settings are edited while it is running.
+    func sourceAccessModeForActiveTurn(conversationID: String) -> AgentSourceAccessMode? {
+        guard isRunning, runningSessionId == conversationID else { return nil }
+        return sourceTurnAssistant?.sourceAccessMode ?? .standard
+    }
+
     func interrupt() {
         interruptRequested = true
         if let turnID = runningTurnID {
             let runtime = runningRuntimeKind
             Task {
+                await SourceReviewRuntime.shared.cancel(turnID: turnID)
                 if runtime == .opencode {
                     await openCodeRuntime.cancel(turnID: turnID)
                 } else {
@@ -321,6 +331,7 @@ final class AgentSession {
         interruptRequested = true
         let task = activeTask
         if let turnID = runningTurnID {
+            await SourceReviewRuntime.shared.cancel(turnID: turnID)
             if runningRuntimeKind == .opencode {
                 await openCodeRuntime.cancel(turnID: turnID)
             } else {
@@ -362,7 +373,8 @@ final class AgentSession {
         let usingCodex = selectedRuntime == .codex
         // Codex uses its subscription. OpenCode's model gateway requires the
         // provider credential already stored in Voice Flow's Keychain.
-        guard usingCodex || KeychainStore.shared.loadAgentAPIKey() != nil else {
+        let copiesOnly = activeAssistant?.sourceAccessMode == .reviewCopies
+        guard (usingCodex && !copiesOnly) || KeychainStore.shared.loadAgentAPIKey() != nil else {
             let message = AgentError.missingAPIKey.localizedDescription
             history.appendMessage(sessionId: currentSessionId, role: .note, text: message)
             notifyHistoryChanged()
@@ -381,6 +393,7 @@ final class AgentSession {
         }
         let sessionId = currentSessionId
         runningSessionId = sessionId
+        sourceTurnAssistant = activeAssistant
         let promptText = trimmed.isEmpty ? "(No note — the screenshots are the message.)" : trimmed
         let attachmentNote = Self.attachmentNote(count: screenshots.count)
         let runtimePreparation = history.beginRuntimeTurn(
@@ -427,6 +440,7 @@ final class AgentSession {
         runningTurnID = nil
         isRunning = false
         activeTask = nil
+        sourceTurnAssistant = nil
         activity = .idle
         if let sessionId {
             if let finalText, !finalText.isEmpty {
@@ -452,10 +466,73 @@ final class AgentSession {
     }
 
     private func runLoop() async {
+        do {
+            pendingSourceContext = try AgentSourceContext.freeze(
+                sourceIDs: sourceTurnAssistant?.selectedSourceIDs ?? [])
+        } catch {
+            let message = error.localizedDescription
+            recordNote(message)
+            DispatchQueue.main.async { self.onError?(message) }
+            finish(nil)
+            return
+        }
+        if sourceTurnAssistant?.sourceAccessMode == .reviewCopies {
+            await runSourceReviewTurn()
+            return
+        }
         switch runningRuntimeKind {
         case .opencode: await runOpenCodeTurn()
         case .codex: await runCodexTurn()
         case nil: finish(nil)
+        }
+    }
+
+    private func runSourceReviewTurn() async {
+        guard let turn = pendingCodexTurn ?? pendingOpenCodeTurn,
+              let runtime = runningRuntimeKind,
+              let turnID = runningTurnID else { finish(nil); return }
+        pendingCodexTurn = nil
+        pendingOpenCodeTurn = nil
+        let sessionId = runningSessionId ?? currentSessionId
+        defer { history.invalidateRuntimeBindingsAfterSourceReview(sessionId: sessionId) }
+        let reviewAssistant = sourceTurnAssistant
+        let layers = AgentPromptComposer.layers(
+            assistant: reviewAssistant, priorMessages: turn.preparation.priorMessages,
+            task: turn.text, includeHandoff: true, includeSkillBodies: false,
+            sourceContext: pendingSourceContext)
+        let request = AgentTurnRequest(
+            turnID: turnID, conversationID: sessionId, assistant: reviewAssistant,
+            priorMessages: turn.preparation.priorMessages,
+            prompt: AgentPromptComposer.compose(layers, includeIdentity: true),
+            screenshots: turn.images,
+            workingDirectory: reviewAssistant?.directory ?? VoiceFlowPaths.shared.configRoot,
+            extraWritableRoots: [], trustProfile: .observe,
+            model: AgentModelSelection(provider: "openrouter", model: UserSettings.shared.agentModel,
+                reasoningEffort: UserSettings.shared.agentReasoningEffort),
+            sourceContext: pendingSourceContext, sourceAccessMode: .reviewCopies)
+        activity = .thinking
+        do {
+            let result = try await SourceReviewRuntime.shared.run(request) { [weak self] event in
+                guard let self else { return }
+                switch event {
+                case .activity(let text): DispatchQueue.main.async { self.onToolActivity?(text) }
+                case .textDelta(_, let text):
+                    self.activity = .responding
+                    DispatchQueue.main.async { self.onAssistantStart?(); self.onAssistantDelta?(text) }
+                default: break
+                }
+            }
+            history.completeRuntimeTurn(sessionId: sessionId, runtime: runtime,
+                text: result.text, runtimeVersion: result.runtimeVersion)
+            finish(result.text, finalAlreadyPersisted: true)
+        } catch is CancellationError {
+            handleInterruption()
+        } catch {
+            if interruptRequested { handleInterruption(); return }
+            let message = error.localizedDescription
+            recordNote(message)
+            DispatchQueue.main.async { self.onError?(message) }
+            finish(nil)
         }
     }
 
@@ -496,7 +573,7 @@ final class AgentSession {
             priorMessages: turn.preparation.priorMessages,
             task: turn.text,
             includeHandoff: turn.preparation.requiresFreshSession,
-            includeSkillBodies: false)
+            includeSkillBodies: false, sourceContext: pendingSourceContext)
         let prompt = AgentPromptComposer.compose(
             layers, includeIdentity: turn.preparation.requiresFreshSession)
         let binding = turn.preparation.resumeExternalSessionID.map {
@@ -644,7 +721,7 @@ final class AgentSession {
             priorMessages: turn.preparation.priorMessages,
             task: turn.text,
             includeHandoff: turn.preparation.requiresFreshSession,
-            includeSkillBodies: true)
+            includeSkillBodies: true, sourceContext: pendingSourceContext)
         let composed = AgentPromptComposer.compose(
             layers, includeIdentity: turn.preparation.requiresFreshSession)
         let prompt = (turn.preparation.requiresFreshSession ? codexPreamble + "\n\n" : "")

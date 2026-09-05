@@ -7,6 +7,7 @@ struct AgentPromptLayers: Equatable {
     let skills: String
     let handoff: String
     let task: String
+    var sources: String = ""
 }
 
 enum AgentPromptComposer {
@@ -22,7 +23,8 @@ enum AgentPromptComposer {
                        priorMessages: [AssistantHistoryMessage],
                        task: String,
                        includeHandoff: Bool,
-                       includeSkillBodies: Bool) -> AgentPromptLayers {
+                       includeSkillBodies: Bool,
+                       sourceContext: String = "") -> AgentPromptLayers {
         let persona: String
         let memory: String
         let skills: String
@@ -53,7 +55,7 @@ enum AgentPromptComposer {
             memory: memory,
             skills: skills,
             handoff: includeHandoff ? canonicalHandoff(priorMessages) : "",
-            task: task)
+            task: task, sources: sourceContext)
     }
 
     static func compose(_ layers: AgentPromptLayers, includeIdentity: Bool) -> String {
@@ -65,6 +67,7 @@ enum AgentPromptComposer {
         }
         if !layers.memory.isEmpty { sections.append(layers.memory) }
         if !layers.skills.isEmpty { sections.append(layers.skills) }
+        if !layers.sources.isEmpty { sections.append(layers.sources) }
         sections.append("# Current task\n\(layers.task)")
         return sections.joined(separator: "\n\n")
     }

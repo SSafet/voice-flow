@@ -1105,6 +1105,34 @@ private struct ShortcutsSettingsView: View {
 
 // ── Window controller (public API unchanged) ──
 
+private struct WorkspaceSettingsContent: View {
+    @ObservedObject var store: SettingsStore
+    @State private var section = 0
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Settings").font(.system(size: 26, weight: .semibold))
+            Picker("Settings section", selection: $section) {
+                Text("Dictation").tag(0)
+                Text("Voice").tag(1)
+                Text("Assistant").tag(2)
+                Text("Watcher").tag(3)
+                Text("Shortcuts").tag(4)
+            }.pickerStyle(.segmented)
+            Group {
+                switch section {
+                case 0: DictationSettingsView(store: store)
+                case 1: VoiceSettingsView(store: store)
+                case 2: AssistantSettingsView(store: store)
+                case 3: WatcherSettingsView(store: store)
+                default: ShortcutsSettingsView(store: store)
+                }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(22)
+        .preferredColorScheme(.dark)
+    }
+}
+
 class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var onHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onHotkeyChanged = onHotkeyChanged } }
     var onHandsFreeHotkeyChanged: ((HotkeySpec) -> Void)? { didSet { store.onHandsFreeHotkeyChanged = onHandsFreeHotkeyChanged } }
@@ -1149,6 +1177,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     func prepareForPresentation() {
         store.reloadAssistantSettings()
         store.reloadVoiceSettings()
+    }
+
+    func makeWorkspaceView() -> NSView {
+        NSHostingView(rootView: WorkspaceSettingsContent(store: store))
     }
 
     private func addTab<V: View>(_ label: String, symbol: String, height: CGFloat, view: V) {

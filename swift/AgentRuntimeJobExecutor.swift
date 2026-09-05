@@ -44,6 +44,11 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
             break
         }
         guard let assistant else { preconditionFailure("ownership preflight lost Assistant") }
+        let sourceContext = try AgentSourceContext.freeze(sourceIDs: job.selectedSourceIDs)
+        let copiesOnly = job.sourceAccessMode == .reviewCopies
+        defer {
+            if copiesOnly { history.invalidateRuntimeBindingsAfterSourceReview(sessionId: job.conversationID) }
+        }
         guard let preparation = history.beginRuntimeTurn(
             sessionId: job.conversationID, runtime: job.runtime, text: job.prompt) else {
             if history.conversation(job.conversationID) != nil {
@@ -57,36 +62,39 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
         let layers = AgentPromptComposer.layers(
             assistant: assistant, priorMessages: preparation.priorMessages,
             task: job.prompt,
-            includeHandoff: preparation.requiresFreshSession,
-            includeSkillBodies: job.runtime == .codex)
+            includeHandoff: copiesOnly || preparation.requiresFreshSession,
+            includeSkillBodies: !copiesOnly && job.runtime == .codex,
+            sourceContext: sourceContext)
         let request = AgentTurnRequest(
             turnID: run.turnID, conversationID: job.conversationID,
             assistant: assistant, priorMessages: preparation.priorMessages,
             prompt: AgentPromptComposer.compose(
-                layers, includeIdentity: preparation.requiresFreshSession),
+                layers, includeIdentity: copiesOnly || preparation.requiresFreshSession),
             screenshots: [],
             workingDirectory: assistant.directory,
             extraWritableRoots: [], trustProfile: job.trustProfile,
-            model: job.runtime == .opencode
+            model: copiesOnly || job.runtime == .opencode
                 ? AgentModelSelection(
                     provider: "openrouter",
                     model: job.modelID ?? AgentJobRuntimeConfiguration.shared.model().model,
                     reasoningEffort: job.reasoningEffort)
-                : AgentModelSelection.codex(reasoningEffort: job.reasoningEffort))
+                : AgentModelSelection.codex(reasoningEffort: job.reasoningEffort),
+            sourceContext: sourceContext, sourceAccessMode: job.sourceAccessMode)
         let binding = preparation.resumeExternalSessionID.map {
             RuntimeBinding(
                 externalSessionID: $0,
                 syncedThroughMessageID: preparation.priorContextMessageID,
                 state: .clean)
         }
-        AgentToolSessionRegistry.shared.prepare(
-            turnID: run.turnID,
-            environment: environmentProvider(job.conversationID))
+        if !copiesOnly {
+            AgentToolSessionRegistry.shared.prepare(
+                turnID: run.turnID, environment: environmentProvider(job.conversationID))
+        }
         lock.withLock { active[run.id] = (job.runtime, run.turnID) }
         defer { lock.withLock { active.removeValue(forKey: run.id) } }
         let runtime: any AgentRuntime = job.runtime == .codex ? codex : openCode
         do {
-            let result = try await runtime.run(request, binding: binding) { event in
+            let emit: (AgentRuntimeEvent) -> Void = { event in
                 switch event {
                 case .started(let externalID):
                     self.history.recordRuntimeStarted(
@@ -99,6 +107,9 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
                 case .textDelta, .usage, .completed, .failed, .interrupted: break
                 }
             }
+            let result: AgentTurnResult
+            if copiesOnly { result = try await SourceReviewRuntime.shared.run(request, emit: emit) }
+            else { result = try await runtime.run(request, binding: binding, emit: emit) }
             let message = history.completeRuntimeTurn(
                 sessionId: job.conversationID, runtime: job.runtime,
                 text: result.text, externalSessionID: result.externalSessionID,
@@ -115,6 +126,7 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
 
     func cancel(runID: String) async {
         guard let value = lock.withLock({ active[runID] }) else { return }
+        await SourceReviewRuntime.shared.cancel(turnID: value.1)
         if value.0 == .codex { await codex.cancel(turnID: value.1) }
         else { await openCode.cancel(turnID: value.1) }
     }

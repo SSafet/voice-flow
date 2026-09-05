@@ -35,13 +35,110 @@ final class ChatPanel {
     var onTTSSeek: ((Double) -> Void)?
     var onTTSStop: (() -> Void)?
 
-    private let width: CGFloat = 440
+    private var width: CGFloat = 920
     // One hardcoded panel size for every view — no adaptive growing or
     // shrinking per destination.
-    private let maxHeight: CGFloat = 520
-    private var height: CGFloat = 520
+    private let maxHeight: CGFloat = 680
+    private var height: CGFloat = 680
 
     private var panel: KeyablePanel!
+    private var workspaceSidebar: WorkspaceSidebar!
+    private var workspaceContent: NSView!
+    private var workspaceHeading: NSTextField!
+    private var sidebarWidth: NSLayoutConstraint!
+    private var sourcesView: NSView?
+    private var settingsView: NSView?
+    private(set) var workspaceDestination: WorkspaceDestination = .now
+    private var destinationBeforeSpeech: WorkspaceDestination = .now
+    var onSourcesSelected: (() -> Void)?
+    var onSourcesBack: (() -> Bool)?
+    var onSettingsSelected: (() -> Void)?
+    var onWorkspaceDestinationChanged: ((WorkspaceDestination) -> Void)?
+    private var showsConversationSurface: Bool {
+        ![WorkspaceDestination.sources, .settings, .speech, .inbox].contains(workspaceDestination)
+    }
+
+    func setSourcesView(_ view: NSView) {
+        sourcesView?.removeFromSuperview()
+        sourcesView = view
+        attachWorkspaceView(view)
+        view.isHidden = workspaceDestination != .sources
+    }
+
+    func setSettingsView(_ view: NSView) {
+        settingsView?.removeFromSuperview()
+        settingsView = view
+        attachWorkspaceView(view)
+        view.isHidden = workspaceDestination != .settings
+    }
+
+    private func attachWorkspaceView(_ view: NSView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        workspaceContent.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: workspaceContent.topAnchor),
+            view.bottomAnchor.constraint(equalTo: workspaceContent.bottomAnchor),
+            view.leadingAnchor.constraint(equalTo: workspaceContent.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: workspaceContent.trailingAnchor),
+        ])
+    }
+
+    func showSources() { showWorkspaceDestination(.sources) }
+
+    func showSourceConsumer(_ object: AgentsObjectID) {
+        speechOpen = false
+        currentTab = .agents
+        switch object {
+        case .assistant: workspaceDestination = .assistants
+        case .automation: workspaceDestination = .automations
+        case .thread: workspaceDestination = .threads
+        }
+        agentsView.showSourceConsumer(object)
+        applyWorkspaceVisibility()
+    }
+
+    func showWorkspaceDestination(_ destination: WorkspaceDestination) {
+        if destination == .settings, settingsView == nil { onOpenSettings?(); return }
+        if destination == .speech, workspaceDestination != .speech {
+            destinationBeforeSpeech = workspaceDestination
+        }
+        let resumeExistingAgentsRoute = !showsConversationSurface && destination == agentsView.workspaceDestination
+        workspaceDestination = destination
+        speechOpen = destination == .speech
+        currentTab = destination == .inbox ? .inbox : .agents
+        switch destination {
+        case .now: if !resumeExistingAgentsRoute { agentsView.showWorkspaceRoot(.now) }
+        case .threads: if !resumeExistingAgentsRoute { agentsView.showWorkspaceRoot(.threads) }
+        case .assistants: if !resumeExistingAgentsRoute { agentsView.showWorkspaceRoot(.assistants) }
+        case .automations: if !resumeExistingAgentsRoute { agentsView.showWorkspaceRoot(.automations) }
+        case .sources: onSourcesSelected?()
+        case .settings: onSettingsSelected?()
+        case .inbox, .speech: break
+        }
+        applyWorkspaceVisibility()
+        onWorkspaceDestinationChanged?(destination)
+    }
+
+    private func applyWorkspaceVisibility() {
+        agentsView.isHidden = !showsConversationSurface
+        dictationsView.isHidden = workspaceDestination != .inbox
+        ttsView.isHidden = workspaceDestination != .speech
+        sourcesView?.isHidden = workspaceDestination != .sources
+        settingsView?.isHidden = workspaceDestination != .settings
+        workspaceHeading.stringValue = workspaceDestination.label
+        styleTabs()
+        updateHeaderScope()
+        if showsConversationSurface { agentsView.refresh() }
+    }
+
+    private func syncAgentsWorkspaceRoute() {
+        guard showsConversationSurface else { return }
+        workspaceDestination = agentsView.workspaceDestination
+        workspaceHeading?.stringValue = workspaceDestination.label
+        styleTabs()
+        updateHeaderScope()
+    }
+
     private var inboxTabButton: NSButton!
     private var agentsTabButton: NSButton!
     private var messagesView: MessagesView!    // messages.json archive — store only, no longer a tab
@@ -69,7 +166,7 @@ final class ChatPanel {
     /// The MCP thread the Agents tab currently shows, read or not — history
     /// pruning must never pull a thread out from under the reader.
     var openAgentThreadId: String? {
-        guard isVisible, currentTab == .agents, !speechOpen,
+        guard isVisible, showsConversationSurface, currentTab == .agents, !speechOpen,
               let id = agentsView.openThreadID, id.source == .mcp else { return nil }
         return id.value
     }
@@ -77,7 +174,7 @@ final class ChatPanel {
     /// Delivery context is intentionally derived from what is visibly open,
     /// never from the last selected/picker target after this panel disappears.
     var conversationFocus: ConversationFocus {
-        guard isVisible, currentTab == .agents, !speechOpen else { return .none }
+        guard isVisible, showsConversationSurface, currentTab == .agents, !speechOpen else { return .none }
         if agentsView.openAssistantThreadClaimsFocus { return .assistant }
         if let id = agentsView.openSessionId { return .session(id) }
         return .none
@@ -137,7 +234,9 @@ final class ChatPanel {
         clickOutsideMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] _ in
-            self?.hide()
+            guard let self, self.panel.attachedSheet == nil,
+                  !(NSApp.keyWindow is NSOpenPanel), !(NSApp.keyWindow is NSSavePanel) else { return }
+            self.hide()
         }
     }
 
@@ -153,6 +252,16 @@ final class ChatPanel {
     }
 
 #if VOICE_FLOW_QA
+    func qaSourceSelection(_ payload: [String: Any]) -> [String: Any] {
+        agentsView.qaSourceSelection(payload)
+    }
+
+    func qaSetWorkspaceSize(width: CGFloat, height: CGFloat) {
+        self.width = max(560, width)
+        self.height = max(420, height)
+        position()
+    }
+
     var qaControlState: [String: Any] {
         let controls: [NSControl] = [
             sessionButton, annotateButton, voiceButton, controlButton, clearButton,
@@ -163,6 +272,9 @@ final class ChatPanel {
         }.filter { !$0.isEmpty }
         labels.append(contentsOf: assistant["accessibility_labels"] as? [String] ?? [])
         return [
+            "workspace_destination": workspaceDestination.rawValue,
+            "workspace_width": panel.frame.width,
+            "workspace_height": panel.frame.height,
             "runtime_present": assistant["runtime_present"] ?? false,
             "runtime_enabled": assistant["runtime_enabled"] ?? false,
             "runtime_title": assistant["runtime_title"] ?? "",
@@ -218,6 +330,7 @@ final class ChatPanel {
         guard let anchor else { return }
         let target = AnchoredPanelPlacement.frame(
             size: NSSize(width: width, height: height), anchor: anchor)
+        sidebarWidth?.constant = target.width < 800 ? 140 : 172
         panel.setFrame(target, display: true)
     }
 
@@ -317,12 +430,10 @@ final class ChatPanel {
 
     /// Amber active tab, quiet inactive; unread counts ride along.
     private func styleTabs() {
-        guard inboxTabButton != nil, agentsTabButton != nil else { return }
+        guard workspaceSidebar != nil else { return }
         let inboxCount = dictationsView?.unrevisitedCount ?? 0
-        let agentsCount = agentsView?.dataSource?.agentSessionRows()
-            .filter { $0.unread }.count ?? 0
-        styleTab(inboxTabButton, title: "Inbox", count: inboxCount, active: currentTab == .inbox)
-        styleTab(agentsTabButton, title: "Agents", count: agentsCount, active: currentTab == .agents)
+        let attentionCount = agentsView?.workspaceAttentionCount ?? 0
+        workspaceSidebar.select(workspaceDestination, inboxCount: inboxCount, attentionCount: attentionCount)
     }
 
     private func styleTab(_ button: NSButton, title: String, count: Int, active: Bool) {
@@ -345,24 +456,19 @@ final class ChatPanel {
 
     /// Show the Speech surface (♪) over whatever tab is current.
     func openSpeech() {
-        speechOpen = true
-        applyTab(currentTab)
+        showWorkspaceDestination(.speech)
     }
 
     private func applyTab(_ tab: ChatTab) {
         currentTab = tab
-        let agentsList = tab == .agents && !speechOpen
-        agentsView.isHidden = !agentsList
-        dictationsView.isHidden = !(tab == .inbox && !speechOpen)
-        ttsView.isHidden = !speechOpen
-        speechButton.contentTintColor = speechOpen ? Theme.accent : Theme.text3
-        styleTabs()
-        updateHeaderScope()
-        if agentsList {
-            agentsView.refresh()
+        if speechOpen {
+            workspaceDestination = .speech
+        } else if tab == .inbox {
+            workspaceDestination = .inbox
         } else {
-            setPreferredAgentsContentHeight(maxHeight - 136)
+            workspaceDestination = agentsView.workspaceDestination
         }
+        applyWorkspaceVisibility()
     }
 
     /// Voice replies, computer control, and Clear act on the assistant
@@ -371,7 +477,7 @@ final class ChatPanel {
     /// misfire at worst — so they appear only while that conversation is
     /// what the panel shows. Annotate and Settings are global and stay.
     private func updateHeaderScope() {
-        let assistantVisible = currentTab == .agents && !speechOpen
+        let assistantVisible = showsConversationSurface && currentTab == .agents && !speechOpen
             && agentsView.openThreadID?.source == .assistant
         for button in [voiceButton, controlButton, clearButton] as [NSButton?] {
             button?.isHidden = !assistantVisible
@@ -438,12 +544,13 @@ final class ChatPanel {
 
     @discardableResult
     func handleMissionControlEscape() -> Bool {
-        guard isVisible, currentTab == .agents else { return false }
+        guard isVisible else { return false }
+        if workspaceDestination == .sources { return onSourcesBack?() ?? false }
         if speechOpen {
-            speechOpen = false
-            applyTab(.agents)
+            showWorkspaceDestination(destinationBeforeSpeech)
             return true
         }
+        guard showsConversationSurface else { return false }
         return agentsView.handleMissionControlEscape()
     }
 
@@ -517,9 +624,7 @@ final class ChatPanel {
     private func build() {
         panel = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: false
-        )
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating + 1
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -528,152 +633,110 @@ final class ChatPanel {
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.onEscape = { [weak self] in self?.onEscape?() }
-
-        // Solid dark, per the approved mock — the HUD blur washed the text
-        // out over bright pages (Safet's Instagram screenshot). A whisper of
-        // translucency keeps it feeling native without costing legibility.
         let root = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         root.appearance = NSAppearance(named: .darkAqua)
         root.wantsLayer = true
-        root.layer?.backgroundColor = Theme.bg.withAlphaComponent(0.98).cgColor
-        root.layer?.cornerRadius = 18
+        root.layer?.backgroundColor = Theme.bg.cgColor
+        root.layer?.cornerRadius = 16
         root.layer?.masksToBounds = true
         root.layer?.borderWidth = 1
         root.layer?.borderColor = Theme.border.cgColor
 
-        // Header ------------------------------------------------------------
-        let title = NSTextField(labelWithString: "Voice Flow")
-        title.font = .systemFont(ofSize: 13, weight: .semibold)
-        title.textColor = Theme.text
-
-        sessionButton = NSButton(title: "● Start continuous capture", target: self, action: #selector(sessionTapped))
-        sessionButton.isBordered = false
-        sessionButton.font = .systemFont(ofSize: 12, weight: .semibold)
-        sessionButton.contentTintColor = NSColor(r: 120, g: 200, b: 120)
-
+        workspaceSidebar = WorkspaceSidebar()
+        workspaceSidebar.translatesAutoresizingMaskIntoConstraints = false
+        workspaceSidebar.onSelect = { [weak self] in self?.showWorkspaceDestination($0) }
+        root.addSubview(workspaceSidebar)
+        sidebarWidth = workspaceSidebar.widthAnchor.constraint(equalToConstant: 172)
+        workspaceHeading = NSTextField(labelWithString: "Now")
+        workspaceHeading.font = .systemFont(ofSize: 20, weight: .semibold)
+        workspaceHeading.textColor = Theme.text
+        sessionButton = NSButton(title: "Start continuous capture", target: self, action: #selector(sessionTapped))
         annotateButton = iconButton("pencil.tip", action: #selector(annotateTapped), tip: "Annotate the screen")
         voiceButton = iconButton("speaker.slash", action: #selector(voiceTapped), tip: "Voice replies off")
         controlButton = iconButton("hand.raised.slash", action: #selector(controlTapped), tip: "Computer control off")
         clearButton = iconButton("trash", action: #selector(clearTapped), tip: "Clear conversation")
-        let settingsButton = iconButton("gearshape", action: #selector(settingsTapped), tip: "Settings")
-
-        let headerSpacer = NSView()
-        headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        // Continuous capture lives on the pill/menu/hotkey — not in the panel
-        // header (design remark, ticket #15). The button object stays alive
-        // for setSessionActive() state but is never added to the view.
-        let header = NSStackView(views: [
-            title, headerSpacer,
-            annotateButton, voiceButton, controlButton, clearButton, settingsButton,
-        ])
+        let search = iconButton("magnifyingglass", action: #selector(workspaceSearchTapped), tip: "Search agents (⌘K)")
+        let close = iconButton("xmark", action: #selector(workspaceCloseTapped), tip: "Close workspace")
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let header = NSStackView(views: [workspaceHeading, spacer, search, annotateButton,
+                                      voiceButton, controlButton, clearButton, close])
         header.orientation = .horizontal
-        header.spacing = 10
-        header.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 8, right: 14)
+        header.spacing = 12
         header.translatesAutoresizingMaskIntoConstraints = false
-
-        let headerLine = NSView()
-        headerLine.wantsLayer = true
-        headerLine.layer?.backgroundColor = Theme.border.cgColor
-        headerLine.translatesAutoresizingMaskIntoConstraints = false
-        headerLine.heightAnchor.constraint(equalToConstant: 1).isActive = true
-
-        // Tabs: two content surfaces + the ♪ speech toggle — custom warm strip
-        // (the mock's full-width amber tabs with unread counts; never the
-        // system-blue segmented control).
+        root.addSubview(header)
+        let divider = NSView()
+        divider.wantsLayer = true
+        divider.layer?.backgroundColor = Theme.border.cgColor
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(divider)
+        workspaceContent = NSView()
+        workspaceContent.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(workspaceContent)
+        NSLayoutConstraint.activate([
+            workspaceSidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            workspaceSidebar.topAnchor.constraint(equalTo: root.topAnchor),
+            workspaceSidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor), sidebarWidth,
+            header.leadingAnchor.constraint(equalTo: workspaceSidebar.trailingAnchor, constant: 24),
+            header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            header.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
+            header.heightAnchor.constraint(equalToConstant: 34),
+            divider.leadingAnchor.constraint(equalTo: workspaceSidebar.trailingAnchor),
+            divider.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            divider.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
+            divider.heightAnchor.constraint(equalToConstant: 1),
+            workspaceContent.leadingAnchor.constraint(equalTo: workspaceSidebar.trailingAnchor, constant: 12),
+            workspaceContent.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            workspaceContent.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 12),
+            workspaceContent.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
+        ])
+        // Keep the existing controls alive for legacy state passthroughs.
         inboxTabButton = tabButton(action: #selector(inboxTabTapped))
         agentsTabButton = tabButton(action: #selector(agentsTabTapped))
-
-        speechButton = NSButton(title: "♪", target: self, action: #selector(speechTapped))
-        speechButton.isBordered = false
-        speechButton.font = .systemFont(ofSize: 13, weight: .medium)
-        speechButton.contentTintColor = Theme.text3
-        speechButton.toolTip = "Speech — paste text and play it aloud"
-        speechButton.translatesAutoresizingMaskIntoConstraints = false
-        speechButton.widthAnchor.constraint(equalToConstant: 26).isActive = true
-
-        let strip = NSStackView(views: [inboxTabButton, agentsTabButton, speechButton])
-        strip.orientation = .horizontal
-        strip.distribution = .fill   // stretch the low-hugging tabs to fill
-        strip.spacing = 4
-        strip.edgeInsets = NSEdgeInsets(top: 3, left: 3, bottom: 3, right: 3)
-        strip.wantsLayer = true
-        strip.layer?.cornerRadius = 9
-        strip.layer?.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10).cgColor
-        strip.translatesAutoresizingMaskIntoConstraints = false
-        inboxTabButton.widthAnchor.constraint(equalTo: agentsTabButton.widthAnchor).isActive = true
-
-        let tabBar = NSView()
-        tabBar.translatesAutoresizingMaskIntoConstraints = false
-        tabBar.addSubview(strip)
-        NSLayoutConstraint.activate([
-            strip.leadingAnchor.constraint(equalTo: tabBar.leadingAnchor, constant: 12),
-            strip.trailingAnchor.constraint(equalTo: tabBar.trailingAnchor, constant: -12),
-            strip.topAnchor.constraint(equalTo: tabBar.topAnchor, constant: 2),
-            strip.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: -6),
-        ])
-
-        // Surfaces (hidden until selected) ------------------------------------
-        messagesView = MessagesView()   // archive store; not in the hierarchy
+        speechButton = NSButton(title: "Speech", target: self, action: #selector(speechTapped))
+        messagesView = MessagesView()
         dictationsView = DictationsView()
-        dictationsView.isHidden = true
-        dictationsView.setContentHuggingPriority(.defaultLow, for: .vertical)
         dictationsView.onUnreadChanged = { [weak self] _ in self?.styleTabs() }
         dictationsView.onContinueRequested = { [weak self] id in self?.onContinueDictation?(id) }
         agentsView = AgentsView()
-        agentsView.onModeChanged = { [weak self] in self?.updateHeaderScope() }
-        agentsView.isHidden = true
-        agentsView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        agentsView.useWorkspaceNavigation()
+        agentsView.onModeChanged = { [weak self] in self?.syncAgentsWorkspaceRoute() }
+        agentsView.onWorkspaceOriginBack = { [weak self] in self?.showSources() }
         agentsView.onNewAssistant = { [weak self] in self?.onNewAssistant?() }
         agentsView.onOpenAssistantSession = { [weak self] id in self?.onOpenAssistantSession?(id) }
         agentsView.onOpenSession = { [weak self] id in self?.onOpenSession?(id) }
-        agentsView.onPreferredHeightChanged = { [weak self] contentHeight in
-            self?.setPreferredAgentsContentHeight(contentHeight)
-        }
         agentsView.onSnap = { [weak self] id in self?.onSnap?(id.value) }
         agentsView.onStop = { [weak self] id in self?.onStop?(id.value) }
         agentsView.onSelectAssistantRuntime = { [weak self] runtime, id in
             self?.onSelectAssistantRuntime?(runtime, id.value)
         }
         panel.onCommand = { [weak self] key in
-            guard let self,
-                  self.agentsView.handleMissionControlCommand(key) else { return false }
+            guard let self else { return false }
+            if key == "4" { self.showSources(); return true }
+            if key == "[" { return self.handleMissionControlEscape() }
+            guard self.agentsView.handleMissionControlCommand(key) else { return false }
             self.speechOpen = false
             self.applyTab(.agents)
             return true
         }
         ttsView = TTSView()
-        ttsView.isHidden = true
-        ttsView.setContentHuggingPriority(.defaultLow, for: .vertical)
         ttsView.onSpeak = { [weak self] request in self?.onTTSSpeak?(request) }
         ttsView.onSeek = { [weak self] position in self?.onTTSSeek?(position) }
         ttsView.onStop = { [weak self] in self?.onTTSStop?() }
-
-        // Assemble ------------------------------------------------------------
-        let column = NSStackView(views: [header, headerLine, tabBar, agentsView, dictationsView, ttsView])
-        column.orientation = .vertical
-        column.spacing = 4
-        column.distribution = .fill
-        column.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(column)
-
-        NSLayoutConstraint.activate([
-            column.topAnchor.constraint(equalTo: root.topAnchor),
-            column.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            column.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            column.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-        ])
-        for view in [header, headerLine, tabBar, agentsView, dictationsView, ttsView] as [NSView] {
-            view.leadingAnchor.constraint(equalTo: column.leadingAnchor).isActive = true
-            view.trailingAnchor.constraint(equalTo: column.trailingAnchor).isActive = true
-        }
-
+        for view in [agentsView, dictationsView, ttsView] as [NSView] { attachWorkspaceView(view) }
         panel.contentView = root
         setVoiceReplies(false)
         setControlAllowed(UserSettings.shared.assistantComputerUse)
         setSessionActive(false)
         selectTab(.agents)
     }
+
+    @objc private func workspaceSearchTapped() {
+        _ = agentsView.handleMissionControlCommand("k")
+        speechOpen = false
+        applyTab(.agents)
+    }
+    @objc private func workspaceCloseTapped() { hide() }
 
     private func setPreferredAgentsContentHeight(_ contentHeight: CGFloat) {
         // Fixed-height panel: content taller than the frame scrolls; shorter

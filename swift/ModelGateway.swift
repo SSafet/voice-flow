@@ -40,6 +40,7 @@ final class ModelGatewayUsageReporter {
 }
 
 private final class ModelGatewayBudgetLedger {
+    static let shared = ModelGatewayBudgetLedger()
     private let lock = NSLock()
     private let url: URL
     init(url: URL = VoiceFlowPaths.shared.file("agent-model-budget.json")) { self.url = url }
@@ -137,7 +138,14 @@ final class ModelGatewayServer {
     private let clients = DispatchQueue(
         label: "voiceflow.model-gateway.clients", qos: .userInitiated, attributes: .concurrent)
     private let admission = DispatchSemaphore(value: 3)
-    private let budget = ModelGatewayBudgetLedger()
+    private let budget = ModelGatewayBudgetLedger.shared
+    private let clientLock = NSLock()
+    private struct ActiveClient {
+        let fd: Int32
+        let task: Task<Void, Never>
+    }
+    private var activeClients: [UUID: ActiveClient] = [:]
+    private var acceptingClients = false
     private var listenFD: Int32 = -1
     private var source: DispatchSourceRead?
     private(set) var connection: ModelGatewayConnection?
@@ -193,6 +201,7 @@ final class ModelGatewayServer {
             if self?.listenFD == fd { self?.listenFD = -1 }
         }
         self.source = source
+        clientLock.withLock { acceptingClients = true }
         source.resume()
         return value
     }
@@ -201,6 +210,19 @@ final class ModelGatewayServer {
         connection = nil  // revokes the only accepted bearer immediately
         source?.cancel()
         source = nil
+        clientLock.withLock {
+            acceptingClients = false
+            for client in activeClients.values {
+                client.task.cancel()
+                // Unblock a request still reading its body as well as any
+                // downstream socket I/O. The owning task closes the fd once.
+                Darwin.shutdown(client.fd, SHUT_RDWR)
+            }
+        }
+    }
+
+    private func cancelClient(_ id: UUID) {
+        clientLock.withLock { activeClients[id]?.task.cancel() }
     }
 
     private func acceptNext() {
@@ -213,19 +235,39 @@ final class ModelGatewayServer {
                    socklen_t(MemoryLayout<Int32>.size))
         clients.async { [weak self] in
             guard let self else { Darwin.close(clientFD); return }
-            Task {
-                await self.handleClient(clientFD)
-                Darwin.shutdown(clientFD, SHUT_RDWR)
+            self.clientLock.lock()
+            guard self.acceptingClients else {
+                self.clientLock.unlock()
                 Darwin.close(clientFD)
+                return
             }
+            let id = UUID()
+            let task = Task {
+                defer {
+                    self.clientLock.withLock { self.activeClients.removeValue(forKey: id) }
+                    Darwin.shutdown(clientFD, SHUT_RDWR)
+                    Darwin.close(clientFD)
+                }
+                await self.handleClient(clientFD, clientID: id)
+            }
+            self.activeClients[id] = ActiveClient(fd: clientFD, task: task)
+            self.clientLock.unlock()
         }
     }
 
-    private func handleClient(_ fd: Int32) async {
+    private func handleClient(_ fd: Int32, clientID: UUID) async {
         guard let request = Self.readRequest(fd) else {
             Self.writeJSON(fd, status: 400, message: "invalid request")
             return
         }
+        guard !Task.isCancelled else { return }
+        // The full request body has been consumed. Subsequent readability is
+        // a peer disconnect (or unsupported HTTP pipelining), so stop the
+        // upstream request even when it has not returned headers yet.
+        let disconnect = DispatchSource.makeReadSource(fileDescriptor: fd, queue: clients)
+        disconnect.setEventHandler { [weak self] in self?.cancelClient(clientID) }
+        disconnect.resume()
+        defer { disconnect.cancel() }
         guard request.method == "POST", request.path.hasSuffix("/chat/completions") else {
             Self.writeJSON(fd, status: 404, message: "unsupported model gateway route")
             return
@@ -296,6 +338,7 @@ final class ModelGatewayServer {
         upstream.setValue("Voice Flow", forHTTPHeaderField: "X-Title")
 
         do {
+            try Task.checkCancellation()
             let (bytes, response) = try await URLSession.shared.bytes(for: upstream)
             guard let http = response as? HTTPURLResponse else {
                 Self.writeJSON(fd, status: 502, message: "provider returned no HTTP response")

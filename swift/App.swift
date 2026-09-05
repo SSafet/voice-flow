@@ -34,6 +34,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var chatPanel: ChatPanel!
     var annotationOverlay: AnnotationOverlay!
     var settingsWindow: SettingsWindowController!
+    var dataSourceStore: DataSourceStore!
+    var sourceCollector: SourceCollector!
+    var sourcesView: SourcesView!
     var permissionsWindow: PermissionsWindowController!
     var hotkeyManager: HotkeyManager!
     var handsFreeHotkeyManager: HotkeyManager!
@@ -299,6 +302,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        sourceCollector?.stop()
         ttsController?.shutdown()
         localAPIServer?.stop()
         syncServer?.stop()
@@ -641,6 +645,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         transcriptPanel = FloatingTranscriptPanel()
 
         settingsWindow = SettingsWindowController()
+        configureSourceWorkspace()
         settingsWindow.onSettingsChanged = { [weak self] in
             self?.syncWorkflowWatcher()
             self?.nextQueue?.applySettings()
@@ -1200,6 +1205,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             models: models, preferredRuntime: agent.preferredRuntime,
             defaultModelID: defaultModel,
             defaultReasoningEffort: UserSettings.shared.agentReasoningEffort)
+        editor.configureSources(
+            choices: agentDataSourceOptions().map { AgentSourceChoice(id: $0.id, label: $0.title) },
+            selectedIDs: assistant.selectedSourceIDs, mode: assistant.sourceAccessMode)
         alert.accessoryView = editor
 #if VOICE_FLOW_QA
         activeAgentJobAlert = alert
@@ -1218,7 +1226,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let selectedRuntime = editor.selectedRuntime
         let selectedModel = editor.selectedModelID
-        if selectedRuntime == .opencode, selectedModel == nil {
+        if selectedRuntime == .opencode || editor.selectedSourceAccessMode == .reviewCopies, selectedModel == nil {
             replyBubble.showTransient("Choose an OpenRouter model or type its exact provider/model ID", seconds: 7)
             return
         }
@@ -1252,7 +1260,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             dailyTimeMinutes: selectedTrigger == .daily ? dailyTime : nil,
             dailyBudgetUSD: dailyBudget,
             maxDurationSeconds: 900, maxAttempts: 3,
-            createdAt: now, updatedAt: now)
+            createdAt: now, updatedAt: now,
+            selectedSourceIDs: editor.selectedSourceIDs,
+            sourceAccessMode: editor.selectedSourceAccessMode)
         do {
             try agentJobStore.put(job)
             _ = agent.reconcileAutomationReferences(
@@ -3199,10 +3209,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showSettings() {
         showDock()
-        chatPanel.hide()
         settingsWindow.prepareForPresentation()
-        settingsWindow.showWindow(nil)
-        settingsWindow.window?.makeKeyAndOrderFront(nil)
+        chatPanel.show(focusInput: false)
+        chatPanel.showWorkspaceDestination(.settings)
         NSApp.activate(ignoringOtherApps: true)
     }
 

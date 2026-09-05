@@ -638,6 +638,18 @@
     {
       "id": "visual:watcher_status",
       "runner": "e2e"
+    },
+    {
+      "id": "tests/data_sources/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/source_review/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/data_sources/ui/main.swift",
+      "runner": "unit"
     }
   ]
 }

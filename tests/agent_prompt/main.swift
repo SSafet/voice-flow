@@ -25,9 +25,9 @@ let history = [
 ]
 let layers = AgentPromptComposer.layers(
     assistant: assistant, priorMessages: history, task: "TASK_MARKER",
-    includeHandoff: true, includeSkillBodies: true)
+    includeHandoff: true, includeSkillBodies: true, sourceContext: "SOURCE_COPY_MARKER")
 let prompt = AgentPromptComposer.compose(layers, includeIdentity: true)
-for marker in ["PERSONA_MARKER", "memory marker", "SKILL_MARKER", "HANDOFF_MARKER", "TASK_MARKER"] {
+for marker in ["PERSONA_MARKER", "memory marker", "SKILL_MARKER", "HANDOFF_MARKER", "TASK_MARKER", "SOURCE_COPY_MARKER"] {
     expect(prompt.contains(marker), "missing prompt layer \(marker)")
 }
 expect(prompt.range(of: "PERSONA_MARKER")!.lowerBound < prompt.range(of: "memory marker")!.lowerBound,
@@ -37,6 +37,6 @@ expect(prompt.range(of: "HANDOFF_MARKER")!.lowerBound < prompt.range(of: "TASK_M
 let resumed = AgentPromptComposer.compose(layers, includeIdentity: false)
 expect(!resumed.contains("PERSONA_MARKER") && !resumed.contains("HANDOFF_MARKER"),
        "resumed prompt repeated identity or handoff")
-expect(resumed.contains("memory marker") && resumed.contains("TASK_MARKER"),
+expect(resumed.contains("memory marker") && resumed.contains("TASK_MARKER") && resumed.contains("SOURCE_COPY_MARKER"),
        "resumed prompt omitted dynamic context")
 print("agent prompt tests passed")

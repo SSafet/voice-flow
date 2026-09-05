@@ -92,6 +92,27 @@ let alphaCollision = try store.create(AssistantDraft(name: "Alpha-Beta"))
 expect(alpha.slug == "alpha-beta" && alphaCollision.slug == "alpha-beta-2",
        "slug collision did not receive a deterministic suffix")
 
+// Existing assistant.md files have no new source keys in their original
+// frontmatter order. Saving new selections must append those fields.
+let legacySourceDirectory = lifecycleRoot.appendingPathComponent("legacy-source")
+try FileManager.default.createDirectory(at: legacySourceDirectory, withIntermediateDirectories: true)
+let legacySourceFile = legacySourceDirectory.appendingPathComponent("assistant.md")
+try "---\nname: Legacy Source Reviewer\ncustom-policy: keep-this\n---\nLegacy instructions.\n"
+    .write(to: legacySourceFile, atomically: true, encoding: .utf8)
+let legacySourceDocument = try store.document(slug: "legacy-source")
+expect(legacySourceDocument.definition.selectedSourceIDs.isEmpty
+    && legacySourceDocument.definition.sourceAccessMode == .standard,
+    "legacy assistant did not default to no selected sources and normal access")
+_ = try store.update(slug: "legacy-source", draft: AssistantDraft(name: "Legacy Source Reviewer",
+    instructions: "Review my saved messages.", selectedSourceIDs: ["mail-a"], sourceAccessMode: .reviewCopies),
+    expectedRevision: legacySourceDocument.revision)
+let savedLegacySource = try store.document(slug: "legacy-source")
+expect(savedLegacySource.definition.selectedSourceIDs == ["mail-a"]
+    && savedLegacySource.definition.sourceAccessMode == .reviewCopies,
+    "saving legacy assistant omitted new source fields from frontmatter")
+expect(savedLegacySource.fields["custom-policy"] == "keep-this",
+    "adding legacy source fields discarded unknown frontmatter")
+
 // Unknown frontmatter survives revision-checked edits; an external mutation
 // is never overwritten by a stale UI draft.
 let researchFile = research.directory.appendingPathComponent("assistant.md")

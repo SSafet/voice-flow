@@ -5,6 +5,35 @@ A native macOS menu-bar app for **voice dictation**, **text-to-speech**, and an
 windows); dictation transcription runs in a bundled Python backend driven over a
 subprocess pipe.
 
+## Data workspace (VF-64)
+
+The main ChatPanel now uses a persistent workspace sidebar: Now, Inbox, Threads,
+Data, Assistants, Automations, Speech, Settings. Default size is 920×680 points,
+clamped to the pill display; the small layout is 720×540. The notification pill
+is unchanged. Settings embeds the same SettingsStore-backed controls in the panel.
+
+`DataSourceStore` / `SourceCollector` own a separate local registry and immutable
+copies (`sources-registry.json`, `source-collection-status.json`,
+`source-snapshots/`). Do not put user configuration under `sources/`: install.sh
+owns and replaces that directory. Collection runs independently of the desktop
+watcher: public HTTP websites, local text folders, EML/mbox exported-email folders,
+and read projections of existing Voice Flow stores. Failed refreshes preserve the
+last successful snapshot; skipped/limited content is visible.
+
+`SourcesView` owns connection, inspection/history, source guidance, and recovery.
+Assistant definitions and automation jobs persist explicit `selectedSourceIDs`
+and `sourceAccessMode`. New automation forms copy the assistant selection once;
+subsequent assistant changes never widen saved jobs. `AgentSourceContext` freezes
+selected data and authored guidance for each turn. Missing sources fail visibly.
+
+`reviewCopies` uses `SourceReviewRuntime`, an app-owned OpenRouter model request
+through ModelGateway. No Codex/OpenCode process or action tools are started in
+this mode. Normal mode retains existing runtime permissions; selecting a source
+alone is not a security boundary. Source-review turns dirty runtime bindings so
+returning to the normal runtime reseeds canonical history.
+
+Design and proof map: `design/vf64/implementation-and-proof.md`.
+
 ## Build & run
 
 ```bash

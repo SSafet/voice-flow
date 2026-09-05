@@ -40,14 +40,22 @@ export VOICE_FLOW_CONFIG_ROOT="$BUILD_DIR/config"
 compile_and_run() {
     local name="$1"
     shift
-    swiftc "$@" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
+    if [[ " $* " != *"swift/AgentSourceConfiguration.swift "* ]]; then
+        swiftc "$@" "$PROJECT_DIR/swift/AgentSourceConfiguration.swift" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
+    else
+        swiftc "$@" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
+    fi
     "$BUILD_DIR/$name"
 }
 
 compile_only() {
     local name="$1"
     shift
-    swiftc "$@" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
+    if [[ " $* " != *"swift/AgentSourceConfiguration.swift "* ]]; then
+        swiftc "$@" "$PROJECT_DIR/swift/AgentSourceConfiguration.swift" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
+    else
+        swiftc "$@" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
+    fi
 }
 
 compile_app() {
@@ -109,6 +117,14 @@ compile_and_run system_agents swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes
     swift/SystemAgents.swift tests/system_agents/main.swift
 compile_and_run watcher_bus swift/VoiceFlowPaths.swift swift/WatcherPolicy.swift \
     swift/WatcherBus.swift tests/watcher_bus/main.swift
+compile_and_run data_sources swift/VoiceFlowPaths.swift swift/DataSources.swift swift/SourceCollector.swift tests/data_sources/main.swift
+compile_and_run data_sources_ui -D VOICE_FLOW_QA swift/VoiceFlowPaths.swift swift/DataSources.swift swift/SourceCollector.swift swift/SourcesView.swift tests/data_sources/ui/main.swift -framework Cocoa
+compile_and_run source_review swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
+    swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
+    swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentJobStore.swift swift/DataSources.swift \
+    swift/AgentSourceContext.swift swift/SourceReviewRuntime.swift swift/ModelGateway.swift \
+    tests/source_review/main.swift -framework Security -lsqlite3
+python3 tests/source_review/transport_proof.py "$BUILD_DIR/source_review"
 compile_and_run hotkey_precedence "${APP_SUPPORT_SOURCES[@]}" tests/hotkey_precedence/main.swift \
     -framework Cocoa -framework AVFoundation -framework CoreGraphics -framework ApplicationServices \
     -framework Accelerate -framework Security -framework ScreenCaptureKit

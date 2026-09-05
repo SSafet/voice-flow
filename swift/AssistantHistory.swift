@@ -505,6 +505,18 @@ final class AssistantHistoryStore {
 
     /// End UI running state but intentionally preserve the dirty binding. A
     /// later turn must reseed rather than trust an uncertain external session.
+    /// A copies-only review is stateless provider inference. An older native
+    /// runtime session did not observe this turn, so it must reseed on return.
+    func invalidateRuntimeBindingsAfterSourceReview(sessionId: String) {
+        lock.withLock {
+            guard let index = envelope.sessions.firstIndex(where: { $0.id == sessionId }) else { return }
+            var bindings = envelope.sessions[index].runtimeBindings ?? [:]
+            for key in bindings.keys { bindings[key]?.state = .dirty }
+            envelope.sessions[index].runtimeBindings = bindings
+            persistLocked()
+        }
+    }
+
     func endRuntimeTurnWithoutFinal(sessionId: String, interrupted: Bool) {
         mutateConversation(sessionId) { conversation in
             conversation.turnState = interrupted ? .interrupted : .idle

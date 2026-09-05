@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "checks": [
+    "signed_bundle_chain_of_custody",
+    "qa_auth_isolation",
+    "signed_qa_physical_input_isolation",
+    "collection_failure_last_good_recovery_pause",
+    "source_connect_validate_collect_inspect_instructions_two_sizes",
+    "assistant_explicit_source_selection_and_unsaved_navigation_draft",
+    "assistant_review_copies_turn_selected_evidence_no_tools",
+    "automation_selected_copy_review_completed_no_tools_original_unchanged",
+    "legacy_daily_surfaces_and_capture_focus",
+    "sources_and_copies_survive_restart",
+    "canonical_review_reply_and_restricted_runtime_header_visible"
+  ],
+  "app": "/private/tmp/vf64-proof/Voice Flow QA.app",
+  "root": "/private/tmp/vf64-proof/run10",
+  "artifacts": "/private/tmp/vf64-proof/artifacts10",
+  "thread_proof": "/tmp/vf64-proof/artifacts10/thread-proof"
+}

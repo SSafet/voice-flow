@@ -72,6 +72,8 @@ struct AgentJob: Equatable {
     let maxAttempts: Int
     let createdAt: Date
     let updatedAt: Date
+    let selectedSourceIDs: [String]
+    let sourceAccessMode: AgentSourceAccessMode
 
     init(id: String = UUID().uuidString, name: String? = nil,
          assistantSlug: String, conversationID: String,
@@ -86,7 +88,8 @@ struct AgentJob: Equatable {
          dailyBudgetUSD: Double = 1.0,
          maxDurationSeconds: TimeInterval = 900,
          maxAttempts: Int = 3,
-         createdAt: Date = Date(), updatedAt: Date = Date()) {
+         createdAt: Date = Date(), updatedAt: Date = Date(),
+         selectedSourceIDs: [String] = [], sourceAccessMode: AgentSourceAccessMode = .standard) {
         self.id = id
         self.name = Self.normalizedName(name, prompt: prompt)
         self.assistantSlug = assistantSlug
@@ -110,6 +113,8 @@ struct AgentJob: Equatable {
         self.maxAttempts = maxAttempts
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.selectedSourceIDs = AgentSourceSelection.normalized(selectedSourceIDs)
+        self.sourceAccessMode = sourceAccessMode
     }
 
     static func normalizedName(_ proposed: String?, prompt: String) -> String {
@@ -175,6 +180,8 @@ struct AgentJobConfiguration: Equatable {
     let dailyBudgetUSD: Double
     let maxDurationSeconds: TimeInterval
     let maxAttempts: Int
+    var selectedSourceIDs: [String] = []
+    var sourceAccessMode: AgentSourceAccessMode = .standard
 }
 
 struct AgentRun: Equatable {
@@ -261,6 +268,9 @@ final class AgentJobStore {
     deinit { sqlite3_close(db) }
 
     func put(_ job: AgentJob) throws {
+        guard job.selectedSourceIDs.allSatisfy(AgentSourceSelection.isValidID) else {
+            throw AgentJobStoreError.invalidState("source selection contains an invalid identifier")
+        }
         try lock.withLock {
             let sql = """
             INSERT INTO agent_jobs (
@@ -269,8 +279,8 @@ final class AgentJobStore {
               concurrency_key, daily_budget_usd, max_duration_seconds,
               max_attempts, created_at, updated_at, model_id, name,
               is_enabled, execution_generation, daily_time_minutes,
-              reasoning_effort
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              reasoning_effort, source_ids_json, source_access_mode
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               assistant_slug=excluded.assistant_slug,
               conversation_id=excluded.conversation_id,
@@ -286,7 +296,9 @@ final class AgentJobStore {
               is_enabled=excluded.is_enabled,
               execution_generation=excluded.execution_generation,
               daily_time_minutes=excluded.daily_time_minutes,
-              reasoning_effort=excluded.reasoning_effort
+              reasoning_effort=excluded.reasoning_effort,
+              source_ids_json=excluded.source_ids_json,
+              source_access_mode=excluded.source_access_mode
             """
             try withStatement(sql) { statement in
                 bind(job, to: statement)
@@ -420,7 +432,9 @@ final class AgentJobStore {
                 dailyBudgetUSD: max(0, configuration.dailyBudgetUSD),
                 maxDurationSeconds: max(1, configuration.maxDurationSeconds),
                 maxAttempts: max(1, configuration.maxAttempts),
-                createdAt: current.createdAt, updatedAt: now)
+                createdAt: current.createdAt, updatedAt: now,
+                selectedSourceIDs: configuration.selectedSourceIDs,
+                sourceAccessMode: configuration.sourceAccessMode)
             try put(updated)
         }
     }
@@ -1149,7 +1163,10 @@ final class AgentJobStore {
             maxDurationSeconds: sqlite3_column_double(statement, 12),
             maxAttempts: Int(sqlite3_column_int(statement, 13)),
             createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 14)),
-            updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 15)))
+            updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 15)),
+            selectedSourceIDs: (try? JSONDecoder().decode([String].self,
+                from: Data(text(statement, 23).utf8))) ?? [],
+            sourceAccessMode: AgentSourceAccessMode.persisted(text(statement, 24)))
     }
 
     private func decodeRun(_ statement: OpaquePointer) -> AgentRun {
@@ -1274,6 +1291,12 @@ final class AgentJobStore {
         try addColumnIfMissing(
             table: "agent_jobs", column: "reasoning_effort",
             definition: "reasoning_effort TEXT")
+        try addColumnIfMissing(
+            table: "agent_jobs", column: "source_ids_json",
+            definition: "source_ids_json TEXT NOT NULL DEFAULT '[]'")
+        try addColumnIfMissing(
+            table: "agent_jobs", column: "source_access_mode",
+            definition: "source_access_mode TEXT NOT NULL DEFAULT 'standard'")
         // An older build toggles enablement through `state` alone and never
         // touches `is_enabled`, so the two can diverge after a downgrade
         // round-trip. Reconcile on every open, not just at migration:
@@ -1414,6 +1437,9 @@ final class AgentJobStore {
         sqlite3_bind_int(statement, 20, Int32(job.generation))
         bindOptionalDouble(job.dailyTimeMinutes.map(Double.init), at: 21, to: statement)
         bindOptionalText(AgentReasoningEffort.normalized(job.reasoningEffort), at: 22, to: statement)
+        let sources = (try? JSONEncoder().encode(job.selectedSourceIDs)) ?? Data("[]".utf8)
+        bindText(String(decoding: sources, as: UTF8.self), at: 23, to: statement)
+        bindText(job.sourceAccessMode.rawValue, at: 24, to: statement)
     }
 
     private func bindText(_ value: String, at index: Int32, to statement: OpaquePointer) {

@@ -50,6 +50,8 @@ expect(sqlite3_exec(legacyDB, legacySQL, nil, nil, nil) == SQLITE_OK,
 sqlite3_close(legacyDB)
 let migrated = try AgentJobStore(url: legacyURL)
 let migratedLegacy = try migrated.job(id: "legacy-model")
+expect(migratedLegacy?.selectedSourceIDs == [] && migratedLegacy?.sourceAccessMode == .standard,
+       "legacy job silently gained source access or review mode")
 expect(migratedLegacy?.modelID == nil,
        "legacy null model did not survive migration")
 expect(migratedLegacy?.name == "legacy",

@@ -21,6 +21,48 @@ extension AppDelegate {
             return .error(400, "Request body must be a JSON object.")
         }
         switch (method, path) {
+        case ("POST", "/__qa/workspace"):
+            DispatchQueue.main.sync {
+                self.chatPanel.show(focusInput: false)
+                if let width = payload["width"] as? Double, let height = payload["height"] as? Double {
+                    self.chatPanel.qaSetWorkspaceSize(width: width, height: height)
+                }
+                if let raw = payload["destination"] as? String, let destination = WorkspaceDestination(rawValue: raw) {
+                    self.chatPanel.showWorkspaceDestination(destination)
+                }
+                if let type = payload["consumer_type"] as? String, let id = payload["consumer_id"] as? String {
+                    if type == "assistant" { self.chatPanel.showSourceConsumer(.assistant(slug: id)) }
+                    if type == "automation" { self.chatPanel.showSourceConsumer(.automation(jobID: id)) }
+                }
+            }
+            return .ok(["ok": true])
+        case ("POST", "/__qa/workspace/selection"):
+            var result: [String: Any] = [:]
+            DispatchQueue.main.sync { result = self.chatPanel.qaSourceSelection(payload) }
+            return .ok(result)
+        case ("GET", "/__qa/sources"), ("POST", "/__qa/sources"):
+            var response = LocalAPIResponse.error(500, "Source operation failed.")
+            DispatchQueue.main.sync {
+                do {
+                    if method == "POST" {
+                        self.chatPanel.show(focusInput: false)
+                        self.chatPanel.showSources()
+                        if let id = payload["source_id"] as? String, payload["action"] as? String == "refresh" {
+                            self.sourceCollector.refresh(sourceID: id)
+                        } else if let id = payload["source_id"] as? String, payload["action"] as? String == "pause" {
+                            try self.sourceCollector.pause(sourceID: id, paused: payload["paused"] as? Bool ?? true)
+                        } else { self.sourcesView.qaAction(payload) }
+                    }
+                    let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+                    let rows = try self.dataSourceStore.listSources().map { source -> [String: Any] in
+                        let status = try JSONSerialization.jsonObject(with: encoder.encode(self.dataSourceStore.status(sourceID: source.id)))
+                        return ["id": source.id, "name": source.name, "kind": source.kind.rawValue, "enabled": source.enabled,
+                                "instructions": source.instructions, "status": status]
+                    }
+                    response = .ok(["sources": rows, "ui": self.sourcesView.qaState()])
+                } catch { response = .error(400, error.localizedDescription) }
+            }
+            return response
         case ("GET", "/__qa/state"):
             return .ok(qaState())
         case ("GET", "/__qa/events"):
@@ -229,8 +271,12 @@ extension AppDelegate {
                             models: models, preferredRuntime: self.agent.preferredRuntime,
                             defaultModelID: defaultModel,
                             defaultReasoningEffort: UserSettings.shared.agentReasoningEffort)
+                        editor.configureSources(
+                            choices: self.agentDataSourceOptions().map { AgentSourceChoice(id: $0.id, label: $0.title) },
+                            selectedIDs: self.agent.activeAssistant?.selectedSourceIDs ?? [],
+                            mode: self.agent.activeAssistant?.sourceAccessMode ?? .standard)
                         let window = NSPanel(
-                            contentRect: NSRect(x: 0, y: 0, width: 500, height: 277),
+                            contentRect: editor.frame,
                             styleMask: [.titled, .closable], backing: .buffered,
                             defer: false)
                         window.title = "New automation"
@@ -369,6 +415,16 @@ extension AppDelegate {
             }
             let runtime = (payload["runtime"] as? String)
                 .flatMap(AgentRuntimeKind.init(rawValue:)) ?? agent.preferredRuntime
+            let sourceMode: AgentSourceAccessMode
+            if let raw = payload["source_access_mode"] as? String {
+                guard let parsed = AgentSourceAccessMode(rawValue: raw) else {
+                    return .error(400, "source_access_mode must be standard or reviewCopies.")
+                }
+                sourceMode = parsed
+            } else { sourceMode = assistant.sourceAccessMode }
+            let selectedSources = payload["selected_source_ids"] as? [String] ?? assistant.selectedSourceIDs
+            let selectedModel = (runtime == .opencode || sourceMode == .reviewCopies)
+                ? (payload["model_id"] as? String ?? UserSettings.shared.agentModel) : nil
             let trigger = (payload["trigger"] as? String)
                 .flatMap(AgentJobTriggerKind.init(rawValue:)) ?? .manual
             let interval = (payload["interval_seconds"] as? NSNumber)?.doubleValue
@@ -382,7 +438,7 @@ extension AppDelegate {
                 assistantSlug: assistant.slug,
                 conversationID: (payload["conversation_id"] as? String) ?? agent.currentSessionId,
                 runtime: runtime, trigger: trigger,
-                modelID: runtime == .opencode ? payload["model_id"] as? String : nil,
+                modelID: selectedModel,
                 prompt: prompt,
                 trustProfile: (payload["trust_profile"] as? String)
                     .flatMap(AgentTrustProfile.init(rawValue:)) ?? .unattended,
@@ -394,7 +450,7 @@ extension AppDelegate {
                 dailyBudgetUSD: (payload["daily_budget_usd"] as? NSNumber)?.doubleValue ?? 1,
                 maxDurationSeconds: (payload["max_duration_seconds"] as? NSNumber)?.doubleValue ?? 900,
                 maxAttempts: (payload["max_attempts"] as? NSNumber)?.intValue ?? 3,
-                createdAt: now, updatedAt: now)
+                createdAt: now, updatedAt: now, selectedSourceIDs: selectedSources, sourceAccessMode: sourceMode)
             do {
                 try agentJobStore.put(job)
                 return .ok(["job_id": job.id])
@@ -729,6 +785,8 @@ extension AppDelegate {
                 "runtime": job.runtime.rawValue, "trigger": job.trigger.rawValue,
                 "state": job.state.rawValue, "prompt": String(job.prompt.prefix(8_000)),
                 "enabled": job.isEnabled,
+                "selected_source_ids": job.selectedSourceIDs,
+                "source_access_mode": job.sourceAccessMode.rawValue,
                 "updated_at": job.updatedAt.timeIntervalSince1970,
             ]
             if let modelID = job.modelID { result["model_id"] = modelID }

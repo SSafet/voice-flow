@@ -21,6 +21,10 @@ final class AgentJobEditorView: NSView {
     let budgetField = NSTextField(string: "1.00")
     let modelCombo = OpenRouterModelComboBox()
     let effortPopUp = NSPopUpButton()
+    let sourceAccessModePopUp = NSPopUpButton()
+    private let sourceStack = NSStackView()
+    private let sourceModeDetail = NSTextField(wrappingLabelWithString: "")
+    private var sourceButtons: [String: NSButton] = [:]
 
     private let modelStatus = NSTextField(wrappingLabelWithString: "")
     private let modelDetail = NSTextField(labelWithString: "")
@@ -33,7 +37,7 @@ final class AgentJobEditorView: NSView {
          defaultReasoningEffort: String = AgentReasoningEffort.unset) {
         allModels = models.models
         catalogStatus = models.statusText
-        super.init(frame: NSRect(x: 0, y: 0, width: 590, height: 275))
+        super.init(frame: NSRect(x: 0, y: 0, width: 590, height: 445))
         appearance = NSAppearance(named: .darkAqua)
 
         promptField.placeholderString = "What should the assistant do?"
@@ -56,7 +60,17 @@ final class AgentJobEditorView: NSView {
         effortPopUp.setAccessibilityLabel("Automation reasoning effort")
         effortPopUp.toolTip =
             "How hard the model should think on every run. Provider-specific; ignored by models without the knob."
-        for popUp in [runtimePopUp, triggerPopUp, effortPopUp] {
+        sourceAccessModePopUp.addItems(withTitles: AgentSourceAccessMode.allCases.map(\.label))
+        sourceAccessModePopUp.setAccessibilityLabel("Automation source access")
+        sourceAccessModePopUp.target = self
+        sourceAccessModePopUp.action = #selector(runtimeChanged)
+        sourceModeDetail.font = .systemFont(ofSize: 10.5)
+        sourceModeDetail.textColor = Theme.text3
+        sourceStack.orientation = .vertical
+        sourceStack.alignment = .leading
+        sourceStack.spacing = 3
+        sourceStack.addArrangedSubview(NSTextField(labelWithString: "No data sources selected"))
+        for popUp in [runtimePopUp, triggerPopUp, effortPopUp, sourceAccessModePopUp] {
             popUp.font = .systemFont(ofSize: 12)
             popUp.isBordered = false
             popUp.alignment = .left
@@ -92,6 +106,9 @@ final class AgentJobEditorView: NSView {
 
         let grid = NSGridView(views: [
             [NSTextField(labelWithString: "Prompt"), promptField],
+            [NSTextField(labelWithString: "Source access"), sourceAccessModePopUp],
+            [NSTextField(labelWithString: ""), sourceModeDetail],
+            [NSTextField(labelWithString: "Sources"), sourceStack],
             [NSTextField(labelWithString: "Runtime"), runtimePopUp],
             [NSTextField(labelWithString: "Model"), modelCombo],
             [NSTextField(labelWithString: ""), modelDetail],
@@ -114,7 +131,7 @@ final class AgentJobEditorView: NSView {
             grid.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
         ])
         grid.column(at: 1).width = 470
-        for control in [runtimePopUp, triggerPopUp, effortPopUp] {
+        for control in [runtimePopUp, triggerPopUp, effortPopUp, sourceAccessModePopUp] {
             control.translatesAutoresizingMaskIntoConstraints = false
             control.widthAnchor.constraint(equalToConstant: 240).isActive = true
         }
@@ -158,7 +175,7 @@ final class AgentJobEditorView: NSView {
     }
 
     var selectedModelID: String? {
-        guard selectedRuntime == .opencode else { return nil }
+        guard selectedRuntime == .opencode || selectedSourceAccessMode == .reviewCopies else { return nil }
         return modelCombo.selectedModelID
     }
 
@@ -175,12 +192,45 @@ final class AgentJobEditorView: NSView {
         return AgentReasoningEffort.normalized(choice.value)
     }
 
+    var selectedSourceAccessMode: AgentSourceAccessMode {
+        AgentSourceAccessMode.allCases.first { $0.label == sourceAccessModePopUp.titleOfSelectedItem } ?? .standard
+    }
+
+    var selectedSourceIDs: [String] {
+        sourceButtons.filter { $0.value.state == .on }.map(\.key).sorted()
+    }
+
+    func configureSources(choices: [AgentSourceChoice], selectedIDs: [String],
+                          mode: AgentSourceAccessMode) {
+        for view in sourceStack.arrangedSubviews { sourceStack.removeArrangedSubview(view); view.removeFromSuperview() }
+        sourceButtons = [:]
+        var all = choices
+        let known = Set(choices.map(\.id))
+        all += selectedIDs.filter { !known.contains($0) }.map {
+            AgentSourceChoice(id: $0, label: "Unavailable source · \($0)")
+        }
+        for choice in all {
+            let button = NSButton(checkboxWithTitle: choice.label, target: nil, action: nil)
+            button.font = .systemFont(ofSize: 11)
+            button.setAccessibilityLabel("Automation source \(choice.label)")
+            button.state = selectedIDs.contains(choice.id) ? .on : .off
+            sourceButtons[choice.id] = button
+            sourceStack.addArrangedSubview(button)
+        }
+        if all.isEmpty { sourceStack.addArrangedSubview(NSTextField(labelWithString: "Add data sources in Data")) }
+        sourceAccessModePopUp.selectItem(withTitle: mode.label)
+        frame.size.height = 420 + CGFloat(max(1, all.count)) * 20
+        runtimeChanged()
+    }
+
     @objc private func runtimeChanged() {
-        let enabled = selectedRuntime == .opencode
+        let enabled = selectedRuntime == .opencode || selectedSourceAccessMode == .reviewCopies
+        sourceModeDetail.stringValue = selectedSourceAccessMode.detail
         modelCombo.isEnabled = enabled
         modelDetail.isEnabled = enabled
-        modelStatus.stringValue = enabled
-            ? catalogStatus
+        modelStatus.stringValue = selectedSourceAccessMode == .reviewCopies
+            ? "Review copies only uses OpenRouter, independently of the normal runtime. " + catalogStatus
+            : enabled ? catalogStatus
             : "Codex chooses its model through Codex settings"
         modelCombo.setAccessibilityHelp(
             enabled ? "Search the current OpenRouter catalog or type an exact model ID."

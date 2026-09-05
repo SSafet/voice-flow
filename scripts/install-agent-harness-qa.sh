@@ -46,12 +46,15 @@ find "$STAGED_APP/Contents/Resources/voice_flow" -type d -name __pycache__ \
 XCODE_SDK="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 if [ ! -d "$XCODE_SDK" ]; then XCODE_SDK="$(xcrun --show-sdk-path)"; fi
 mkdir -p "$STAGE/module-cache"
+# Compile one coherent source snapshot even when another workspace task edits
+# Swift files during the signed QA build.
+cp -R "$PROJECT_DIR/swift" "$STAGE/swift"
 SWIFT_MODULECACHE_PATH="$STAGE/module-cache" CLANG_MODULE_CACHE_PATH="$STAGE/module-cache" \
 swiftc -o "$STAGED_APP/Contents/MacOS/voice-flow" \
-    "$PROJECT_DIR"/swift/*.swift -D VOICE_FLOW_QA \
+    "$STAGE"/swift/*.swift -D VOICE_FLOW_QA \
     -framework Cocoa -framework AVFoundation -framework CoreGraphics \
     -framework ApplicationServices -framework Accelerate -framework Security \
-    -framework ScreenCaptureKit -lsqlite3 -sdk "$XCODE_SDK" -O -suppress-warnings
+    -framework ScreenCaptureKit -lsqlite3 -sdk "$XCODE_SDK" "${VOICE_FLOW_QA_OPTIMIZATION:--O}" -suppress-warnings
 chmod 755 "$STAGED_APP/Contents/MacOS/voice-flow"
 
 SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null \

@@ -1,0 +1,36 @@
+Captured sources-inventory-920
+Captured source-connect-error
+Captured connect-emailCopies
+Captured email-detail-920
+Captured email-inspect-920
+Captured email-all-items-920
+Captured email-collection-history-920
+Retrying local TCP connection for GET /__qa/sources
+Captured email-instructions-saved
+Captured connect-localFolder
+Retrying local TCP connection for POST /__qa/sources
+Retrying local TCP connection for POST /__qa/sources
+Captured source-stale-last-good
+Retrying local TCP connection for GET /__qa/state
+Retrying local TCP connection for GET /__qa/sources
+Captured source-paused
+Captured sources-inventory-720
+Captured email-detail-720
+Retrying local TCP connection for POST /__qa/ui/snapshot
+Captured assistant-source-selection-920
+Captured assistant-selection-return
+Captured assistant-review-result
+Captured automation-source-selection-920
+Captured legacy-now-720
+Captured legacy-inbox-720
+Captured legacy-threads-720
+Captured legacy-assistants-720
+Captured legacy-automations-720
+Captured legacy-speech-720
+Captured legacy-settings-720
+Captured sources-final-920
+Retrying local TCP connection for GET /__qa/sources
+Retrying local TCP connection for GET /__qa/sources
+Retrying local TCP connection for GET /__qa/sources
+Captured email-after-restart
+VF-64 signed workspace walkthrough passed: 10 checks
