@@ -3548,7 +3548,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             case .codex:
                 choices = [("", "Codex default")] + CodexModelCatalog.installedSlugs().map { ($0, $0) }
             case .claude:
-                choices = [("", "Claude default"), ("sonnet", "Sonnet"), ("opus", "Opus"), ("haiku", "Haiku")]
+                choices = [("", "Claude default")] + ClaudeModelCatalog.choices()
             case .opencode:
                 let catalog = (dataSource?.agentAutomationModels() ?? [])
                     .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -3557,7 +3557,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             modelChoicesCache[kind] = (Date(), choices)
         }
         if !current.isEmpty, !choices.contains(where: { $0.value == current }) {
-            choices.insert((current, current), at: kind == .opencode ? 0 : 1)
+            choices.insert((current, kind == .claude ? ClaudeModelCatalog.label(for: current) : current),
+                           at: kind == .opencode ? 0 : 1)
         }
         // Index 0 ("") means "no per-conversation choice": the turn runs on
         // the Settings model when one is set, else the CLI's own default.
@@ -3570,7 +3571,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             }
         }()
         if kind != .opencode, let first = choices.first, first.value.isEmpty, !global.isEmpty {
-            choices[0] = ("", "Default (\(global))")
+            choices[0] = ("", "Default (\(kind == .claude ? ClaudeModelCatalog.label(for: global) : global))")
+        } else if kind == .claude, let first = choices.first, first.value.isEmpty,
+                  let cliDefault = ClaudeModelCatalog.resolved(for: nil) {
+            choices[0] = ("", "Claude default · \(cliDefault)")
         }
         return choices
     }

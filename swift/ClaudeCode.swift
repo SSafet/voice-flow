@@ -294,8 +294,9 @@ final class ClaudeCodeAgentRuntime: AgentRuntime {
         let handleLine: (Data) -> Void = { line in
             guard let message = ClaudeCodeProtocol.decode(line) else { return }
             switch message {
-            case .sessionStarted(let id, _):
+            case .sessionStarted(let id, let model):
                 collector.lock.withLock { collector.startedSession = id }
+                ClaudeModelCatalog.record(requested: request.model?.model, resolved: model)
             case .textDelta(let delta):
                 collector.lock.withLock { collector.streamed += delta }
                 emit(.textDelta(partID: "claude-agent", delta: delta))
@@ -428,5 +429,80 @@ final class ClaudeCodeAgentRuntime: AgentRuntime {
     func cancel(turnID: UUID) async {
         guard let proc = lock.withLock({ active[turnID] }), proc.isRunning else { return }
         ProcessTree.terminate(proc.processIdentifier)
+    }
+}
+
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Claude Code models. The CLI takes an alias for the latest model of a
+//  family ("fable", "opus", "sonnet", "haiku" — `claude --help`) or a full
+//  id; which version an alias means is decided server-side, so nothing on
+//  disk can list it. The app learns it the only honest way: every turn's
+//  `system/init` event names the model that actually ran, and that
+//  resolution is kept per requested alias in `claude-models.json` and shown
+//  next to the alias in the picker ("Fable · claude-fable-5-1").
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+enum ClaudeModelCatalog {
+    /// The CLI's documented aliases, in the order the picker shows them.
+    static let aliases: [(alias: String, label: String)] = [
+        ("fable", "Fable"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku"),
+    ]
+    /// Key for "no model flag": the CLI's own default.
+    static let defaultKey = ""
+
+    private struct Store: Codable {
+        var resolved: [String: String] = [:]
+        var updatedAt: Date = Date()
+    }
+    private static let lock = NSLock()
+    private static var cache: (modified: Date, store: Store)?
+    private static var fileURL: URL { VoiceFlowPaths.shared.file("claude-models.json") }
+
+    private static func load() -> Store {
+        let path = fileURL.path
+        let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+            ?? .distantPast
+        if let cached = lock.withLock({ cache }), cached.modified == modified { return cached.store }
+        let store = (try? JSONDecoder().decode(Store.self, from: Data(contentsOf: fileURL))) ?? Store()
+        lock.withLock { cache = (modified, store) }
+        return store
+    }
+
+    /// The full model id the CLI ran for `requested` (an alias, a full id,
+    /// or nil for its default), once a turn has taught it.
+    static func resolved(for requested: String?) -> String? {
+        let key = requested?.trimmingCharacters(in: .whitespacesAndNewlines) ?? defaultKey
+        return load().resolved[key]
+    }
+
+    /// Called from the runtime's `system/init` event: remember what the
+    /// CLI resolved `requested` to. A full id that resolves to itself is
+    /// not worth a write.
+    static func record(requested: String?, resolved model: String?) {
+        guard let model = model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty else { return }
+        let key = requested?.trimmingCharacters(in: .whitespacesAndNewlines) ?? defaultKey
+        if key == model { return }
+        var store = load()
+        guard store.resolved[key] != model else { return }
+        store.resolved[key] = model
+        store.updatedAt = Date()
+        if let data = try? JSONEncoder().encode(store) {
+            try? data.write(to: fileURL, options: .atomic)
+            lock.withLock { cache = nil }
+        }
+    }
+
+    /// Picker label for an alias or id: the alias name plus the version it
+    /// last resolved to, when known.
+    static func label(for value: String) -> String {
+        let name = aliases.first { $0.alias == value }?.label ?? value
+        if let id = resolved(for: value), id != value { return "\(name) · \(id)" }
+        return name
+    }
+
+    /// The picker's choices after the leading default item.
+    static func choices() -> [(value: String, label: String)] {
+        aliases.map { ($0.alias, label(for: $0.alias)) }
     }
 }

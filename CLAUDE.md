@@ -77,7 +77,12 @@ tabs (`ChatTab`, default **Agents** on open):
   shared setting), and Send/Stop on the right — and it stays up while the
   turn runs, so a draft typed meanwhile is kept. Model choices are per
   runtime: `codex_model` (from `~/.codex/models_cache.json`),
-  `claude_code_model`, `agent_model` (OpenRouter). `ChatPanel` no longer owns a chat of its own; it routes
+  `claude_code_model` (the CLI's aliases fable · opus · sonnet · haiku; the
+  version each alias ran last is learned from every turn's `system/init`
+  event into `claude-models.json` — `ClaudeModelCatalog` — and shown as
+  "Fable · claude-fable-5"), `agent_model` (OpenRouter). The composer's
+  pick is stored on the conversation (`preferredModels`); the Settings
+  value is the default and shows as "Default (…)". `ChatPanel` no longer owns a chat of its own; it routes
   (`openAssistantConversation`, `setActivity`, `addNote` → a 6 s strip).
   Its nav bar is **Now · Threads · Setup** (`AgentsDestination.navigation`):
   two reading surfaces, then one setup surface. The panel lands on **Now**,
@@ -430,7 +435,7 @@ deployed copies are build outputs.
 | `Core.swift` | `UserSettings`, `KeychainStore`, `HotkeyManager`, `AudioRecorder`, `BackendBridge`, `Paster`, `HotkeySpec` | Audio capture, Python STT bridge (subprocess), paste/stream into the frontmost app, settings, global hotkeys. |
 | `UI.swift` | `Theme`, `MenuBarManager`, `FloatingIndicator`, `FloatingTranscriptPanel`, `MessagesView`, `DictationsView`, `TTSView`, `HoverCardView`, `KeyRecorderButton` | Menu bar, pill, live transcript overlay, the Inbox (dictations) and Speech surfaces, and the store-only `MessagesView`. |
 | `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel, its tabs, and the header; routes assistant state into `AgentsView` rather than rendering a chat itself. |
-| `Composer.swift` | `ComposerView`, `ComposerControls` | The one message input, styled as a session bar and pinned under the thread (never inside the scroll): image chips, auto-growing text, and a bottom row — left: access mode (Observe · Workspace · Full access = the capability dial), + attach images, mic (dictate into this thread), snap; right: spinner + live status, runtime (Codex · OpenCode · Claude Code), model (Codex's own catalog / Sonnet-Opus-Haiku / OpenRouter), reasoning effort, and Send that becomes Stop while a turn runs. It stays up during the turn so a draft is kept. Assistant threads configure the bar; MCP threads get the plain one. Do not hand-build another. |
+| `Composer.swift` | `ComposerView`, `ComposerControls` | The one message input, styled as a session bar and pinned under the thread (never inside the scroll): image chips, auto-growing text, and a bottom row — left: access mode (Observe · Workspace · Full access = the capability dial), + attach images, mic (dictate into this thread), snap; right: spinner + live status, runtime (Codex · OpenCode · Claude Code), model (Codex's own catalog / Claude's fable-opus-sonnet-haiku aliases with learned versions / OpenRouter), reasoning effort, and Send that becomes Stop while a turn runs. It stays up during the turn so a draft is kept. Assistant threads configure the bar; MCP threads get the plain one. Do not hand-build another. |
 | `ReplyBubble.swift` | `ReplyBubble` | Facade over the pill's grown surface (no window of its own) — forwards messages/asks/streaming to `FloatingIndicator`. |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
 | `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of contextual-capture messages for Claude (check/wait semantics). |
