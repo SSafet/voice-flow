@@ -222,15 +222,21 @@ final class ClaudeCodeAgentRuntime: AgentRuntime {
         return object["loggedIn"] as? Bool
     }
 
+    /// The CLI keys its Keychain credential by `USER`; without it, it falls
+    /// back to the stale `~/.claude/.credentials.json` and reports the OAuth
+    /// session expired even right after a successful /login (measured).
     static func sanitizedEnvironment(
-        source: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+        source: [String: String] = ProcessInfo.processInfo.environment,
+        userName: String = NSUserName()) -> [String: String] {
         let allowlist = [
-            "PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+            "PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
             "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
             "CLAUDE_CONFIG_DIR",
         ]
         var result: [String: String] = [:]
         for key in allowlist where source[key] != nil { result[key] = source[key] }
+        if result["USER"] == nil, !userName.isEmpty { result["USER"] = userName }
+        if result["LOGNAME"] == nil, let user = result["USER"] { result["LOGNAME"] = user }
         return result
     }
 

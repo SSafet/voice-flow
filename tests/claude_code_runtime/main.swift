@@ -96,8 +96,12 @@ expect(ClaudeCodeProtocol.activityLabel(forTool: "Bash") == "Running a command"
 let environment = ClaudeCodeAgentRuntime.sanitizedEnvironment(source: [
     "PATH": "/usr/bin", "HOME": "/tmp/home", "ANTHROPIC_API_KEY": "secret",
     "OPENAI_API_KEY": "secret", "CLAUDE_CODE_OAUTH_TOKEN": "secret",
-])
-expect(environment == ["PATH": "/usr/bin", "HOME": "/tmp/home"],
-       "Claude Code child inherited a non-allowlisted environment value")
+], userName: "safet")
+expect(environment == ["PATH": "/usr/bin", "HOME": "/tmp/home", "USER": "safet", "LOGNAME": "safet"],
+       "Claude Code child must get USER (the Keychain credential key) and nothing secret: \(environment)")
+let explicitUser = ClaudeCodeAgentRuntime.sanitizedEnvironment(
+    source: ["PATH": "/usr/bin", "HOME": "/tmp/home", "USER": "other", "LOGNAME": "other"], userName: "safet")
+expect(explicitUser["USER"] == "other" && explicitUser["LOGNAME"] == "other",
+       "an explicit USER in the source environment must win over the fallback")
 
 print("claude code runtime tests passed")
