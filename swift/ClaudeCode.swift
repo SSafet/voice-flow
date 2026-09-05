@@ -297,6 +297,7 @@ final class ClaudeCodeAgentRuntime: AgentRuntime {
             case .sessionStarted(let id, let model):
                 collector.lock.withLock { collector.startedSession = id }
                 ClaudeModelCatalog.record(requested: request.model?.model, resolved: model)
+                ClaudeModelCatalog.refreshIfStale()
             case .textDelta(let delta):
                 collector.lock.withLock { collector.streamed += delta }
                 emit(.textDelta(partID: "claude-agent", delta: delta))
@@ -454,10 +455,85 @@ enum ClaudeModelCatalog {
     private struct Store: Codable {
         var resolved: [String: String] = [:]
         var updatedAt: Date = Date()
+        /// The CLI these resolutions came from (real path + mtime). A
+        /// different binary means every alias may point somewhere new.
+        var cliIdentity: String?
     }
     private static let lock = NSLock()
     private static var cache: (modified: Date, store: Store)?
+    private static var refreshing = false
     private static var fileURL: URL { VoiceFlowPaths.shared.file("claude-models.json") }
+    /// Posted on main after a background re-resolution lands.
+    static let didChange = Notification.Name("ClaudeModelCatalog.didChange")
+
+    /// Identity of the installed CLI: the executable's real path and mtime.
+    static func cliIdentity() -> String? {
+        guard let binary = ClaudeCodeAgentRuntime.findBinary() else { return nil }
+        let real = URL(fileURLWithPath: binary).resolvingSymlinksInPath().path
+        let modified = (try? FileManager.default.attributesOfItem(atPath: real))?[.modificationDate] as? Date
+        return "\(real)@\(Int(modified?.timeIntervalSince1970 ?? 0))"
+    }
+
+    /// True while the stored resolutions predate the installed CLI.
+    static var isStale: Bool {
+        guard let identity = cliIdentity() else { return false }
+        return load().cliIdentity != identity
+    }
+
+    /// The CLI changed (update, reinstall): re-resolve every alias in the
+    /// background with one minimal turn each, then relabel the picker.
+    /// Visible in app.log; the picker shows the old versions until the new
+    /// ones land. Called from the picker build and from a turn's init.
+    static func refreshIfStale() {
+        guard isStale, let binary = ClaudeCodeAgentRuntime.findBinary(),
+              let identity = cliIdentity() else { return }
+        let start = lock.withLock { () -> Bool in
+            if refreshing { return false }
+            refreshing = true
+            return true
+        }
+        guard start else { return }
+        vflog("claude models: CLI changed (\(identity)) — re-resolving aliases")
+        DispatchQueue.global(qos: .utility).async {
+            var learned: [String: String] = [:]
+            for key in [defaultKey] + aliases.map(\.alias) {
+                if let model = resolveByTurn(binary: binary, alias: key) { learned[key] = model }
+            }
+            var store = load()
+            for (key, model) in learned { store.resolved[key] = model }
+            store.cliIdentity = identity
+            store.updatedAt = Date()
+            if let data = try? JSONEncoder().encode(store) {
+                try? data.write(to: fileURL, options: .atomic)
+                lock.withLock { cache = nil }
+            }
+            lock.withLock { refreshing = false }
+            vflog("claude models: resolved \(learned.count)/\(aliases.count + 1) — \(learned)")
+            DispatchQueue.main.async { NotificationCenter.default.post(name: didChange, object: nil) }
+        }
+    }
+
+    /// One minimal print-mode turn; the `system/init` event names the model.
+    private static func resolveByTurn(binary: String, alias: String) -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: binary)
+        var args = ["-p", "Reply with exactly the word: pong",
+                    "--output-format", "stream-json", "--verbose", "--max-turns", "1"]
+        if !alias.isEmpty { args += ["--model", alias] }
+        proc.arguments = args
+        proc.environment = ClaudeCodeAgentRuntime.sanitizedEnvironment()
+        let out = Pipe()
+        proc.standardOutput = out
+        proc.standardError = FileHandle.nullDevice
+        proc.standardInput = FileHandle.nullDevice
+        do { try proc.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        for line in data.split(separator: UInt8(ascii: "\n")) {
+            if case .sessionStarted(_, let model)? = ClaudeCodeProtocol.decode(Data(line)) { return model }
+        }
+        return nil
+    }
 
     private static func load() -> Store {
         let path = fileURL.path

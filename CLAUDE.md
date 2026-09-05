@@ -80,7 +80,10 @@ tabs (`ChatTab`, default **Agents** on open):
   `claude_code_model` (the CLI's aliases fable · opus · sonnet · haiku; the
   version each alias ran last is learned from every turn's `system/init`
   event into `claude-models.json` — `ClaudeModelCatalog` — and shown as
-  "Fable · claude-fable-5"), `agent_model` (OpenRouter). The composer's
+  "Fable · claude-fable-5-1"; the file also records the CLI binary's
+  identity, and when the CLI changes the app re-resolves every alias in
+  the background with one minimal turn each, logs it to app.log, and
+  relabels the open picker), `agent_model` (OpenRouter). The composer's
   pick is stored on the conversation (`preferredModels`); the Settings
   value is the default and shows as "Default (…)". `ChatPanel` no longer owns a chat of its own; it routes
   (`openAssistantConversation`, `setActivity`, `addNote` → a 6 s strip).

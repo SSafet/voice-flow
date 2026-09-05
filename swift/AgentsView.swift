@@ -548,6 +548,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// Model lists are read from disk / the catalog; a rebuild per streamed
     /// message must not re-read them.
     private var modelChoicesCache: [AgentRuntimeKind: (at: Date, choices: [(value: String, label: String)])] = [:]
+    private var claudeModelsObserver: NSObjectProtocol?
     private var threadInlineError: String?
     private var pushedOrigin: Mode?
     private var assistantThreadStreams: [String: String] = [:]
@@ -629,6 +630,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     deinit {
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+        if let claudeModelsObserver { NotificationCenter.default.removeObserver(claudeModelsObserver) }
     }
 
     private func setupUI() {
@@ -642,6 +644,13 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         scrollView.documentView = contentStack
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.contentView.postsBoundsChangedNotifications = true
+        claudeModelsObserver = NotificationCenter.default.addObserver(
+            forName: ClaudeModelCatalog.didChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.modelChoicesCache[.claude] = nil
+            if case .thread = self.mode { self.rebuild() }
+        }
         scrollObserver = NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification,
             object: scrollView.contentView,
@@ -3549,6 +3558,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 choices = [("", "Codex default")] + CodexModelCatalog.installedSlugs().map { ($0, $0) }
             case .claude:
                 choices = [("", "Claude default")] + ClaudeModelCatalog.choices()
+                ClaudeModelCatalog.refreshIfStale()
             case .opencode:
                 let catalog = (dataSource?.agentAutomationModels() ?? [])
                     .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
