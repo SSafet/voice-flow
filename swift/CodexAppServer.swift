@@ -113,7 +113,9 @@ enum CodexAppServerProtocol {
     static func turnInput(prompt: String, imagePaths: [String]) -> [[String: Any]] {
         var input: [[String: Any]] = [["type": "text", "text": prompt]]
         for path in imagePaths {
-            input.append(["type": "image", "localImage": ["path": path]])
+            // v2 `LocalImageUserInput`: {type: "localImage", path}. The nested
+            // {type: "image", localImage: …} shape is rejected with "missing field `url`".
+            input.append(["type": "localImage", "path": path])
         }
         return input
     }

@@ -63,8 +63,9 @@ expect(resume["threadId"] as? String == "thr_9", "thread/resume must name the th
 let input = CodexAppServerProtocol.turnInput(prompt: "hello", imagePaths: ["/tmp/shot.jpg"])
 expect(input.count == 2 && input[0]["type"] as? String == "text" && input[0]["text"] as? String == "hello",
        "the prompt must be the first text item")
-expect((input[1]["localImage"] as? [String: Any])?["path"] as? String == "/tmp/shot.jpg",
-       "images ride as localImage items")
+expect(input[1]["type"] as? String == "localImage" && input[1]["path"] as? String == "/tmp/shot.jpg"
+       && input[1]["localImage"] == nil,
+       "images ride as v2 localImage items: {type: localImage, path} (the nested shape is rejected: missing field `url`)")
 let turn = CodexAppServerProtocol.turnParams(threadId: "thr_1", prompt: "p", imagePaths: [], reasoningEffort: "low")
 expect(turn["effort"] as? String == "low" && turn["threadId"] as? String == "thr_1", "turn params must carry effort and thread")
 expect(CodexAppServerProtocol.turnParams(threadId: "t", prompt: "p", imagePaths: [], reasoningEffort: nil)["effort"] == nil,

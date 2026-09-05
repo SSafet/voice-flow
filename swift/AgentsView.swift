@@ -508,6 +508,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var automationFilter: AutomationFilter = .all
     private var composerField: ComposerView?
     private var composerThreadID: AgentsThreadID?
+    private weak var attachPicker: NSOpenPanel?
     private var automationNameField: NSTextField?
     private var automationInstructionsView: NSTextView?
     private var automationAssistantPopUp: NSPopUpButton?
@@ -936,6 +937,17 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case "lifecycle_tapped": threadLifecycleTapped(); return true
         case "confirm_complete": confirmCompleteThreadTapped(); return true
         case "cancel_complete": cancelCompleteThreadTapped(); return true
+        case "attach_probe":
+            // Open the real picker, record its level against the panel's, close it.
+            pickAttachments()
+            let picker = attachPicker
+            QAEventRecorder.shared.append("attach_probe", [
+                "picker_level": picker?.level.rawValue ?? -1,
+                "panel_level": window?.level.rawValue ?? -1,
+                "picker_visible": picker?.isVisible ?? false,
+            ])
+            picker?.cancel(nil)
+            return picker != nil
         case "scroll_bottom":
             contentStack.layoutSubtreeIfNeeded()
             let bottom = max(0, contentStack.frame.height - scrollView.contentView.bounds.height)
@@ -3374,6 +3386,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         picker.allowsMultipleSelection = true
         picker.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .gif]
         picker.message = "Attach images to this message"
+        // The chat panel floats above normal windows; a non-modal open panel
+        // opens at normal level and lands behind it. Sit one level higher.
+        picker.level = (window?.level ?? .floating) + 1
+        attachPicker = picker
         picker.begin { [weak self] response in
             guard response == .OK, let self else { return }
             for url in picker.urls { self.composerField?.addAttachment(path: url.path) }
