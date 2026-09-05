@@ -33,13 +33,43 @@ final class LockedCounter: @unchecked Sendable {
     var count: Int { lock.withLock { value } }
 }
 
+// An hour old: outside the recent-activity window, so the model decides.
+let anHourAgo = Date().addingTimeInterval(-3600)
 let current = AssistantConversation(
     codexThreadId: "thread-current",
     title: "Pantrella next cohort retention",
     messages: [
-        AssistantHistoryMessage(role: .user, text: "Plan the follow-up for the next cohort"),
-        AssistantHistoryMessage(role: .assistant, text: "Use a 48-hour follow-up and measure return rate"),
+        AssistantHistoryMessage(at: anHourAgo, role: .user, text: "Plan the follow-up for the next cohort"),
+        AssistantHistoryMessage(at: anHourAgo, role: .assistant, text: "Use a 48-hour follow-up and measure return rate"),
     ])
+
+// Recent activity reuses without a model call: the round trip is the whole
+// wake latency, so it is paid only when the choice is real.
+expect(AssistantContinuityClassifier.defaultRecentReuseSeconds == 180,
+       "the recent-activity window should be three minutes")
+let recentCalls = LockedCounter()
+let recentClassifier = AssistantContinuityClassifier(runner: { _ in
+    recentCalls.increment()
+    return #"{"decision":"new","confidence":0.99,"reason":"model must not be asked"}"#
+})
+let recent = AssistantConversation(
+    codexThreadId: "thread-recent",
+    title: "Live exchange",
+    messages: [
+        AssistantHistoryMessage(at: anHourAgo, role: .user, text: "Earlier question"),
+        AssistantHistoryMessage(at: Date().addingTimeInterval(-40), role: .assistant, text: "Reply 40 s ago"),
+    ])
+let recentOutcome = awaitOutcome(recentClassifier, current: recent, incoming: "Plan tomorrow's gym session")
+expect(recentOutcome.decision == .reuse && !recentOutcome.usedFallback && recentCalls.count == 0,
+       "a wake within the window must reuse the current conversation without a model call")
+let staleCalls = LockedCounter()
+let staleClassifier = AssistantContinuityClassifier(runner: { _ in
+    staleCalls.increment()
+    return #"{"decision":"new","confidence":0.99,"reason":"unrelated"}"#
+})
+let staleOutcome = awaitOutcome(staleClassifier, current: current, incoming: "Plan tomorrow's gym session")
+expect(staleOutcome.decision == .new && staleCalls.count == 1,
+       "a wake outside the window must still ask the model")
 
 expect(AssistantContinuityClassifier.defaultTimeoutSeconds == 15,
        "the production FLORA classifier budget should be 15 seconds")

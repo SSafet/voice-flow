@@ -88,13 +88,20 @@ final class AssistantContinuityClassifier {
     static let maxContextCharacters = 6_000
     static let maxIncomingCharacters = 4_000
     static let defaultTimeoutSeconds: TimeInterval = 15
+    /// A wake that lands this soon after the current conversation's last
+    /// message is a continuation: the model round trip (5–8 s, the whole
+    /// wake latency) is only paid when the choice is real.
+    static let defaultRecentReuseSeconds: TimeInterval = 180
 
     private let runner: Runner
     private let timeoutNanoseconds: UInt64
+    private let recentReuseSeconds: TimeInterval
 
     init(timeoutSeconds: TimeInterval = AssistantContinuityClassifier.defaultTimeoutSeconds,
+         recentReuseSeconds: TimeInterval = AssistantContinuityClassifier.defaultRecentReuseSeconds,
          runner: Runner? = nil) {
         self.timeoutNanoseconds = UInt64(max(0.05, timeoutSeconds) * 1_000_000_000)
+        self.recentReuseSeconds = recentReuseSeconds
         self.runner = runner ?? { prompt in
             try await Self.runCodex(prompt)
         }
@@ -113,6 +120,15 @@ final class AssistantContinuityClassifier {
             return AssistantContinuityOutcome(
                 decision: .reuse, confidence: 1,
                 reason: "the current conversation is an empty draft", usedFallback: false)
+        }
+
+        if let last = relevant.last {
+            let age = Date().timeIntervalSince(last.at)
+            if age >= 0, age <= recentReuseSeconds {
+                return AssistantContinuityOutcome(
+                    decision: .reuse, confidence: 1,
+                    reason: "the current conversation was active \(Int(age)) s ago", usedFallback: false)
+            }
         }
 
         do {
