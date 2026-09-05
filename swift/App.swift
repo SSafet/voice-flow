@@ -97,7 +97,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// not just session deaths. A session re-adopting its old id reclaims
     /// its queue; the rest show as ghost picker entries.
     var sessionPushes: [String: [SessionPush]] = [:] {
-        didSet { Self.savePushes(sessionPushes) }
+        didSet { schedulePushSave() }
+    }
+    /// Saves coalesce: a burst of mutations (marking a stack seen, a sweep,
+    /// a streamed reply's pushes, several sessions reporting at once) used
+    /// to serialize the whole store — hundreds of KB — on every assignment.
+    /// One write lands 0.5 s after the last mutation; quit flushes.
+    private var pendingPushSave: DispatchWorkItem?
+    private var pushSavePendingSince: Date?
+    private static let pushSaveDelay: TimeInterval = 0.5
+    /// A mutation stream denser than the delay must still reach disk.
+    private static let pushSaveMaxDeferral: TimeInterval = 5
+
+    private func schedulePushSave() {
+        let since = pushSavePendingSince ?? Date()
+        if Date().timeIntervalSince(since) >= Self.pushSaveMaxDeferral {
+            flushPushSave()
+            return
+        }
+        pushSavePendingSince = since
+        pendingPushSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.flushPushSave() }
+        pendingPushSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pushSaveDelay, execute: work)
+    }
+
+    func flushPushSave() {
+        pendingPushSave?.cancel()
+        pendingPushSave = nil
+        pushSavePendingSince = nil
+        Self.savePushes(sessionPushes)
     }
     /// What the player is reading right now — a session stack, the
     /// assistant's reply, or plain text (VF-48 unification): one player,
@@ -121,6 +150,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private static func savePushes(_ pushes: [String: [SessionPush]]) {
         if let data = try? JSONEncoder().encode(pushes) {
             try? data.write(to: pushesURL, options: .atomic)
+#if VOICE_FLOW_QA
+            QAEventRecorder.shared.append("pushes_saved", ["bytes": data.count, "sessions": pushes.count])
+#endif
         }
     }
 
@@ -306,6 +338,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        flushPushSave()
         sourceCollector?.stop()
         ttsController?.shutdown()
         localAPIServer?.stop()
