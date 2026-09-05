@@ -828,6 +828,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                let jobs = try? store.jobs(limit: 500) {
                 allowed.formUnion(jobs.compactMap(\.modelID))
             }
+            if let agent = self?.agent {
+                allowed.formUnion(agent.conversationPreferredModels(for: .opencode))
+            }
             return ModelGatewayCredentialSnapshot(
                 apiKey: KeychainStore.shared.loadAgentAPIKey(),
                 upstreamBaseURL: baseURL,

@@ -679,10 +679,15 @@ extension AppDelegate: AgentsDataSource {
                 linkedAutomationCount: jobs.count,
                 runtime: conversation.preferredRuntime
                     ?? AgentRuntimeKind.fromBackendSetting(UserSettings.shared.agentBackend),
-                model: agent.preferredModel(
-                    for: conversation.preferredRuntime
-                        ?? AgentRuntimeKind.fromBackendSetting(UserSettings.shared.agentBackend),
-                    sessionId: conversation.id),
+                // The composer shows the conversation's own choice; with none,
+                // Codex/Claude land on the "Default (<global>)" item, and
+                // OpenCode (no default item) shows the resolved model.
+                model: {
+                    let kind = conversation.preferredRuntime
+                        ?? AgentRuntimeKind.fromBackendSetting(UserSettings.shared.agentBackend)
+                    if let explicit = conversation.preferredModels?[kind.rawValue] { return explicit }
+                    return kind == .opencode ? agent.preferredModel(for: kind, sessionId: conversation.id) : ""
+                }(),
                 runtimeSwitchable: conversation.turnState != .running && !agent.isRunning,
                 activity: conversation.id == agent.currentSessionId ? agent.activity : .idle,
                 canSnap: ownerAvailable && conversation.completedAt == nil,

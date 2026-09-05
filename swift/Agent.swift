@@ -141,6 +141,12 @@ final class AgentSession {
 
     /// The composer's model choice for one conversation. Allowed mid-turn:
     /// it lands on the next turn.
+    /// Every per-conversation model choice for `kind` — the gateway
+    /// allowlist must admit them alongside the global and job models.
+    func conversationPreferredModels(for kind: AgentRuntimeKind) -> Set<String> {
+        Set(history.conversations().compactMap { $0.preferredModels?[kind.rawValue] })
+    }
+
     func setPreferredModel(_ model: String, runtime: AgentRuntimeKind, conversationID: String) {
         history.setPreferredModel(model, runtime: runtime, for: conversationID)
         notifyHistoryChanged()

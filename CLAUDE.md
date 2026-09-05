@@ -91,7 +91,10 @@ tabs (`ChatTab`, default **Agents** on open):
   search field and filter chips appear only from 6 automations up.
   `AgentsView.refresh()` memoizes: on a read surface (destination, thread,
   search) identical row inputs skip the rebuild (`RefreshInputs`), so the
-  ~20 refresh call sites cost nothing when nothing changed.
+  ~20 refresh call sites cost nothing when nothing changed. When a thread
+  does rebuild, its message rows persist across rebuilds keyed by message
+  id (`threadRowCache` / `ThreadMessageRow`, updated in place; scoped to
+  the open thread) — a 31-message thread rebuilds in ~12 ms instead of ~40.
   The panel header's voice-replies / computer-control / Clear icons act on
   the assistant conversation and show only while it is on screen
   (`ChatPanel.updateHeaderScope`); Annotate and Settings are always there.

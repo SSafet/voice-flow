@@ -146,6 +146,7 @@ final class NextQueue {
            now.timeIntervalSince(idleStart) >= idleResumeMinutes * 60,
            emptyNagSuppressed {
             emptyNagSuppressed = false
+            emptySince = nil   // a fresh grace period, not an instant pop on return
             vflog("queue: back after \(Int(now.timeIntervalSince(idleStart) / 60))m away — empty nudge re-armed")
         }
         recentActivations.removeAll { now.timeIntervalSince($0) > switchBurstWindow }

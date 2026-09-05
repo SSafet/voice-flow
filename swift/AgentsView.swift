@@ -552,6 +552,60 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var pushedOrigin: Mode?
     private var assistantThreadStreams: [String: String] = [:]
     private weak var assistantThreadStreamingLabel: NSTextField?
+    /// Message rows of the open thread, keyed by message id. A thread
+    /// refresh (new push, seen-state change, navigation back onto it) used
+    /// to re-create every row — label, wrapping body, divider, constraints —
+    /// which is the lag on long threads. Rows now persist across rebuilds
+    /// and are updated in place when their text changes; only new messages
+    /// get new views. Scoped to one thread; cleared when it changes.
+    private var threadRowCache: [String: ThreadMessageRow] = [:]
+    private var threadRowCacheThread: AgentsThreadID?
+
+    private final class ThreadMessageRow: NSView {
+        let role = NSTextField(labelWithString: "")
+        let body = NSTextField(wrappingLabelWithString: "")
+        let dividerHeight: NSLayoutConstraint
+        var contentKey = ""
+
+        init() {
+            let divider = NSView()
+            dividerHeight = divider.heightAnchor.constraint(equalToConstant: 1)
+            super.init(frame: .zero)
+            role.font = .systemFont(ofSize: 9.5, weight: .semibold)
+            body.font = .systemFont(ofSize: 12.5)
+            body.maximumNumberOfLines = 0
+            body.isSelectable = true
+            divider.wantsLayer = true
+            divider.layer?.backgroundColor = Theme.border.cgColor
+            for view in [role, body, divider] {
+                view.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(view)
+            }
+            NSLayoutConstraint.activate([
+                role.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+                role.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+                body.topAnchor.constraint(equalTo: role.bottomAnchor, constant: 4),
+                body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+                body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+                body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
+                divider.leadingAnchor.constraint(equalTo: leadingAnchor),
+                divider.trailingAnchor.constraint(equalTo: trailingAnchor),
+                divider.bottomAnchor.constraint(equalTo: bottomAnchor),
+                dividerHeight,
+            ])
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        func apply(roleText: String, roleColor: NSColor, bodyText: String, bodyColor: NSColor, key: String) {
+            guard key != contentKey else { return }
+            contentKey = key
+            role.stringValue = roleText
+            role.textColor = roleColor
+            body.stringValue = bodyText
+            body.textColor = bodyColor
+        }
+    }
     /// Live turn state for the open assistant thread — updated in place
     /// (no rebuild) as the agent thinks, acts, and replies.
     private var assistantActivity: AgentActivity = .idle
@@ -941,10 +995,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             // Open the real picker, record its level against the panel's, close it.
             pickAttachments()
             let picker = attachPicker
+            // Levels only: begin(_:) presents asynchronously, so isVisible
+            // is not meaningful on this run-loop turn.
             QAEventRecorder.shared.append("attach_probe", [
                 "picker_level": picker?.level.rawValue ?? -1,
                 "panel_level": window?.level.rawValue ?? -1,
-                "picker_visible": picker?.isVisible ?? false,
             ])
             picker?.cancel(nil)
             return picker != nil
@@ -1320,6 +1375,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         // field is torn down — Escape, back, Cmd shortcuts included.
         lastRefreshInputs = nil
         stashComposerDraft()
+        if case .thread = mode {} else {
+            threadRowCache.removeAll()
+            threadRowCacheThread = nil
+        }
         contentStack.subviews.forEach { $0.removeFromSuperview() }
         clearComposerHost()
         clearHeaderHost()
@@ -1351,7 +1410,18 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         switch mode {
         case .destination(let destination): buildDestination(destination)
         case .search: buildSearch()
-        case .thread(let sid): buildThread(sid)
+        case .thread(let sid):
+#if VOICE_FLOW_QA
+            let started = Date()
+            buildThread(sid)
+            contentStack.layoutSubtreeIfNeeded()
+            QAEventRecorder.shared.append("thread_build", [
+                "ms": Date().timeIntervalSince(started) * 1000,
+                "rows": contentStack.subviews.count,
+            ])
+#else
+            buildThread(sid)
+#endif
         case .job(let id): buildJob(id)
         case .automationCreate: buildAutomationForm(jobID: nil)
         case .automationEdit(let id): buildAutomationForm(jobID: id)
@@ -3229,49 +3299,37 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 id: "stream:\(id.value)", at: Date(), role: .assistant,
                 text: streaming, hint: nil))
         }
+        if threadRowCacheThread != id {
+            threadRowCache.removeAll()
+            threadRowCacheThread = id
+        }
+        var liveRowIDs = Set<String>()
         for (index, message) in renderedMessages.enumerated() {
-            let block = NSView()
-            let role = NSTextField(labelWithString: {
+            let roleText: String = {
                 switch message.role {
                 case .assistant: return detail.owner.uppercased()
                 case .user: return "YOU"
                 case .note: return "NOTE"
                 }
-            }())
-            role.font = .systemFont(ofSize: 9.5, weight: .semibold)
-            role.textColor = message.role == .user ? Theme.accent : Theme.text3
+            }()
             let bodyText = [message.text, message.hint]
                 .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
                 .joined(separator: "\n")
-            let body = NSTextField(wrappingLabelWithString:
-                bodyText.isEmpty && message.id.hasPrefix("stream:") ? "…" : bodyText)
-            body.font = .systemFont(ofSize: 12.5)
-            body.textColor = message.role == .note ? Theme.text3 : Theme.text2
-            body.maximumNumberOfLines = 0
-            body.isSelectable = true
-            if message.id.hasPrefix("stream:") { assistantThreadStreamingLabel = body }
-            let divider = NSView()
-            divider.wantsLayer = true
-            divider.layer?.backgroundColor = Theme.border.cgColor
-            for view in [role, body, divider] {
-                view.translatesAutoresizingMaskIntoConstraints = false
-                block.addSubview(view)
-            }
-            NSLayoutConstraint.activate([
-                role.topAnchor.constraint(equalTo: block.topAnchor, constant: 9),
-                role.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 4),
-                body.topAnchor.constraint(equalTo: role.bottomAnchor, constant: 4),
-                body.leadingAnchor.constraint(equalTo: block.leadingAnchor, constant: 4),
-                body.trailingAnchor.constraint(equalTo: block.trailingAnchor, constant: -4),
-                body.bottomAnchor.constraint(equalTo: block.bottomAnchor, constant: -9),
-                divider.leadingAnchor.constraint(equalTo: block.leadingAnchor),
-                divider.trailingAnchor.constraint(equalTo: block.trailingAnchor),
-                divider.bottomAnchor.constraint(equalTo: block.bottomAnchor),
-                divider.heightAnchor.constraint(equalToConstant: index == renderedMessages.count - 1 ? 0 : 1),
-            ])
-            place(block, below: &top, gap: 0)
+            let shownBody = bodyText.isEmpty && message.id.hasPrefix("stream:") ? "…" : bodyText
+            let row = threadRowCache[message.id] ?? ThreadMessageRow()
+            threadRowCache[message.id] = row
+            liveRowIDs.insert(message.id)
+            row.apply(roleText: roleText,
+                      roleColor: message.role == .user ? Theme.accent : Theme.text3,
+                      bodyText: shownBody,
+                      bodyColor: message.role == .note ? Theme.text3 : Theme.text2,
+                      key: "\(message.role)\u{1}\(roleText)\u{1}\(shownBody)")
+            row.dividerHeight.constant = index == renderedMessages.count - 1 ? 0 : 1
+            if message.id.hasPrefix("stream:") { assistantThreadStreamingLabel = row.body }
+            place(row, below: &top, gap: 0)
         }
+        threadRowCache = threadRowCache.filter { liveRowIDs.contains($0.key) }
 
         if detail.messages.isEmpty {
             place(emptyLabel("No messages yet"), below: &top, gap: 24)
@@ -3500,6 +3558,19 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
         if !current.isEmpty, !choices.contains(where: { $0.value == current }) {
             choices.insert((current, current), at: kind == .opencode ? 0 : 1)
+        }
+        // Index 0 ("") means "no per-conversation choice": the turn runs on
+        // the Settings model when one is set, else the CLI's own default.
+        // Say which, or picking it looks like a dead item.
+        let global: String = {
+            switch kind {
+            case .codex: return UserSettings.shared.codexModel
+            case .claude: return UserSettings.shared.claudeCodeModel
+            case .opencode: return ""
+            }
+        }()
+        if kind != .opencode, let first = choices.first, first.value.isEmpty, !global.isEmpty {
+            choices[0] = ("", "Default (\(global))")
         }
         return choices
     }
