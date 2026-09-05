@@ -200,13 +200,9 @@ final class ChatPanel {
         }
         if focusInput {
             selectTab(.agents)             // the panel lands on the agent list
-            // Accessory app + nonactivating panel: the panel can be key while
-            // another app stays active, and synthetic keystrokes from clipboard
-            // managers (Maccy's auto-paste, expanders) go to the ACTIVE app —
-            // so a paste aimed at the composer landed in whatever was behind.
-            // An explicit open is user-initiated, so take activation here. The
-            // focusInput: false paths — a push, settings, restore — never do,
-            // which is what keeps an agent message from stealing the screen.
+            // Explicit opens activate us so typing and clipboard-manager paste
+            // reach the workspace. Passive show(focusInput: false) only orders
+            // the window forward and must not take keyboard focus.
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKey()
         }
@@ -218,12 +214,10 @@ final class ChatPanel {
     func hide() {
         vflog("chat panel: hide()")
         removeClickOutsideMonitor()
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.14
-            panel.animator().alphaValue = 0
-        }, completionHandler: {
-            self.panel.orderOut(nil)
-        })
+        // Release the key window in the outside-click event, not after a fade.
+        // A deferred orderOut can retain focus during the handoff and can also
+        // dismiss a newly reopened workspace when its completion finally runs.
+        panel.orderOut(nil)
     }
 
     // A mouse-down anywhere outside the panel dismisses it. A *global* monitor
@@ -624,7 +618,12 @@ final class ChatPanel {
     private func build() {
         panel = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        // The workspace activates on explicit opens. Combining that with a
+        // nonactivating panel's borrowed keyboard focus breaks click-away focus
+        // handoff. Keep nonactivating behavior on the notification pill only.
+        // We own dismissal, including passive opens while another app is active.
+        panel.hidesOnDeactivate = false
         panel.level = .floating + 1
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -833,5 +832,4 @@ final class KeyablePanel: NSPanel {
         onEscape?()
     }
 }
-
 
