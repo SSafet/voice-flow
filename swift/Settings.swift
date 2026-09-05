@@ -428,7 +428,7 @@ private struct DictationSettingsView: View {
                         onRemove: { store.removeOpenAIKey() }
                     )
                     if store.needsOpenAIKey {
-                        Label("Add your OpenAI key to start dictating, or switch to on-device transcription.",
+                        Label("Add your OpenAI key to start dictating.",
                               systemImage: "exclamationmark.triangle.fill")
                             .font(.caption)
                             .foregroundStyle(.orange)

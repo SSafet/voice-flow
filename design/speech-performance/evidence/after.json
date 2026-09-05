@@ -1,0 +1,151 @@
+{
+  "kind": "controlled actual pipeline benchmark",
+  "stt": [
+    {
+      "release_to_final_ms": 130.47291710972786,
+      "previews_before_final": 0
+    },
+    {
+      "release_to_final_ms": 120.51783315837383,
+      "previews_before_final": 0
+    },
+    {
+      "release_to_final_ms": 127.99520790576935,
+      "previews_before_final": 0
+    },
+    {
+      "release_to_final_ms": 129.67879232019186,
+      "previews_before_final": 0
+    },
+    {
+      "release_to_final_ms": 130.29137533158064,
+      "previews_before_final": 0
+    }
+  ],
+  "tts": [
+    {
+      "duration_seconds": 2,
+      "error": "",
+      "first_playing_ms": 445.07970847189426,
+      "max_rendered_position_seconds": 2.2933333333333334,
+      "pause_violation": false,
+      "queue_finished_ms": 2766.96720905602,
+      "scenario": "steady",
+      "stop_violation": false
+    },
+    {
+      "duration_seconds": 2,
+      "error": "",
+      "first_playing_ms": 424.279416911304,
+      "max_rendered_position_seconds": 2.272,
+      "pause_violation": false,
+      "queue_finished_ms": 2720.1246665790677,
+      "scenario": "steady",
+      "stop_violation": false
+    },
+    {
+      "duration_seconds": 2,
+      "error": "",
+      "first_playing_ms": 419.46366615593433,
+      "max_rendered_position_seconds": 2.2826666666666666,
+      "pause_violation": false,
+      "queue_finished_ms": 2729.267541319132,
+      "scenario": "steady",
+      "stop_violation": false
+    },
+    {
+      "duration_seconds": 2,
+      "error": "",
+      "first_playing_ms": 419.14604138582945,
+      "max_rendered_position_seconds": 2.2293333333333334,
+      "pause_violation": false,
+      "queue_finished_ms": 2672.0136664807796,
+      "scenario": "steady",
+      "stop_violation": false
+    },
+    {
+      "duration_seconds": 2,
+      "error": "",
+      "first_playing_ms": 418.1899167597294,
+      "max_rendered_position_seconds": 2.2613333333333334,
+      "pause_violation": false,
+      "queue_finished_ms": 2704.787624999881,
+      "scenario": "steady",
+      "stop_violation": false
+    }
+  ],
+  "tts_regressions": [
+    {
+      "duration_seconds": 0.05,
+      "error": "",
+      "first_playing_ms": 192.32279155403376,
+      "max_rendered_position_seconds": 0.064,
+      "pause_violation": false,
+      "queue_finished_ms": 280.6900832802057,
+      "scenario": "short",
+      "stop_violation": false
+    },
+    {
+      "duration_seconds": 0.05,
+      "error": "",
+      "first_playing_ms": 222.59791661053896,
+      "max_rendered_position_seconds": 0.064,
+      "pause_violation": false,
+      "queue_finished_ms": 313.33991698920727,
+      "scenario": "fragmented",
+      "stop_violation": false
+    },
+    {
+      "duration_seconds": 0.05,
+      "error": "The TTS response could not be played.",
+      "first_playing_ms": -1,
+      "max_rendered_position_seconds": 0,
+      "pause_violation": false,
+      "queue_finished_ms": -1,
+      "scenario": "invalid",
+      "stop_violation": false
+    },
+    {
+      "duration_seconds": 0,
+      "error": "TTS request failed (503): fixture outage",
+      "first_playing_ms": -1,
+      "max_rendered_position_seconds": 0,
+      "pause_violation": false,
+      "queue_finished_ms": -1,
+      "scenario": "http_error",
+      "stop_violation": false
+    },
+    {
+      "duration_seconds": 2,
+      "error": "",
+      "first_playing_ms": 723.1321670114994,
+      "max_rendered_position_seconds": 2.016,
+      "pause_violation": false,
+      "queue_finished_ms": 2762.9875829443336,
+      "scenario": "pause",
+      "stop_violation": false
+    },
+    {
+      "duration_seconds": 0,
+      "error": "",
+      "first_playing_ms": -1,
+      "max_rendered_position_seconds": 0,
+      "pause_violation": false,
+      "queue_finished_ms": -1,
+      "scenario": "cancel",
+      "stop_violation": false
+    },
+    {
+      "duration_seconds": 0.05,
+      "error": "",
+      "first_playing_ms": 329.0932085365057,
+      "max_rendered_position_seconds": 0.064,
+      "pause_violation": false,
+      "queue_finished_ms": 417.28316619992256,
+      "scenario": "replace",
+      "stop_violation": false
+    }
+  ],
+  "stt_median_ms": 129.67879232019186,
+  "tts_median_ms": 419.46366615593433
+}

@@ -252,6 +252,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Streaming partial transcription
     var transcriptPanel: FloatingTranscriptPanel!
+    private var transcriptionReleasedAt: [UUID: TimeInterval] = [:]
     private var partialTimer: Timer?
     private var partialRequestId: Int = 0
     private var latestDisplayedPartialId: Int = 0
@@ -2554,6 +2555,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        transcriptionReleasedAt[id] = ProcessInfo.processInfo.systemUptime
         recorder.stop { [weak self] pcmData in
             guard let self, var current = self.captureRuns[id] else { return }
             current.phase = .awaitingTranscription
@@ -2564,6 +2566,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             guard let pcmData else {
+                self.transcriptionReleasedAt.removeValue(forKey: id)
                 if current.capability == .continuous, current.continuousSummary != nil {
                     current.transcript = ""
                     current.phase = .ready
@@ -2702,6 +2705,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             vflog("uncorrelated or duplicate transcription result id=\(requestId ?? "nil")")
             return
         }
+        recordTranscriptionCompletion(id)
         let note = (cleaned.isEmpty ? raw : cleaned).trimmingCharacters(in: .whitespacesAndNewlines)
         run.transcript = note
         run.phase = .ready
@@ -2714,7 +2718,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         maybeDeliverCapture(id)
     }
 
+    private func recordTranscriptionCompletion(_ id: UUID) {
+        if let released = transcriptionReleasedAt.removeValue(forKey: id) {
+            vflog("speech stt request=\(id) terminal_ms=\((ProcessInfo.processInfo.systemUptime - released) * 1000)")
+        }
+    }
+
     private func handleTranscriptionError(requestId: String?, message: String) {
+        if let id = correlatedRunId(requestId) { recordTranscriptionCompletion(id) }
         guard let id = correlatedRunId(requestId), var run = captureRuns[id] else {
             chatPanel.addNote(message)
             if !chatPanel.isVisible {

@@ -1,0 +1,59 @@
+{
+  "kind": "controlled actual pipeline benchmark",
+  "stt": [
+    {
+      "release_to_final_ms": 2083.8329596444964,
+      "previews_before_final": 5
+    },
+    {
+      "release_to_final_ms": 2070.096291601658,
+      "previews_before_final": 5
+    },
+    {
+      "release_to_final_ms": 2082.300207577646,
+      "previews_before_final": 5
+    },
+    {
+      "release_to_final_ms": 2075.6052089855075,
+      "previews_before_final": 5
+    },
+    {
+      "release_to_final_ms": 2070.9956251084805,
+      "previews_before_final": 5
+    }
+  ],
+  "tts": [
+    {
+      "duration_seconds": 2,
+      "error": "",
+      "first_playing_ms": 754.2709587141871,
+      "max_rendered_position_seconds": 2.016
+    },
+    {
+      "duration_seconds": 2,
+      "error": "",
+      "first_playing_ms": 698.96399974823,
+      "max_rendered_position_seconds": 2.016
+    },
+    {
+      "duration_seconds": 2,
+      "error": "",
+      "first_playing_ms": 719.1529171541333,
+      "max_rendered_position_seconds": 2.016
+    },
+    {
+      "duration_seconds": 2,
+      "error": "",
+      "first_playing_ms": 700.3351664170623,
+      "max_rendered_position_seconds": 2.016
+    },
+    {
+      "duration_seconds": 2,
+      "error": "",
+      "first_playing_ms": 709.4425829127431,
+      "max_rendered_position_seconds": 2.016
+    }
+  ],
+  "stt_median_ms": 2075.6052089855075,
+  "tts_median_ms": 709.4425829127431
+}

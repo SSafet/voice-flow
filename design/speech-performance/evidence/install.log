@@ -1,0 +1,18 @@
+Installing Voice Flow...
+  Preparing pinned OpenCode runtime...
+Prepared OpenCode 1.17.11 (arm64, 996fea55451be04cfa27c0d9dbbf0468cb611cde43075fe3dac799772d0b710f)
+  Compiling Swift...
+  ✓ Swift binary compiled
+  Signing with: Developer ID Application: Safet Safet (RTKL5BFL9H)
+/Applications/Voice Flow.app.staging/Contents/MacOS/voice-flow: replacing existing signature
+/Applications/Voice Flow.app.staging/Contents/Resources/Runtime/OpenCode/opencode: replacing existing signature
+/Applications/Voice Flow.app.staging: replacing existing signature
+  ✓ Bundle swapped into place
+  ✓ Watcher assets deployed (com.voiceflow.watcher-analyze loaded)
+
+✓ Installed to /Applications/Voice Flow.app
+  ⓘ Voice Flow is still running the previous build — quit and reopen it
+    when convenient, or run ./install.sh --relaunch next time.
+
+Launch: open /Applications/Voice\ Flow.app
+Uninstall: /Users/safet/repos/voice-flow/uninstall.sh

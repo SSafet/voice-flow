@@ -1,0 +1,202 @@
+{
+  "started_at": "2026-09-05T15:11:41.723253+00:00",
+  "endpoint": "https://openrouter.ai/api/v1/audio/transcriptions",
+  "kind": "completed-file STT, not live input streaming",
+  "fixture_pcm_sha256": "c3002f65d0f924d5c00a3ea5849fe14fe84f746458e92b9de1885777546aca2f",
+  "reference": "Please move the Voice Flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is seven four two nine.",
+  "scoring": "case/punctuation insensitive, Voice Flow and fixture number normalized",
+  "trials": [
+    {
+      "model": "x-ai/grok-stt-1.0",
+      "trial": 0,
+      "repeat": 1,
+      "audio_seconds": 16.7,
+      "generation_id": "gen-stt-1788621102-XS8IdxqIXKN7hIr0QEWs",
+      "final_ms": 1149.049000000005,
+      "transcript": "Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine.",
+      "usage": {
+        "seconds": 16.7,
+        "cost": 0.0004638888888888889
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 1149.6960420000023
+    },
+    {
+      "model": "openai/gpt-4o-mini-transcribe",
+      "trial": 0,
+      "repeat": 1,
+      "audio_seconds": 16.7,
+      "generation_id": "gen-stt-1788621103-0UItzzQ00JbvR3bkI7o6",
+      "final_ms": 698.2683749999978,
+      "transcript": "Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429.",
+      "usage": {
+        "total_tokens": 205,
+        "input_tokens": 167,
+        "output_tokens": 38,
+        "cost": 0.00039875
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 698.7197079999987
+    },
+    {
+      "model": "openai/gpt-4o-mini-transcribe",
+      "trial": 1,
+      "repeat": 1,
+      "audio_seconds": 16.7,
+      "generation_id": "gen-stt-1788621103-fxeVPJeldLrWD0mTLE3v",
+      "final_ms": 736.3786250000004,
+      "transcript": "Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is 7429.",
+      "usage": {
+        "total_tokens": 206,
+        "input_tokens": 167,
+        "output_tokens": 39,
+        "cost": 0.00040375
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 736.6742080000108
+    },
+    {
+      "model": "x-ai/grok-stt-1.0",
+      "trial": 1,
+      "repeat": 1,
+      "audio_seconds": 16.7,
+      "generation_id": "gen-stt-1788621104-Pbv5ERJIzz2LAvLG1XpQ",
+      "final_ms": 1630.484250000009,
+      "transcript": "Please move the voiceflow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine.",
+      "usage": {
+        "seconds": 16.7,
+        "cost": 0.0004638888888888889
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 1630.895792000004
+    },
+    {
+      "model": "x-ai/grok-stt-1.0",
+      "trial": 2,
+      "repeat": 1,
+      "audio_seconds": 16.7,
+      "generation_id": "gen-stt-1788621106-LraQwxCoPmsEKOHyLiVt",
+      "final_ms": 786.9228329999913,
+      "transcript": "Please move the voiceflow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine.",
+      "usage": {
+        "seconds": 16.7,
+        "cost": 0.0004638888888888889
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 787.0603749999958
+    },
+    {
+      "model": "openai/gpt-4o-mini-transcribe",
+      "trial": 2,
+      "repeat": 1,
+      "audio_seconds": 16.7,
+      "generation_id": "gen-stt-1788621106-3xDmF9rI7dq9hmEdzjYq",
+      "final_ms": 1093.544332999997,
+      "transcript": "Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429.",
+      "usage": {
+        "total_tokens": 205,
+        "input_tokens": 167,
+        "output_tokens": 38,
+        "cost": 0.00039875
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 1093.7547909999948
+    },
+    {
+      "model": "x-ai/grok-stt-1.0",
+      "trial": 0,
+      "repeat": 6,
+      "audio_seconds": 100.2,
+      "generation_id": "gen-stt-1788621108-R6jOPRlZBK9bgEafi0TO",
+      "final_ms": 1563.8978329999986,
+      "transcript": "Please move the voiceflow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine.",
+      "usage": {
+        "seconds": 100.2,
+        "cost": 0.0027833333333333334
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 1575.5170830000084
+    },
+    {
+      "model": "openai/gpt-4o-mini-transcribe",
+      "trial": 0,
+      "repeat": 6,
+      "audio_seconds": 100.2,
+      "generation_id": "gen-stt-1788621109-SYIXXH9Mzkfe7zp2rwRe",
+      "final_ms": 3428.727125000009,
+      "transcript": "Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429.",
+      "usage": {
+        "total_tokens": 1220,
+        "input_tokens": 1002,
+        "output_tokens": 218,
+        "cost": 0.0023425
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 3440.6714160000006
+    },
+    {
+      "model": "openai/gpt-4o-mini-transcribe",
+      "trial": 1,
+      "repeat": 6,
+      "audio_seconds": 100.2,
+      "generation_id": "gen-stt-1788621113-SKiwXMZy4NgTah4Qhj7i",
+      "final_ms": 3341.689416999998,
+      "transcript": "Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429.",
+      "usage": {
+        "total_tokens": 1220,
+        "input_tokens": 1002,
+        "output_tokens": 218,
+        "cost": 0.0023425
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 3353.8566670000023
+    },
+    {
+      "model": "x-ai/grok-stt-1.0",
+      "trial": 1,
+      "repeat": 6,
+      "audio_seconds": 100.2,
+      "generation_id": "gen-stt-1788621116-ETiNf1FmD1Nrhpdaynul",
+      "final_ms": 1707.3124589999934,
+      "transcript": "Please move the voiceflow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine.",
+      "usage": {
+        "seconds": 100.2,
+        "cost": 0.0027833333333333334
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 1712.0599170000048
+    },
+    {
+      "model": "x-ai/grok-stt-1.0",
+      "trial": 2,
+      "repeat": 6,
+      "audio_seconds": 100.2,
+      "generation_id": "gen-stt-1788621118-ePyZzyWmRqJL2hCEP4Ds",
+      "final_ms": 1273.917124999997,
+      "transcript": "Please move the voiceflow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine. Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is seven four two nine.",
+      "usage": {
+        "seconds": 100.2,
+        "cost": 0.0027833333333333334
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 1278.480583000004
+    },
+    {
+      "model": "openai/gpt-4o-mini-transcribe",
+      "trial": 2,
+      "repeat": 6,
+      "audio_seconds": 100.2,
+      "generation_id": "gen-stt-1788621119-kz06o2RNf04OL9rVgOm1",
+      "final_ms": 3092.898500000004,
+      "transcript": "Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429.",
+      "usage": {
+        "total_tokens": 1220,
+        "input_tokens": 1002,
+        "output_tokens": 218,
+        "cost": 0.0023425
+      },
+      "normalized_wer": 0.0,
+      "elapsed_ms": 3104.5792920000113
+    }
+  ]
+}

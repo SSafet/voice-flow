@@ -4,14 +4,14 @@ import base64
 import json
 import os
 import sys
+import threading
 import wave
 
 import numpy as np
 
-from voice_flow.transcriber import Transcriber
-from voice_flow.cleaner import Cleaner
 from voice_flow.config import SAMPLE_RATE
 from voice_flow.openai_transcriber import OpenAITranscriber
+from voice_flow.speech_worker import SpeechWorker
 
 
 def _read_wav(path: str) -> np.ndarray:
@@ -26,153 +26,100 @@ def _decode_b64_pcm(b64: str) -> np.ndarray:
     return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32767.0
 
 
+_output_lock = threading.Lock()
+
+
 def _send(msg: dict):
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
+    with _output_lock:
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+
+class RequestHandler:
+    def __init__(self):
+        self.openai_transcriber = OpenAITranscriber()
+
+    def __call__(self, cmd, emit):
+        action = cmd.get("cmd")
+        if action not in ("transcribe", "partial_transcribe"):
+            emit({"event": "error", "request_id": cmd.get("request_id"),
+                  "message": "Only API transcription is supported."})
+            return
+        partial = action == "partial_transcribe"
+        request_id = cmd.get("request_id")
+        audio_path = cmd.get("audio_path", "")
+
+        def result(text):
+            if partial:
+                emit({"event": "partial_result", "run_id": cmd.get("run_id"),
+                      "request_id": request_id, "text": text})
+            else:
+                emit({"event": "result", "request_id": request_id, "raw": text, "cleaned": text})
+
+        try:
+            if cmd.get("provider", "openai") != "openai":
+                raise ValueError("Local transcription was retired. Select OpenAI API in Settings.")
+            sample_rate = int(cmd.get("sample_rate", SAMPLE_RATE) or SAMPLE_RATE)
+            if sample_rate <= 0:
+                raise ValueError("Invalid audio sample rate")
+            if cmd.get("audio_b64"):
+                audio = _decode_b64_pcm(cmd["audio_b64"])
+            elif audio_path:
+                audio = _read_wav(audio_path)
+            else:
+                result("")
+                return
+            if len(audio) < sample_rate * (0.05 if partial else 0.1):
+                result("")
+                return
+            options = dict(
+                api_key=cmd.get("openai_api_key", ""), sample_rate=sample_rate,
+                vocabulary=cmd.get("vocabulary") or None,
+                wake_word=str(cmd.get("wake_word") or "").strip() or None,
+            )
+            if partial:
+                options.update(max_attempts=1, timeout_seconds=10)
+            else:
+                emit({"event": "status", "request_id": request_id, "message": "Transcribing with OpenAI..."})
+                options.update(
+                    on_delta=lambda text: emit({"event": "transcription_delta", "request_id": request_id, "text": text}),
+                    on_retry=lambda attempt, total: emit({
+                        "event": "status", "request_id": request_id,
+                        "message": f"Transcription interrupted — retrying ({attempt}/{total})...",
+                    }),
+                )
+            result(self.openai_transcriber.transcribe(audio, **options) or "")
+        except Exception as exc:
+            if partial:
+                result("")
+            else:
+                emit({"event": "error", "request_id": request_id, "message": str(exc)})
+        finally:
+            if audio_path:
+                try:
+                    os.unlink(audio_path)
+                except OSError:
+                    pass
 
 
 def main():
-    # Line-buffered stdout for real-time communication
     sys.stdout.reconfigure(line_buffering=True)
-
-    transcriber = Transcriber()
-    cleaner = Cleaner()
-    openai_transcriber = OpenAITranscriber()
-
+    worker = SpeechWorker(RequestHandler, _send)
     _send({"event": "ready"})
-
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            cmd = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        action = cmd.get("cmd")
-
-        if action == "load":
+    try:
+        for line in sys.stdin:
             try:
-                _send({"event": "status", "message": "Loading STT model..."})
-                transcriber.load()
-                _send({"event": "status", "message": "Loading cleanup LLM..."})
-                cleaner.load()
-                _send({"event": "loaded"})
-            except Exception as e:
-                _send({"event": "error", "message": str(e)})
-
-        elif action == "transcribe":
-            request_id = cmd.get("request_id")
-            audio_path = cmd.get("audio_path", "")
-            audio_b64 = cmd.get("audio_b64", "")
-            sample_rate = int(cmd.get("sample_rate", SAMPLE_RATE) or SAMPLE_RATE)
-            skip_cleanup = cmd.get("skip_cleanup", False)
-            provider = cmd.get("provider", "openai")
-            openai_api_key = cmd.get("openai_api_key", "")
-            vocabulary = cmd.get("vocabulary") or []
-            wake_word = str(cmd.get("wake_word") or "").strip() or None
-            try:
-                # Prefer base64 PCM (no file I/O), fall back to WAV path
-                if audio_b64:
-                    audio = _decode_b64_pcm(audio_b64)
-                elif audio_path:
-                    audio = _read_wav(audio_path)
-                else:
-                    _send({"event": "result", "request_id": request_id, "raw": "", "cleaned": ""})
-                    continue
-
-                if len(audio) < 1600:  # < 100ms at 16kHz
-                    _send({"event": "result", "request_id": request_id, "raw": "", "cleaned": ""})
-                    continue
-
-                if provider == "openai":
-                    _send({"event": "status", "message": "Transcribing with OpenAI..."})
-                    raw = openai_transcriber.transcribe(
-                        audio,
-                        api_key=openai_api_key,
-                        sample_rate=sample_rate,
-                        vocabulary=vocabulary or None,
-                        wake_word=wake_word,
-                        on_retry=lambda attempt, total: _send({
-                            "event": "status", "request_id": request_id,
-                            "message": f"Transcription interrupted — retrying ({attempt}/{total})...",
-                        }),
-                    )
-                else:
-                    if not transcriber.is_loaded:
-                        _send({"event": "status", "message": "Loading STT model..."})
-                    raw = transcriber.transcribe(audio, sample_rate=sample_rate)
-
-                if not raw:
-                    _send({"event": "result", "request_id": request_id, "raw": "", "cleaned": ""})
-                    continue
-
-                if provider == "openai":
-                    cleaned = raw
-                elif skip_cleanup:
-                    # Basic capitalization only — no LLM round-trip
-                    cleaned = raw.strip()
-                    if cleaned:
-                        cleaned = cleaned[0].upper() + cleaned[1:]
-                else:
-                    if not cleaner.is_loaded:
-                        _send({"event": "status", "message": "Loading cleanup LLM..."})
-                    cleaned = cleaner.clean(
-                        raw, vocabulary=vocabulary or None, wake_word=wake_word)
-
-                _send({"event": "result", "request_id": request_id, "raw": raw, "cleaned": cleaned})
-            except Exception as e:
-                _send({"event": "error", "request_id": request_id, "message": str(e)})
-            finally:
-                # Clean up temp file if WAV path was used
-                if audio_path:
-                    try:
-                        os.unlink(audio_path)
-                    except OSError:
-                        pass
-
-        elif action == "partial_transcribe":
-            run_id = cmd.get("run_id")
-            audio_b64 = cmd.get("audio_b64", "")
-            sample_rate = int(cmd.get("sample_rate", SAMPLE_RATE) or SAMPLE_RATE)
-            provider = cmd.get("provider", "openai")
-            openai_api_key = cmd.get("openai_api_key", "")
-            request_id = cmd.get("request_id", 0)
-            vocabulary = cmd.get("vocabulary") or []
-            wake_word = str(cmd.get("wake_word") or "").strip() or None
-            try:
-                if not audio_b64:
-                    _send({"event": "partial_result", "run_id": run_id, "text": "", "request_id": request_id})
-                    continue
-
-                audio = _decode_b64_pcm(audio_b64)
-                if len(audio) < 800:
-                    _send({"event": "partial_result", "run_id": run_id, "text": "", "request_id": request_id})
-                    continue
-
-                if provider == "openai":
-                    raw = openai_transcriber.transcribe(
-                        audio,
-                        api_key=openai_api_key,
-                        sample_rate=sample_rate,
-                        vocabulary=vocabulary or None,
-                        wake_word=wake_word,
-                        # A newer preview supersedes this one; do not hold up
-                        # the final dictation by retrying stale partial audio.
-                        max_attempts=1,
-                    )
-                else:
-                    if not transcriber.is_loaded:
-                        _send({"event": "status", "message": "Loading STT model..."})
-                    raw = transcriber.transcribe(audio, sample_rate=sample_rate)
-
-                _send({"event": "partial_result", "run_id": run_id, "text": raw or "", "request_id": request_id})
-            except Exception:
-                _send({"event": "partial_result", "run_id": run_id, "text": "", "request_id": request_id})
-
-        elif action == "ping":
-            _send({"event": "pong"})
+                cmd = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(cmd, dict):
+                continue
+            if cmd.get("cmd") == "ping":
+                _send({"event": "pong"})
+            else:
+                worker.submit(cmd)
+    finally:
+        worker.close()
 
 
 if __name__ == "__main__":

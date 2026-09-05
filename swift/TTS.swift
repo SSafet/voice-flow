@@ -115,7 +115,6 @@ private let TTSSampleRate: Double = 24_000
 private let TTSChannels: AVAudioChannelCount = 1
 private let TTSBytesPerFrame = 2
 private let TTSLiveChunkFrames: AVAudioFrameCount = 4_800
-private let TTSLiveStartupFrames: AVAudioFramePosition = 12_000
 private let OpenAITTSInputCharacterLimit = 4_096
 private let OpenAITTSChunkTargetCharacterLimit = 3_900
 
@@ -251,8 +250,12 @@ final class TTSController: NSObject {
     private var awaitingLiveText = false
     private var playbackTimer: Timer?
     private var scheduledBufferCount = 0
+    private var playbackGeneration: UInt64 = 0
     private var streamCompleted = false
     private var livePlaybackStarted = false
+    private var firstPCMAt: TimeInterval?
+    private var speechRequestedAt: TimeInterval = 0
+    private var startupWork: DispatchWorkItem?
     private var isPlaybackPaused = false
     private var playbackBaseFrameOffset: AVAudioFramePosition = 0
     private var cachedTotalFrames: AVAudioFramePosition = 0
@@ -354,6 +357,7 @@ final class TTSController: NSObject {
         }
 
         currentStreamSession = session
+        if speechRequestedAt == 0 { speechRequestedAt = ProcessInfo.processInfo.systemUptime }
         currentAudioSource = .live
         try ensureAudioEngineStarted()
         refreshPlaybackStatus()
@@ -374,6 +378,7 @@ final class TTSController: NSObject {
         stopPlaybackTimer()
         playerNode.stop()
         playerNode.reset()
+        playbackGeneration &+= 1
         scheduledBufferCount = 0
         playbackBaseFrameOffset = currentFrame
 
@@ -401,14 +406,16 @@ final class TTSController: NSObject {
     }
 
     func stop() {
+        activeRequestID = UUID()
+        resetStartup()
         if currentStreamSession != nil {
-            activeRequestID = UUID()
             currentStreamSession?.cancel()
             currentStreamSession = nil
             clearSpeechPlan()
             stopPlaybackTimer()
             playerNode.stop()
             playerNode.reset()
+            playbackGeneration &+= 1
             scheduledBufferCount = 0
             pendingPCMData.removeAll()
             streamCompleted = false
@@ -447,6 +454,7 @@ final class TTSController: NSObject {
         stopPlaybackTimer()
         playerNode.stop()
         playerNode.reset()
+        playbackGeneration &+= 1
         scheduledBufferCount = 0
         isPlaybackPaused = false
         playbackBaseFrameOffset = 0
@@ -530,11 +538,13 @@ final class TTSController: NSObject {
     func skipQueuedSpeech(to index: Int) {
         guard queuedSpeechActive, index >= 0, index < speechChunks.count else { return }
         activeRequestID = UUID()          // orphan the in-flight stream
+        resetStartup()
         currentStreamSession?.cancel()
         currentStreamSession = nil
         stopPlaybackTimer()
         playerNode.stop()
         playerNode.reset()
+        playbackGeneration &+= 1
         scheduledBufferCount = 0
         pendingPCMData.removeAll()
         currentPCMData.removeAll()
@@ -622,6 +632,17 @@ final class TTSController: NSObject {
 
     private func appendLivePCM(requestID: UUID, data: Data) {
         guard requestID == activeRequestID else { return }
+        guard !data.isEmpty else { return }
+        if firstPCMAt == nil {
+            firstPCMAt = ProcessInfo.processInfo.systemUptime
+            vflog("speech tts request=\(requestID) first_pcm_ms=\((firstPCMAt! - speechRequestedAt) * 1000)")
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.activeRequestID == requestID else { return }
+                self.startBufferedPlaybackIfPossible()
+            }
+            startupWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + SpeechStartupPolicy.graceSeconds, execute: work)
+        }
         currentPCMData.append(data)
         pendingPCMData.append(data)
         if isPlaybackPaused {
@@ -630,9 +651,19 @@ final class TTSController: NSObject {
         }
         schedulePendingLiveAudioIfPossible()
 
+        startBufferedPlaybackIfPossible()
+    }
+
+    private func startBufferedPlaybackIfPossible() {
+        guard !isPlaybackPaused else { return }
         let canStart = livePlaybackStarted || canStartLivePlayback()
         if !playerNode.isPlaying && scheduledBufferCount > 0 && canStart {
+            if !livePlaybackStarted {
+                vflog("speech tts request=\(activeRequestID) playback_start_ms=\((ProcessInfo.processInfo.systemUptime - speechRequestedAt) * 1000)")
+            }
             livePlaybackStarted = true
+            startupWork?.cancel()
+            startupWork = nil
             playerNode.play()
             startPlaybackTimer()
             setStatus(.playing, playbackMessage())
@@ -646,8 +677,15 @@ final class TTSController: NSObject {
     private func finishLiveStream(requestID: UUID, cacheURL: URL?) {
         guard requestID == activeRequestID else { return }
         currentStreamSession = nil
+        guard currentPCMData.count % TTSBytesPerFrame == 0 else {
+            fail(requestID: requestID, message: TTSError.invalidAudio.localizedDescription)
+            return
+        }
         if !isPlaybackPaused {
             schedulePendingLiveAudioIfPossible(flushAll: true)
+            // A short response may finish before any startup threshold. Flush
+            // and play it now; otherwise it could remain scheduled but silent.
+            startBufferedPlaybackIfPossible()
         }
 
         let nextIndex = activeSpeechChunkIndex + 1
@@ -817,7 +855,8 @@ final class TTSController: NSObject {
     private func schedulePendingLiveAudioIfPossible(flushAll: Bool = false) {
         let chunkBytes = Int(TTSLiveChunkFrames) * TTSBytesPerFrame
         while pendingPCMData.count >= chunkBytes || (flushAll && !pendingPCMData.isEmpty) {
-            let take = flushAll ? pendingPCMData.count : chunkBytes
+            let take = flushAll ? pendingPCMData.count - pendingPCMData.count % TTSBytesPerFrame : chunkBytes
+            guard take > 0 else { break }
             let chunk = Data(pendingPCMData.prefix(take))
             pendingPCMData.removeFirst(take)
             schedulePCMChunk(chunk)
@@ -844,9 +883,13 @@ final class TTSController: NSObject {
         }
 
         scheduledBufferCount += 1
+        let requestID = activeRequestID
+        let generation = playbackGeneration
         playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.async {
-                self?.handleScheduledBufferPlayed()
+                guard let self, self.activeRequestID == requestID,
+                      self.playbackGeneration == generation else { return }
+                self.handleScheduledBufferPlayed()
             }
         }
     }
@@ -912,6 +955,7 @@ final class TTSController: NSObject {
         stopPlaybackTimer()
         playerNode.stop()
         playerNode.reset()
+        playbackGeneration &+= 1
         scheduledBufferCount = 0
         streamCompleted = false
         isPlaybackPaused = false
@@ -1024,7 +1068,10 @@ final class TTSController: NSObject {
         let receivedFrames = AVAudioFramePosition(currentPCMData.count / TTSBytesPerFrame)
         let playedFrames = min(playbackFramePosition(), receivedFrames)
         let bufferedFrames = max(0, receivedFrames - playedFrames)
-        return bufferedFrames >= TTSLiveStartupFrames
+        return SpeechStartupPolicy.canStart(
+            bufferedSeconds: Double(bufferedFrames) / TTSSampleRate,
+            elapsed: firstPCMAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0,
+            complete: false)
     }
 
     private func playCachedAudio(from url: URL, startAtFrame: AVAudioFramePosition, autoPlay: Bool) throws {
@@ -1044,6 +1091,7 @@ final class TTSController: NSObject {
 
         playerNode.stop()
         playerNode.reset()
+        playbackGeneration &+= 1
         stopPlaybackTimer()
         scheduledBufferCount = 0
         playbackBaseFrameOffset = clampedStartFrame
@@ -1061,9 +1109,13 @@ final class TTSController: NSObject {
         }
 
         scheduledBufferCount = 1
+        let requestID = activeRequestID
+        let generation = playbackGeneration
         playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.async {
-                self?.handleScheduledBufferPlayed()
+                guard let self, self.activeRequestID == requestID,
+                      self.playbackGeneration == generation else { return }
+                self.handleScheduledBufferPlayed()
             }
         }
 
@@ -1077,12 +1129,14 @@ final class TTSController: NSObject {
     }
 
     private func discardCurrentAudio() {
+        resetStartup()
         currentStreamSession?.cancel()
         currentStreamSession = nil
         clearSpeechPlan()
         stopPlaybackTimer()
         playerNode.stop()
         playerNode.reset()
+        playbackGeneration &+= 1
         scheduledBufferCount = 0
         currentCacheURL = nil
         currentAudioSource = .none
@@ -1095,7 +1149,16 @@ final class TTSController: NSObject {
         cachedTotalFrames = 0
     }
 
+    private func resetStartup() {
+        startupWork?.cancel()
+        startupWork = nil
+        firstPCMAt = nil
+        speechRequestedAt = 0
+        livePlaybackStarted = false
+    }
+
     private func clearSpeechPlan() {
+        resetStartup()
         queuedSpeechActive = false
         queuedChunkFrames.removeAll()
         lastAnnouncedQueuedChunk = nil

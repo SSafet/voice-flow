@@ -1,0 +1,73 @@
+{
+  "kind": "live API, alternating paired requests; synthetic English only",
+  "audio_seconds": 43.65,
+  "input": "Please move the design review to Thursday afternoon and invite the product team. We need to discuss the new navigation, confirm the delivery date, and check the remaining accessibility issues. The first milestone is a working prototype. The second milestone is a complete test with keyboard navigation. Keep the existing customer data intact and make sure every error has a clear recovery action. After the review, write a short summary with the decisions, the owners, and the next steps. Do not send the release announcement until the final checks pass. The project name is Voice Flow. The final confirmation code is seven four two nine.",
+  "runs": [
+    {
+      "pair": 0,
+      "mode": "batch",
+      "first_text_ms": 1638.5424574837089,
+      "final_ms": 1638.5424574837089,
+      "transcript": "Please move the design review to Thursday afternoon and invite the product team. We need to discuss the new navigation, confirm the delivery date, and check the remaining accessibility issues. The first milestone is a working prototype. The second milestone is a complete test with keyboard navigation. Keep the existing customer data intact and make sure every error has a clear recovery action. After the review, write a short summary with the decisions, the owners, and the next steps. Do not send the release announcement until the final checks pass. The project name is VoiceFlow. The final confirmation code is 7429.",
+      "word_count": 101,
+      "normalized_exact_match": true,
+      "normalized_wer": 0.0
+    },
+    {
+      "pair": 0,
+      "mode": "stream",
+      "first_text_ms": 928.7985414266586,
+      "final_ms": 1425.1591255888343,
+      "transcript": "Please move the design review to Thursday afternoon and invite the product team. We need to discuss the new navigation, confirm the delivery date, and check the remaining accessibility issues. The first milestone is a working prototype. The second milestone is a complete test with keyboard navigation. Keep the existing customer data intact and make sure every error has a clear recovery action. After the review, write a short summary with the decisions, the owners, and the next steps. Do not send the release announcement until the final check is passed. The project name is Voiceflow. The final confirmation code is 7429.",
+      "word_count": 102,
+      "normalized_exact_match": false,
+      "normalized_wer": 0.0297029702970297
+    },
+    {
+      "pair": 1,
+      "mode": "stream",
+      "first_text_ms": 1228.732792660594,
+      "final_ms": 1741.3281258195639,
+      "transcript": "Please move the design review to Thursday afternoon and invite the product team. We need to discuss the new navigation, confirm the delivery date, and check the remaining accessibility issues. The first milestone is a working prototype. The second milestone is a complete test with keyboard navigation. Keep the existing customer data intact and make sure every error has a clear recovery action. After the review, write a short summary with the decisions, the owners, and the next steps. Do not send the release announcement until the final check is passed. The project name is VoiceFlow. The final confirmation code is 7429.",
+      "word_count": 102,
+      "normalized_exact_match": false,
+      "normalized_wer": 0.0297029702970297
+    },
+    {
+      "pair": 1,
+      "mode": "batch",
+      "first_text_ms": 1428.048875182867,
+      "final_ms": 1428.048875182867,
+      "transcript": "Please move the design review to Thursday afternoon and invite the product team. We need to discuss the new navigation, confirm the delivery date, and check the remaining accessibility issues. The first milestone is a working prototype. The second milestone is a complete test with keyboard navigation. Keep the existing customer data intact and make sure every error has a clear recovery action. After the review, write a short summary with the decisions, the owners, and the next steps. Do not send the release announcement until the final check is passed. The project name is VoiceFlow. The final confirmation code is 7429.",
+      "word_count": 102,
+      "normalized_exact_match": false,
+      "normalized_wer": 0.0297029702970297
+    },
+    {
+      "pair": 2,
+      "mode": "batch",
+      "first_text_ms": 1601.2953342869878,
+      "final_ms": 1601.2953342869878,
+      "transcript": "Please move the design review to Thursday afternoon and invite the product team. We need to discuss the new navigation, confirm the delivery date, and check the remaining accessibility issues. The first milestone is a working prototype. The second milestone is a complete test with keyboard navigation. Keep the existing customer data intact and make sure every error has a clear recovery action. After the review, write a short summary with the decisions, the owners, and the next steps. Do not send the release announcement until the final check is passed. The project name is VoiceFlow. The final confirmation code is 7429.",
+      "word_count": 102,
+      "normalized_exact_match": false,
+      "normalized_wer": 0.0297029702970297
+    },
+    {
+      "pair": 2,
+      "mode": "stream",
+      "first_text_ms": 943.7893331050873,
+      "final_ms": 1448.30537494272,
+      "transcript": "Please move the design review to Thursday afternoon and invite the product team. We need to discuss the new navigation, confirm the delivery date, and check the remaining accessibility issues. The first milestone is a working prototype. The second milestone is a complete test with keyboard navigation. Keep the existing customer data intact and make sure every error has a clear recovery action. After the review, write a short summary with the decisions, the owners, and the next steps. Do not send the release announcement until the final checks pass. The project name is Voiceflow. The final confirmation code is 7429.",
+      "word_count": 101,
+      "normalized_exact_match": true,
+      "normalized_wer": 0.0
+    }
+  ],
+  "batch_first_text_median_ms": 1601.2953342869878,
+  "batch_final_median_ms": 1601.2953342869878,
+  "stream_first_text_median_ms": 943.7893331050873,
+  "stream_final_median_ms": 1448.30537494272,
+  "batch_mean_normalized_wer": 0.019801980198019802,
+  "stream_mean_normalized_wer": 0.019801980198019802
+}

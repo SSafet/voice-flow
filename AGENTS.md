@@ -5,6 +5,19 @@ A native macOS menu-bar app for **voice dictation**, **text-to-speech**, and an
 windows); dictation transcription runs in a bundled Python backend driven over a
 subprocess pipe.
 
+## API speech performance
+
+Speech is API-only. Legacy `local` dictation settings migrate to OpenAI; MLX is no
+longer a default dependency. Final STT uses SSE from the completed-recording API:
+provisional text is not displayed (the brief pre-paste preview was removed after
+user feedback); `done` is the sole final-delivery authority.
+`SpeechWorker` bounds/coalesces the dormant preview lane independently of finals;
+the old 1.5-second partial timer currently has no caller. TTS uses a guarded PCM
+startup (500 ms buffered, or 200 ms after a 220 ms arrival grace), with immediate
+flush/play for short completed responses. Do not lower buffers without checking
+starvation on real arrival traces. Run `./scripts/test-speech.sh` and see
+`design/speech-performance/review.md` for measurements and reproducible API probes.
+
 ## Build & run
 
 ```bash

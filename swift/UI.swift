@@ -2258,13 +2258,15 @@ class FloatingTranscriptPanel {
 
     func hide() {
         guard let p = panel else { return }
+        // Release ownership now: a new stream can show during the fade without
+        // the old completion clearing the new panel and its text label.
+        panel = nil
+        textLabel = nil
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.15
             p.animator().alphaValue = 0
         }, completionHandler: {
             p.orderOut(nil)
-            self.panel = nil
-            self.textLabel = nil
         })
     }
 }

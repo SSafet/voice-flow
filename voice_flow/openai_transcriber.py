@@ -31,6 +31,8 @@ class OpenAITranscriber:
         wake_word: str | None = None,
         max_attempts: int = 3,
         on_retry: Callable[[int, int], None] | None = None,
+        on_delta: Callable[[str], None] | None = None,
+        timeout_seconds: float = 90,
     ) -> str:
         if not api_key.strip():
             raise ValueError("Missing OpenAI API key")
@@ -42,6 +44,8 @@ class OpenAITranscriber:
             "model": self.model_name,
             "response_format": "json",
         }
+        if on_delta is not None:
+            fields["stream"] = "true"
         prompt = _transcription_prompt(vocabulary, wake_word)
         if prompt:
             fields["prompt"] = prompt
@@ -70,8 +74,9 @@ class OpenAITranscriber:
         attempts = max(1, min(max_attempts, 3))
         for attempt in range(1, attempts + 1):
             try:
-                with urllib.request.urlopen(request, timeout=90) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
+                with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                    payload = (_read_transcript_stream(response, on_delta) if on_delta is not None
+                               else json.loads(response.read().decode("utf-8")))
                 break
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")
@@ -90,6 +95,8 @@ class OpenAITranscriber:
                     reason = getattr(exc, "reason", str(exc))
                     raise RuntimeError(
                         f"OpenAI transcription failed after {attempt} attempt(s): {reason}") from exc
+            if on_delta is not None:
+                on_delta("")  # Reset provisional text before replaying the saved audio.
             if on_retry:
                 on_retry(attempt + 1, attempts)
             time.sleep(attempt)
@@ -100,6 +107,35 @@ class OpenAITranscriber:
         if _is_prompt_echo(text, vocabulary, wake_word):
             return ""
         return text
+
+
+def _read_transcript_stream(response, on_delta) -> dict:
+    """SSE frames are line-delimited, not TCP-chunk-delimited. Only done commits.
+
+    The callback receives replacement text, so retries cannot duplicate a prefix.
+    An interrupted stream is a transport failure and uses the existing retry path.
+    """
+    text = ""
+    event_lines = []
+    for raw in response:
+        line = raw.decode("utf-8").rstrip("\r\n")
+        if line.startswith("data:"):
+            event_lines.append(line[5:].lstrip())
+        elif not line and event_lines:
+            data = "\n".join(event_lines)
+            event_lines = []
+            if data == "[DONE]":
+                break
+            event = json.loads(data)
+            kind = event.get("type")
+            if kind == "transcript.text.delta":
+                text += event.get("delta", "")
+                on_delta(text)
+            elif kind == "transcript.text.done":
+                return {"text": event.get("text", text)}
+            elif kind == "error":
+                raise RuntimeError("OpenAI transcription stream failed: " + str(event.get("message", "unknown error")))
+    raise http.client.IncompleteRead(b"", None)
 
 
 def _normalize(s: str) -> str:

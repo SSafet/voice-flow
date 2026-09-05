@@ -1,0 +1,99 @@
+{
+  "file": [
+    {
+      "model": "gpt-4o-mini-transcribe",
+      "audio_seconds": 16.7,
+      "trials": 2,
+      "successful": 2,
+      "successful_median_final_ms": 695.9749585948884,
+      "normalized_wer": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "model": "gpt-4o-mini-transcribe",
+      "audio_seconds": 100.2,
+      "trials": 2,
+      "successful": 2,
+      "successful_median_final_ms": 2877.8888951055706,
+      "normalized_wer": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "model": "gpt-4o-transcribe",
+      "audio_seconds": 16.7,
+      "trials": 2,
+      "successful": 2,
+      "successful_median_final_ms": 823.0397296138108,
+      "normalized_wer": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "model": "gpt-4o-transcribe",
+      "audio_seconds": 100.2,
+      "trials": 2,
+      "successful": 2,
+      "successful_median_final_ms": 2361.225896514952,
+      "normalized_wer": [
+        0.8333333333333334,
+        0.8333333333333334
+      ]
+    },
+    {
+      "model": "gpt-transcribe",
+      "audio_seconds": 16.7,
+      "trials": 2,
+      "successful": 2,
+      "successful_median_final_ms": 875.6315410137177,
+      "normalized_wer": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "model": "gpt-transcribe",
+      "audio_seconds": 100.2,
+      "trials": 2,
+      "successful": 2,
+      "successful_median_final_ms": 3962.7294577658176,
+      "normalized_wer": [
+        0.16666666666666666,
+        0.16666666666666666
+      ]
+    }
+  ],
+  "realtime": [
+    {
+      "model": "gpt-live-transcribe",
+      "audio_seconds": 16.7,
+      "trials": 3,
+      "successful": 2,
+      "successful_median_final_ms": 718.1369797326624,
+      "normalized_wer": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "model": "gpt-live-transcribe",
+      "audio_seconds": 100.2,
+      "trials": 1,
+      "successful": 1,
+      "successful_median_final_ms": 625.5577923730016,
+      "normalized_wer": [
+        0.0
+      ]
+    }
+  ],
+  "limitations": [
+    "Synthetic repeated English, not a representative quality corpus",
+    "File N=2 per model/duration; live N=3 short, N=1 long",
+    "API final latency excludes paste/UI and live setup occurs before audio pacing",
+    "One live timeout was preserved; cause unclassified"
+  ]
+}

@@ -57,8 +57,6 @@ def _run(command, cloud=_OpenAI):
     stdin = io.StringIO(json.dumps(command) + "\n")
     stdout = _Output()
     with (
-        mock.patch.object(backend, "Transcriber", _Local),
-        mock.patch.object(backend, "Cleaner", _Cleaner),
         mock.patch.object(backend, "OpenAITranscriber", cloud),
         mock.patch.object(sys, "stdin", stdin),
         mock.patch.object(sys, "stdout", stdout),
@@ -105,15 +103,11 @@ class BackendProtocolTests(unittest.TestCase):
         })
         self.assertEqual(_OpenAI.last_kwargs["wake_word"], "FLORA")
 
-    def test_wake_word_reaches_local_cleanup(self):
-        _run({
-            "cmd": "transcribe",
-            "request_id": "run-local-wake",
-            "audio_b64": _audio(),
-            "provider": "local",
-            "wake_word": "FLORA",
-        })
-        self.assertEqual(_Cleaner.last_kwargs["wake_word"], "FLORA")
+    def test_retired_local_provider_fails_visibly(self):
+        events = _run({"cmd": "transcribe", "request_id": "old-local", "provider": "local", "audio_b64": _audio()})
+        error = next(e for e in events if e["event"] == "error")
+        self.assertEqual(error["request_id"], "old-local")
+        self.assertIn("retired", error["message"])
 
     def test_cloud_prompt_preserves_exact_wake_script(self):
         prompt = _transcription_prompt(["Anthropic"], "FLORA")
@@ -150,7 +144,7 @@ class BackendProtocolTests(unittest.TestCase):
                     return
                 self.send_response(200)
                 self.end_headers()
-                self.wfile.write(b'{"text":"Recovered long dictation"}')
+                self.wfile.write(b'data: {"type":"transcript.text.done","text":"Recovered long dictation"}\n\n')
 
             def log_message(self, *args):
                 pass
@@ -218,7 +212,7 @@ class TranscriptionRetryTests(unittest.TestCase):
                            "provider": "openai", "openai_api_key": "test", "audio_b64": _audio()},
                           cloud=OpenAITranscriber)
         self.assertEqual(request.call_count, 1)
-        self.assertEqual(events[-1], {"event": "partial_result", "run_id": "run", "request_id": 1, "text": ""})
+        self.assertEqual(next(e for e in events if e["event"] == "partial_result"), {"event": "partial_result", "run_id": "run", "request_id": 1, "text": ""})
 
 
 if __name__ == "__main__":

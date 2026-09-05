@@ -1,0 +1,1471 @@
+{
+  "kind": "exploratory live API test; synthetic repeated English, not production quality evidence",
+  "reference": "Please move the Voice Flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is seven four two nine.",
+  "fixture_sha256": "c3002f65d0f924d5c00a3ea5849fe14fe84f746458e92b9de1885777546aca2f",
+  "fixture_seconds": 16.7,
+  "file": [
+    {
+      "model": "gpt-4o-mini-transcribe",
+      "trial": 0,
+      "audio_seconds": 16.7,
+      "final_ms": 712.8515830263495,
+      "first_text_ms": 587.9018744453788,
+      "transcript": "Please move the VoiceFlow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429.",
+      "normalized_wer": 0.0
+    },
+    {
+      "model": "gpt-transcribe",
+      "trial": 0,
+      "audio_seconds": 16.7,
+      "final_ms": 910.3810405358672,
+      "first_text_ms": 794.8140827938914,
+      "transcript": "Please move the voice flow design review to Thursday afternoon keep the existing customer data intact check keyboard navigation and confirm every recovery action the final confirmation code is seven four two nine.",
+      "normalized_wer": 0.0
+    },
+    {
+      "model": "gpt-4o-transcribe",
+      "trial": 0,
+      "audio_seconds": 16.7,
+      "final_ms": 874.6250001713634,
+      "first_text_ms": 470.87204176932573,
+      "transcript": "Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is seven-four-two-nine.",
+      "normalized_wer": 0.0
+    },
+    {
+      "model": "gpt-4o-transcribe",
+      "trial": 1,
+      "audio_seconds": 16.7,
+      "final_ms": 771.4544590562582,
+      "first_text_ms": 471.23395930975676,
+      "transcript": "Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429.",
+      "normalized_wer": 0.0
+    },
+    {
+      "model": "gpt-transcribe",
+      "trial": 1,
+      "audio_seconds": 16.7,
+      "final_ms": 840.8820414915681,
+      "first_text_ms": 632.025333121419,
+      "transcript": "Please move the voice flow design review to Thursday afternoon keep the existing customer data intact check keyboard navigation and confirm every recovery action the final confirmation code is seven four two nine.",
+      "normalized_wer": 0.0
+    },
+    {
+      "model": "gpt-4o-mini-transcribe",
+      "trial": 1,
+      "audio_seconds": 16.7,
+      "final_ms": 679.0983341634274,
+      "first_text_ms": 549.244542606175,
+      "transcript": "Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact, check keyboard navigation, and confirm every recovery action. The final confirmation code is 7429.",
+      "normalized_wer": 0.0
+    },
+    {
+      "model": "gpt-4o-mini-transcribe",
+      "trial": 0,
+      "audio_seconds": 100.2,
+      "final_ms": 2808.679207228124,
+      "first_text_ms": 1874.7166246175766,
+      "transcript": "Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429.",
+      "normalized_wer": 0.0
+    },
+    {
+      "model": "gpt-transcribe",
+      "trial": 0,
+      "audio_seconds": 100.2,
+      "final_ms": 3871.2034579366446,
+      "first_text_ms": 2249.8358748853207,
+      "transcript": "Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine.",
+      "normalized_wer": 0.16666666666666666
+    },
+    {
+      "model": "gpt-4o-transcribe",
+      "trial": 0,
+      "audio_seconds": 100.2,
+      "final_ms": 2681.871583685279,
+      "first_text_ms": 2394.228874705732,
+      "transcript": "Please move the VoiceFlow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429.",
+      "normalized_wer": 0.8333333333333334
+    },
+    {
+      "model": "gpt-4o-transcribe",
+      "trial": 1,
+      "audio_seconds": 100.2,
+      "final_ms": 2040.5802093446255,
+      "first_text_ms": 1634.1358749195933,
+      "transcript": "Please move the VoiceFlow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429.",
+      "normalized_wer": 0.8333333333333334
+    },
+    {
+      "model": "gpt-transcribe",
+      "trial": 1,
+      "audio_seconds": 100.2,
+      "final_ms": 4054.2554575949907,
+      "first_text_ms": 2377.5952076539397,
+      "transcript": "Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine. Please move the voice flow design review to Thursday afternoon, keep the existing customer data intact, check keyboard navigation, and confirm every recovery action, the final confirmation code is seven four two nine.",
+      "normalized_wer": 0.16666666666666666
+    },
+    {
+      "model": "gpt-4o-mini-transcribe",
+      "trial": 1,
+      "audio_seconds": 100.2,
+      "final_ms": 2947.098582983017,
+      "first_text_ms": 1949.9120423570275,
+      "transcript": "Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429. Please move the voice flow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is 7429.",
+      "normalized_wer": 0.0
+    }
+  ],
+  "realtime": [
+    {
+      "model": "gpt-live-transcribe",
+      "delay": "medium",
+      "trial": 0,
+      "audio_seconds": 16.7,
+      "setup_ms": 735.8919167891145,
+      "first_delta_ms": 2552.6676243171096,
+      "transcript": "Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is seven four two nine.",
+      "completed_at_ms": 18171.143542043865,
+      "release_to_final_ms": 734.3312501907349,
+      "first_text_before_release": true,
+      "events": [
+        {
+          "type": "session.created",
+          "at_ms": 568.9589167013764
+        },
+        {
+          "type": "session.updated",
+          "at_ms": 735.7184169813991
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 2552.665874361992
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 2952.727999538183
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 3165.927750058472
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 3759.911666624248
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 3956.4214572310448
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 4572.86970783025
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 4758.522207848728
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 5155.90679179877
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 5749.725749716163
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 6159.3569573014975
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 7163.822582922876
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 7175.018332898617
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 7354.688041843474
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 7765.131291933358
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 8350.073332898319
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 8556.311499327421
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 9169.64945755899
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 10159.241207875311
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 10171.728374436498
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 10563.044166192412
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 11156.974624842405
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 11562.203457579017
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 12154.512291774154
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 12756.128124892712
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 13553.200374357402
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 13760.677624493837
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 14357.300124131143
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 14368.573375046253
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 14758.149874396622
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 15384.946499951184
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 15758.291416801512
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 15959.294541738927
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 17158.73504150659
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 17357.310791499913
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 17557.320499792695
+        },
+        {
+          "type": "input_audio_buffer.committed",
+          "at_ms": 17600.185707211494
+        },
+        {
+          "type": "conversation.item.added",
+          "at_ms": 17600.226249545813
+        },
+        {
+          "type": "conversation.item.done",
+          "at_ms": 17600.857666693628
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 17758.931832388043
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 17771.978124976158
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.completed",
+          "at_ms": 18171.135124750435
+        }
+      ],
+      "normalized_wer": 0.0
+    },
+    {
+      "model": "gpt-live-transcribe",
+      "delay": "medium",
+      "trial": 1,
+      "audio_seconds": 16.7,
+      "error": "RuntimeError: hon.framework/Versions/3.11/lib/python3.11/asyncio/locks.py\", line 213, in wait\n    await fut\nasyncio.exceptions.CancelledError\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/safet/repos/voice-flow/tests/speech_performance/model_comparison.py\", line 97, in <module>\n    print(json.dumps(asyncio.run(realtime(pcm*int(sys.argv[-1]),key))))\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.11/3.11.14_1/Frameworks/Python.framework/Versions/3.11/lib/python3.11/asyncio/runners.py\", line 190, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.11/3.11.14_1/Frameworks/Python.framework/Versions/3.11/lib/python3.11/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.11/3.11.14_1/Frameworks/Python.framework/Versions/3.11/lib/python3.11/asyncio/base_events.py\", line 654, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/Users/safet/repos/voice-flow/tests/speech_performance/model_comparison.py\", line 55, in realtime\n    await asyncio.wait_for(final.wait(),30)\n  File \"/opt/homebrew/Cellar/python@3.11/3.11.14_1/Frameworks/Python.framework/Versions/3.11/lib/python3.11/asyncio/tasks.py\", line 502, in wait_for\n    raise exceptions.TimeoutError() from exc\nTimeoutError\n"
+    },
+    {
+      "model": "gpt-live-transcribe",
+      "delay": "medium",
+      "trial": 0,
+      "audio_seconds": 100.2,
+      "setup_ms": 1845.5801252275705,
+      "first_delta_ms": 3600.7395004853606,
+      "transcript": "Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is seven four two nine. Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is seven four two nine. Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is seven four two nine. Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is seven four two nine. Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is seven four two nine. Please move the Voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is seven four two nine.",
+      "completed_at_ms": 102672.16512560844,
+      "release_to_final_ms": 625.5577923730016,
+      "first_text_before_release": true,
+      "events": [
+        {
+          "type": "session.created",
+          "at_ms": 1213.8706669211388
+        },
+        {
+          "type": "session.updated",
+          "at_ms": 1845.4413330182433
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 3600.735083222389
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 3995.2962500974536
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 4200.870541855693
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 4792.839208617806
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 4994.486750103533
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 5594.82108335942
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 5792.720625177026
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 6189.940792508423
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 6800.111625343561
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 7200.943416915834
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 8196.137083694339
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 8206.834667362273
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 8389.47429228574
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 9003.906874917448
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 9595.705583691597
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 9794.709250330925
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 10205.136250704527
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 11204.17287480086
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 11215.285208076239
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 11637.94512487948
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 12392.708499915898
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 12791.746375150979
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 13189.486125484109
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 13799.560791812837
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 14589.449292048812
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 14793.510667048395
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 15404.537667520344
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 15415.570083074272
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 15795.70629261434
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 16400.014458224177
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 16796.996125020087
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 16996.867833659053
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 18199.602374807
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 18386.58891711384
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 18592.000207863748
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 18791.901292279363
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 18802.94904205948
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 20190.51833357662
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 20610.816000029445
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 20800.842666998506
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 21392.179500311613
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 21403.943332843482
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 21805.214375257492
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 22394.774375483394
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 22797.49408364296
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 23399.27662536502
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 23797.298333607614
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 24803.291874937713
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 24806.38620816171
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 25004.540417343378
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 25604.120874777436
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 26188.814458437264
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 26404.782583005726
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 26794.362667016685
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 27792.382958345115
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 27807.038917206228
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 28397.013500332832
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 29012.544167228043
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 29397.434500046074
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 29995.701792649925
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 30388.30658327788
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 30996.565791778266
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 31397.29370828718
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 31996.107541956007
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 32011.0188331455
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 32402.837458066642
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 32990.87508302182
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 33390.66108316183
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 33595.85095848888
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 34195.982083678246
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 34804.45025023073
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 34992.69908294082
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 35192.544458433986
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 35205.20962495357
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 36998.36700037122
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 37441.90266728401
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 37594.49141751975
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 38191.31770823151
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 38203.369458206
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 38596.465333364904
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 38996.06129247695
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 39396.51929214597
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 39995.89591752738
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 40592.65954233706
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 41395.473583601415
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 41404.88108340651
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 41597.60516695678
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 42196.830375120044
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 42804.372125305235
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 42990.67870806903
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 43604.00220844895
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 44597.94387500733
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 44604.4106669724
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 45004.16129268706
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 45629.06604260206
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 46007.85016734153
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 46591.44845791161
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 47198.14045820385
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 47595.97533289343
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 47996.39958329499
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 48797.671999782324
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 48811.369666829705
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 49196.82908337563
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 49812.63766717166
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 50198.08708317578
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 50396.92350011319
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 50851.86483338475
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 51400.074208155274
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 51595.87770793587
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 51995.803417637944
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 52007.65083357692
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 53598.26004225761
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 54030.04954196513
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 54192.71929189563
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 54849.22175016254
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 54849.22920819372
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 55191.27900060266
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 55609.377916902304
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 55994.928625412285
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 56592.37300045788
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 57194.657042622566
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 58196.66033331305
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 58206.06158301234
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 58398.61650019884
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 58999.67837519944
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 59397.35587500036
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 59596.32770810276
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 60204.271958209574
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 61197.5396675989
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 61202.46041752398
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 61812.537792138755
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 62396.534292027354
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 62792.85108298063
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 63400.65158344805
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 63802.043749950826
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 64196.823875419796
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 64610.653541982174
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 65393.624333664775
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 65404.141374863684
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 65797.82216716558
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 66397.15245831758
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 66812.66829185188
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 67015.13495855033
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 67597.36487548798
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 67995.03308348358
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 68199.20716714114
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 68592.07158349454
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 68606.69387504458
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 70394.68858297914
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 70596.72966692597
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 70805.31695857644
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 71396.20216749609
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 71405.71358334273
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 71803.1154582277
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 72192.65183340758
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 72797.28754237294
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 73392.90912542492
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 73992.97287501395
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 74790.99070839584
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 74805.42783346027
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 75002.5022085756
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 75597.89629187435
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 76194.21283341944
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 76392.72799994797
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 76793.96941699088
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 77797.75933362544
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 77808.47800057381
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 78400.13091731817
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 78992.82604269683
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 79394.29041743279
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 79994.1873755306
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 80396.61275036633
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 80992.5029585138
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 81450.52479207516
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 82206.51174988598
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 82221.14008292556
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 82603.68049982935
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 83205.03650046885
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 83421.38633318245
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 83596.2468329817
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 84211.89845819026
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 84793.68358291686
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 84995.68425025791
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 85202.08512526006
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 85214.22412525862
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 86999.05404262245
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 87393.38395837694
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 87595.7285836339
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 88192.10308324546
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 88213.04062567651
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 88594.94649991393
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 88997.64616694301
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 89389.05991706997
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 89995.34212518483
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 90596.5312924236
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 91589.3862079829
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 91605.41900061071
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 91804.43804245442
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 92204.96104191989
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 92795.35545781255
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 92997.65087477863
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 93589.54783342779
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 94601.38762556016
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 94611.7447083816
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 95199.92287550122
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 95804.11341693252
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 95992.51620844007
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 96589.60295841098
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 97195.50645817071
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 97599.11820851266
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 98013.70504219085
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 98792.02829208225
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 98809.71537530422
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 99200.20354259759
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 99804.23799995333
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 100205.0722502172
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 100393.03224999458
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 100797.29500040412
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 101401.53008326888
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 101596.5233752504
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 101799.33470860124
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 101813.43945860863
+        },
+        {
+          "type": "input_audio_buffer.committed",
+          "at_ms": 102229.78449985385
+        },
+        {
+          "type": "conversation.item.added",
+          "at_ms": 102230.02654220909
+        },
+        {
+          "type": "conversation.item.done",
+          "at_ms": 102231.38270806521
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.completed",
+          "at_ms": 102672.16008342803
+        }
+      ],
+      "normalized_wer": 0.0
+    },
+    {
+      "model": "gpt-live-transcribe",
+      "delay": "medium",
+      "trial": 2,
+      "audio_seconds": 16.7,
+      "diagnostic_followup": true,
+      "setup_ms": 783.3696659654379,
+      "first_delta_ms": 2539.1128323972225,
+      "transcript": "Please move the voiceflow design review to Thursday afternoon. Keep the existing customer data intact. Check keyboard navigation and confirm every recovery action. The final confirmation code is seven four two nine.",
+      "completed_at_ms": 18186.557332985103,
+      "release_to_final_ms": 701.94270927459,
+      "first_text_before_release": true,
+      "events": [
+        {
+          "type": "session.created",
+          "at_ms": 602.9746243730187,
+          "item_id": null
+        },
+        {
+          "type": "session.updated",
+          "at_ms": 783.2332076504827,
+          "item_id": null
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 2539.1076244413853,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 2943.1759575381875,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 3135.021290741861,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 3543.112540617585,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 3943.1876661255956,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 4545.7072500139475,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 4737.186375074089,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 5160.275707952678,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 5539.129165932536,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 6145.6594578921795,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 7154.240165837109,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 7358.898458071053,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 7553.299457766116,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 7945.809374563396,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 8536.532749421895,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 8749.404041096568,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 9145.052500069141,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 10144.17695812881,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 10160.68720817566,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 10741.736374795437,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 11343.341832980514,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 11748.041957616806,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 12346.285332925618,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 12757.869582623243,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 13536.119500175118,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 13743.29200014472,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 14343.841291032732,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 14353.873957879841,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 14746.534625068307,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 15340.496082790196,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 15751.033457927406,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 15952.192041091621,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 17331.602375023067,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 17544.394499622285,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "input_audio_buffer.committed",
+          "at_ms": 17651.932083070278,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.added",
+          "at_ms": 17651.959541253746,
+          "item_id": null
+        },
+        {
+          "type": "conversation.item.done",
+          "at_ms": 17651.980540715158,
+          "item_id": null
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 17743.29258315265,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 17819.0045831725,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.delta",
+          "at_ms": 17830.769415944815,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        },
+        {
+          "type": "conversation.item.input_audio_transcription.completed",
+          "at_ms": 18186.554165557027,
+          "item_id": "item_EKjnn1oYr5v5N6EXOFsgj"
+        }
+      ],
+      "normalized_wer": 0.0
+    }
+  ],
+  "scoring": "case/punctuation insensitive, Voice Flow collapsed, spoken or hyphenated seven-four-two-nine normalized to 7429; v2"
+}

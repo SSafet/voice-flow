@@ -1,0 +1,42 @@
+{
+  "kind": "replay of identical live PCM arrival traces, not acoustic measurement",
+  "policy": "200ms audio plus 220ms arrival grace, or 500ms audio",
+  "runs": [
+    {
+      "old_start_ms": 1990.228,
+      "guarded_start_ms": 1839.412,
+      "saving_ms": 150.81600000000003,
+      "guarded_starvations": [],
+      "old_starvations": []
+    },
+    {
+      "old_start_ms": 1158.687,
+      "guarded_start_ms": 1024.769,
+      "saving_ms": 133.9179999999999,
+      "guarded_starvations": [],
+      "old_starvations": []
+    },
+    {
+      "old_start_ms": 733.782,
+      "guarded_start_ms": 703.649,
+      "saving_ms": 30.133000000000038,
+      "guarded_starvations": [],
+      "old_starvations": []
+    },
+    {
+      "old_start_ms": 1155.977,
+      "guarded_start_ms": 982.924,
+      "saving_ms": 173.0530000000001,
+      "guarded_starvations": [],
+      "old_starvations": []
+    },
+    {
+      "old_start_ms": 995.996,
+      "guarded_start_ms": 904.368,
+      "saving_ms": 91.62799999999993,
+      "guarded_starvations": [],
+      "old_starvations": []
+    }
+  ],
+  "median_saving_ms": 133.9179999999999
+}

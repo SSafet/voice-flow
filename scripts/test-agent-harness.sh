@@ -111,6 +111,7 @@ compile_and_run capture_store swift/VoiceFlowPaths.swift swift/DisplayContext.sw
     swift/ScreenCapture.swift swift/Capture.swift tests/capture_store/main.swift \
     -framework Cocoa -framework ScreenCaptureKit
 compile_and_run player swift/Player.swift tests/player/main.swift
+compile_and_run speech_transport swift/SpeechTransport.swift tests/speech_transport/main.swift
 compile_and_run speech_sanitizer swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
     swift/SystemAgents.swift swift/SpeechSanitizer.swift tests/speech_sanitizer/main.swift
 compile_and_run system_agents swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
@@ -192,6 +193,7 @@ compile_and_run opencode_http swift/VoiceFlowPaths.swift swift/AssistantWake.swi
     swift/OpenCodeHTTPClient.swift tests/opencode_http/main.swift -framework Security
 
 "$PROJECT_DIR/.venv/bin/python" tests/test_backend_protocol.py -q
+"$PROJECT_DIR/.venv/bin/python" -m unittest discover -s tests -p test_speech_performance.py -q
 
 case "$MODE" in
     --unit) ;;

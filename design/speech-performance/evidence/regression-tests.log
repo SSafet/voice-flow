@@ -1,0 +1,32 @@
+test_cloud_prompt_preserves_exact_wake_script (test_backend_protocol.BackendProtocolTests.test_cloud_prompt_preserves_exact_wake_script) ... ok
+test_final_result_echoes_capture_run_id (test_backend_protocol.BackendProtocolTests.test_final_result_echoes_capture_run_id) ... ok
+test_four_minute_upload_recovers_from_real_dropped_http_connection (test_backend_protocol.BackendProtocolTests.test_four_minute_upload_recovers_from_real_dropped_http_connection) ... ok
+test_partial_result_echoes_run_and_sequence_ids (test_backend_protocol.BackendProtocolTests.test_partial_result_echoes_run_and_sequence_ids) ... ok
+test_retired_local_provider_fails_visibly (test_backend_protocol.BackendProtocolTests.test_retired_local_provider_fails_visibly) ... ok
+test_wake_word_reaches_cloud_transcription (test_backend_protocol.BackendProtocolTests.test_wake_word_reaches_cloud_transcription) ... ok
+test_partial_does_not_retry (test_backend_protocol.TranscriptionRetryTests.test_partial_does_not_retry) ... ok
+test_retryable_http_errors_recover_but_permanent_errors_fail_once (test_backend_protocol.TranscriptionRetryTests.test_retryable_http_errors_recover_but_permanent_errors_fail_once) ... ok
+test_transport_failures_are_bounded (test_backend_protocol.TranscriptionRetryTests.test_transport_failures_are_bounded) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.591s
+
+OK
+test_disconnect_resets_preview_retries_same_audio_and_commits_once (test_speech_performance.StreamingTests.test_disconnect_resets_preview_retries_same_audio_and_commits_once) ... ok
+test_incomplete_stream_never_commits_partial_text (test_speech_performance.StreamingTests.test_incomplete_stream_never_commits_partial_text) ... ok
+test_prompt_echo_still_cannot_be_final_text (test_speech_performance.StreamingTests.test_prompt_echo_still_cannot_be_final_text) ... ok
+test_unicode_deltas_are_replaceable_and_done_is_authoritative (test_speech_performance.StreamingTests.test_unicode_deltas_are_replaceable_and_done_is_authoritative) ... ok
+test_final_finishes_while_preview_is_blocked_and_stale_text_is_suppressed (test_speech_performance.WorkerTests.test_final_finishes_while_preview_is_blocked_and_stale_text_is_suppressed) ... ok
+test_only_latest_pending_preview_is_requested (test_speech_performance.WorkerTests.test_only_latest_pending_preview_is_requested) ... ok
+test_queue_limit_fails_visibly_and_preserves_accepted_finals (test_speech_performance.WorkerTests.test_queue_limit_fails_visibly_and_preserves_accepted_finals) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.002s
+
+OK
+PASS speech transport: every UTF-8 boundary and startup policy
+speech sanitizer tests passed
+speech speed tests passed
+[2026-09-05T08:44:55Z] audio: start during drain — settling previous recording first
+audio recorder tests passed
+Speech regression gate passed

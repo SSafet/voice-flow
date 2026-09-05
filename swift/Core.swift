@@ -137,6 +137,9 @@ enum DictationProvider: String, CaseIterable {
     case local
     case openai
 
+    // Decode the old value for migration, but never offer retired local models.
+    static var allCases: [DictationProvider] { [.openai] }
+
     var label: String {
         switch self {
         case .local:
@@ -260,7 +263,7 @@ class UserSettings {
         let hadTTSInstructions = dict.keys.contains("tts_instructions")
         if let raw = dict["dictation_provider"] as? String,
            let provider = DictationProvider(rawValue: raw) {
-            dictationProvider = provider
+            dictationProvider = provider == .local ? .openai : provider
         }
         hotkey = loadHotkey(dict, key: "hotkey", fallback: hotkey)
         handsFreeHotkey = loadHotkey(dict, key: "hands_free_hotkey", fallback: handsFreeHotkey)
@@ -1651,6 +1654,9 @@ class BackendBridge {
     private var process: Process?
     private var stdin: FileHandle?
     private var readyReceived = false
+    private var outputLines = SpeechJSONLines()
+    private let outputQueue = DispatchQueue(label: "voiceflow.backend.output")
+    private let inputQueue = DispatchQueue(label: "voiceflow.backend.input")
 
     func start() {
         let projectDir = Self.projectDir()
@@ -1692,9 +1698,10 @@ class BackendBridge {
         // Read stdout line by line
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty, let str = String(data: data, encoding: .utf8) else { return }
-            for line in str.components(separatedBy: "\n") where !line.isEmpty {
-                self?.handleLine(line)
+            guard !data.isEmpty else { return }
+            self?.outputQueue.async { [weak self] in
+                guard let self else { return }
+                for line in self.outputLines.append(data) { self.handleLine(line) }
             }
         }
 
@@ -1787,11 +1794,15 @@ class BackendBridge {
             onError?(dict["request_id"] as? String, "Dictation backend isn't running — restart Voice Flow")
             return
         }
-        do {
-            try stdin.write(contentsOf: Data((str + "\n").utf8))
-        } catch {
-            vflog("backend pipe write failed: \(error)")
-            onError?(dict["request_id"] as? String, "Dictation backend died — restart Voice Flow")
+        inputQueue.async { [weak self] in
+            do {
+                try stdin.write(contentsOf: Data((str + "\n").utf8))
+            } catch {
+                vflog("backend pipe write failed: \(error)")
+                DispatchQueue.main.async {
+                    self?.onError?(dict["request_id"] as? String, "Dictation backend died — restart Voice Flow")
+                }
+            }
         }
     }
 
@@ -1813,6 +1824,10 @@ class BackendBridge {
                 let raw = dict["raw"] as? String ?? ""
                 let cleaned = dict["cleaned"] as? String ?? ""
                 onResult?(requestId, raw, cleaned)
+            case "transcription_delta":
+                // Provisional API text is intentionally not presented: it can
+                // arrive only a moment before final paste and flash distractingly.
+                break
             case "partial_result":
                 let runId = dict["run_id"] as? String
                 let text = dict["text"] as? String ?? ""
@@ -1822,6 +1837,8 @@ class BackendBridge {
                 let requestId = dict["request_id"] as? String
                 let msg = dict["message"] as? String ?? "unknown"
                 onError?(requestId, msg)
+            case "speech_metrics":
+                vflog("speech stt lane=\(dict["lane"] ?? "") request=\(dict["request_id"] ?? "") queue_ms=\(dict["queue_ms"] ?? 0) service_ms=\(dict["service_ms"] ?? 0)")
             case "status":
                 let msg = dict["message"] as? String ?? ""
                 onStatus?(msg)
