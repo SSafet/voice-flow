@@ -243,7 +243,7 @@ enum AgentJobStoreError: LocalizedError {
 
 final class AgentJobStore {
     static let globalConcurrency = 3
-    static let runtimeConcurrency: [AgentRuntimeKind: Int] = [.codex: 2, .opencode: 3]
+    static let runtimeConcurrency: [AgentRuntimeKind: Int] = [.codex: 2, .opencode: 3, .claude: 2]
 
     private let db: OpaquePointer
     private let lock = NSRecursiveLock()

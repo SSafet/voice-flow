@@ -253,6 +253,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     var onSnap: ((AgentsThreadID) -> Void)?
     var onStop: ((AgentsThreadID) -> Void)?
     var onSelectAssistantRuntime: ((AgentRuntimeKind, AgentsThreadID) -> Void)?
+    /// The effort popup writes the one shared reasoning-effort setting.
+    var onSelectReasoningEffort: ((String) -> Void)?
 
     private enum Mode: Equatable {
         case destination(AgentsDestination)
@@ -529,13 +531,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// (no rebuild) as the agent thinks, acts, and replies.
     private var assistantActivity: AgentActivity = .idle
     private var assistantActivityDetail: String?
-    private var assistantRuntimeSwitchable = false
     /// A turn tears the composer down (canReply is false while it runs) and
     /// rebuilds it when the reply lands; the caret must come back with it.
     private var composerFocusPending = false
-    private weak var assistantStatusLabel: NSTextField?
-    private weak var assistantStopButton: NSButton?
-    private weak var assistantRuntimePopUp: NSPopUpButton?
     private var transientNoteLabel: NSTextField?
     private var transientNoteTimer: Timer?
     private var inlineError: String?
@@ -1245,9 +1243,6 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         systemAgentModelField = nil
         systemAgentEffortPopUp = nil
         systemAgentInstructionsView = nil
-        assistantStatusLabel = nil
-        assistantStopButton = nil
-        assistantRuntimePopUp = nil
         switch mode {
         case .destination(let destination): buildDestination(destination)
         case .search: buildSearch()
@@ -3064,10 +3059,6 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         ])
         place(header, below: &top, gap: 0)
 
-        if id.source == .assistant, !detail.archived {
-            place(makeAssistantStatusRow(detail), below: &top, gap: 4)
-        }
-
         if threadCompleteConfirmationID == id {
             let confirmation = NSView()
             let copy = NSTextField(labelWithString: "Completing cancels its waiting question.")
@@ -3181,16 +3172,21 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             place(emptyLabel("No messages yet"), below: &top, gap: 24)
         }
 
+        let assistantThread = id.source == .assistant
         if detail.archived {
             place(emptyLabel("Reopen this thread to reply"), below: &top, gap: 14)
-        } else if detail.canReply {
+        } else if detail.canReply || (assistantThread && detail.live) {
             let composer = makeComposer(
-                placeholder: id.source == .assistant ? "Message \(detail.owner)…" : "Message this thread…",
-                snap: detail.canSnap)
+                placeholder: assistantThread ? "Message \(detail.owner)…" : "Message this thread…")
             composer.text = threadDrafts[id] ?? ""
+            if assistantThread { configureAssistantComposer(composer, detail: detail) }
             place(composer, below: &top, gap: 10)
             composerField = composer
             composerThreadID = id
+            if assistantThread {
+                assistantActivity = detail.live && detail.activity == .idle ? .thinking : detail.activity
+                applyAssistantActivity()
+            }
         } else if let reason = detail.readOnlyReason {
             let notice = NSTextField(wrappingLabelWithString: reason)
             notice.font = .systemFont(ofSize: 11.5)
@@ -3202,54 +3198,6 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         finishContent(top)
     }
 
-    /// Runtime picker · live status · Stop, under the assistant thread's
-    /// header. The old panel chat carried these; the thread is now the one
-    /// assistant surface, so they live here.
-    private func makeAssistantStatusRow(_ detail: AgentThreadDetail) -> NSView {
-        let runtime = NSPopUpButton(frame: .zero, pullsDown: false)
-        runtime.addItems(withTitles: ["Codex", "OpenCode"])
-        runtime.selectItem(at: detail.runtime == .opencode ? 1 : 0)
-        if detail.sourceReviewOnly {
-            runtime.removeAllItems()
-            runtime.addItem(withTitle: "Review copies · OpenRouter")
-        }
-        runtime.target = self
-        runtime.action = #selector(assistantRuntimeChanged(_:))
-        runtime.controlSize = .mini
-        runtime.font = .systemFont(ofSize: 10, weight: .medium)
-        runtime.toolTip = "Runtime for this Assistant conversation"
-        runtime.setAccessibilityLabel("Assistant runtime")
-        assistantRuntimeSwitchable = detail.runtimeSwitchable && !detail.sourceReviewOnly
-        assistantRuntimePopUp = runtime
-
-        let status = NSTextField(labelWithString: "")
-        status.font = .systemFont(ofSize: 11)
-        status.textColor = Theme.accent
-        status.lineBreakMode = .byTruncatingTail
-        status.maximumNumberOfLines = 1
-        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        assistantStatusLabel = status
-
-        let stop = NSButton(title: "Stop", target: self, action: #selector(assistantStopTapped))
-        stop.bezelStyle = .inline
-        stop.controlSize = .small
-        stop.font = .systemFont(ofSize: 11, weight: .semibold)
-        stop.setAccessibilityLabel("Stop the assistant")
-        assistantStopButton = stop
-
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let row = NSStackView(views: [runtime, status, spacer, stop])
-        row.orientation = .horizontal
-        row.spacing = 8
-        row.alignment = .centerY
-        row.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 2)
-        row.heightAnchor.constraint(equalToConstant: 22).isActive = true
-        assistantActivity = detail.activity
-        applyAssistantActivity()
-        return row
-    }
-
     private func applyAssistantActivity() {
         let text: String
         switch assistantActivity {
@@ -3258,10 +3206,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .responding: text = assistantActivityDetail ?? "Replying…"
         case .acting: text = assistantActivityDetail ?? "Working on your screen…"
         }
-        assistantStatusLabel?.stringValue = text
-        assistantStatusLabel?.isHidden = text.isEmpty
-        assistantStopButton?.isHidden = assistantActivity == .idle
-        assistantRuntimePopUp?.isEnabled = assistantActivity == .idle && assistantRuntimeSwitchable
+        composerField?.setStatus(text, running: assistantActivity != .idle)
     }
 
     /// The agent's activity for `conversationID`, from AppDelegate. Updates
@@ -3293,6 +3238,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             label.alignment = .center
             label.lineBreakMode = .byTruncatingTail
             label.maximumNumberOfLines = 1
+            // A long notice truncates; it must never widen the panel.
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             label.wantsLayer = true
             label.layer?.backgroundColor = Theme.cardHover.cgColor
             label.layer?.cornerRadius = 8
@@ -3318,11 +3265,15 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
 #if VOICE_FLOW_QA
     var qaAssistantControlState: [String: Any] {
-        let controls: [NSControl] = [assistantRuntimePopUp, assistantStopButton].compactMap { $0 }
+        let runtime = composerField?.runtimeControl
+        let controls: [NSControl] = [runtime, composerField?.effortControl,
+                                     composerField?.stopControl].compactMap { $0 }
         return [
-            "runtime_present": assistantRuntimePopUp != nil,
-            "runtime_enabled": assistantRuntimePopUp?.isEnabled ?? false,
-            "runtime_title": assistantRuntimePopUp?.titleOfSelectedItem ?? "",
+            "runtime_present": runtime != nil,
+            "runtime_enabled": runtime?.isEnabled ?? false,
+            "runtime_title": runtime?.titleOfSelectedItem ?? "",
+            "composer_running": composerField?.isRunning ?? false,
+            "composer_status": composerField?.status ?? "",
             "accessibility_labels": controls.compactMap {
                 $0.accessibilityLabel()?.trimmingCharacters(in: .whitespacesAndNewlines)
             }.filter { !$0.isEmpty },
@@ -3330,33 +3281,44 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 #endif
 
-    @objc private func assistantRuntimeChanged(_ sender: NSPopUpButton) {
-        guard let id = openThreadID else { return }
-        onSelectAssistantRuntime?(sender.indexOfSelectedItem == 1 ? .opencode : .codex, id)
-    }
-
-    @objc private func assistantStopTapped() {
-        if let id = openThreadID { onStop?(id) }
-    }
-
-    @objc private func assistantSnapTapped() {
-        if let id = openThreadID { onSnap?(id) }
-    }
-
-    private func makeComposer(placeholder: String, snap: Bool = false) -> ComposerView {
-        var leading: NSButton?
-        if snap {
-            let button = NSButton(
-                image: NSImage(systemSymbolName: "camera.viewfinder",
-                               accessibilityDescription: "Snap the screen and send") ?? NSImage(),
-                target: self, action: #selector(assistantSnapTapped))
-            button.isBordered = false
-            button.contentTintColor = Theme.text2
-            button.toolTip = "Snap the screen and send"
-            button.setAccessibilityLabel("Snap the screen and send")
-            leading = button
+    /// The assistant composer's toolbar: runtime (or the review-copies
+    /// notice), effort, snap. Every control passes the thread it sits in.
+    private func configureAssistantComposer(_ composer: ComposerView, detail: AgentThreadDetail) {
+        var controls = ComposerControls()
+        if detail.sourceReviewOnly {
+            controls.runtimeOptions = ["Review copies · OpenRouter"]
+            controls.runtimeIndex = 0
+            controls.runtimeEnabled = false
+        } else {
+            controls.runtimeOptions = AgentRuntimeKind.allCases.map(\.label)
+            controls.runtimeIndex = AgentRuntimeKind.allCases.firstIndex(of: detail.runtime ?? .codex) ?? 0
+            controls.runtimeEnabled = detail.runtimeSwitchable
         }
-        let composer = ComposerView(placeholder: placeholder, fontSize: 12.5, leading: leading)
+        controls.effortOptions = AgentReasoningEffort.choices.map(\.label)
+        let effort = AgentReasoningEffort.normalized(UserSettings.shared.agentReasoningEffort)
+            ?? AgentReasoningEffort.unset
+        controls.effortIndex = AgentReasoningEffort.choices.firstIndex { $0.value == effort } ?? 0
+        controls.snap = detail.canSnap
+        composer.setControls(controls)
+        composer.onRuntimeSelected = { [weak self] index in
+            guard let self, let id = self.openThreadID,
+                  AgentRuntimeKind.allCases.indices.contains(index) else { return }
+            self.onSelectAssistantRuntime?(AgentRuntimeKind.allCases[index], id)
+        }
+        composer.onEffortSelected = { [weak self] index in
+            guard AgentReasoningEffort.choices.indices.contains(index) else { return }
+            self?.onSelectReasoningEffort?(AgentReasoningEffort.choices[index].value)
+        }
+        composer.onSnap = { [weak self] in
+            if let id = self?.openThreadID { self?.onSnap?(id) }
+        }
+        composer.onStop = { [weak self] in
+            if let id = self?.openThreadID { self?.onStop?(id) }
+        }
+    }
+
+    private func makeComposer(placeholder: String) -> ComposerView {
+        let composer = ComposerView(placeholder: placeholder, fontSize: 12.5)
         composer.onSend = { [weak self] text, images in self?.submit(text, images: images) }
         return composer
     }

@@ -71,9 +71,10 @@ tabs (`ChatTab`, default **Agents** on open):
   `swift/AgentsView.swift`): one row per MCP session plus the assistant;
   opening a row shows that session's thread. The assistant conversation is
   **that same thread view** — the only assistant surface: its header row
-  carries the runtime picker (Codex/OpenCode), the live turn status
-  ("Thinking…", tool activity) and Stop, and its composer has the snap
-  accessory. `ChatPanel` no longer owns a chat of its own; it routes
+  composer carries the runtime picker (Codex · OpenCode · Claude Code),
+  the reasoning-effort picker (the one shared setting), the live turn status
+  ("Thinking…", tool activity), snap, and Send/Stop — and it stays up while
+  the turn runs, so a draft typed meanwhile is kept. `ChatPanel` no longer owns a chat of its own; it routes
   (`openAssistantConversation`, `setActivity`, `addNote` → a 6 s strip).
   Its nav bar is **Now · Threads · Setup** (`AgentsDestination.navigation`):
   two reading surfaces, then one setup surface. The panel lands on **Now**,
@@ -270,6 +271,20 @@ Tools: `show_guide` / `update_guide` / `show_panel` / `annotate_screen` /
 re-selecting the session or via the speaker icon (there is no agent-side
 auto-play tool; `speak` was folded into `report_to_user`).
 
+## Runtimes
+
+Three runtimes answer assistant turns and automations (`AgentRuntimeKind`):
+**Codex** (ChatGPT subscription; one long-lived `codex app-server` per
+owner — the assistant and the automations executor — ended on quit; `codex
+exec` only for the continuity router and as a fallback), **Claude
+Code** (Claude subscription; `claude -p` per turn, sessions resumed by id,
+model from `claude_code_model`, effort from the shared ladder, permission
+mode from the trust profile: observe → plan, workspace → acceptEdits,
+unattended → bypassPermissions), and **OpenCode** (OpenRouter key, kernel
+sandbox below). Codex and Claude Code rely on their CLIs' own sandboxes and
+permission systems, like Codex always has; their CLIs must be signed in
+(`codex login`, `claude` → /login) — Settings → Assistant shows the state.
+
 ## Agent containment — the boundary is the kernel, not the permission map
 
 OpenCode's permission rules match tool names and command text, which the model
@@ -406,7 +421,7 @@ deployed copies are build outputs.
 | `Core.swift` | `UserSettings`, `KeychainStore`, `HotkeyManager`, `AudioRecorder`, `BackendBridge`, `Paster`, `HotkeySpec` | Audio capture, Python STT bridge (subprocess), paste/stream into the frontmost app, settings, global hotkeys. |
 | `UI.swift` | `Theme`, `MenuBarManager`, `FloatingIndicator`, `FloatingTranscriptPanel`, `MessagesView`, `DictationsView`, `TTSView`, `HoverCardView`, `KeyRecorderButton` | Menu bar, pill, live transcript overlay, the Inbox (dictations) and Speech surfaces, and the store-only `MessagesView`. |
 | `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel, its tabs, and the header; routes assistant state into `AgentsView` rather than rendering a chat itself. |
-| `Composer.swift` | `ComposerView` | The one message input: auto-growing multi-line text area, Return-sends, send button, optional leading accessory. Used by the Agents thread and the assistant input row — do not hand-build another. |
+| `Composer.swift` | `ComposerView`, `ComposerControls` | The one message input: auto-growing text, image chips, and a toolbar — runtime picker (Codex · OpenCode · Claude Code), reasoning effort, live turn status, snap, Send that becomes Stop while a turn runs. Assistant threads configure the toolbar; MCP threads get the plain one. Do not hand-build another. |
 | `ReplyBubble.swift` | `ReplyBubble` | Facade over the pill's grown surface (no window of its own) — forwards messages/asks/streaming to `FloatingIndicator`. |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
 | `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of contextual-capture messages for Claude (check/wait semantics). |
@@ -420,7 +435,9 @@ deployed copies are build outputs.
 | `Sandbox.swift` | `AgentSandboxPolicy`, `AgentSandbox`, `AgentSandboxSettings` | The Seatbelt profile the agent runtime runs under — the real security boundary. |
 | `EgressProxy.swift` | `EgressProxyServer`, `EgressPolicy`, `EgressLog` | Loopback CONNECT proxy: the agent's only route out, logged by destination host. |
 | `AssistantContinuity.swift` | `AssistantContinuityClassifier`, `LocalAssistantSessionAdapter` | Ephemeral current-vs-new wake routing and the stable local picker identity for FLORA. |
-| `Codex.swift` | `CodexExecBackend` | ChatGPT-subscription assistant turns via `codex exec --json` (OAuth, thread resume, image attach); the default backend. A failed turn now surfaces as an error — there is no silent API-key fallback. |
+| `Codex.swift` | `CodexExecBackend` | `codex exec --json` per-turn backend: the continuity router's one-shot classifier and the fallback when the app-server cannot start. |
+| `CodexAppServer.swift` | `CodexAppServerBackend`, `CodexAppServerProtocol`, `ProcessTree` | The default Codex backend: one long-lived `codex app-server` JSON-RPC process — thread/start + thread/resume, turn/start, streamed `item/agentMessage/delta`, request-based interrupt. A dead thread starts fresh with the canonical handoff. |
+| `ClaudeCode.swift` | `ClaudeCodeAgentRuntime`, `ClaudeCodeProtocol` | Claude-subscription turns via `claude -p` with stream-json in/out (session id per conversation, `--resume`, base64 images on stdin, `--permission-mode` from the trust profile, `--effort` from the shared ladder). |
 | `Annotation.swift` | `AnnotationOverlay` | Draw-on-screen overlay (pen + multiline text notes with size presets). |
 | `Settings.swift` | `SettingsStore`, `SettingsWindowController`, `PermissionsWindowController`, `KeyRecorderView` | SwiftUI settings & permissions windows. |
 | `ScreenCapture.swift` | `ScreenCapture`, `CaptureScheduler`, `ImageUtils` | ScreenCaptureKit screenshots for the agent. |

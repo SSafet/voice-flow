@@ -61,7 +61,7 @@ final class FakeCodex: CodexExecuting {
 }
 
 let fake = FakeCodex()
-let runtime = CodexAgentRuntime(backend: fake)
+let runtime = CodexAgentRuntime(backend: fake, fallback: nil)
 let request = AgentTurnRequest(
     turnID: UUID(), conversationID: "conversation-a", assistant: nil,
     priorMessages: [], prompt: "Do the task", screenshots: [Data([1, 2, 3])],
@@ -107,9 +107,141 @@ expect(events == [
     "delta:first ", "delta:second", "completed:first second",
 ], "normalized runtime event order changed: \(events)")
 
-let cancelSemaphore = DispatchSemaphore(value: 0)
-Task { await runtime.cancel(turnID: request.turnID); cancelSemaphore.signal() }
-expect(cancelSemaphore.wait(timeout: .now() + 1) == .success, "cancel did not return")
-expect(fake.interrupted, "cancel did not terminate the backend")
+// Cancel after the turn ended is a no-op: on the shared app-server an
+// untargeted interrupt would hit every other turn.
+let lateCancel = DispatchSemaphore(value: 0)
+Task { await runtime.cancel(turnID: request.turnID); lateCancel.signal() }
+expect(lateCancel.wait(timeout: .now() + 1) == .success, "cancel did not return")
+expect(!fake.interrupted, "a cancel after completion must not interrupt the backend")
+
+// Cancel during the turn targets that turn's thread — whether it arrives
+// after the thread is known or (queued) before.
+final class BlockingCodex: CodexExecuting {
+    let started = DispatchSemaphore(value: 0)
+    let release = DispatchSemaphore(value: 0)
+    var interruptedThreads: [String?] = []
+    var announceThread = true
+    func interrupt() { interruptedThreads.append(nil) }
+    func interrupt(threadId: String?) { interruptedThreads.append(threadId) }
+    func run(prompt: String, images: [Data], resumeThread: String?,
+             workingDirectory: URL?, extraWritableRoots: [String],
+             reasoningEffort: String?,
+             onThreadStarted: @escaping (String) -> Void,
+             onToolActivity: @escaping (String) -> Void,
+             onAgentText: @escaping (String) -> Void) async throws -> CodexExecBackend.TurnResult {
+        if announceThread { onThreadStarted("thr-live") }
+        started.signal()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global().async { self.release.wait(); continuation.resume() }
+        }
+        if !announceThread { onThreadStarted("thr-late") }
+        return CodexExecBackend.TurnResult(text: "done", threadId: announceThread ? "thr-live" : "thr-late")
+    }
+}
+for lateThread in [false, true] {
+    let blocking = BlockingCodex()
+    blocking.announceThread = !lateThread
+    let blockingRuntime = CodexAgentRuntime(backend: blocking, fallback: nil)
+    let liveRequest = AgentTurnRequest(
+        turnID: UUID(), conversationID: "conversation-c", assistant: nil,
+        priorMessages: [], prompt: "long task", screenshots: [],
+        workingDirectory: FileManager.default.temporaryDirectory,
+        extraWritableRoots: [], trustProfile: .workspace, model: nil)
+    let finished = DispatchSemaphore(value: 0)
+    Task {
+        _ = try? await blockingRuntime.run(liveRequest, binding: nil) { _ in }
+        finished.signal()
+    }
+    expect(blocking.started.wait(timeout: .now() + 3) == .success, "blocking turn did not start")
+    let cancelled = DispatchSemaphore(value: 0)
+    Task { await blockingRuntime.cancel(turnID: liveRequest.turnID); cancelled.signal() }
+    expect(cancelled.wait(timeout: .now() + 1) == .success, "cancel did not return")
+    if lateThread {
+        expect(blocking.interruptedThreads.isEmpty, "a cancel before the thread exists must wait, not interrupt everything")
+    } else {
+        expect(blocking.interruptedThreads == ["thr-live"], "cancel must interrupt exactly the turn's thread: \(blocking.interruptedThreads)")
+    }
+    blocking.release.signal()
+    expect(finished.wait(timeout: .now() + 3) == .success, "blocking turn did not finish")
+    if lateThread {
+        expect(blocking.interruptedThreads == ["thr-late"], "a queued cancel must apply once the thread is known: \(blocking.interruptedThreads)")
+    }
+}
+
+// A remembered thread that no longer exists on disk: the adapter starts a
+// fresh thread with the canonical handoff instead of failing the turn.
+final class GoneThreadCodex: CodexExecuting {
+    var prompts: [String] = []
+    var resumes: [String?] = []
+    func interrupt() {}
+    func run(prompt: String, images: [Data], resumeThread: String?,
+             workingDirectory: URL?, extraWritableRoots: [String],
+             reasoningEffort: String?,
+             onThreadStarted: @escaping (String) -> Void,
+             onToolActivity: @escaping (String) -> Void,
+             onAgentText: @escaping (String) -> Void) async throws -> CodexExecBackend.TurnResult {
+        prompts.append(prompt)
+        resumes.append(resumeThread)
+        if let resumeThread { throw CodexBackendError.threadNotFound(resumeThread) }
+        onThreadStarted("codex-fresh")
+        onAgentText("fresh reply")
+        return CodexExecBackend.TurnResult(text: "fresh reply", threadId: "codex-fresh")
+    }
+}
+let gone = GoneThreadCodex()
+let goneRuntime = CodexAgentRuntime(backend: gone, fallback: nil)
+let goneRequest = AgentTurnRequest(
+    turnID: UUID(), conversationID: "conversation-b", assistant: nil,
+    priorMessages: [AssistantHistoryMessage(role: .user, text: "earlier question"),
+                    AssistantHistoryMessage(role: .assistant, text: "earlier answer")],
+    prompt: "follow-up", screenshots: [],
+    workingDirectory: FileManager.default.temporaryDirectory,
+    extraWritableRoots: [], trustProfile: .workspace, model: nil)
+let goneSemaphore = DispatchSemaphore(value: 0)
+var goneResult: AgentTurnResult?
+var goneEvents: [String] = []
+Task {
+    goneResult = try? await goneRuntime.run(goneRequest, binding: binding) { event in
+        if case .started(let id) = event { goneEvents.append("started:\(id)") }
+    }
+    goneSemaphore.signal()
+}
+expect(goneSemaphore.wait(timeout: .now() + 3) == .success, "fallback runtime did not finish")
+expect(gone.resumes == ["codex-old", nil], "the adapter must retry once without the dead thread: \(gone.resumes)")
+expect(gone.prompts.count == 2 && gone.prompts[1].contains("earlier answer") && gone.prompts[1].hasSuffix("follow-up"),
+       "the fresh start must carry the canonical handoff before the task: \(gone.prompts)")
+expect(goneResult?.externalSessionID == "codex-fresh" && goneEvents == ["started:codex-fresh"],
+       "the fresh thread must become the binding")
+
+// An older CLI without app-server: the exec backend takes over for good.
+final class NoAppServer: CodexExecuting {
+    var calls = 0
+    func interrupt() {}
+    func run(prompt: String, images: [Data], resumeThread: String?,
+             workingDirectory: URL?, extraWritableRoots: [String],
+             reasoningEffort: String?,
+             onThreadStarted: @escaping (String) -> Void,
+             onToolActivity: @escaping (String) -> Void,
+             onAgentText: @escaping (String) -> Void) async throws -> CodexExecBackend.TurnResult {
+        calls += 1
+        throw CodexBackendError.appServerUnavailable("too old")
+    }
+}
+let broken = NoAppServer()
+let execFallback = FakeCodex()
+let fallbackRuntime = CodexAgentRuntime(backend: broken, fallback: execFallback)
+let fallbackSemaphore = DispatchSemaphore(value: 0)
+var fallbackResults: [String] = []
+Task {
+    for _ in 0..<2 {
+        if let result = try? await fallbackRuntime.run(request, binding: nil, emit: { _ in }) {
+            fallbackResults.append(result.text)
+        }
+    }
+    fallbackSemaphore.signal()
+}
+expect(fallbackSemaphore.wait(timeout: .now() + 3) == .success, "exec fallback did not finish")
+expect(fallbackResults == ["first second", "first second"], "turns must succeed through the exec fallback")
+expect(broken.calls == 1, "the app-server must be tried once, then left alone: \(broken.calls)")
 
 print("codex runtime tests passed")

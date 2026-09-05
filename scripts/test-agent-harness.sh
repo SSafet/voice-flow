@@ -179,7 +179,14 @@ compile_and_run assistant_continuity swift/VoiceFlowPaths.swift swift/AgentRunti
     swift/SystemAgents.swift swift/AssistantContinuity.swift tests/assistant_continuity/main.swift
 compile_and_run codex_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift swift/Codex.swift \
+    swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/CodexAppServer.swift \
     swift/CodexAgentRuntime.swift tests/codex_runtime/main.swift
+compile_and_run codex_appserver swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
+    swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift swift/Codex.swift \
+    swift/CodexAppServer.swift tests/codex_appserver/main.swift
+compile_and_run claude_code_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
+    swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift swift/Codex.swift \
+    swift/CodexAppServer.swift swift/ClaudeCode.swift tests/claude_code_runtime/main.swift
 compile_and_run opencode_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
     swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \

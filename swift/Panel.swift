@@ -24,6 +24,7 @@ final class ChatPanel {
     var onNewAssistant: (() -> Void)?
     var onOpenAssistantSession: ((String) -> Void)?
     var onSelectAssistantRuntime: ((AgentRuntimeKind, String) -> Void)?
+    var onSelectReasoningEffort: ((String) -> Void)?
     var onEscape: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenSession: ((String) -> Void)?
@@ -719,6 +720,9 @@ final class ChatPanel {
         agentsView.onStop = { [weak self] id in self?.onStop?(id.value) }
         agentsView.onSelectAssistantRuntime = { [weak self] runtime, id in
             self?.onSelectAssistantRuntime?(runtime, id.value)
+        }
+        agentsView.onSelectReasoningEffort = { [weak self] effort in
+            self?.onSelectReasoningEffort?(effort)
         }
         panel.onCommand = { [weak self] key in
             guard let self else { return false }

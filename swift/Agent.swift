@@ -65,6 +65,7 @@ final class AgentSession {
     // loop remains only as a one-release fallback while OpenCode is added.
     private let codexRuntime = CodexAgentRuntime()
     private let openCodeRuntime = OpenCodeAgentRuntime()
+    private let claudeRuntime = ClaudeCodeAgentRuntime()
     private var codexThreadId: String?
     private var pendingCodexTurn: (
         text: String,
@@ -113,7 +114,17 @@ final class AgentSession {
 
     var preferredRuntime: AgentRuntimeKind {
         if let runtime = currentConversation.preferredRuntime { return runtime }
-        return UserSettings.shared.agentBackend == AgentBackendOpenCode ? .opencode : .codex
+        return AgentRuntimeKind.fromBackendSetting(UserSettings.shared.agentBackend)
+    }
+
+    /// The adapter for a runtime kind. Codex and Claude Code are CLI
+    /// subscriptions; OpenCode is the supervised loopback server.
+    private func runtime(for kind: AgentRuntimeKind) -> any AgentRuntime {
+        switch kind {
+        case .codex: return codexRuntime
+        case .opencode: return openCodeRuntime
+        case .claude: return claudeRuntime
+        }
     }
 
     @discardableResult
@@ -315,11 +326,7 @@ final class AgentSession {
             let runtime = runningRuntimeKind
             Task {
                 await SourceReviewRuntime.shared.cancel(turnID: turnID)
-                if runtime == .opencode {
-                    await openCodeRuntime.cancel(turnID: turnID)
-                } else {
-                    await codexRuntime.cancel(turnID: turnID)
-                }
+                await self.runtime(for: runtime ?? .codex).cancel(turnID: turnID)
             }
         }
         activeTask?.cancel()
@@ -332,14 +339,11 @@ final class AgentSession {
         let task = activeTask
         if let turnID = runningTurnID {
             await SourceReviewRuntime.shared.cancel(turnID: turnID)
-            if runningRuntimeKind == .opencode {
-                await openCodeRuntime.cancel(turnID: turnID)
-            } else {
-                await codexRuntime.cancel(turnID: turnID)
-            }
+            await runtime(for: runningRuntimeKind ?? .codex).cancel(turnID: turnID)
         }
         task?.cancel()
         await task?.value
+        codexRuntime.shutdown()
     }
 
     private func loadRuntime(from conversation: AssistantConversation) {
@@ -370,9 +374,10 @@ final class AgentSession {
             return
         }
         let selectedRuntime = preferredRuntime
-        let usingCodex = selectedRuntime == .codex
-        // Codex uses its subscription. OpenCode's model gateway requires the
-        // provider credential already stored in Voice Flow's Keychain.
+        // Codex and Claude Code use their CLI's subscription. OpenCode's model
+        // gateway requires the provider credential already stored in Voice
+        // Flow's Keychain.
+        let usingCodex = selectedRuntime.usesSubscriptionCLI
         let copiesOnly = activeAssistant?.sourceAccessMode == .reviewCopies
         guard (usingCodex && !copiesOnly) || KeychainStore.shared.loadAgentAPIKey() != nil else {
             let message = AgentError.missingAPIKey.localizedDescription
@@ -482,7 +487,7 @@ final class AgentSession {
         }
         switch runningRuntimeKind {
         case .opencode: await runOpenCodeTurn()
-        case .codex: await runCodexTurn()
+        case .codex, .claude: await runCLITurn(runningRuntimeKind ?? .codex)
         case nil: finish(nil)
         }
     }
@@ -702,12 +707,13 @@ final class AgentSession {
         """
     }
 
-    /// Runs one turn through the Codex CLI. Returns true when the turn should
-    /// be retried through the API path instead (Codex failed and a key exists).
-    private func runCodexTurn() async {
+    /// Runs one turn through a CLI runtime — Codex or Claude Code. Both take
+    /// the same composed prompt, resume their own external session per
+    /// conversation, and stream through the shared runtime event vocabulary.
+    private func runCLITurn(_ kind: AgentRuntimeKind) async {
         activity = .thinking
         guard let turn = pendingCodexTurn else {
-            let message = "Codex turn was not prepared."
+            let message = "\(kind.label) turn was not prepared."
             recordNote(message)
             DispatchQueue.main.async { self.onError?(message) }
             finish(nil)
@@ -715,7 +721,7 @@ final class AgentSession {
         }
         pendingCodexTurn = nil
 
-        codexThreadId = turn.preparation.resumeExternalSessionID
+        if kind == .codex { codexThreadId = turn.preparation.resumeExternalSessionID }
         let layers = AgentPromptComposer.layers(
             assistant: activeAssistant,
             priorMessages: turn.preparation.priorMessages,
@@ -743,8 +749,12 @@ final class AgentSession {
             workingDirectory: workingDirectory,
             extraWritableRoots: activeAssistant == nil ? [] : [ticketsDir, queueDir],
             trustProfile: foregroundTrustProfile,
-            model: AgentModelSelection.codex(
-                reasoningEffort: UserSettings.shared.agentReasoningEffort))
+            model: kind == .claude
+                ? AgentModelSelection(
+                    provider: "anthropic", model: UserSettings.shared.claudeCodeModel,
+                    reasoningEffort: UserSettings.shared.agentReasoningEffort)
+                : AgentModelSelection.codex(
+                    reasoningEffort: UserSettings.shared.agentReasoningEffort))
         let resumeBinding = turn.preparation.resumeExternalSessionID.map {
             RuntimeBinding(
                 externalSessionID: $0,
@@ -754,15 +764,15 @@ final class AgentSession {
 
         do {
             var started = false
-            let result = try await codexRuntime.run(
+            let result = try await runtime(for: kind).run(
                 request, binding: resumeBinding,
                 emit: { [weak self] event in
                     guard let self else { return }
                     switch event {
                     case .started(let id):
-                        self.codexThreadId = id
+                        if kind == .codex { self.codexThreadId = id }
                         self.history.recordRuntimeStarted(
-                            sessionId: sessionId, runtime: .codex,
+                            sessionId: sessionId, runtime: kind,
                             externalSessionID: id, fresh: turn.preparation.requiresFreshSession)
                         self.notifyHistoryChanged()
                     case .activity(let label):
@@ -786,11 +796,11 @@ final class AgentSession {
                     self.onAssistantDelta?(result.text)
                 }
             }
-            codexThreadId = result.externalSessionID ?? codexThreadId
+            if kind == .codex { codexThreadId = result.externalSessionID ?? codexThreadId }
             history.completeRuntimeTurn(
-                sessionId: sessionId, runtime: .codex,
+                sessionId: sessionId, runtime: kind,
                 text: result.text,
-                externalSessionID: codexThreadId,
+                externalSessionID: kind == .codex ? codexThreadId : result.externalSessionID,
                 runtimeVersion: result.runtimeVersion)
             finish(result.text, finalAlreadyPersisted: true)
         } catch is CancellationError {

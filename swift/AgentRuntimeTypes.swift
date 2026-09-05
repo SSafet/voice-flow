@@ -3,12 +3,23 @@ import Foundation
 enum AgentRuntimeKind: String, Codable, CaseIterable {
     case codex
     case opencode
+    case claude
 
     var label: String {
         switch self {
         case .codex: return "Codex"
         case .opencode: return "OpenCode"
+        case .claude: return "Claude Code"
         }
+    }
+
+    /// The CLI runtimes draw on a subscription the CLI itself holds; only
+    /// OpenCode needs a provider key in Voice Flow's Keychain.
+    var usesSubscriptionCLI: Bool { self != .opencode }
+
+    /// The `agent_backend` setting is a string for historical reasons.
+    static func fromBackendSetting(_ value: String) -> AgentRuntimeKind {
+        AgentRuntimeKind(rawValue: value) ?? .codex
     }
 }
 

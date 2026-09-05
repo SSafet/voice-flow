@@ -30,6 +30,7 @@ final class SettingsStore: ObservableObject {
     @Published var agentBaseURL: String { didSet { commit() } }
     @Published var agentDailyBudgetUSD: Double { didSet { commit() } }
     @Published var agentBackend: String { didSet { commit() } }
+    @Published var claudeCodeModel: String { didSet { commit() } }
     @Published var assistantWakeEnabled: Bool { didSet { commit() } }
     @Published var assistantWakeWord: String { didSet { commit() } }
     @Published var doubleSelectSpeak: Bool { didSet { commit() } }
@@ -80,6 +81,7 @@ final class SettingsStore: ObservableObject {
         agentBaseURL = s.agentBaseURL
         agentDailyBudgetUSD = s.agentDailyBudgetUSD
         agentBackend = s.agentBackend
+        claudeCodeModel = s.claudeCodeModel
         assistantWakeEnabled = s.assistantWakeEnabled
         assistantWakeWord = s.assistantWakeWord
         doubleSelectSpeak = s.doubleSelectSpeak
@@ -116,6 +118,7 @@ final class SettingsStore: ObservableObject {
         agentBaseURL = settings.agentBaseURL
         agentDailyBudgetUSD = settings.agentDailyBudgetUSD
         agentBackend = settings.agentBackend
+        claudeCodeModel = settings.claudeCodeModel
         hasAgentKey = KeychainStore.shared.hasAgentAPIKey
         loaded = true
     }
@@ -154,8 +157,9 @@ final class SettingsStore: ObservableObject {
         let url = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         s.agentBaseURL = url.isEmpty ? DefaultAgentBaseURL : url
         s.agentDailyBudgetUSD = min(max(agentDailyBudgetUSD, 0.25), 500)
-        s.agentBackend = agentBackend == AgentBackendOpenCode
-            ? AgentBackendOpenCode : AgentBackendCodex
+        s.agentBackend = [AgentBackendOpenCode, AgentBackendClaude].contains(agentBackend)
+            ? agentBackend : AgentBackendCodex
+        s.claudeCodeModel = claudeCodeModel.trimmingCharacters(in: .whitespacesAndNewlines)
         s.assistantWakeEnabled = assistantWakeEnabled
         let wakeWord = assistantWakeWord.trimmingCharacters(in: .whitespacesAndNewlines)
         s.assistantWakeWord = wakeWord.isEmpty ? DefaultAssistantWakeWord : wakeWord
@@ -532,6 +536,7 @@ private struct VoiceSettingsView: View {
 // ── Assistant tab ──
 
 private struct AssistantSettingsView: View {
+    @State private var claudeStatus = "Checking…"
     @ObservedObject var store: SettingsStore
     @State private var openCodeStatus = "Starts on demand"
     @State private var modelCatalog = OpenRouterModelCatalogResult(
@@ -555,6 +560,21 @@ private struct AssistantSettingsView: View {
         return CodexExecBackend.isLoggedIn ? "Signed in with ChatGPT" : "Installed — not signed in"
     }
 
+    /// `claude auth status` spawns a process, so it runs off the main
+    /// thread once per appearance and per backend change, never per body pass.
+    @MainActor
+    private func refreshClaudeStatus() async {
+        let text = await Task.detached(priority: .utility) { () -> String in
+            guard let binary = ClaudeCodeAgentRuntime.findBinary() else { return "Not installed" }
+            switch ClaudeCodeAgentRuntime.isLoggedIn(binary: binary) {
+            case true?: return "Signed in"
+            case false?: return "Installed — not signed in"
+            case nil: return "Installed"
+            }
+        }.value
+        claudeStatus = text
+    }
+
     private var displayedWakeWord: String {
         let word = store.assistantWakeWord.trimmingCharacters(in: .whitespacesAndNewlines)
         return word.isEmpty ? DefaultAssistantWakeWord : word
@@ -576,6 +596,7 @@ private struct AssistantSettingsView: View {
             Section {
                 Picker(selection: $store.agentBackend) {
                     Text("ChatGPT subscription (Codex)").tag(AgentBackendCodex)
+                    Text("Claude subscription (Claude Code)").tag(AgentBackendClaude)
                     Text("OpenCode harness (OpenRouter)").tag(AgentBackendOpenCode)
                 } label: {
                     SettingRowLabel(title: "Backend",
@@ -588,6 +609,22 @@ private struct AssistantSettingsView: View {
                     } label: {
                         SettingRowLabel(title: "Codex CLI",
                                         subtitle: "Sign in once with “codex login” in Terminal — no API billing")
+                    }
+                } else if store.agentBackend == AgentBackendClaude {
+                    LabeledContent {
+                        Text(claudeStatus).foregroundStyle(.secondary)
+                    } label: {
+                        SettingRowLabel(title: "Claude Code CLI",
+                                        subtitle: "Sign in once with “claude” → /login in Terminal — no API billing")
+                    }
+                    LabeledContent {
+                        TextField("", text: $store.claudeCodeModel, prompt: Text("CLI default"))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 220)
+                            .accessibilityLabel("Claude Code model")
+                    } label: {
+                        SettingRowLabel(title: "Model",
+                                        subtitle: "sonnet, opus, haiku, or a full model id; blank keeps the CLI's default")
                     }
                 } else {
                     LabeledContent {
@@ -628,8 +665,8 @@ private struct AssistantSettingsView: View {
             } header: {
                 Text("Account")
             } footer: {
-                Text(store.agentBackend == AgentBackendCodex
-                     ? "Not used by the subscription backend — needed only if you switch to the OpenCode harness, or for automations pinned to it."
+                Text(store.agentBackend != AgentBackendOpenCode
+                     ? "Not used by the subscription backends — needed only if you switch to the OpenCode harness, or for automations pinned to it."
                      : "The assistant needs an OpenRouter key (openrouter.ai) to answer questions, see your screen, and help you work.")
             }
 
@@ -786,7 +823,11 @@ private struct AssistantSettingsView: View {
         .formStyle(.grouped)
         .task {
             await refreshOpenCodeStatus()
+            await refreshClaudeStatus()
             await loadOpenRouterModels()
+        }
+        .onChange(of: store.agentBackend) { _ in
+            Task { await refreshClaudeStatus() }
         }
     }
 

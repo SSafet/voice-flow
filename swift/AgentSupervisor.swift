@@ -9,6 +9,12 @@ protocol AgentJobExecuting: AnyObject {
     func execute(job: AgentJob, run: AgentRun,
                  progress: @escaping (String) -> Void) async throws -> AgentJobExecutionResult
     func cancel(runID: String) async
+    /// App teardown: release long-lived runtime processes.
+    func shutdown()
+}
+
+extension AgentJobExecuting {
+    func shutdown() {}
 }
 
 struct AgentJobStatusUpdate {
@@ -92,6 +98,7 @@ actor AgentSupervisor {
             await executor.cancel(runID: runID)
         }
         for task in tasks.values { await task.value }
+        executor.shutdown()
         for runID in tasks.keys {
             _ = try? store.releaseInterrupted(
                 runID: runID, workerID: workerID, reason: "app quit")

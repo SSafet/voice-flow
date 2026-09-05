@@ -598,6 +598,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         chatPanel.onContinueDictation = { [weak self] entryId in
             self?.continueDictation(appendingTo: entryId)
         }
+        chatPanel.onSelectReasoningEffort = { effort in
+            // The same knob as Settings → Assistant → Reasoning effort.
+            UserSettings.shared.agentReasoningEffort =
+                AgentReasoningEffort.normalized(effort) ?? AgentReasoningEffort.unset
+            UserSettings.shared.save()
+        }
         chatPanel.onSnap = { [weak self] conversationID in
             guard let self else { return }
             guard self.agent.activateConversation(conversationID) != nil else {

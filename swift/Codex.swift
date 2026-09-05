@@ -11,6 +11,7 @@ import Darwin
 
 let AgentBackendCodex = "codex"
 let AgentBackendOpenCode = "opencode"
+let AgentBackendClaude = "claude"
 /// One-release decode/fallback identifier. New settings never write it.
 let AgentBackendAPI = "api"
 
@@ -19,6 +20,13 @@ enum CodexBackendError: LocalizedError {
     case notLoggedIn
     case usageLimit(String)
     case turnFailed(String)
+    /// The thread a binding remembers no longer exists on disk; start fresh.
+    case threadNotFound(String)
+    /// `codex app-server` could not start (older CLI); use `codex exec`.
+    case appServerUnavailable(String)
+    /// The shared app-server is serving another workspace right now; this
+    /// one turn goes through `codex exec` without giving up the server.
+    case appServerBusy
 
     var errorDescription: String? {
         switch self {
@@ -32,6 +40,12 @@ enum CodexBackendError: LocalizedError {
                 : message
         case .turnFailed(let message):
             return message
+        case .threadNotFound(let id):
+            return "Codex thread \(id) is no longer available."
+        case .appServerUnavailable(let message):
+            return "codex app-server unavailable: \(message)"
+        case .appServerBusy:
+            return "codex app-server is busy with another workspace."
         }
     }
 }
@@ -299,6 +313,9 @@ final class CodexExecBackend {
 /// `CodexExecBackend`; tests provide a JSONL-free fake with the same lifecycle.
 protocol CodexExecuting: AnyObject {
     func interrupt()
+    /// Interrupt one thread's turn where the backend can tell them apart;
+    /// the per-process exec backend interrupts its only turn.
+    func interrupt(threadId: String?)
     func run(prompt: String,
              images: [Data],
              resumeThread: String?,
@@ -308,6 +325,10 @@ protocol CodexExecuting: AnyObject {
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
              onAgentText: @escaping (String) -> Void) async throws -> CodexExecBackend.TurnResult
+}
+
+extension CodexExecuting {
+    func interrupt(threadId: String?) { interrupt() }
 }
 
 extension CodexExecBackend: CodexExecuting {}

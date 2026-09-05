@@ -678,7 +678,7 @@ extension AppDelegate: AgentsDataSource {
                 readOnlyReason: readOnlyReason,
                 linkedAutomationCount: jobs.count,
                 runtime: conversation.preferredRuntime
-                    ?? (UserSettings.shared.agentBackend == AgentBackendOpenCode ? .opencode : .codex),
+                    ?? AgentRuntimeKind.fromBackendSetting(UserSettings.shared.agentBackend),
                 runtimeSwitchable: conversation.turnState != .running && !agent.isRunning,
                 activity: conversation.id == agent.currentSessionId ? agent.activity : .idle,
                 canSnap: ownerAvailable && conversation.completedAt == nil,

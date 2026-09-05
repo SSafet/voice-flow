@@ -783,13 +783,14 @@
     {
       "id": "RUN-02",
       "area": "runtime",
-      "name": "Codex starts and resumes JSONL sessions",
+      "name": "Codex starts and resumes sessions (app-server, exec fallback)",
       "kind": "existing",
       "risk": "critical",
       "tests": [
         "tests/test_backend_protocol.py",
         "tests/codex_runtime/main.swift",
-        "live:codex_new_resume"
+        "live:codex_new_resume",
+        "tests/codex_appserver/main.swift"
       ]
     },
     {
@@ -1619,6 +1620,16 @@
       "risk": "high",
       "tests": [
         "tests/data_sources/ui/main.swift"
+      ]
+    },
+    {
+      "id": "RUN-14",
+      "area": "runtime",
+      "name": "Claude Code runs and resumes headless stream-json sessions",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/claude_code_runtime/main.swift"
       ]
     }
   ]

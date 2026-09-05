@@ -186,6 +186,9 @@ class UserSettings {
     // Default runtime for new Assistant conversations. Existing conversations
     // persist their own preferred runtime in assistant-sessions.json.
     var agentBackend: String = AgentBackendCodex
+    // Model for the Claude Code runtime ("" = the CLI's own default). The
+    // effort knob is the shared agent_reasoning_effort.
+    var claudeCodeModel: String = ""
     var voiceRepliesEnabled: Bool = false
     var assistantWakeEnabled: Bool = true
     var assistantWakeWord: String = DefaultAssistantWakeWord
@@ -305,7 +308,10 @@ class UserSettings {
             // The old direct API choice expands to OpenCode. The direct loop
             // remains only as a hidden Codex failure fallback for one release.
             agentBackend = (v == AgentBackendOpenCode || v == AgentBackendAPI)
-                ? AgentBackendOpenCode : AgentBackendCodex
+                ? AgentBackendOpenCode : (v == AgentBackendClaude ? AgentBackendClaude : AgentBackendCodex)
+        }
+        if let v = dict["claude_code_model"] as? String {
+            claudeCodeModel = v.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if let v = dict["voice_replies_enabled"] as? Bool { voiceRepliesEnabled = v }
         if let v = dict["assistant_wake_enabled"] as? Bool { assistantWakeEnabled = v }
@@ -363,6 +369,7 @@ class UserSettings {
             "agent_base_url": agentBaseURL,
             "agent_daily_budget_usd": agentDailyBudgetUSD,
             "agent_backend": agentBackend,
+            "claude_code_model": claudeCodeModel,
             "voice_replies_enabled": voiceRepliesEnabled,
             "assistant_wake_enabled": assistantWakeEnabled,
             "assistant_wake_word": Self.trimmed(assistantWakeWord, fallback: DefaultAssistantWakeWord),

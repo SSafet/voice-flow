@@ -108,7 +108,7 @@ extension AppDelegate {
         case ("POST", "/__qa/runtime"):
             guard let raw = payload["runtime"] as? String,
                   let runtime = AgentRuntimeKind(rawValue: raw) else {
-                return .error(400, "runtime must be codex or opencode.")
+                return .error(400, "runtime must be codex, opencode, or claude.")
             }
             let trust = (payload["trust_profile"] as? String)
                 .flatMap(AgentTrustProfile.init(rawValue:)) ?? .workspace
@@ -138,6 +138,7 @@ extension AppDelegate {
                     switch runtime {
                     case .codex: status = await CodexAgentRuntime().status()
                     case .opencode: status = await OpenCodeAgentRuntime().status()
+                    case .claude: status = await ClaudeCodeAgentRuntime().status()
                     }
                     values.append([
                         "runtime": runtime.rawValue,

@@ -650,6 +650,14 @@
     {
       "id": "tests/data_sources/ui/main.swift",
       "runner": "unit"
+    },
+    {
+      "id": "tests/codex_appserver/main.swift",
+      "runner": "unit"
+    },
+    {
+      "id": "tests/claude_code_runtime/main.swift",
+      "runner": "unit"
     }
   ]
 }
