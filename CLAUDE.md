@@ -394,16 +394,19 @@ deployed copies are build outputs.
 - `queue/queue.json` — the **next queue** (`NextQueue`, `swift/Queue.swift`): the
   user's small "what's next" list, rendered as a `system`-flagged overlay panel
   that resurfaces briefly at transition moments (app-switch burst, idle-return,
-  content change, slow clock; positions rotate top-right/center/left) and stays
-  up when empty during active hours. The file is the API — FLORA (codex: direct
+  content change, slow clock; positions rotate top-right/center/left). When the
+  queue is empty it nudges once per sitting ("Empty — what's next?", up for
+  `show_seconds`, then gone on its own); only the explicit menu "show" keeps
+  the Empty panel up. The file is the API — FLORA (codex: direct
   edit via writable root; OpenCode: `voiceflow_queue` tool), Claude sessions,
   and the user edit it directly; `queue/_schema.md` documents it, and
   `queue/config.json` overrides the surfacing tunables. Never auto-populate it:
   the user plans it himself. Settings → Assistant toggle (`queue_enabled`);
-  ✕ on a filled panel backs off 10 min; ✕ on the Empty panel keeps it down
-  for the rest of that sitting — it returns only after the user has been
-  away ≥ `idle_resume_minutes` (or on relaunch), never on the 30-min clock
-  (`emptyNagSuppressed`). The whole feature is a side-attachment —
+  ✕ on a filled panel backs off 10 min; the Empty nudge, closed or timed
+  out, stays down for the rest of that sitting — it returns only after the
+  user has been away ≥ `idle_resume_minutes` (or on relaunch), never on the
+  30-min clock (`emptyNagSuppressed`; the log showed 315 dismissals of the
+  old persistent panel against two fills in a month). The whole feature is a side-attachment —
   delete `swift/Queue.swift` plus ~20 wiring lines to remove it.
 - `watcher/` — ambient workflow log (`WorkflowWatcher`): per-day `activity.jsonl` + deduped frames, plus `ANALYZE.md` / `ledger.md` / `reviews/` for the nightly review.
 - `app.log` — `vflog` output.

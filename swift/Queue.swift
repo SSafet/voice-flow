@@ -52,16 +52,19 @@ final class NextQueue {
     private var lastConfigMtime: Date?
 
     // ── Surfacing state (main thread) ──
-    private enum Surface { case hidden, brief(until: Date), persistentEmpty }
+    private enum Surface { case hidden, brief(until: Date), briefEmpty(until: Date), persistentEmpty }
     private var surface: Surface = .hidden
     private var anchorIndex = 0
     private var lastTriggerShow = Date.distantPast
     private var lastClockShow = Date()          // don't clock-fire right at launch
     private var dismissCooldownUntil = Date.distantPast
     private var emptySince: Date?
-    /// The user closed the Empty panel this sitting. It stays down until they
-    /// leave and come back (or the app restarts): the log showed the 30-minute
-    /// re-show being dismissed within seconds, ~15 times a day, for a month.
+    /// The Empty nudge has had its one showing this sitting (it timed out or
+    /// the user closed it). It stays down until they leave and come back (or
+    /// the app restarts): the log showed 315 dismissals of the persistent
+    /// panel against two fills in a month — a nag, not a habit builder. The
+    /// ambient Empty panel is now a brief nudge, once per sitting; only the
+    /// explicit menu "show" keeps it up.
     private var emptyNagSuppressed = false
     private var wasIdleSince: Date?
     private var recentActivations: [Date] = []
@@ -154,6 +157,9 @@ final class NextQueue {
                 // relaunch brings the Empty panel back.
                 emptyNagSuppressed = true
                 vflog("queue: empty panel dismissed, quiet until the next sitting")
+            } else if case .briefEmpty = surface {
+                emptyNagSuppressed = true
+                vflog("queue: empty nudge dismissed, quiet until the next sitting")
             } else {
                 dismissCooldownUntil = now.addingTimeInterval(10 * 60)
                 vflog("queue: dismissed by user, quiet for 10m")
@@ -168,6 +174,22 @@ final class NextQueue {
                 surface = .hidden
             } else {
                 refreshOverlayIfContentChanged(open: open)
+            }
+        case .briefEmpty(let until):
+            if !open.isEmpty {
+                // Filled while the nudge was up: that is the moment it exists for.
+                emptyNagSuppressed = true
+                if active && !isBusy() {
+                    showBrief(open: open, reason: "filled")
+                } else {
+                    hideOverlay()
+                    surface = .hidden
+                }
+            } else if now >= until || !active {
+                hideOverlay()
+                surface = .hidden
+                emptyNagSuppressed = true
+                vflog("queue: empty nudge down, quiet until the next sitting")
             }
         case .persistentEmpty:
             if !open.isEmpty {
@@ -190,7 +212,7 @@ final class NextQueue {
                 if emptyNagSuppressed { break }
                 if emptySince == nil { emptySince = now }
                 if now.timeIntervalSince(emptySince!) >= emptyGraceSeconds {
-                    showPersistentEmpty()
+                    showEmptyNudge()
                 }
                 break
             }
@@ -249,6 +271,15 @@ final class NextQueue {
         writeOverlay(open: [], empty: true)
         surface = .persistentEmpty
         vflog("queue: empty panel up")
+    }
+
+    /// The once-per-sitting "what's next?" nudge: same panel, but it leaves
+    /// on its own after `showSeconds` instead of waiting to be dismissed.
+    private func showEmptyNudge() {
+        anchorIndex = (anchorIndex + Int.random(in: 1...2)) % 3
+        writeOverlay(open: [], empty: true)
+        surface = .briefEmpty(until: Date().addingTimeInterval(showSeconds))
+        vflog("queue: empty nudge up (once this sitting)")
     }
 
     private func refreshOverlayIfContentChanged(open: [QueueItem]) {
