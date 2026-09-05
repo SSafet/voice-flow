@@ -255,6 +255,12 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     var onSelectAssistantRuntime: ((AgentRuntimeKind, AgentsThreadID) -> Void)?
     /// The effort popup writes the one shared reasoning-effort setting.
     var onSelectReasoningEffort: ((String) -> Void)?
+    /// The access popup sets the capability dial (run commands, control screen).
+    var onSelectAccessMode: ((AgentCapabilityDial.AccessMode) -> Void)?
+    /// The model popup writes the chosen runtime's model setting ("" = its default).
+    var onSelectModel: ((AgentRuntimeKind, String) -> Void)?
+    /// The mic button: start (or stop) a dictation into this thread.
+    var onMicToggle: ((AgentsThreadID) -> Void)?
 
     private enum Mode: Equatable {
         case destination(AgentsDestination)
@@ -345,6 +351,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     private var contentStack: NSView!          // flipped document view
     private var scrollView: NSScrollView!
+    /// The composer lives here, pinned under the thread, never inside the
+    /// scrolling content — the way a session bar stays put.
+    private var composerHost: NSView!
+    private var composerHostHeight: NSLayoutConstraint!
     private var navigationBar: NSView!
     private var workspaceNavigation = false
     private var navigationHeight: NSLayoutConstraint!
@@ -523,6 +533,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var threadDeleteConfirmationID: AgentsThreadID?
     private var threadCompleteConfirmationID: AgentsThreadID?
     private var threadDrafts: [AgentsThreadID: String] = [:]
+    /// Attached image paths, kept per thread across rebuilds like the draft.
+    private var threadAttachments: [AgentsThreadID: [String]] = [:]
+    /// A dictation is going into the open thread; the composer is rebuilt
+    /// on every history change, so the flag lives here.
+    private var recordingActive = false
+    /// Model lists are read from disk / the catalog; a rebuild per streamed
+    /// message must not re-read them.
+    private var modelChoicesCache: [AgentRuntimeKind: (at: Date, choices: [(value: String, label: String)])] = [:]
     private var threadInlineError: String?
     private var pushedOrigin: Mode?
     private var assistantThreadStreams: [String: String] = [:]
@@ -572,10 +590,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
 
         navigationBar = buildNavigationBar()
+        composerHost = NSView()
+        composerHost.translatesAutoresizingMaskIntoConstraints = false
         addSubview(navigationBar)
         addSubview(scrollView)
+        addSubview(composerHost)
         navigationHeight = navigationBar.heightAnchor.constraint(equalToConstant: 36)
         contentTop = scrollView.topAnchor.constraint(equalTo: navigationBar.bottomAnchor, constant: 2)
+        composerHostHeight = composerHost.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             navigationBar.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             navigationBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
@@ -584,9 +606,33 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             contentTop,
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            scrollView.bottomAnchor.constraint(equalTo: composerHost.topAnchor, constant: -8),
+            composerHost.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            composerHost.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            composerHost.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            composerHostHeight,
             contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
         ])
+    }
+
+    /// Put the thread's composer in the pinned host (replacing any previous
+    /// one) and let the host size to it.
+    private func installComposer(_ composer: ComposerView) {
+        composerHost.subviews.forEach { $0.removeFromSuperview() }
+        composer.translatesAutoresizingMaskIntoConstraints = false
+        composerHost.addSubview(composer)
+        composerHostHeight.isActive = false
+        NSLayoutConstraint.activate([
+            composer.topAnchor.constraint(equalTo: composerHost.topAnchor),
+            composer.bottomAnchor.constraint(equalTo: composerHost.bottomAnchor),
+            composer.leadingAnchor.constraint(equalTo: composerHost.leadingAnchor),
+            composer.trailingAnchor.constraint(equalTo: composerHost.trailingAnchor),
+        ])
+    }
+
+    private func clearComposerHost() {
+        composerHost.subviews.forEach { $0.removeFromSuperview() }
+        composerHostHeight.isActive = true
     }
 
     private func buildNavigationBar() -> NSView {
@@ -941,7 +987,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// other sessions must never eat what the user is typing.
     func refresh() {
         if case .thread(let id) = mode {
-            if let composer = composerField { threadDrafts[id] = composer.text }
+            if let composer = composerField {
+                threadDrafts[id] = composer.text
+                threadAttachments[id] = composer.attachments
+            }
             if dataSource?.agentThreadDetail(for: id) == nil {
                 mode = .destination(currentDestination)
             }
@@ -1218,6 +1267,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         lastRefreshInputs = nil
         stashComposerDraft()
         contentStack.subviews.forEach { $0.removeFromSuperview() }
+        clearComposerHost()
         composerField = nil
         composerThreadID = nil
         automationSearchField = nil
@@ -3179,8 +3229,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             let composer = makeComposer(
                 placeholder: assistantThread ? "Message \(detail.owner)…" : "Message this thread…")
             composer.text = threadDrafts[id] ?? ""
+            composer.attachments = threadAttachments[id] ?? []
             if assistantThread { configureAssistantComposer(composer, detail: detail) }
-            place(composer, below: &top, gap: 10)
+            installComposer(composer)
+            composer.setRecording(recordingActive)
+            composer.onAttachRequested = { [weak self] in self?.pickAttachments() }
             composerField = composer
             composerThreadID = id
             if assistantThread {
@@ -3247,7 +3300,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             addSubview(label)
             NSLayoutConstraint.activate([
                 label.centerXAnchor.constraint(equalTo: centerXAnchor),
-                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+                label.bottomAnchor.constraint(equalTo: composerHost.topAnchor, constant: -8),
                 label.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -48),
                 label.heightAnchor.constraint(equalToConstant: 24),
             ])
@@ -3263,13 +3316,40 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     func focusComposer() { composerField?.focus() }
 
+    /// A dictation into the open thread started or ended: the mic reflects it.
+    func setRecording(_ on: Bool) {
+        recordingActive = on
+        composerField?.setRecording(on)
+    }
+
+    /// The + button. The picker is non-modal and the pick lands on whichever
+    /// composer is live when it closes — a rebuild in between loses nothing.
+    private func pickAttachments() {
+        let picker = NSOpenPanel()
+        picker.canChooseFiles = true
+        picker.canChooseDirectories = false
+        picker.allowsMultipleSelection = true
+        picker.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .gif]
+        picker.message = "Attach images to this message"
+        picker.begin { [weak self] response in
+            guard response == .OK, let self else { return }
+            for url in picker.urls { self.composerField?.addAttachment(path: url.path) }
+            if let id = self.composerThreadID, let composer = self.composerField {
+                self.threadAttachments[id] = composer.attachments
+            }
+            self.composerField?.focus()
+        }
+    }
+
 #if VOICE_FLOW_QA
     var qaAssistantControlState: [String: Any] {
         let runtime = composerField?.runtimeControl
-        let controls: [NSControl] = [runtime, composerField?.effortControl,
-                                     composerField?.stopControl].compactMap { $0 }
+        let controls: [NSControl] = [runtime, composerField?.modelControl, composerField?.effortControl, composerField?.accessControl,
+                                     composerField?.micControl, composerField?.stopControl].compactMap { $0 }
         return [
             "runtime_present": runtime != nil,
+            "access_mode": composerField?.accessControl?.titleOfSelectedItem ?? "",
+            "model_title": composerField?.modelControl?.titleOfSelectedItem ?? "",
             "runtime_enabled": runtime?.isEnabled ?? false,
             "runtime_title": runtime?.titleOfSelectedItem ?? "",
             "composer_running": composerField?.isRunning ?? false,
@@ -3281,10 +3361,15 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 #endif
 
-    /// The assistant composer's toolbar: runtime (or the review-copies
-    /// notice), effort, snap. Every control passes the thread it sits in.
+    /// The assistant composer's session bar: access mode, attach, mic, snap
+    /// on the left; runtime (or the review-copies notice) and effort on the
+    /// right. Every control passes the thread it sits in.
     private func configureAssistantComposer(_ composer: ComposerView, detail: AgentThreadDetail) {
         var controls = ComposerControls()
+        controls.accessOptions = AgentCapabilityDial.AccessMode.allCases.map(\.label)
+        controls.accessIndex = UserSettings.shared.agentCapabilityDial.accessMode.rawValue
+        controls.attach = true
+        controls.mic = detail.canSnap
         if detail.sourceReviewOnly {
             controls.runtimeOptions = ["Review copies · OpenRouter"]
             controls.runtimeIndex = 0
@@ -3294,12 +3379,22 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             controls.runtimeIndex = AgentRuntimeKind.allCases.firstIndex(of: detail.runtime ?? .codex) ?? 0
             controls.runtimeEnabled = detail.runtimeSwitchable
         }
+        let runtimeKind = detail.runtime ?? .codex
+        let models = modelChoices(for: runtimeKind)
+        if !detail.sourceReviewOnly {
+            controls.modelOptions = models.map(\.label)
+            controls.modelIndex = models.firstIndex { $0.value == currentModel(for: runtimeKind) } ?? 0
+        }
         controls.effortOptions = AgentReasoningEffort.choices.map(\.label)
         let effort = AgentReasoningEffort.normalized(UserSettings.shared.agentReasoningEffort)
             ?? AgentReasoningEffort.unset
         controls.effortIndex = AgentReasoningEffort.choices.firstIndex { $0.value == effort } ?? 0
         controls.snap = detail.canSnap
         composer.setControls(controls)
+        composer.onModelSelected = { [weak self] index in
+            guard let self, models.indices.contains(index) else { return }
+            self.onSelectModel?(runtimeKind, models[index].value)
+        }
         composer.onRuntimeSelected = { [weak self] index in
             guard let self, let id = self.openThreadID,
                   AgentRuntimeKind.allCases.indices.contains(index) else { return }
@@ -3314,6 +3409,48 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
         composer.onStop = { [weak self] in
             if let id = self?.openThreadID { self?.onStop?(id) }
+        }
+        composer.onAccessSelected = { [weak self] index in
+            guard let mode = AgentCapabilityDial.AccessMode(rawValue: index) else { return }
+            self?.onSelectAccessMode?(mode)
+        }
+        composer.onMicToggle = { [weak self] in
+            if let id = self?.openThreadID { self?.onMicToggle?(id) }
+        }
+    }
+
+    /// What the model popup offers for a runtime: the runtime's own default
+    /// first, then what it can run. A currently chosen value that is not in
+    /// the list (typed in Settings) is kept as its own entry.
+    private func modelChoices(for kind: AgentRuntimeKind) -> [(value: String, label: String)] {
+        var choices: [(value: String, label: String)]
+        if let cached = modelChoicesCache[kind], Date().timeIntervalSince(cached.at) < 60 {
+            choices = cached.choices
+        } else {
+            switch kind {
+            case .codex:
+                choices = [("", "Codex default")] + CodexModelCatalog.installedSlugs().map { ($0, $0) }
+            case .claude:
+                choices = [("", "Claude default"), ("sonnet", "Sonnet"), ("opus", "Opus"), ("haiku", "Haiku")]
+            case .opencode:
+                let catalog = (dataSource?.agentAutomationModels() ?? [])
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                choices = catalog.map { ($0.id, $0.name) }
+            }
+            modelChoicesCache[kind] = (Date(), choices)
+        }
+        let current = currentModel(for: kind)
+        if !current.isEmpty, !choices.contains(where: { $0.value == current }) {
+            choices.insert((current, current), at: kind == .opencode ? 0 : 1)
+        }
+        return choices
+    }
+
+    private func currentModel(for kind: AgentRuntimeKind) -> String {
+        switch kind {
+        case .codex: return UserSettings.shared.codexModel
+        case .claude: return UserSettings.shared.claudeCodeModel
+        case .opencode: return UserSettings.shared.agentModel
         }
     }
 
@@ -3807,6 +3944,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func stashComposerDraft() {
         guard let composer = composerField, let id = composerThreadID else { return }
         threadDrafts[id] = composer.text
+        threadAttachments[id] = composer.attachments
     }
 
     private func submit(_ text: String, images: [String] = []) {

@@ -92,7 +92,8 @@ final class CodexExecBackend {
 
     static func executionArguments(
         prompt: String, imagePaths: [String], resumeThread: String?,
-        extraWritableRoots: [String], reasoningEffort: String? = nil) -> [String] {
+        extraWritableRoots: [String], model: String? = nil,
+        reasoningEffort: String? = nil) -> [String] {
         // `exec` and `exec resume` diverge slightly in supported flags
         // (resume has no --sandbox/-C), so permissions go through -c. The
         // Assistant needs outbound access for user-requested integrations
@@ -113,6 +114,9 @@ final class CodexExecBackend {
                 .map { "\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
                 .joined(separator: ", ")
             args.append(contentsOf: ["-c", "sandbox_workspace_write.writable_roots=[\(toml)]"])
+        }
+        if let model = model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
+            args.append(contentsOf: ["-m", model])
         }
         if let effort = reasoningEffort, !effort.isEmpty {
             // Same knob OpenCode calls the model variant, spelled the codex way.
@@ -151,6 +155,7 @@ final class CodexExecBackend {
              resumeThread: String?,
              workingDirectory: URL? = nil,
              extraWritableRoots: [String] = [],
+             model: String? = nil,
              reasoningEffort: String? = nil,
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
@@ -169,7 +174,7 @@ final class CodexExecBackend {
 
         let args = Self.executionArguments(
             prompt: prompt, imagePaths: imagePaths, resumeThread: resumeThread,
-            extraWritableRoots: extraWritableRoots, reasoningEffort: reasoningEffort)
+            extraWritableRoots: extraWritableRoots, model: model, reasoningEffort: reasoningEffort)
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
@@ -321,6 +326,7 @@ protocol CodexExecuting: AnyObject {
              resumeThread: String?,
              workingDirectory: URL?,
              extraWritableRoots: [String],
+             model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
@@ -332,3 +338,34 @@ extension CodexExecuting {
 }
 
 extension CodexExecBackend: CodexExecuting {}
+
+/// The models the user's Codex CLI offers, read from its own cache
+/// (`~/.codex/models_cache.json`) — the composer's model list for Codex.
+enum CodexModelCatalog {
+    static func visibleSlugs(from data: Data) -> [String] {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = object["models"] as? [[String: Any]] else { return [] }
+        return models.compactMap { model in
+            guard let slug = model["slug"] as? String, !slug.isEmpty,
+                  (model["visibility"] as? String ?? "list") != "hide" else { return nil }
+            return slug
+        }
+    }
+
+    private static var cache: (path: String, modified: Date, slugs: [String])?
+    private static let cacheLock = NSLock()
+
+    static func installedSlugs() -> [String] {
+        let home = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex"
+        let path = home + "/models_cache.json"
+        let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+            ?? .distantPast
+        if let cached = cacheLock.withLock({ cache }), cached.path == path, cached.modified == modified {
+            return cached.slugs
+        }
+        guard let data = FileManager.default.contents(atPath: path) else { return [] }
+        let slugs = visibleSlugs(from: data)
+        cacheLock.withLock { cache = (path, modified, slugs) }
+        return slugs
+    }
+}

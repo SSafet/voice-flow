@@ -108,10 +108,13 @@ tabs (`ChatTab`, default **Agents** on open):
   `swift/AgentsView.swift`): one row per MCP session plus the assistant;
   opening a row shows that session's thread. The assistant conversation is
   **that same thread view** — the only assistant surface: its header row
-  composer carries the runtime picker (Codex · OpenCode · Claude Code),
-  the reasoning-effort picker (the one shared setting), the live turn status
-  ("Thinking…", tool activity), snap, and Send/Stop — and it stays up while
-  the turn runs, so a draft typed meanwhile is kept. `ChatPanel` no longer owns a chat of its own; it routes
+  composer is a session bar pinned under the thread: access mode (the
+  capability dial as one word), + attach, mic, snap on the left; live status,
+  runtime (Codex · OpenCode · Claude Code), model, reasoning effort (the one
+  shared setting), and Send/Stop on the right — and it stays up while the
+  turn runs, so a draft typed meanwhile is kept. Model choices are per
+  runtime: `codex_model` (from `~/.codex/models_cache.json`),
+  `claude_code_model`, `agent_model` (OpenRouter). `ChatPanel` no longer owns a chat of its own; it routes
   (`openAssistantConversation`, `setActivity`, `addNote` → a 6 s strip).
   Its nav bar is **Now · Threads · Setup** (`AgentsDestination.navigation`):
   two reading surfaces, then one setup surface. The panel lands on **Now**,
@@ -384,7 +387,7 @@ deployed copies are build outputs.
 | `VoiceFlowPaths.swift`, `QAControl.swift` | `VoiceFlowPaths`, `QAEventRecorder` | Config-root isolation plus the compile-time-absent QA authority/event plane. |
 | `AssistantContinuity.swift` | `AssistantContinuityClassifier`, `LocalAssistantSessionAdapter` | Ephemeral current-vs-new wake routing and the stable local picker identity for FLORA. |
 | `AssistantHistory.swift` | `AssistantHistoryStore`, `AssistantConversation`, `AssistantHistoryMessage` | Atomic local history and resume metadata for selectable in-app Assistant sessions. |
-| `Composer.swift` | `ComposerView`, `ComposerControls` | The one message input: auto-growing text, image chips, and a toolbar — runtime picker (Codex · OpenCode · Claude Code), reasoning effort, live turn status, snap, Send that becomes Stop while a turn runs. Assistant threads configure the toolbar; MCP threads get the plain one. Do not hand-build another. |
+| `Composer.swift` | `ComposerView`, `ComposerControls` | The one message input, styled as a session bar and pinned under the thread (never inside the scroll): image chips, auto-growing text, and a bottom row — left: access mode (Observe · Workspace · Full access = the capability dial), + attach images, mic (dictate into this thread), snap; right: spinner + live status, runtime (Codex · OpenCode · Claude Code), model (Codex's own catalog / Sonnet-Opus-Haiku / OpenRouter), reasoning effort, and Send that becomes Stop while a turn runs. It stays up during the turn so a draft is kept. Assistant threads configure the bar; MCP threads get the plain one. Do not hand-build another. |
 | `Codex.swift` | `CodexExecBackend` | `codex exec --json` per-turn backend: the continuity router's one-shot classifier and the fallback when the app-server cannot start. |
 | `CodexAppServer.swift` | `CodexAppServerBackend`, `CodexAppServerProtocol`, `ProcessTree` | The default Codex backend: one long-lived `codex app-server` JSON-RPC process — thread/start + thread/resume, turn/start, streamed `item/agentMessage/delta`, request-based interrupt. A dead thread starts fresh with the canonical handoff. |
 | `ClaudeCode.swift` | `ClaudeCodeAgentRuntime`, `ClaudeCodeProtocol` | Claude-subscription turns via `claude -p` with stream-json in/out (session id per conversation, `--resume`, base64 images on stdin, `--permission-mode` from the trust profile, `--effort` from the shared ladder). |

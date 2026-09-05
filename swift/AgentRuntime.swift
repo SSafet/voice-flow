@@ -24,12 +24,15 @@ struct AgentModelSelection: Codable, Equatable {
         self.reasoningEffort = AgentReasoningEffort.normalized(reasoningEffort)
     }
 
-    /// Codex picks its model from the user's own codex settings — Voice Flow
-    /// only ever overrides how hard it thinks. Nil when there is nothing to
-    /// override, so that path keeps sending no model config at all.
-    static func codex(reasoningEffort: String?) -> AgentModelSelection? {
-        guard let effort = AgentReasoningEffort.normalized(reasoningEffort) else { return nil }
-        return AgentModelSelection(provider: "codex", model: "", reasoningEffort: effort)
+    /// Codex picks its model from the user's own codex settings unless the
+    /// composer chose one; Voice Flow overrides that and how hard it thinks.
+    /// Nil when there is nothing to override, so that path keeps sending no
+    /// model config at all.
+    static func codex(model: String? = nil, reasoningEffort: String?) -> AgentModelSelection? {
+        let chosen = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let effort = AgentReasoningEffort.normalized(reasoningEffort)
+        guard !chosen.isEmpty || effort != nil else { return nil }
+        return AgentModelSelection(provider: "codex", model: chosen, reasoningEffort: effort)
     }
 }
 

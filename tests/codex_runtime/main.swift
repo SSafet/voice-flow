@@ -32,6 +32,18 @@ let codexEffortArguments = CodexExecBackend.executionArguments(
     extraWritableRoots: [], reasoningEffort: "low")
 expect(codexEffortArguments.contains("model_reasoning_effort=\"low\""),
        "the shared reasoning-effort config should reach codex as its own config key")
+let codexModelArguments = CodexExecBackend.executionArguments(
+    prompt: "task", imagePaths: [], resumeThread: nil,
+    extraWritableRoots: [], model: "gpt-5.6-luna", reasoningEffort: nil)
+expect(codexModelArguments.contains("-m") && codexModelArguments.contains("gpt-5.6-luna")
+       && !codexEffortArguments.contains("-m"),
+       "a chosen model must reach codex as -m, and only when chosen")
+expect(AgentModelSelection.codex(model: "", reasoningEffort: "") == nil
+       && AgentModelSelection.codex(model: "gpt-6-astra", reasoningEffort: nil)?.model == "gpt-6-astra",
+       "the codex selection must carry a chosen model and stay nil when nothing is chosen")
+expect(CodexModelCatalog.visibleSlugs(from: Data(#"{"models":[{"slug":"gpt-6-astra","visibility":"list"},{"slug":"gpt-reserve","visibility":"hide"},{"slug":"gpt-5.5"}]}"#.utf8))
+       == ["gpt-6-astra", "gpt-5.5"],
+       "the Codex model catalog must list visible slugs in the CLI's order")
 
 final class FakeCodex: CodexExecuting {
     var receivedPrompt = ""
@@ -44,6 +56,7 @@ final class FakeCodex: CodexExecuting {
 
     func run(prompt: String, images: [Data], resumeThread: String?,
              workingDirectory: URL?, extraWritableRoots: [String],
+             model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
@@ -125,6 +138,7 @@ final class BlockingCodex: CodexExecuting {
     func interrupt(threadId: String?) { interruptedThreads.append(threadId) }
     func run(prompt: String, images: [Data], resumeThread: String?,
              workingDirectory: URL?, extraWritableRoots: [String],
+             model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
@@ -176,6 +190,7 @@ final class GoneThreadCodex: CodexExecuting {
     func interrupt() {}
     func run(prompt: String, images: [Data], resumeThread: String?,
              workingDirectory: URL?, extraWritableRoots: [String],
+             model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
@@ -219,6 +234,7 @@ final class NoAppServer: CodexExecuting {
     func interrupt() {}
     func run(prompt: String, images: [Data], resumeThread: String?,
              workingDirectory: URL?, extraWritableRoots: [String],
+             model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,

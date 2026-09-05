@@ -754,6 +754,7 @@ final class AgentSession {
                     provider: "anthropic", model: UserSettings.shared.claudeCodeModel,
                     reasoningEffort: UserSettings.shared.agentReasoningEffort)
                 : AgentModelSelection.codex(
+                    model: UserSettings.shared.codexModel,
                     reasoningEffort: UserSettings.shared.agentReasoningEffort))
         let resumeBinding = turn.preparation.resumeExternalSessionID.map {
             RuntimeBinding(

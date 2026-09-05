@@ -92,6 +92,36 @@ struct AgentCapabilityDial: Equatable {
     var runCommands: Bool = true
     var reachNetwork: Bool = true
     var controlScreen: Bool = true
+
+    /// The composer's one-word view of the dial. Observe reads only;
+    /// Workspace runs commands and edits files; Full access also controls
+    /// the screen. Network follows its own switch and is not touched.
+    enum AccessMode: Int, CaseIterable {
+        case observe
+        case workspace
+        case fullAccess
+
+        var label: String {
+            switch self {
+            case .observe: return "Observe"
+            case .workspace: return "Workspace"
+            case .fullAccess: return "Full access"
+            }
+        }
+    }
+
+    var accessMode: AccessMode {
+        if !runCommands { return .observe }
+        return controlScreen ? .fullAccess : .workspace
+    }
+
+    /// The dial with the two switches the mode governs set accordingly.
+    func applying(_ mode: AccessMode) -> AgentCapabilityDial {
+        var dial = self
+        dial.runCommands = mode != .observe
+        dial.controlScreen = mode == .fullAccess
+        return dial
+    }
 }
 
 struct AgentPermissionPolicy: Equatable {

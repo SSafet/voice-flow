@@ -7,6 +7,42 @@ import Cocoa
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 extension AppDelegate {
+    /// `VOICE_FLOW_QA_LAUNCH_SNAPSHOT=<png path>`: open a fresh assistant
+    /// conversation in the panel, optionally on `VOICE_FLOW_QA_LAUNCH_RUNTIME`
+    /// and with `VOICE_FLOW_QA_LAUNCH_ACTIVITY` (thinking/responding/acting)
+    /// painted on the composer, snapshot the panel to that path, and quit.
+    /// Visual proof with no loopback HTTP round trip — the QA control
+    /// endpoints need a working TCP stack; this needs only a file.
+    func qaRunLaunchSnapshotIfRequested() {
+        let environment = ProcessInfo.processInfo.environment
+        guard let destination = environment["VOICE_FLOW_QA_LAUNCH_SNAPSHOT"], !destination.isEmpty else { return }
+        let runtime = environment["VOICE_FLOW_QA_LAUNCH_RUNTIME"].flatMap(AgentRuntimeKind.init(rawValue:))
+        let activity = environment["VOICE_FLOW_QA_LAUNCH_ACTIVITY"].flatMap(AgentActivity.init(rawValue:))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self else { return }
+            let conversation = self.agent.createConversation(force: true)
+            if let runtime { _ = self.agent.setPreferredRuntime(runtime) }
+            self.chatPanel.show(focusInput: false)
+            self.chatPanel.openAssistantConversation(conversation.id)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                if let activity, activity != .idle {
+                    self.chatPanel.setActivity(activity, conversationID: conversation.id)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    do {
+                        let shot = try self.chatPanel.qaSnapshot()
+                        try? FileManager.default.removeItem(atPath: destination)
+                        try FileManager.default.copyItem(atPath: shot.path, toPath: destination)
+                        vflog("qa launch snapshot: \(destination) \(shot.width)x\(shot.height)")
+                    } catch {
+                        vflog("qa launch snapshot failed: \(error)")
+                    }
+                    NSApp.terminate(nil)
+                }
+            }
+        }
+    }
+
     private func qaObject(_ data: Data) -> [String: Any]? {
         guard !data.isEmpty,
               let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

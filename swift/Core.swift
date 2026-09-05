@@ -189,6 +189,8 @@ class UserSettings {
     // Model for the Claude Code runtime ("" = the CLI's own default). The
     // effort knob is the shared agent_reasoning_effort.
     var claudeCodeModel: String = ""
+    // Model for the Codex runtime ("" = whatever the user's codex config says).
+    var codexModel: String = ""
     var voiceRepliesEnabled: Bool = false
     var assistantWakeEnabled: Bool = true
     var assistantWakeWord: String = DefaultAssistantWakeWord
@@ -313,6 +315,9 @@ class UserSettings {
         if let v = dict["claude_code_model"] as? String {
             claudeCodeModel = v.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        if let v = dict["codex_model"] as? String {
+            codexModel = v.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         if let v = dict["voice_replies_enabled"] as? Bool { voiceRepliesEnabled = v }
         if let v = dict["assistant_wake_enabled"] as? Bool { assistantWakeEnabled = v }
         if let v = dict["assistant_wake_word"] as? String {
@@ -370,6 +375,7 @@ class UserSettings {
             "agent_daily_budget_usd": agentDailyBudgetUSD,
             "agent_backend": agentBackend,
             "claude_code_model": claudeCodeModel,
+            "codex_model": codexModel,
             "voice_replies_enabled": voiceRepliesEnabled,
             "assistant_wake_enabled": assistantWakeEnabled,
             "assistant_wake_word": Self.trimmed(assistantWakeWord, fallback: DefaultAssistantWakeWord),

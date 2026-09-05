@@ -119,11 +119,14 @@ enum CodexAppServerProtocol {
     }
 
     static func turnParams(threadId: String, prompt: String, imagePaths: [String],
-                           reasoningEffort: String?) -> [String: Any] {
+                           model: String? = nil, reasoningEffort: String?) -> [String: Any] {
         var params: [String: Any] = [
             "threadId": threadId,
             "input": turnInput(prompt: prompt, imagePaths: imagePaths),
         ]
+        if let model = model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
+            params["model"] = model
+        }
         if let effort = reasoningEffort, !effort.isEmpty { params["effort"] = effort }
         return params
     }
@@ -231,6 +234,7 @@ final class CodexAppServerBackend: CodexExecuting {
              resumeThread: String?,
              workingDirectory: URL?,
              extraWritableRoots: [String],
+             model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
@@ -288,7 +292,7 @@ final class CodexAppServerBackend: CodexExecuting {
                             "turn/start",
                             CodexAppServerProtocol.turnParams(
                                 threadId: threadId, prompt: prompt, imagePaths: imagePaths,
-                                reasoningEffort: reasoningEffort))
+                                model: model, reasoningEffort: reasoningEffort))
                         let turnId = (result?["turn"] as? [String: Any])?["id"] as? String
                         let interruptNow: Bool = self.lock.withLock {
                             state.turnId = turnId

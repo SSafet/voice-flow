@@ -264,6 +264,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 menuBar?.setState(state)
                 let capability = activeRunId.flatMap { captureRuns[$0]?.capability } ?? .dictate
                 indicator?.setState(state, recordingFor: capability)
+                chatPanel?.setRecording(state == .recording && capability == .dictate)
             }
         }
     }
@@ -284,6 +285,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // ── launch backend ──────────────────────────────
         state = .loading
         backend.start()
+#if VOICE_FLOW_QA
+        qaRunLaunchSnapshotIfRequested()
+#endif
 
         // VF-60: a previous session that died without applicationWillTerminate
         // (crash, force-quit, rebuild-under-a-running-app) leaves its runtime
@@ -598,6 +602,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         chatPanel.onContinueDictation = { [weak self] entryId in
             self?.continueDictation(appendingTo: entryId)
         }
+        chatPanel.onSelectModel = { [weak self] kind, model in
+            // One setting per runtime, the same ones Settings → Assistant edits.
+            switch kind {
+            case .codex: UserSettings.shared.codexModel = model
+            case .claude: UserSettings.shared.claudeCodeModel = model
+            case .opencode: UserSettings.shared.agentModel = model.isEmpty ? DefaultAgentModel : model
+            }
+            UserSettings.shared.save()
+            self?.chatPanel.refreshAgents()
+        }
+        chatPanel.onSelectAccessMode = { [weak self] mode in
+            // The same switches as Settings → Assistant (run commands, control
+            // this Mac); the header's hand icon follows.
+            let dial = UserSettings.shared.agentCapabilityDial.applying(mode)
+            UserSettings.shared.agentRunCommands = dial.runCommands
+            UserSettings.shared.assistantComputerUse = dial.controlScreen
+            UserSettings.shared.save()
+            self?.chatPanel.setControlAllowed(dial.controlScreen)
+        }
+        chatPanel.onMicToggle = { [weak self] conversationID in
+            guard let self else { return }
+            // Decide before any side effect: a running dictation stops, any
+            // other capture (snapshot, continuous) is not ours to stop.
+            if let id = self.activeRunId, let run = self.captureRuns[id] {
+                if run.capability == .dictate {
+                    self.stopCapture(expectedCapability: .dictate)
+                } else {
+                    self.replyBubble.showTransient("another capture is running", seconds: 4)
+                }
+                return
+            }
+            guard !self.recorder.isBusy else {
+                self.replyBubble.showTransient("still finishing the last recording", seconds: 4)
+                return
+            }
+            // A plain Dictate goes to the visibly open conversation; make
+            // sure that is the one the mic was tapped in.
+            guard self.agent.activateConversation(conversationID) != nil else {
+                self.replyBubble.showTransient("wait for the Assistant to finish first", seconds: 4)
+                return
+            }
+            self.beginCapture(capability: .dictate, deliveryPolicy: .contextual, handsFree: false)
+        }
         chatPanel.onSelectReasoningEffort = { effort in
             // The same knob as Settings → Assistant → Reasoning effort.
             UserSettings.shared.agentReasoningEffort =
@@ -618,11 +665,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             UserSettings.shared.voiceRepliesEnabled = on
             UserSettings.shared.save()
         }
-        chatPanel.onToggleControl = { on in
+        chatPanel.onToggleControl = { [weak self] on in
             // Same switch as Settings → Assistant → Computer use; the agent
             // reads the setting live (AgentSession.allowControl).
             UserSettings.shared.assistantComputerUse = on
             UserSettings.shared.save()
+            self?.chatPanel.refreshAgents()
         }
         chatPanel.onStop = { [weak self] conversationID in
             guard let self, self.agent.currentSessionId == conversationID else { return }

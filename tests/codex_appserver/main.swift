@@ -69,6 +69,9 @@ let turn = CodexAppServerProtocol.turnParams(threadId: "thr_1", prompt: "p", ima
 expect(turn["effort"] as? String == "low" && turn["threadId"] as? String == "thr_1", "turn params must carry effort and thread")
 expect(CodexAppServerProtocol.turnParams(threadId: "t", prompt: "p", imagePaths: [], reasoningEffort: nil)["effort"] == nil,
        "an unset effort must not be sent")
+expect(CodexAppServerProtocol.turnParams(threadId: "t", prompt: "p", imagePaths: [], model: "gpt-6-astra", reasoningEffort: nil)["model"] as? String == "gpt-6-astra"
+       && CodexAppServerProtocol.turnParams(threadId: "t", prompt: "p", imagePaths: [], model: " ", reasoningEffort: nil)["model"] == nil,
+       "a chosen model rides the turn; a blank one is not sent")
 
 expect(CodexAppServerProtocol.activityLabel(for: "commandExecution") == "Running a command"
        && CodexAppServerProtocol.activityLabel(for: "userMessage") == nil,

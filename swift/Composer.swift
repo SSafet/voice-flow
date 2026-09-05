@@ -3,49 +3,68 @@ import Cocoa
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Composer — the one place the user types a message to an agent
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  Every message input is this view. It grows with the text — one line up
-//  to `maxHeight`, then it scrolls — and carries, on a toolbar under the
-//  text, everything a turn needs: which runtime answers (Codex, Claude
-//  Code, OpenCode), how hard it thinks, what it is doing right now, a snap
-//  of the screen, and Send — which becomes Stop while the turn runs.
-//  Attached images sit above the text as chips (click to remove).
+//  Modeled on the session bars of Claude Code and Codex: one bordered box,
+//  pinned to the bottom of the thread, with everything about the session
+//  around the text. Bottom-left is what the agent may do here — access
+//  mode, attach an image, dictate, snap the screen. Bottom-right is what
+//  answers — runtime, reasoning effort — plus the live status with a
+//  spinner, and Send, which becomes Stop while the turn runs.
 //
-//  The composer never disappears during a turn: the draft you type while
-//  the assistant works stays put, Return waits, Stop is one tap away.
+//  The box never disappears during a turn: the draft you type while the
+//  assistant works stays put, Return waits, Stop is one tap away. Attached
+//  images sit above the text as chips (click to remove).
 
-/// The controls an assistant thread puts on the toolbar. nil = a plain
+/// The controls an assistant thread puts on the bar. nil = a plain
 /// composer (MCP threads: text, images, Send).
 struct ComposerControls: Equatable {
+    var accessOptions: [String] = []
+    var accessIndex: Int = 0
+    var accessEnabled: Bool = true
+    var attach: Bool = false
+    var mic: Bool = false
+    var snap: Bool = false
     var runtimeOptions: [String] = []
     var runtimeIndex: Int = 0
     var runtimeEnabled: Bool = true
+    var modelOptions: [String] = []
+    var modelIndex: Int = 0
     var effortOptions: [String] = []
     var effortIndex: Int = 0
-    var snap: Bool = false
 }
 
 final class ComposerView: NSView {
     /// Fired on Return or send with the trimmed text and the file paths of
-    /// any pasted images. Clearing is the caller's call — a send that fails
-    /// keeps the draft and its attachments.
+    /// any attached images. Clearing is the caller's call — a send that
+    /// fails keeps the draft and its attachments.
     var onSend: ((String, [String]) -> Void)?
     /// Per-keystroke hook, for stashing drafts.
     var onTextChanged: (() -> Void)?
+    var onAccessSelected: ((Int) -> Void)?
     var onRuntimeSelected: ((Int) -> Void)?
+    var onModelSelected: ((Int) -> Void)?
     var onEffortSelected: ((Int) -> Void)?
+    var onMicToggle: (() -> Void)?
+    /// The + button; the owner presents the picker and adds what was chosen.
+    var onAttachRequested: (() -> Void)?
     var onSnap: (() -> Void)?
     var onStop: (() -> Void)?
 
+    private let box = NSView()
     private let textView = ComposerTextView()
     private let attachmentsRow = NSStackView()
     private var attachmentPaths: [String] = []
     private let scroll = NSScrollView()
     private let placeholderLabel = NSTextField(labelWithString: "")
-    private let toolbar = NSStackView()
-    private let runtimePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let effortPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let statusLabel = NSTextField(labelWithString: "")
+    private let bar = NSStackView()
+    private let accessPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let attachButton = NSButton()
+    private let micButton = NSButton()
     private let snapButton = NSButton()
+    private let spinner = NSProgressIndicator()
+    private let statusLabel = NSTextField(labelWithString: "")
+    private let runtimePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let modelPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let effortPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let sendButton = NSButton()
     private let stopButton = NSButton()
     private var heightConstraint: NSLayoutConstraint!
@@ -56,6 +75,7 @@ final class ComposerView: NSView {
     private let inset: CGFloat
     private var controls: ComposerControls?
     private(set) var isRunning = false
+    private(set) var isRecording = false
 
     var text: String {
         get { textView.string }
@@ -75,12 +95,23 @@ final class ComposerView: NSView {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachmentPaths.isEmpty
     }
 
-    /// The send button, for callers that inspect or restyle it.
+    /// Attached image paths — stashed and restored across rebuilds by the owner.
+    var attachments: [String] {
+        get { attachmentPaths }
+        set {
+            attachmentPaths = newValue
+            rebuildAttachments()
+        }
+    }
+
+    /// The bar's controls, for QA state and the panel's accessibility list.
     var sendControl: NSButton { sendButton }
-    /// The toolbar controls, for QA state and the panel's accessibility list.
-    var runtimeControl: NSPopUpButton? { controls?.runtimeOptions.isEmpty == false ? runtimePopUp : nil }
-    var effortControl: NSPopUpButton? { controls?.effortOptions.isEmpty == false ? effortPopUp : nil }
     var stopControl: NSButton { stopButton }
+    var micControl: NSButton? { controls?.mic == true ? micButton : nil }
+    var accessControl: NSPopUpButton? { controls?.accessOptions.isEmpty == false ? accessPopUp : nil }
+    var runtimeControl: NSPopUpButton? { controls?.runtimeOptions.isEmpty == false ? runtimePopUp : nil }
+    var modelControl: NSPopUpButton? { controls?.modelOptions.isEmpty == false ? modelPopUp : nil }
+    var effortControl: NSPopUpButton? { controls?.effortOptions.isEmpty == false ? effortPopUp : nil }
     var status: String { statusLabel.stringValue }
 
     var hasFocus: Bool {
@@ -88,14 +119,20 @@ final class ComposerView: NSView {
         return responder === textView
     }
 
-    /// - Parameter maxHeight: how far the field grows before it starts scrolling.
-    init(placeholder: String, fontSize: CGFloat = 12.5,
-         minHeight: CGFloat = 34, maxHeight: CGFloat = 132,
-         inset: CGFloat = 8) {
+    /// - Parameter maxHeight: how far the text grows before it starts scrolling.
+    init(placeholder: String, fontSize: CGFloat = 13,
+         minHeight: CGFloat = 44, maxHeight: CGFloat = 150,
+         inset: CGFloat = 10) {
         self.minHeight = minHeight
         self.maxHeight = maxHeight
         self.inset = inset
         super.init(frame: .zero)
+
+        box.wantsLayer = true
+        box.layer?.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 8).cgColor
+        box.layer?.borderColor = Theme.borderHover.cgColor
+        box.layer?.borderWidth = 1
+        box.layer?.cornerRadius = 12
 
         let font = NSFont.systemFont(ofSize: fontSize)
         textView.font = font
@@ -119,59 +156,73 @@ final class ComposerView: NSView {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
-        scroll.wantsLayer = true
-        scroll.layer?.backgroundColor = NSColor(r: 255, g: 245, b: 230, a: 10).cgColor
-        scroll.layer?.cornerRadius = 8
 
         placeholderLabel.stringValue = placeholder
         placeholderLabel.font = font
         placeholderLabel.textColor = Theme.text3
         placeholderLabel.lineBreakMode = .byTruncatingTail
 
-        // Toolbar ---------------------------------------------------------
-        for popUp in [runtimePopUp, effortPopUp] {
-            popUp.controlSize = .mini
-            popUp.font = .systemFont(ofSize: 10, weight: .medium)
+        // The bar --------------------------------------------------------
+        for popUp in [accessPopUp, runtimePopUp, modelPopUp, effortPopUp] {
+            popUp.isBordered = false
+            popUp.controlSize = .small
+            popUp.font = .systemFont(ofSize: 11.5, weight: .medium)
+            popUp.contentTintColor = Theme.text2
             popUp.target = self
             popUp.isHidden = true
+            // Long OpenRouter names must truncate, never push Send off the bar.
+            popUp.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            popUp.lineBreakMode = .byTruncatingTail
+            popUp.translatesAutoresizingMaskIntoConstraints = false
+            popUp.widthAnchor.constraint(lessThanOrEqualToConstant: 180).isActive = true
         }
+        accessPopUp.action = #selector(accessChanged)
+        accessPopUp.toolTip = "What the assistant may do on this Mac"
+        accessPopUp.setAccessibilityLabel("Access mode")
         runtimePopUp.action = #selector(runtimeChanged)
         runtimePopUp.toolTip = "Runtime for this conversation"
         runtimePopUp.setAccessibilityLabel("Assistant runtime")
+        modelPopUp.action = #selector(modelChanged)
+        modelPopUp.toolTip = "Model for this runtime"
+        modelPopUp.setAccessibilityLabel("Model")
         effortPopUp.action = #selector(effortChanged)
         effortPopUp.toolTip = "How hard the model thinks"
         effortPopUp.setAccessibilityLabel("Reasoning effort")
 
-        statusLabel.font = .systemFont(ofSize: 11)
+        configureIcon(attachButton, "plus", label: "Attach an image", action: #selector(attachTapped))
+        configureIcon(micButton, "mic", label: "Dictate into this thread", action: #selector(micTapped))
+        configureIcon(snapButton, "camera.viewfinder", label: "Snap the screen and send", action: #selector(snapTapped))
+        attachButton.isHidden = true
+        micButton.isHidden = true
+        snapButton.isHidden = true
+
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        spinner.isHidden = true
+        spinner.setAccessibilityLabel("Working")
+
+        statusLabel.font = .systemFont(ofSize: 11.5)
         statusLabel.textColor = Theme.accent
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.maximumNumberOfLines = 1
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        statusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        snapButton.image = NSImage(systemSymbolName: "camera.viewfinder",
-                                   accessibilityDescription: "Snap the screen and send") ?? NSImage()
-        snapButton.isBordered = false
-        snapButton.title = ""
-        snapButton.contentTintColor = Theme.text2
-        snapButton.target = self
-        snapButton.action = #selector(snapTapped)
-        snapButton.toolTip = "Snap the screen and send"
-        snapButton.setAccessibilityLabel("Snap the screen and send")
-        snapButton.isHidden = true
+        statusLabel.isHidden = true
 
         sendButton.image = NSImage(systemSymbolName: "arrow.up.circle.fill",
                                    accessibilityDescription: "Send") ?? NSImage()
+        sendButton.symbolConfiguration = .init(pointSize: 22, weight: .regular)
         sendButton.isBordered = false
         sendButton.title = ""
         sendButton.contentTintColor = Theme.accent
         sendButton.target = self
         sendButton.action = #selector(sendTapped)
         sendButton.setAccessibilityLabel("Send")
-        sendButton.toolTip = "Send"
+        sendButton.toolTip = "Send (Return)"
 
         stopButton.image = NSImage(systemSymbolName: "stop.circle.fill",
                                    accessibilityDescription: "Stop") ?? NSImage()
+        stopButton.symbolConfiguration = .init(pointSize: 22, weight: .regular)
         stopButton.isBordered = false
         stopButton.title = ""
         stopButton.contentTintColor = NSColor(r: 255, g: 110, b: 100)
@@ -181,12 +232,16 @@ final class ComposerView: NSView {
         stopButton.toolTip = "Stop this turn"
         stopButton.isHidden = true
 
-        toolbar.orientation = .horizontal
-        toolbar.alignment = .centerY
-        toolbar.spacing = 6
-        toolbar.edgeInsets = NSEdgeInsets(top: 0, left: 2, bottom: 0, right: 2)
-        for view in [runtimePopUp, effortPopUp, statusLabel, snapButton, sendButton, stopButton] {
-            toolbar.addArrangedSubview(view)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        bar.orientation = .horizontal
+        bar.alignment = .centerY
+        bar.spacing = 8
+        bar.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        for view in [accessPopUp, attachButton, micButton, snapButton, spacer,
+                     spinner, statusLabel, runtimePopUp, modelPopUp, effortPopUp, sendButton, stopButton] {
+            bar.addArrangedSubview(view)
         }
 
         attachmentsRow.orientation = .horizontal
@@ -194,33 +249,36 @@ final class ComposerView: NSView {
         attachmentsRow.isHidden = true
         attachmentsRow.setAccessibilityLabel("Attached images")
 
-        for view in [scroll, placeholderLabel, attachmentsRow, toolbar] as [NSView] {
+        box.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(box)
+        for view in [attachmentsRow, scroll, placeholderLabel, bar] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(view)
+            box.addSubview(view)
         }
 
         heightConstraint = scroll.heightAnchor.constraint(equalToConstant: minHeight)
         attachmentsHeight = attachmentsRow.heightAnchor.constraint(equalToConstant: 0)
-        attachmentsGap = scroll.topAnchor.constraint(equalTo: attachmentsRow.bottomAnchor,
-                                                     constant: 0)
+        attachmentsGap = scroll.topAnchor.constraint(equalTo: attachmentsRow.bottomAnchor, constant: 0)
         NSLayoutConstraint.activate([
+            box.topAnchor.constraint(equalTo: topAnchor),
+            box.bottomAnchor.constraint(equalTo: bottomAnchor),
+            box.leadingAnchor.constraint(equalTo: leadingAnchor),
+            box.trailingAnchor.constraint(equalTo: trailingAnchor),
             heightConstraint,
             attachmentsHeight,
             attachmentsGap,
-            attachmentsRow.topAnchor.constraint(equalTo: topAnchor),
-            attachmentsRow.leadingAnchor.constraint(equalTo: leadingAnchor),
-            attachmentsRow.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            toolbar.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 4),
-            toolbar.leadingAnchor.constraint(equalTo: leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            toolbar.heightAnchor.constraint(equalToConstant: 24),
-            toolbar.bottomAnchor.constraint(equalTo: bottomAnchor),
-            placeholderLabel.leadingAnchor.constraint(equalTo: scroll.leadingAnchor,
-                                                      constant: inset),
-            placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: scroll.trailingAnchor,
-                                                       constant: -inset),
+            attachmentsRow.topAnchor.constraint(equalTo: box.topAnchor, constant: 8),
+            attachmentsRow.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: inset),
+            attachmentsRow.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -inset),
+            scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 2),
+            scroll.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -2),
+            bar.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 2),
+            bar.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            bar.heightAnchor.constraint(equalToConstant: 34),
+            bar.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -4),
+            placeholderLabel.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: inset),
+            placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: scroll.trailingAnchor, constant: -inset),
             placeholderLabel.topAnchor.constraint(equalTo: scroll.topAnchor, constant: inset),
         ])
         syncPlaceholder()
@@ -228,26 +286,50 @@ final class ComposerView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    // ── Toolbar state ───────────────────────────────────
+    private func configureIcon(_ button: NSButton, _ symbol: String, label: String, action: Selector) {
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label) ?? NSImage()
+        button.symbolConfiguration = .init(pointSize: 14, weight: .medium)
+        button.isBordered = false
+        button.title = ""
+        button.contentTintColor = Theme.text2
+        button.target = self
+        button.action = action
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
+    }
 
-    /// Which runtime/effort/snap controls to show; nil hides them all.
+    // ── Bar state ───────────────────────────────────────
+
+    /// Which controls to show; nil hides the session controls.
     func setControls(_ value: ComposerControls?) {
         controls = value
         let controls = value ?? ComposerControls()
-        runtimePopUp.removeAllItems()
-        runtimePopUp.addItems(withTitles: controls.runtimeOptions)
-        runtimePopUp.isHidden = controls.runtimeOptions.isEmpty
-        if controls.runtimeOptions.indices.contains(controls.runtimeIndex) {
-            runtimePopUp.selectItem(at: controls.runtimeIndex)
-        }
-        effortPopUp.removeAllItems()
-        effortPopUp.addItems(withTitles: controls.effortOptions)
-        effortPopUp.isHidden = controls.effortOptions.isEmpty
-        if controls.effortOptions.indices.contains(controls.effortIndex) {
-            effortPopUp.selectItem(at: controls.effortIndex)
-        }
+        fill(accessPopUp, controls.accessOptions, controls.accessIndex)
+        fill(runtimePopUp, controls.runtimeOptions, controls.runtimeIndex)
+        fill(modelPopUp, controls.modelOptions, controls.modelIndex)
+        fill(effortPopUp, controls.effortOptions, controls.effortIndex)
+        attachButton.isHidden = !controls.attach
+        micButton.isHidden = !controls.mic
         snapButton.isHidden = !controls.snap
         applyRunningState()
+    }
+
+    private func fill(_ popUp: NSPopUpButton, _ options: [String], _ index: Int) {
+        popUp.removeAllItems()
+        popUp.addItems(withTitles: options)
+        popUp.isHidden = options.isEmpty
+        if options.indices.contains(index) { popUp.selectItem(at: index) }
+        if popUp === accessPopUp {
+            // Full access reads as a warning, the way the reference bars do:
+            // a pop-up draws the selected item's own title, so colour lives
+            // on the item.
+            for item in popUp.itemArray where item.title.lowercased().contains("full") {
+                item.attributedTitle = NSAttributedString(string: item.title, attributes: [
+                    .foregroundColor: NSColor(r: 240, g: 140, b: 60),
+                    .font: NSFont.systemFont(ofSize: 11.5, weight: .medium),
+                ])
+            }
+        }
     }
 
     /// What the turn is doing, and whether one is running (Send ↔ Stop).
@@ -257,10 +339,26 @@ final class ComposerView: NSView {
         applyRunningState()
     }
 
+    /// A dictation is going into this thread.
+    func setRecording(_ on: Bool) {
+        isRecording = on
+        micButton.image = NSImage(systemSymbolName: on ? "mic.fill" : "mic",
+                                  accessibilityDescription: on ? "Stop dictating" : "Dictate into this thread") ?? NSImage()
+        micButton.contentTintColor = on ? NSColor(r: 255, g: 110, b: 100) : Theme.text2
+        micButton.toolTip = on ? "Stop dictating" : "Dictate into this thread"
+        micButton.setAccessibilityLabel(on ? "Stop dictating" : "Dictate into this thread")
+    }
+
     private func applyRunningState() {
         let controls = controls ?? ComposerControls()
+        accessPopUp.isEnabled = controls.accessEnabled && !isRunning
         runtimePopUp.isEnabled = controls.runtimeEnabled && !isRunning
+        modelPopUp.isEnabled = !isRunning
         snapButton.isEnabled = !isRunning
+        micButton.isEnabled = !isRunning
+        statusLabel.isHidden = statusLabel.stringValue.isEmpty
+        spinner.isHidden = !isRunning
+        if isRunning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         sendButton.isHidden = isRunning
         stopButton.isHidden = !isRunning
     }
@@ -281,8 +379,22 @@ final class ComposerView: NSView {
     @objc private func sendTapped() { submit() }
     @objc private func stopTapped() { onStop?() }
     @objc private func snapTapped() { onSnap?() }
+    @objc private func micTapped() { onMicToggle?() }
+    @objc private func accessChanged() {
+        applyRunningState()
+        onAccessSelected?(accessPopUp.indexOfSelectedItem)
+    }
     @objc private func runtimeChanged() { onRuntimeSelected?(runtimePopUp.indexOfSelectedItem) }
+    @objc private func modelChanged() { onModelSelected?(modelPopUp.indexOfSelectedItem) }
     @objc private func effortChanged() { onEffortSelected?(effortPopUp.indexOfSelectedItem) }
+
+    /// The + button: the owner presents a non-modal picker.
+    @objc private func attachTapped() { onAttachRequested?() }
+
+    func addAttachment(path: String) {
+        attachmentPaths.append(path)
+        rebuildAttachments()
+    }
 
     private func submit() {
         // While a turn runs the draft waits; Stop is the only action.

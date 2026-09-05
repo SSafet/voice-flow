@@ -25,6 +25,10 @@ final class ChatPanel {
     var onOpenAssistantSession: ((String) -> Void)?
     var onSelectAssistantRuntime: ((AgentRuntimeKind, String) -> Void)?
     var onSelectReasoningEffort: ((String) -> Void)?
+    var onSelectAccessMode: ((AgentCapabilityDial.AccessMode) -> Void)?
+    var onSelectModel: ((AgentRuntimeKind, String) -> Void)?
+    /// Mic tapped in the composer of this conversation: start or stop dictating.
+    var onMicToggle: ((String) -> Void)?
     var onEscape: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenSession: ((String) -> Void)?
@@ -275,6 +279,10 @@ final class ChatPanel {
             "runtime_present": assistant["runtime_present"] ?? false,
             "runtime_enabled": assistant["runtime_enabled"] ?? false,
             "runtime_title": assistant["runtime_title"] ?? "",
+            "model_title": assistant["model_title"] ?? "",
+            "access_mode": assistant["access_mode"] ?? "",
+            "composer_running": assistant["composer_running"] ?? false,
+            "composer_status": assistant["composer_status"] ?? "",
             "accessibility_labels": labels,
         ]
     }
@@ -388,6 +396,10 @@ final class ChatPanel {
         voiceButton.contentTintColor = on ? Theme.accent : Theme.text2
         voiceButton.toolTip = on ? "Voice replies on" : "Voice replies off"
     }
+
+    /// The app is recording a dictation (any route); the open thread's mic
+    /// shows it so a click there stops it.
+    func setRecording(_ on: Bool) { agentsView.setRecording(on) }
 
     func setControlAllowed(_ on: Bool) {
         controlOn = on
@@ -724,6 +736,9 @@ final class ChatPanel {
         agentsView.onSelectReasoningEffort = { [weak self] effort in
             self?.onSelectReasoningEffort?(effort)
         }
+        agentsView.onSelectAccessMode = { [weak self] mode in self?.onSelectAccessMode?(mode) }
+        agentsView.onSelectModel = { [weak self] kind, model in self?.onSelectModel?(kind, model) }
+        agentsView.onMicToggle = { [weak self] id in self?.onMicToggle?(id.value) }
         panel.onCommand = { [weak self] key in
             guard let self else { return false }
             if key == "4" { self.showSources(); return true }

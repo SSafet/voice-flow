@@ -111,6 +111,7 @@ final class CodexAgentRuntime: AgentRuntime {
                 resumeThread: resumeThread,
                 workingDirectory: request.workingDirectory,
                 extraWritableRoots: request.extraWritableRoots,
+                model: request.model?.model,
                 reasoningEffort: request.model?.reasoningEffort,
                 onThreadStarted: { id in
                     onThreadStarted(id)

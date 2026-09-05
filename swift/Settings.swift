@@ -31,6 +31,7 @@ final class SettingsStore: ObservableObject {
     @Published var agentDailyBudgetUSD: Double { didSet { commit() } }
     @Published var agentBackend: String { didSet { commit() } }
     @Published var claudeCodeModel: String { didSet { commit() } }
+    @Published var codexModel: String { didSet { commit() } }
     @Published var assistantWakeEnabled: Bool { didSet { commit() } }
     @Published var assistantWakeWord: String { didSet { commit() } }
     @Published var doubleSelectSpeak: Bool { didSet { commit() } }
@@ -82,6 +83,7 @@ final class SettingsStore: ObservableObject {
         agentDailyBudgetUSD = s.agentDailyBudgetUSD
         agentBackend = s.agentBackend
         claudeCodeModel = s.claudeCodeModel
+        codexModel = s.codexModel
         assistantWakeEnabled = s.assistantWakeEnabled
         assistantWakeWord = s.assistantWakeWord
         doubleSelectSpeak = s.doubleSelectSpeak
@@ -119,6 +121,9 @@ final class SettingsStore: ObservableObject {
         agentDailyBudgetUSD = settings.agentDailyBudgetUSD
         agentBackend = settings.agentBackend
         claudeCodeModel = settings.claudeCodeModel
+        codexModel = settings.codexModel
+        agentRunCommands = settings.agentRunCommands
+        assistantComputerUse = settings.assistantComputerUse
         hasAgentKey = KeychainStore.shared.hasAgentAPIKey
         loaded = true
     }
@@ -160,6 +165,7 @@ final class SettingsStore: ObservableObject {
         s.agentBackend = [AgentBackendOpenCode, AgentBackendClaude].contains(agentBackend)
             ? agentBackend : AgentBackendCodex
         s.claudeCodeModel = claudeCodeModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        s.codexModel = codexModel.trimmingCharacters(in: .whitespacesAndNewlines)
         s.assistantWakeEnabled = assistantWakeEnabled
         let wakeWord = assistantWakeWord.trimmingCharacters(in: .whitespacesAndNewlines)
         s.assistantWakeWord = wakeWord.isEmpty ? DefaultAssistantWakeWord : wakeWord
