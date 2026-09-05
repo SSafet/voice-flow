@@ -127,6 +127,25 @@ final class AgentSession {
         }
     }
 
+    /// The model a conversation's next turn uses for a runtime: its own
+    /// choice when it made one, else the global default for that runtime.
+    func preferredModel(for kind: AgentRuntimeKind, sessionId: String? = nil) -> String {
+        let conversation = sessionId.flatMap { history.conversation($0) } ?? currentConversation
+        if let chosen = conversation.preferredModels?[kind.rawValue], !chosen.isEmpty { return chosen }
+        switch kind {
+        case .codex: return UserSettings.shared.codexModel
+        case .claude: return UserSettings.shared.claudeCodeModel
+        case .opencode: return UserSettings.shared.agentModel
+        }
+    }
+
+    /// The composer's model choice for one conversation. Allowed mid-turn:
+    /// it lands on the next turn.
+    func setPreferredModel(_ model: String, runtime: AgentRuntimeKind, conversationID: String) {
+        history.setPreferredModel(model, runtime: runtime, for: conversationID)
+        notifyHistoryChanged()
+    }
+
     @discardableResult
     func setPreferredRuntime(_ runtime: AgentRuntimeKind) -> AssistantConversation? {
         guard !isRunning else { return nil }
@@ -512,7 +531,8 @@ final class AgentSession {
             screenshots: turn.images,
             workingDirectory: reviewAssistant?.directory ?? VoiceFlowPaths.shared.configRoot,
             extraWritableRoots: [], trustProfile: .observe,
-            model: AgentModelSelection(provider: "openrouter", model: UserSettings.shared.agentModel,
+            model: AgentModelSelection(provider: "openrouter",
+                model: preferredModel(for: .opencode, sessionId: sessionId),
                 reasoningEffort: UserSettings.shared.agentReasoningEffort),
             sourceContext: pendingSourceContext, sourceAccessMode: .reviewCopies)
         activity = .thinking
@@ -595,7 +615,7 @@ final class AgentSession {
             workingDirectory: workingDirectory,
             extraWritableRoots: [], trustProfile: foregroundTrustProfile,
             model: AgentModelSelection(
-                provider: "openrouter", model: UserSettings.shared.agentModel,
+                provider: "openrouter", model: preferredModel(for: .opencode, sessionId: sessionId),
                 reasoningEffort: UserSettings.shared.agentReasoningEffort))
 
         AgentToolSessionRegistry.shared.prepare(
@@ -751,10 +771,10 @@ final class AgentSession {
             trustProfile: foregroundTrustProfile,
             model: kind == .claude
                 ? AgentModelSelection(
-                    provider: "anthropic", model: UserSettings.shared.claudeCodeModel,
+                    provider: "anthropic", model: preferredModel(for: .claude, sessionId: sessionId),
                     reasoningEffort: UserSettings.shared.agentReasoningEffort)
                 : AgentModelSelection.codex(
-                    model: UserSettings.shared.codexModel,
+                    model: preferredModel(for: .codex, sessionId: sessionId),
                     reasoningEffort: UserSettings.shared.agentReasoningEffort))
         let resumeBinding = turn.preparation.resumeExternalSessionID.map {
             RuntimeBinding(

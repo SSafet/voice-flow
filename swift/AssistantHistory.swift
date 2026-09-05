@@ -40,6 +40,10 @@ struct AssistantConversation: Codable, Equatable {
     /// can still resume/read Codex conversations after a rollback.
     var codexThreadId: String?
     var preferredRuntime: AgentRuntimeKind?
+    /// The model this conversation asked for, per runtime kind (raw value →
+    /// model id; "" or absent = the runtime's global default). Set from the
+    /// composer; it changes this conversation only, never the defaults.
+    var preferredModels: [String: String]?
     /// String keys keep the on-disk JSON stable and human-readable.
     var runtimeBindings: [String: RuntimeBinding]?
     let createdAt: Date
@@ -526,6 +530,16 @@ final class AssistantHistoryStore {
     func setPreferredRuntime(_ runtime: AgentRuntimeKind?, for sessionId: String) {
         mutateConversation(sessionId) { conversation in
             conversation.preferredRuntime = runtime
+        }
+    }
+
+    func setPreferredModel(_ model: String?, runtime: AgentRuntimeKind, for sessionId: String) {
+        mutateConversation(sessionId) { conversation in
+            var models = conversation.preferredModels ?? [:]
+            let trimmed = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if trimmed.isEmpty { models.removeValue(forKey: runtime.rawValue) }
+            else { models[runtime.rawValue] = trimmed }
+            conversation.preferredModels = models.isEmpty ? nil : models
         }
     }
 

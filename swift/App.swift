@@ -602,14 +602,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         chatPanel.onContinueDictation = { [weak self] entryId in
             self?.continueDictation(appendingTo: entryId)
         }
-        chatPanel.onSelectModel = { [weak self] kind, model in
-            // One setting per runtime, the same ones Settings → Assistant edits.
-            switch kind {
-            case .codex: UserSettings.shared.codexModel = model
-            case .claude: UserSettings.shared.claudeCodeModel = model
-            case .opencode: UserSettings.shared.agentModel = model.isEmpty ? DefaultAgentModel : model
-            }
-            UserSettings.shared.save()
+        chatPanel.onSelectModel = { [weak self] kind, model, conversationID in
+            // The composer's choice changes this conversation only; the
+            // defaults for new conversations stay in Settings → Assistant.
+            self?.agent.setPreferredModel(model, runtime: kind, conversationID: conversationID)
             self?.chatPanel.refreshAgents()
         }
         chatPanel.onSelectAccessMode = { [weak self] mode in

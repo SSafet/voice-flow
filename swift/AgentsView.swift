@@ -80,6 +80,8 @@ struct AgentThreadDetail {
     /// whether it may be switched right now; what the current turn is doing;
     /// whether the composer offers "snap the screen and send".
     var runtime: AgentRuntimeKind? = nil
+    /// The model this conversation's next turn uses for `runtime` ("" = default).
+    var model: String = ""
     var runtimeSwitchable: Bool = false
     var activity: AgentActivity = .idle
     var canSnap: Bool = false
@@ -257,8 +259,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     var onSelectReasoningEffort: ((String) -> Void)?
     /// The access popup sets the capability dial (run commands, control screen).
     var onSelectAccessMode: ((AgentCapabilityDial.AccessMode) -> Void)?
-    /// The model popup writes the chosen runtime's model setting ("" = its default).
-    var onSelectModel: ((AgentRuntimeKind, String) -> Void)?
+    /// The model popup sets this conversation's model for the runtime ("" = default).
+    var onSelectModel: ((AgentRuntimeKind, String, AgentsThreadID) -> Void)?
     /// The mic button: start (or stop) a dictation into this thread.
     var onMicToggle: ((AgentsThreadID) -> Void)?
 
@@ -355,6 +357,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// scrolling content — the way a session bar stays put.
     private var composerHost: NSView!
     private var composerHostHeight: NSLayoutConstraint!
+    /// The open thread's header (‹ title · state · ✓ 🔊 🗑) lives here,
+    /// fixed above the scrolling messages, matching the pinned bar below.
+    private var headerHost: NSView!
+    private var headerHostHeight: NSLayoutConstraint!
     private var navigationBar: NSView!
     private var workspaceNavigation = false
     private var navigationHeight: NSLayoutConstraint!
@@ -592,11 +598,15 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         navigationBar = buildNavigationBar()
         composerHost = NSView()
         composerHost.translatesAutoresizingMaskIntoConstraints = false
+        headerHost = NSView()
+        headerHost.translatesAutoresizingMaskIntoConstraints = false
         addSubview(navigationBar)
+        addSubview(headerHost)
         addSubview(scrollView)
         addSubview(composerHost)
         navigationHeight = navigationBar.heightAnchor.constraint(equalToConstant: 36)
-        contentTop = scrollView.topAnchor.constraint(equalTo: navigationBar.bottomAnchor, constant: 2)
+        contentTop = headerHost.topAnchor.constraint(equalTo: navigationBar.bottomAnchor, constant: 2)
+        headerHostHeight = headerHost.heightAnchor.constraint(equalToConstant: 0)
         composerHostHeight = composerHost.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             navigationBar.topAnchor.constraint(equalTo: topAnchor, constant: 4),
@@ -604,6 +614,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             navigationBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             navigationHeight,
             contentTop,
+            headerHost.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            headerHost.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            headerHostHeight,
+            scrollView.topAnchor.constraint(equalTo: headerHost.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             scrollView.bottomAnchor.constraint(equalTo: composerHost.topAnchor, constant: -8),
@@ -633,6 +647,24 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private func clearComposerHost() {
         composerHost.subviews.forEach { $0.removeFromSuperview() }
         composerHostHeight.isActive = true
+    }
+
+    private func installThreadHeader(_ header: NSView) {
+        headerHost.subviews.forEach { $0.removeFromSuperview() }
+        header.translatesAutoresizingMaskIntoConstraints = false
+        headerHost.addSubview(header)
+        headerHostHeight.isActive = false
+        NSLayoutConstraint.activate([
+            header.topAnchor.constraint(equalTo: headerHost.topAnchor),
+            header.bottomAnchor.constraint(equalTo: headerHost.bottomAnchor),
+            header.leadingAnchor.constraint(equalTo: headerHost.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: headerHost.trailingAnchor),
+        ])
+    }
+
+    private func clearHeaderHost() {
+        headerHost.subviews.forEach { $0.removeFromSuperview() }
+        headerHostHeight.isActive = true
     }
 
     private func buildNavigationBar() -> NSView {
@@ -904,7 +936,17 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case "lifecycle_tapped": threadLifecycleTapped(); return true
         case "confirm_complete": confirmCompleteThreadTapped(); return true
         case "cancel_complete": cancelCompleteThreadTapped(); return true
-        default: return false
+        case "scroll_bottom":
+            contentStack.layoutSubtreeIfNeeded()
+            let bottom = max(0, contentStack.frame.height - scrollView.contentView.bounds.height)
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: bottom))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            return true
+        default:
+            if action.hasPrefix("select_model:"), let index = Int(action.dropFirst("select_model:".count)) {
+                return composerField?.selectModel(at: index) ?? false
+            }
+            return false
         }
     }
 
@@ -1268,6 +1310,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         stashComposerDraft()
         contentStack.subviews.forEach { $0.removeFromSuperview() }
         clearComposerHost()
+        clearHeaderHost()
         composerField = nil
         composerThreadID = nil
         automationSearchField = nil
@@ -3107,7 +3150,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             line.heightAnchor.constraint(equalToConstant: 1),
             header.heightAnchor.constraint(equalToConstant: 48),
         ])
-        place(header, below: &top, gap: 0)
+        installThreadHeader(header)
 
         if threadCompleteConfirmationID == id {
             let confirmation = NSView()
@@ -3380,10 +3423,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             controls.runtimeEnabled = detail.runtimeSwitchable
         }
         let runtimeKind = detail.runtime ?? .codex
-        let models = modelChoices(for: runtimeKind)
+        let models = modelChoices(for: runtimeKind, current: detail.model)
         if !detail.sourceReviewOnly {
             controls.modelOptions = models.map(\.label)
-            controls.modelIndex = models.firstIndex { $0.value == currentModel(for: runtimeKind) } ?? 0
+            controls.modelIndex = models.firstIndex { $0.value == detail.model } ?? 0
         }
         controls.effortOptions = AgentReasoningEffort.choices.map(\.label)
         let effort = AgentReasoningEffort.normalized(UserSettings.shared.agentReasoningEffort)
@@ -3392,8 +3435,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         controls.snap = detail.canSnap
         composer.setControls(controls)
         composer.onModelSelected = { [weak self] index in
-            guard let self, models.indices.contains(index) else { return }
-            self.onSelectModel?(runtimeKind, models[index].value)
+            guard let self, let id = self.openThreadID, models.indices.contains(index) else { return }
+            self.onSelectModel?(runtimeKind, models[index].value, id)
         }
         composer.onRuntimeSelected = { [weak self] index in
             guard let self, let id = self.openThreadID,
@@ -3422,7 +3465,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// What the model popup offers for a runtime: the runtime's own default
     /// first, then what it can run. A currently chosen value that is not in
     /// the list (typed in Settings) is kept as its own entry.
-    private func modelChoices(for kind: AgentRuntimeKind) -> [(value: String, label: String)] {
+    private func modelChoices(for kind: AgentRuntimeKind, current: String) -> [(value: String, label: String)] {
         var choices: [(value: String, label: String)]
         if let cached = modelChoicesCache[kind], Date().timeIntervalSince(cached.at) < 60 {
             choices = cached.choices
@@ -3439,19 +3482,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             }
             modelChoicesCache[kind] = (Date(), choices)
         }
-        let current = currentModel(for: kind)
         if !current.isEmpty, !choices.contains(where: { $0.value == current }) {
             choices.insert((current, current), at: kind == .opencode ? 0 : 1)
         }
         return choices
-    }
-
-    private func currentModel(for kind: AgentRuntimeKind) -> String {
-        switch kind {
-        case .codex: return UserSettings.shared.codexModel
-        case .claude: return UserSettings.shared.claudeCodeModel
-        case .opencode: return UserSettings.shared.agentModel
-        }
     }
 
     private func makeComposer(placeholder: String) -> ComposerView {

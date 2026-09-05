@@ -679,6 +679,10 @@ extension AppDelegate: AgentsDataSource {
                 linkedAutomationCount: jobs.count,
                 runtime: conversation.preferredRuntime
                     ?? AgentRuntimeKind.fromBackendSetting(UserSettings.shared.agentBackend),
+                model: agent.preferredModel(
+                    for: conversation.preferredRuntime
+                        ?? AgentRuntimeKind.fromBackendSetting(UserSettings.shared.agentBackend),
+                    sessionId: conversation.id),
                 runtimeSwitchable: conversation.turnState != .running && !agent.isRunning,
                 activity: conversation.id == agent.currentSessionId ? agent.activity : .idle,
                 canSnap: ownerAvailable && conversation.completedAt == nil,

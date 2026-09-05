@@ -386,6 +386,14 @@ final class ComposerView: NSView {
     }
     @objc private func runtimeChanged() { onRuntimeSelected?(runtimePopUp.indexOfSelectedItem) }
     @objc private func modelChanged() { onModelSelected?(modelPopUp.indexOfSelectedItem) }
+
+    /// Pick a model item the way a click would (QA drives the real path).
+    func selectModel(at index: Int) -> Bool {
+        guard modelPopUp.itemArray.indices.contains(index) else { return false }
+        modelPopUp.selectItem(at: index)
+        modelChanged()
+        return true
+    }
     @objc private func effortChanged() { onEffortSelected?(effortPopUp.indexOfSelectedItem) }
 
     /// The + button: the owner presents a non-modal picker.

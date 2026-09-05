@@ -26,7 +26,8 @@ final class ChatPanel {
     var onSelectAssistantRuntime: ((AgentRuntimeKind, String) -> Void)?
     var onSelectReasoningEffort: ((String) -> Void)?
     var onSelectAccessMode: ((AgentCapabilityDial.AccessMode) -> Void)?
-    var onSelectModel: ((AgentRuntimeKind, String) -> Void)?
+    /// Model for one conversation: (runtime, model id, conversation id).
+    var onSelectModel: ((AgentRuntimeKind, String, String) -> Void)?
     /// Mic tapped in the composer of this conversation: start or stop dictating.
     var onMicToggle: ((String) -> Void)?
     var onEscape: (() -> Void)?
@@ -737,7 +738,7 @@ final class ChatPanel {
             self?.onSelectReasoningEffort?(effort)
         }
         agentsView.onSelectAccessMode = { [weak self] mode in self?.onSelectAccessMode?(mode) }
-        agentsView.onSelectModel = { [weak self] kind, model in self?.onSelectModel?(kind, model) }
+        agentsView.onSelectModel = { [weak self] kind, model, id in self?.onSelectModel?(kind, model, id.value) }
         agentsView.onMicToggle = { [weak self] id in self?.onMicToggle?(id.value) }
         panel.onCommand = { [weak self] key in
             guard let self else { return false }
