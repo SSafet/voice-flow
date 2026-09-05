@@ -1,4 +1,4 @@
-# VF-65: workspace focus handoff
+# VF-65 / VF-66: workspace focus and sizing
 
 Run `./scripts/test-panel-focus.sh` from an unlocked macOS desktop session.
 It compiles the real app support sources with a small AppKit test entry point
@@ -10,6 +10,12 @@ with keyboard focus, synchronous dismissal and focus release, capture routing
 after dismissal, and immediate explicit/passive reopening. AppKit events must
 be dispatched while settling; running only the foundation run loop does not
 process window activation events.
+
+It also attaches a long label in a hidden pane, reveals that pane, and reopens
+on a simulated smaller display. The actual window frame must stay at the
+positioned size in each case. Before VF-66, even a hidden label enlarged the
+window; a live workspace was measured at 21,204 points wide and macOS reported
+capture stream failures when the user tried to screenshot it.
 
 For physical click-away QA, open Voice Flow from the pill, click an exposed
 text field in another app once, and type. That app should receive the typing

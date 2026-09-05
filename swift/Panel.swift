@@ -42,6 +42,8 @@ final class ChatPanel {
     private var height: CGFloat = 680
 
     private var panel: KeyablePanel!
+    private var workspaceWidth: NSLayoutConstraint!
+    private var workspaceHeight: NSLayoutConstraint!
     private var workspaceSidebar: WorkspaceSidebar!
     private var workspaceContent: NSView!
     private var workspaceHeading: NSTextField!
@@ -324,6 +326,8 @@ final class ChatPanel {
         guard let anchor else { return }
         let target = AnchoredPanelPlacement.frame(
             size: NSSize(width: width, height: height), anchor: anchor)
+        workspaceWidth.constant = target.width
+        workspaceHeight.constant = target.height
         sidebarWidth?.constant = target.width < 800 ? 140 : 172
         panel.setFrame(target, display: true)
     }
@@ -633,6 +637,13 @@ final class ChatPanel {
         panel.becomesKeyOnlyIfNeeded = true
         panel.onEscape = { [weak self] in self?.onEscape?() }
         let root = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        // setFrame alone is only a proposal to an activating AppKit window:
+        // intrinsic text widths (even in hidden panes) can expand it afterward.
+        // Geometry belongs to position(); content must compress or scroll within
+        // the display-clamped workspace instead of resizing it off-screen.
+        workspaceWidth = root.widthAnchor.constraint(equalToConstant: width)
+        workspaceHeight = root.heightAnchor.constraint(equalToConstant: height)
+        NSLayoutConstraint.activate([workspaceWidth, workspaceHeight])
         root.appearance = NSAppearance(named: .darkAqua)
         root.wantsLayer = true
         root.layer?.backgroundColor = Theme.bg.cgColor
@@ -832,4 +843,3 @@ final class KeyablePanel: NSPanel {
         onEscape?()
     }
 }
-
