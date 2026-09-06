@@ -210,9 +210,11 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   key printed under each control; while editing, an amber frame outlines each
   display and a ring at the cursor previews the active colour and width. A
   note being written sits in an opaque box (`AnnotationTextChrome`): drag it
-  by the header, resize it by the corner handle, A− / A+ or ⌘[ / ⌘] step the
-  shared size, ✓ or Escape commits; glyphs are outlined so text reads on
-  top of anything, committed notes included.
+  by the header, resize it by the corner handle, A− / A+ or ⌘[ / ⌘] walk a
+  text-size ladder from 8 to 48 pt (the dial's S/M/L = 10/16/28), ✓ or Escape
+  commits; the box is see-through with a white line, and glyphs carry a
+  hairline white outline (dark for white text) so notes read on top of
+  anything, committed notes included.
 
 ## MCP server — Voice Flow as Claude Code's interaction layer
 

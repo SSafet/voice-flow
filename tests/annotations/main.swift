@@ -263,18 +263,23 @@ autoreleasepool {
            "corner drag did not make the box taller")
     let bigger = chrome.rect(for: .bigger)
     chrome.mouseDown(with: chromeMouse(.leftMouseDown, NSPoint(x: bigger.midX, y: bigger.midY)))
-    expect(canvas.size == .large && editor.font?.pointSize == 32, "A+ did not step the size")
+    expect(editor.font?.pointSize == 18 && canvas.size == .medium, "A+ did not step the text ladder: \(editor.font?.pointSize ?? 0)")
+    expect(editor.outlineWidth <= 1, "outline is not a hairline")
     let cmdBracket = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0,
                                       windowNumber: window.windowNumber, context: nil, characters: "[",
                                       charactersIgnoringModifiers: "[", isARepeat: false, keyCode: 33)!
     editor.keyDown(with: cmdBracket)
-    expect(canvas.size == .medium && editor.string == "boxed note", "⌘[ did not step the size down without typing")
+    expect(editor.font?.pointSize == 16 && editor.string == "boxed note", "⌘[ did not step the size down without typing")
+    for _ in 0..<20 { editor.keyDown(with: cmdBracket) }
+    expect(editor.font?.pointSize == 8, "text could not get down to 8 pt: \(editor.font?.pointSize ?? 0)")
+    for _ in 0..<6 { chrome.mouseDown(with: chromeMouse(.leftMouseDown, NSPoint(x: bigger.midX, y: bigger.midY))) }
+    expect(editor.font?.pointSize == 16, "ladder did not climb back to 16: \(editor.font?.pointSize ?? 0)")
     let movedOrigin = editor.frame.origin, movedWidth = editor.frame.width
     let done = chrome.rect(for: .done)
     chrome.mouseDown(with: chromeMouse(.leftMouseDown, NSPoint(x: done.midX, y: done.midY)))
     expect(editor.superview == nil && chrome.superview == nil, "✓ did not commit and remove the box")
     if case let .text(text, origin, _, pointSize, width) = canvas.items.last! {
-        expect(text == "boxed note" && origin == movedOrigin && width == movedWidth && pointSize == 22,
+        expect(text == "boxed note" && origin == movedOrigin && width == movedWidth && pointSize == 16,
                "committed note lost the moved/resized geometry")
     } else { fatalError("boxed note changed kind") }
 }

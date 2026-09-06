@@ -31,7 +31,7 @@ enum AnnotationSize: Int, Codable, CaseIterable {
 
     var penWidth: CGFloat { [3, 5, 8][rawValue] }
     var highlightWidth: CGFloat { [14, 22, 32][rawValue] }
-    var fontSize: CGFloat { [16, 22, 32][rawValue] }
+    var fontSize: CGFloat { [10, 16, 28][rawValue] }
     var badgeDiameter: CGFloat { [24, 30, 38][rawValue] }
     var label: String { ["S", "M", "L"][rawValue] }
     var name: String { ["Small", "Medium", "Large"][rawValue] }
@@ -357,16 +357,30 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
     }
     var size: AnnotationSize = .medium {
         didSet {
+            fontSize = size.fontSize
             if let editor = textEditor { styleEditor(editor) }
             onContentChanged?()
             onSelectionChanged?()
             invalidateCursorRing()
         }
     }
-    /// Text size as a point value; setting it snaps to the nearest preset.
-    var fontSize: CGFloat {
-        get { size.fontSize }
-        set { size = AnnotationSize.closest(fontSize: newValue) }
+    /// Text size in points. The dial's S/M/L sets it; A−/A+ and ⌘[ / ⌘] walk
+    /// a finer ladder so a note can be a caption or a headline.
+    static let textSizeLadder: [CGFloat] = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48]
+    var fontSize: CGFloat = AnnotationSize.medium.fontSize {
+        didSet {
+            guard fontSize != oldValue else { return }
+            if let editor = textEditor { styleEditor(editor) }
+            onContentChanged?()
+            invalidateCursorRing()
+        }
+    }
+
+    func stepTextSize(_ delta: Int) {
+        let ladder = Self.textSizeLadder
+        let current = ladder.enumerated().min(by: { abs($0.element - fontSize) < abs($1.element - fontSize) })?.offset ?? 0
+        let next = max(0, min(ladder.count - 1, current + delta))
+        fontSize = ladder[next]
     }
     var isEditing = false {
         didSet {
@@ -411,7 +425,7 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         if let editor = textEditor, !editor.string.isEmpty {
             result.append(.text(string: editor.string, origin: textEditorOrigin,
                                 color: editor.textColor ?? color,
-                                fontSize: editor.font?.pointSize ?? size.fontSize,
+                                fontSize: editor.font?.pointSize ?? fontSize,
                                 width: editor.frame.width))
         }
         return result
@@ -669,7 +683,7 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
     // ── Text entry ──────────────────────────────────────
 
     private func beginTextEntry(at point: CGPoint) {
-        let fontSize = size.fontSize
+        let fontSize = self.fontSize
         let editorWidth = min(440, max(180, bounds.width - point.x - 24))
         let editor = AnnotationTextEditor.make(frame: NSRect(
             x: point.x, y: point.y - fontSize * 0.7,
@@ -690,7 +704,7 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         editor.maxSize = NSSize(width: editorWidth, height: bounds.height - point.y)
         editor.onCommit = { [weak self] in self?.commitPendingText() }
         editor.onChange = { [weak self] in self?.onContentChanged?() }
-        editor.onSizeStep = { [weak self] delta in self?.stepSize(delta) }
+        editor.onSizeStep = { [weak self] delta in self?.stepTextSize(delta) }
         styleEditor(editor)
 
         // The box around the note: drag it by the header, resize it by the
@@ -700,7 +714,7 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         chrome.color = color
         chrome.onMove = { [weak self] delta in self?.moveTextBox(by: delta) }
         chrome.onResize = { [weak self] delta in self?.resizeTextBox(by: delta) }
-        chrome.onSizeStep = { [weak self] delta in self?.stepSize(delta) }
+        chrome.onSizeStep = { [weak self] delta in self?.stepTextSize(delta) }
         chrome.onDone = { [weak self] in self?.commitPendingText() }
         addSubview(chrome)
         addSubview(editor)
@@ -720,10 +734,10 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
     /// while the box itself stays see-through.
     private func styleEditor(_ editor: AnnotationTextEditor) {
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: Self.annotationFont(ofSize: size.fontSize),
+            .font: Self.annotationFont(ofSize: fontSize),
             .foregroundColor: color,
         ]
-        editor.font = Self.annotationFont(ofSize: size.fontSize)
+        editor.font = Self.annotationFont(ofSize: fontSize)
         editor.textColor = color
         editor.insertionPointColor = color
         editor.typingAttributes = attributes
@@ -731,7 +745,7 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
             storage.addAttributes(attributes, range: NSRange(location: 0, length: storage.length))
         }
         editor.outlineColor = Self.outlineColor(for: color)
-        editor.outlineWidth = Self.outlineWidth(forPointSize: size.fontSize)
+        editor.outlineWidth = Self.outlineWidth(forPointSize: fontSize)
         editor.needsDisplay = true
     }
 
@@ -743,8 +757,10 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         [.font: annotationFont(ofSize: pointSize), .foregroundColor: color]
     }
 
+    /// Visible outline outside the glyph, in points: a hairline that only
+    /// grows a little with headline sizes.
     static func outlineWidth(forPointSize pointSize: CGFloat) -> CGFloat {
-        max(2, pointSize * 0.12)
+        max(0.5, pointSize * 0.03)
     }
 
     static func outlineColor(for color: NSColor) -> NSColor {
@@ -777,7 +793,7 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         guard let editor = textEditor else { return }
         let frame = editor.frame
         let width = max(120, min(bounds.width - frame.minX, frame.width + delta.width))
-        let minHeight = max(size.fontSize + 12, editor.minSize.height + delta.height)
+        let minHeight = max(fontSize + 12, editor.minSize.height + delta.height)
         editor.minSize = NSSize(width: width, height: minHeight)
         editor.maxSize = NSSize(width: width, height: max(minHeight, bounds.height - frame.minY))
         editor.setFrameSize(NSSize(width: width, height: max(minHeight, frame.height)))
@@ -791,7 +807,7 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         let string = editor.string.trimmingCharacters(in: .whitespacesAndNewlines)
         let origin = textEditorOrigin
         let itemColor = editor.textColor ?? color
-        let pointSize = editor.font?.pointSize ?? size.fontSize
+        let pointSize = editor.font?.pointSize ?? fontSize
         let width = editor.frame.width
         discardTextEditor()
         if !string.isEmpty {
@@ -828,7 +844,7 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         case .pen, .line, .arrow, .rect, .ellipse: return size.penWidth + 6
         case .highlighter: return size.highlightWidth
         case .number: return size.badgeDiameter
-        case .text: return size.fontSize * 0.7
+        case .text: return fontSize * 0.7
         case .eraser: return 18
         }
     }
