@@ -216,11 +216,12 @@
     {
       "id": "DIC-05",
       "area": "capture",
-      "name": "Annotation commits on Escape and Escape remains panic stop",
+      "name": "Annotation Undo is lifetime-safe, marks and drafts recover after restart, and Escape commits",
       "kind": "existing",
       "risk": "high",
       "tests": [
-        "e2e:annotation_escape"
+        "e2e:annotation_escape",
+        "tests/annotations/main.swift"
       ]
     },
     {

@@ -16,18 +16,106 @@ private let AnnotationColors: [NSColor] = [
 
 private let AnnotationFontSizes: [CGFloat] = [16, 22, 32]
 
-private enum AnnotationItem {
+enum AnnotationItem {
     case stroke(points: [CGPoint], color: NSColor)
     case text(string: String, origin: CGPoint, color: NSColor, fontSize: CGFloat, width: CGFloat)
 }
 
+/// Plain, versioned data: never archive AppKit views or their undo targets.
+struct AnnotationSnapshot: Codable {
+    struct Color: Codable {
+        let red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat
+        init(_ color: NSColor) {
+            let rgb = color.usingColorSpace(.sRGB) ?? NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)
+            red = rgb.redComponent; green = rgb.greenComponent
+            blue = rgb.blueComponent; alpha = rgb.alphaComponent
+        }
+        var value: NSColor { NSColor(srgbRed: red, green: green, blue: blue, alpha: alpha) }
+    }
+    enum Item: Codable {
+        case stroke([CGPoint], Color)
+        case text(String, CGPoint, Color, CGFloat, CGFloat)
+        init(_ item: AnnotationItem) {
+            switch item {
+            case let .stroke(points, color): self = .stroke(points, Color(color))
+            case let .text(text, origin, color, size, width):
+                self = .text(text, origin, Color(color), size, width)
+            }
+        }
+        var value: AnnotationItem {
+            switch self {
+            case let .stroke(points, color): return .stroke(points: points, color: color.value)
+            case let .text(text, origin, color, size, width):
+                return .text(string: text, origin: origin, color: color.value, fontSize: size, width: width)
+            }
+        }
+    }
+    var version = 1
+    let items: [Item]
+}
+
+final class AnnotationStore {
+    let url: URL
+    init(url: URL = VoiceFlowPaths.shared.file("annotations.json")) { self.url = url }
+
+    func load() throws -> [AnnotationItem] {
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        let snapshot = try JSONDecoder().decode(AnnotationSnapshot.self, from: Data(contentsOf: url))
+        guard snapshot.version == 1 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return snapshot.items.map(\.value)
+    }
+
+    func save(_ items: [AnnotationItem]) throws {
+        let data = try JSONEncoder().encode(AnnotationSnapshot(items: items.map(AnnotationSnapshot.Item.init)))
+        try data.write(to: url, options: .atomic)
+    }
+}
+
 final class AnnotationOverlay {
     var onEditingChanged: ((Bool) -> Void)?
+    var onSaveError: (() -> Void)?
 
     private(set) var isEditing = false
     private var panel: OverlayPanel?
     private var canvas: AnnotationCanvas?
     private var toolbar: AnnotationToolbar?
+    private let store: AnnotationStore
+    private var reportedSaveFailure = false
+
+    init(store: AnnotationStore = AnnotationStore()) {
+        self.store = store
+        do {
+            let restored = try store.load()
+            if !restored.isEmpty {
+                ensurePanel()
+                canvas?.items = restored
+                canvas?.needsDisplay = true
+                vflog("annotate: restored \(restored.count) marks")
+            }
+        } catch {
+            // Preserve unreadable data before a later edit writes a new snapshot.
+            let backup = store.url.appendingPathExtension("unreadable-\(UUID().uuidString)")
+            do { try FileManager.default.copyItem(at: store.url, to: backup) }
+            catch { vflog("annotate: could not preserve unreadable snapshot: \(error)") }
+            vflog("annotate: could not restore snapshot: \(error)")
+        }
+    }
+
+    private func save() {
+        guard let canvas else { return }
+        do {
+            try store.save(canvas.recoverableItems)
+            reportedSaveFailure = false
+        } catch {
+            if !reportedSaveFailure {
+                vflog("annotate: autosave failed: \(error)")
+                onSaveError?()
+                reportedSaveFailure = true
+            }
+        }
+    }
 
     var hasContent: Bool { !(canvas?.items.isEmpty ?? true) }
 
@@ -63,8 +151,7 @@ final class AnnotationOverlay {
     }
 
     func clear() {
-        canvas?.items.removeAll()
-        canvas?.needsDisplay = true
+        canvas?.clear()
         if !isEditing {
             panel?.orderOut(nil)
         }
@@ -97,6 +184,7 @@ final class AnnotationOverlay {
 
         let newCanvas = AnnotationCanvas(frame: NSRect(origin: .zero, size: frame.size))
         newCanvas.onRequestEndEditing = { [weak self] in self?.endEditing() }
+        newCanvas.onContentChanged = { [weak self] in self?.save() }
         newPanel.contentView = newCanvas
 
         panel = newPanel
@@ -143,26 +231,46 @@ enum AnnotationTool {
     case pen, text
 }
 
-private final class AnnotationCanvas: NSView {
+final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
     var items: [AnnotationItem] = []
     var tool: AnnotationTool = .pen
     var color: NSColor = AnnotationColors[0] {
         didSet {
             textEditor?.textColor = color
             textEditor?.insertionPointColor = color
+            onContentChanged?()
         }
     }
     var fontSize: CGFloat = AnnotationFontSizes[1] {
-        didSet { textEditor?.font = Self.annotationFont(ofSize: fontSize) }
+        didSet {
+            textEditor?.font = Self.annotationFont(ofSize: fontSize)
+            onContentChanged?()
+        }
     }
     var isEditing = false {
         didSet { window?.invalidateCursorRects(for: self) }
     }
     var onRequestEndEditing: (() -> Void)?
+    var onContentChanged: (() -> Void)?
 
     private var activeStroke: [CGPoint] = []
     private var textEditor: AnnotationTextEditor?
     private var textEditorOrigin: CGPoint = .zero
+    private var redoItems: [AnnotationItem] = []
+
+    // Include in-flight work in every atomic checkpoint. After relaunch a draft
+    // is restored as a normal note, without resurrecting an NSTextView.
+    var recoverableItems: [AnnotationItem] {
+        var result = items
+        if activeStroke.count > 1 { result.append(.stroke(points: activeStroke, color: color)) }
+        if let editor = textEditor, !editor.string.isEmpty {
+            result.append(.text(string: editor.string, origin: textEditorOrigin,
+                                color: editor.textColor ?? color,
+                                fontSize: editor.font?.pointSize ?? fontSize,
+                                width: editor.frame.width))
+        }
+        return result
+    }
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -200,6 +308,7 @@ private final class AnnotationCanvas: NSView {
         guard isEditing, tool == .pen, !activeStroke.isEmpty else { return }
         activeStroke.append(convert(event.locationInWindow, from: nil))
         needsDisplay = true
+        onContentChanged?()
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -207,17 +316,53 @@ private final class AnnotationCanvas: NSView {
         activeStroke.append(convert(event.locationInWindow, from: nil))
         if activeStroke.count > 1 {
             items.append(.stroke(points: activeStroke, color: color))
+            redoItems.removeAll()
         }
         activeStroke = []
         needsDisplay = true
+        onContentChanged?()
     }
 
     func undo() {
-        commitPendingText()
-        if !items.isEmpty {
-            items.removeLast()
-            needsDisplay = true
+        if let editor = textEditor {
+            editor.undoManager?.undo()
+            return
         }
+        guard let item = items.popLast() else { return }
+        redoItems.append(item)
+        needsDisplay = true
+        onContentChanged?()
+    }
+
+    @objc func undo(_ sender: Any?) { undo() }
+    @objc func redo(_ sender: Any?) {
+        if let editor = textEditor {
+            editor.undoManager?.redo()
+            return
+        }
+        guard let item = redoItems.popLast() else { return }
+        items.append(item)
+        needsDisplay = true
+        onContentChanged?()
+    }
+
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(undo(_:)) {
+            return textEditor?.undoManager?.canUndo ?? !items.isEmpty
+        }
+        if item.action == #selector(redo(_:)) {
+            return textEditor?.undoManager?.canRedo ?? !redoItems.isEmpty
+        }
+        return true
+    }
+
+    func clear() {
+        discardTextEditor()
+        activeStroke.removeAll()
+        items.removeAll()
+        redoItems.removeAll()
+        needsDisplay = true
+        onContentChanged?()
     }
 
     // ── Text entry ──────────────────────────────────────
@@ -245,6 +390,7 @@ private final class AnnotationCanvas: NSView {
         editor.minSize = NSSize(width: editorWidth, height: fontSize + 12)
         editor.maxSize = NSSize(width: editorWidth, height: bounds.height - point.y)
         editor.onCommit = { [weak self] in self?.commitPendingText() }
+        editor.onChange = { [weak self] in self?.onContentChanged?() }
         addSubview(editor)
         window?.makeFirstResponder(editor)
         textEditor = editor
@@ -258,13 +404,27 @@ private final class AnnotationCanvas: NSView {
         let itemColor = editor.textColor ?? color
         let size = editor.font?.pointSize ?? fontSize
         let width = editor.frame.width
-        editor.removeFromSuperview()
-        textEditor = nil
+        discardTextEditor()
         if !string.isEmpty {
             items.append(.text(string: string, origin: origin, color: itemColor, fontSize: size, width: width))
+            redoItems.removeAll()
         }
         needsDisplay = true
+        onContentChanged?()
+    }
+
+    private func discardTextEditor() {
+        guard let editor = textEditor else { return }
+        // Undo operations contain non-owning AppKit text targets. They must not
+        // escape this editor's lifetime or be invoked after it is detached.
+        editor.onChange = nil
+        editor.onCommit = nil
+        editor.breakUndoCoalescing()
         window?.makeFirstResponder(self)
+        editor.undoManager?.removeAllActions()
+        editor.allowsUndo = false
+        editor.removeFromSuperview()
+        textEditor = nil
     }
 
     // ── Drawing ─────────────────────────────────────────
@@ -324,8 +484,27 @@ private final class AnnotationCanvas: NSView {
 
 // Multiline text entry for the text tool. Return adds a line; Escape (or
 // clicking elsewhere) commits the note.
-private final class AnnotationTextEditor: NSTextView {
+final class AnnotationTextEditor: NSTextView {
     var onCommit: (() -> Void)?
+    var onChange: (() -> Void)?
+    private lazy var textUndoManager: UndoManager = {
+        let manager = UndoManager()
+        for name in [NSNotification.Name.NSUndoManagerDidUndoChange, NSNotification.Name.NSUndoManagerDidRedoChange] {
+            NotificationCenter.default.addObserver(self, selector: #selector(undoFinished),
+                                                   name: name, object: manager)
+        }
+        return manager
+    }()
+    override var undoManager: UndoManager? { textUndoManager }
+
+    // AppKit can call didChangeText before an undo operation has finished
+    // restoring storage. Checkpoint the final text after the group completes.
+    @objc private func undoFinished(_ notification: Notification) { onChange?() }
+
+    override func didChangeText() {
+        super.didChangeText()
+        if !textUndoManager.isUndoing && !textUndoManager.isRedoing { onChange?() }
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {  // Escape commits the note, stays in annotate mode

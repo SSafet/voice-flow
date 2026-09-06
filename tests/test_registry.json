@@ -20,6 +20,10 @@
   },
   "tests": [
     {
+      "id": "tests/annotations/main.swift",
+      "runner": "unit"
+    },
+    {
       "id": "contract:capture_bundle",
       "runner": "unit"
     },

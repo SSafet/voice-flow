@@ -461,6 +461,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.show()
 
         annotationOverlay = AnnotationOverlay()
+        annotationOverlay.onSaveError = { [weak self] in
+            self?.indicator.flashMessage("Annotations could not be saved", seconds: 8, isError: true)
+        }
         annotationOverlay.onEditingChanged = { [weak self] editing in
             guard let self else { return }
             self.chatPanel.setAnnotating(editing)

@@ -214,7 +214,11 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   before the reply finishes. The read-aloud hotkey doubles as *stop speech*;
   starting any recording barges in and silences playback.
 - Escape commits a pending annotation text note, then exits annotate mode; it
-  stays the panic button while the agent is acting.
+  stays the panic button while the agent is acting. Annotation text editors own
+  isolated undo managers that are cleared before detaching; canvas Undo/Redo
+  routes to live text while typing and to completed marks otherwise. Marks,
+  in-flight strokes, and text drafts save atomically to `annotations.json` on
+  change and restore as click-through marks on launch. Clear discards drafts too.
 
 ## MCP server — Voice Flow as Codex's interaction layer
 
@@ -335,6 +339,7 @@ deployed copies are build outputs.
 ## Persistent data (`~/.config/voice-flow/`)
 
 - `settings.json` — `UserSettings` (hotkeys, TTS voice/speed/instructions, agent model, …).
+- `annotations.json` — versioned annotation marks and in-flight work for crash recovery.
 - `dictations.json` — dictation history (`[HistoryEntry]`, JSON), written by
   `DictationsView` on each new dictation (render cap 60, store cap 200). Survives restarts.
 - `messages.json` — every agent push (`[AgentMessageEntry]`: time, session,
