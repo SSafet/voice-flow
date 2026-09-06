@@ -671,12 +671,12 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
     private func beginTextEntry(at point: CGPoint) {
         let fontSize = size.fontSize
         let editorWidth = min(440, max(180, bounds.width - point.x - 24))
-        let editor = AnnotationTextEditor(frame: NSRect(
+        let editor = AnnotationTextEditor.make(frame: NSRect(
             x: point.x, y: point.y - fontSize * 0.7,
             width: editorWidth, height: fontSize + 12
         ))
-        editor.backgroundColor = AnnotationTextChrome.ground
-        editor.drawsBackground = true
+        editor.backgroundColor = .clear
+        editor.drawsBackground = false  // only the box line and handles show
         editor.isRichText = false
         editor.isAutomaticQuoteSubstitutionEnabled = false
         editor.isAutomaticDashSubstitutionEnabled = false
@@ -717,9 +717,12 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
     }
 
     /// Outlined glyphs in the live colour, so a note reads on top of anything
-    /// even before the opaque box is gone.
+    /// while the box itself stays see-through.
     private func styleEditor(_ editor: AnnotationTextEditor) {
-        let attributes = Self.textAttributes(color: color, pointSize: size.fontSize)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: Self.annotationFont(ofSize: size.fontSize),
+            .foregroundColor: color,
+        ]
         editor.font = Self.annotationFont(ofSize: size.fontSize)
         editor.textColor = color
         editor.insertionPointColor = color
@@ -727,15 +730,27 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         if let storage = editor.textStorage, storage.length > 0 {
             storage.addAttributes(attributes, range: NSRange(location: 0, length: storage.length))
         }
+        editor.outlineColor = Self.outlineColor(for: color)
+        editor.outlineWidth = Self.outlineWidth(forPointSize: size.fontSize)
+        editor.needsDisplay = true
     }
 
+    /// White outline around every glyph (dark only when the text itself is
+    /// white); the committed renderer and the live editor both draw a
+    /// stroke-only pass first, then the fill, so the outline sits all around
+    /// the letters without eating into them.
     static func textAttributes(color: NSColor, pointSize: CGFloat) -> [NSAttributedString.Key: Any] {
-        [
-            .font: annotationFont(ofSize: pointSize),
-            .foregroundColor: color,
-            .strokeColor: NSColor.black.withAlphaComponent(0.85),
-            .strokeWidth: -2.5,  // negative: fill and outline
-        ]
+        [.font: annotationFont(ofSize: pointSize), .foregroundColor: color]
+    }
+
+    static func outlineWidth(forPointSize pointSize: CGFloat) -> CGFloat {
+        max(2, pointSize * 0.12)
+    }
+
+    static func outlineColor(for color: NSColor) -> NSColor {
+        let rgb = color.usingColorSpace(.sRGB) ?? color
+        let luminance = 0.299 * rgb.redComponent + 0.587 * rgb.greenComponent + 0.114 * rgb.blueComponent
+        return luminance > 0.85 ? NSColor(r: 30, g: 28, b: 26) : .white
     }
 
     private func layoutTextChrome() {
@@ -991,18 +1006,22 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
                        withAttributes: attributes)
 
         case .text(let string, let origin, let textColor, let pointSize, let width):
-            let shadow = NSShadow()
-            shadow.shadowColor = NSColor.black.withAlphaComponent(0.6)
-            shadow.shadowBlurRadius = 3
-            shadow.shadowOffset = NSSize(width: 0, height: 1)
-            var attributes = Self.textAttributes(color: textColor, pointSize: pointSize)
-            attributes[.shadow] = shadow
             // Same geometry as the editor: wrap at its width, draw from its origin.
             let rect = NSRect(
                 x: origin.x + 3, y: origin.y + 2,
                 width: width - 6, height: max(bounds.height - origin.y, 40)
             )
-            NSString(string: string).draw(in: rect, withAttributes: attributes)
+            // The same outlining layout manager as the live editor, so a
+            // committed note wraps and looks exactly like it did while typing.
+            let storage = NSTextStorage(string: string, attributes: Self.textAttributes(color: textColor, pointSize: pointSize))
+            let layout = OutlinedLayoutManager()
+            layout.outlineColor = Self.outlineColor(for: textColor)
+            layout.outlineWidth = Self.outlineWidth(forPointSize: pointSize)
+            storage.addLayoutManager(layout)
+            let container = NSTextContainer(containerSize: rect.size)
+            container.lineFragmentPadding = 0
+            layout.addTextContainer(container)
+            layout.drawGlyphs(forGlyphRange: layout.glyphRange(for: container), at: rect.origin)
         }
     }
 
@@ -1073,6 +1092,25 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
 final class AnnotationTextEditor: NSTextView {
     var onCommit: (() -> Void)?
     var onChange: (() -> Void)?
+    var outlineColor: NSColor {
+        get { outlineLayout?.outlineColor ?? .white }
+        set { outlineLayout?.outlineColor = newValue }
+    }
+    var outlineWidth: CGFloat {
+        get { outlineLayout?.outlineWidth ?? 0 }
+        set { outlineLayout?.outlineWidth = newValue }
+    }
+    private var outlineLayout: OutlinedLayoutManager? { layoutManager as? OutlinedLayoutManager }
+
+    /// A TextKit 1 stack with the outlining layout manager.
+    static func make(frame: NSRect) -> AnnotationTextEditor {
+        let storage = NSTextStorage()
+        let layout = OutlinedLayoutManager()
+        storage.addLayoutManager(layout)
+        let container = NSTextContainer(containerSize: NSSize(width: frame.width, height: .greatestFiniteMagnitude))
+        layout.addTextContainer(container)
+        return AnnotationTextEditor(frame: frame, textContainer: container)
+    }
     /// ⌘[ / ⌘] while typing step the shared size dial.
     var onSizeStep: ((Int) -> Void)?
     private lazy var textUndoManager: UndoManager = {
@@ -1114,15 +1152,41 @@ final class AnnotationTextEditor: NSTextView {
     }
 }
 
+/// Draws every glyph run twice: a stroke-only pass in the outline colour,
+/// then the normal fill on top. Unlike the `.strokeWidth` attribute, this
+/// keeps the letter shapes intact and the outline fully outside them.
+final class OutlinedLayoutManager: NSLayoutManager {
+    var outlineColor: NSColor = .white
+    var outlineWidth: CGFloat = 2.5
+
+    override func showCGGlyphs(_ glyphs: UnsafePointer<CGGlyph>, positions: UnsafePointer<CGPoint>, count glyphCount: Int,
+                               font: NSFont, textMatrix: CGAffineTransform, attributes: [NSAttributedString.Key: Any],
+                               in CGContext: CGContext) {
+        if outlineWidth > 0 {
+            CGContext.saveGState()
+            CGContext.setTextDrawingMode(.stroke)
+            CGContext.setStrokeColor(outlineColor.cgColor)
+            CGContext.setLineWidth(outlineWidth * 2)  // centred on the edge: half shows outside
+            CGContext.setLineJoin(.round)
+            super.showCGGlyphs(glyphs, positions: positions, count: glyphCount, font: font,
+                               textMatrix: textMatrix, attributes: attributes, in: CGContext)
+            CGContext.restoreGState()
+        }
+        CGContext.setTextDrawingMode(.fill)
+        super.showCGGlyphs(glyphs, positions: positions, count: glyphCount, font: font,
+                           textMatrix: textMatrix, attributes: attributes, in: CGContext)
+    }
+}
+
 // ── Text box chrome ─────────────────────────────────────
 
-/// The opaque frame around a note being written: a header to drag it by,
-/// A− / A+ / ✓ buttons, and a corner handle that resizes the box. Sits under
-/// the editor in the canvas, so the editor keeps every click inside itself.
+/// The see-through frame around a note being written: a white box line, a
+/// header to drag it by, A− / A+ / ✓ buttons, and a corner handle that
+/// resizes the box. Sits under the editor in the canvas, so the editor keeps
+/// every click inside itself.
 final class AnnotationTextChrome: NSView {
     enum Button: CaseIterable { case smaller, bigger, done }
 
-    static let ground = NSColor(r: 28, g: 26, b: 24)
     static let headerHeight: CGFloat = 22
     static let pad: CGFloat = 4
     static let handle: CGFloat = 14
@@ -1160,15 +1224,21 @@ final class AnnotationTextChrome: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6)
-        Self.ground.setFill()
-        box.fill()
-        color.setStroke()
-        box.lineWidth = 2
+        // No fill: only the line, with the same soft dark halo every mark has,
+        // so a white line still reads on a white page.
+        let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 6, yRadius: 6)
+        NSColor.black.withAlphaComponent(0.35).setStroke()
+        box.lineWidth = 3.5
+        box.stroke()
+        NSColor.white.setStroke()
+        box.lineWidth = 1.5
         box.stroke()
 
         // Header: grip dots on the left, the buttons on the right.
-        let dim = NSColor.white.withAlphaComponent(0.55)
+        let dim = NSColor.white.withAlphaComponent(0.9)
+        let glyphOutline: [NSAttributedString.Key: Any] = [
+            .strokeColor: NSColor.black.withAlphaComponent(0.6), .strokeWidth: -6.0,
+        ]
         dim.setFill()
         for row in 0..<2 {
             for column in 0..<3 {
@@ -1177,16 +1247,16 @@ final class AnnotationTextChrome: NSView {
             }
         }
         let labelAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: dim,
-        ]
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: dim,
+        ].merging(glyphOutline) { current, _ in current }
         ("drag" as NSString).draw(at: NSPoint(x: 30, y: 4), withAttributes: labelAttributes)
         let captions: [Button: (String, CGFloat)] = [.smaller: ("A−", 11), .bigger: ("A+", 13), .done: ("✓", 13)]
         for button in Button.allCases {
             let (caption, fontSize) = captions[button]!
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
-                .foregroundColor: button == .done ? color : NSColor.white,
-            ]
+                .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),
+                .foregroundColor: NSColor.white,
+            ].merging(glyphOutline) { current, _ in current }
             let size = (caption as NSString).size(withAttributes: attributes)
             let target = rect(for: button)
             (caption as NSString).draw(at: NSPoint(x: target.midX - size.width / 2, y: target.midY - size.height / 2),
@@ -1195,11 +1265,14 @@ final class AnnotationTextChrome: NSView {
 
         // Corner handle: two diagonal grip lines.
         let handle = handleRect
-        dim.setStroke()
         for offset in [4.0, 9.0] as [CGFloat] {
             let line = NSBezierPath()
             line.move(to: NSPoint(x: handle.maxX - 2, y: handle.maxY - offset))
             line.line(to: NSPoint(x: handle.maxX - offset, y: handle.maxY - 2))
+            NSColor.black.withAlphaComponent(0.5).setStroke()
+            line.lineWidth = 3
+            line.stroke()
+            NSColor.white.setStroke()
             line.lineWidth = 1.5
             line.stroke()
         }

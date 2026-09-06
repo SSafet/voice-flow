@@ -233,8 +233,8 @@ autoreleasepool {
     canvas.size = .medium
     let editor = startText("boxed note")
     let chrome = canvas.subviews.compactMap { $0 as? AnnotationTextChrome }.first!
-    expect(editor.backgroundColor.alphaComponent == 1, "text box is translucent")
-    expect(((editor.typingAttributes[.strokeWidth] as? NSNumber)?.doubleValue ?? 0) < 0, "typed text has no outline")
+    expect(!editor.drawsBackground, "text area is not see-through")
+    expect(editor.outlineWidth > 0 && editor.outlineColor == NSColor.white, "typed text has no white outline")
     expect(canvas.subviews.firstIndex(of: chrome)! < canvas.subviews.firstIndex(of: editor)!,
            "chrome sits above the editor")
     func chromeMouse(_ type: NSEvent.EventType, _ chromePoint: NSPoint, dx: CGFloat = 0, dy: CGFloat = 0) -> NSEvent {
