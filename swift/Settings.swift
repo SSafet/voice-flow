@@ -1157,14 +1157,16 @@ private struct WorkspaceSettingsContent: View {
     @State private var section = 0
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Settings").font(.system(size: 26, weight: .semibold))
             Picker("Settings section", selection: $section) {
                 Text("Dictation").tag(0)
                 Text("Voice").tag(1)
                 Text("Assistant").tag(2)
                 Text("Watcher").tag(3)
                 Text("Shortcuts").tag(4)
-            }.pickerStyle(.segmented)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Settings section")
             Group {
                 switch section {
                 case 0: DictationSettingsView(store: store)
@@ -1173,9 +1175,12 @@ private struct WorkspaceSettingsContent: View {
                 case 3: WatcherSettingsView(store: store)
                 default: ShortcutsSettingsView(store: store)
                 }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .scrollContentBackground(.hidden)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(22)
+        .tint(Color(nsColor: Theme.accent))
         .preferredColorScheme(.dark)
     }
 }

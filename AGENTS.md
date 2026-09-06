@@ -102,8 +102,10 @@ Design and proof map: `design/vf64/implementation-and-proof.md`.
 ## Primary surface: the ChatPanel
 
 The app's main window is **`ChatPanel`** (`swift/Panel.swift`) — a borderless
-floating panel anchored to the little pill (`FloatingIndicator`). It has two
-tabs (`ChatTab`, default **Agents** on open):
+floating panel anchored to the little pill (`FloatingIndicator`). Its persistent
+sidebar is **Now · Inbox · Threads · Data · Assistants · Automations · Speech ·
+Settings** (`WorkspaceDestination`). `ChatTab` remains an internal Inbox/Agents
+routing adapter; it is not the visible navigation.
 
 - **Inbox** — everything the user said, with a destination: the dictation
   history (`DictationsView` in `swift/UI.swift`), filtered by destination chips.
@@ -119,23 +121,23 @@ tabs (`ChatTab`, default **Agents** on open):
   runtime: `codex_model` (from `~/.codex/models_cache.json`),
   `claude_code_model`, `agent_model` (OpenRouter). `ChatPanel` no longer owns a chat of its own; it routes
   (`openAssistantConversation`, `setActivity`, `addNote` → a 6 s strip).
-  Its nav bar is **Now · Threads · Setup** (`AgentsDestination.navigation`):
-  two reading surfaces, then one setup surface. The panel lands on **Now**,
+  `AgentsDestination.navigation` retains **Now · Threads · Setup** for standalone
+  callers; the primary panel uses the workspace sidebar. The panel starts on **Now**,
   which answers "what is here for me?": NEEDS YOU (asks, blocked/failed
   automations), RUNNING NOW, and UNREAD (open threads with unseen output,
   newest first — `AgentsNowSnapshot` in `swift/AgentsNavigation.swift`).
   "All clear" appears only when all three are empty; the Now badge still
-  counts asks/blocks only. **Setup** is assistants + the SYSTEM agents +
-  automations on one screen (`buildSetup`); the `.automations` destination
-  still exists for deep links and lights the Setup item, and the automation
+  counts asks/blocks only. **Assistants** includes the SYSTEM agents;
+  **Automations** is a separate workspace destination. The automation
   search field and filter chips appear only from 6 automations up.
   `AgentsView.refresh()` memoizes: on a read surface (destination, thread,
   search) identical row inputs skip the rebuild (`RefreshInputs`), so the
   ~20 refresh call sites cost nothing when nothing changed.
   The panel header's voice-replies / computer-control / Clear icons act on
   the assistant conversation and show only while it is on screen
-  (`ChatPanel.updateHeaderScope`); Annotate and Settings are always there.
-  Its **Assistants** sub-tab also carries a **SYSTEM** section: the three
+  (`ChatPanel.updateHeaderScope`); Search, Annotate, and Close remain in the
+  header, and Settings stays in the sidebar.
+  The **Assistants** destination also carries a **SYSTEM** section: the three
   agents the app runs on its own behalf — continuity router, speech cleanup,
   and speech (`SystemAgentStore`, `swift/SystemAgents.swift`). Identities are
   fixed (no create/delete); model, reasoning, and the leading instructions
@@ -146,12 +148,19 @@ tabs (`ChatTab`, default **Agents** on open):
   once and reports what came back. The speech agent's instructions are the
   existing `tts_instructions` setting, not a second copy.
 
-**Speech** is a drawer, not a tab: the ♪ button overlays `TTSView` (paste text,
-play it through the TTS engine) on whichever tab is current; an explicit tab
-select closes it. `MessagesView` (`swift/UI.swift`) still exists but is
+**Speech** shows `TTSView` (paste text and play it through the shared TTS engine)
+from the sidebar, retaining the prior destination for return navigation.
+`MessagesView` (`swift/UI.swift`) still exists but is
 store-only — it writes the `messages.json` archive and is never added to the
 view hierarchy. The menu-bar "Dictation History" item and the pill's context
 menu open the panel on the Inbox tab.
+
+Rows expose individual accessible actions and accept Return/Space. Same-thread
+refresh keeps the mounted composer and its undo/selection state. Below 780
+points the composer's runtime/model/effort choices use a second row; attachments
+scroll horizontally. Setup forms keep independent drafts with their original
+revisions, and explicit Reload saved actions recover from conflicts. Behavioral
+proof lives in `tests/workspace_ui/`; run it with `--unit --only workspace_ui`.
 
 ## Hotkey-driven agent flows (no panel required)
 

@@ -186,6 +186,9 @@ compile_and_run display_context swift/DisplayContext.swift tests/display_context
 compile_and_run annotations swift/VoiceFlowPaths.swift swift/DisplayContext.swift swift/Annotation.swift tests/annotations/main.swift -framework Cocoa
 compile_and_run window_placement swift/WindowPlacement.swift tests/window_placement/main.swift -framework Cocoa
 compile_and_run agents_navigation swift/AgentsNavigation.swift tests/agents_navigation/main.swift
+compile_and_run workspace_ui -D VOICE_FLOW_QA "${APP_SUPPORT_SOURCES[@]}" tests/workspace_ui/*.swift \
+    -framework Cocoa -framework AVFoundation -framework CoreGraphics -framework ApplicationServices \
+    -framework Accelerate -framework Security -framework ScreenCaptureKit -lsqlite3
 compile_and_run capture_clipboard swift/CaptureClipboard.swift tests/capture_clipboard/main.swift -framework Cocoa
 compile_and_run capture_store swift/VoiceFlowPaths.swift swift/DisplayContext.swift \
     swift/ScreenCapture.swift swift/Capture.swift tests/capture_store/main.swift \

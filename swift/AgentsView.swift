@@ -388,59 +388,190 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     private var workspaceRoutes: [String: Mode] = [:]
+    private enum WorkspaceDraftValue: Equatable {
+        case text(String), choice(String), checked(Bool)
+    }
     private struct WorkspaceDraft {
-        var fields: [String]
-        var editors: [String]
-        var choices: [String: NSControl.StateValue]
-        var popups: [String?]
-        var scroll: NSPoint
+        var changes: [String: WorkspaceDraftValue]
+        var revision: String?
+    }
+    private struct WorkspaceForm {
+        let key: String
+        let controls: [String: NSView]
+        var baseline: [String: WorkspaceDraftValue]
+        var revision: String?
+    }
+    private struct WorkspaceFocus {
+        let control: String
+        let selection: NSRange?
     }
     private var workspaceDrafts: [String: WorkspaceDraft] = [:]
+    private var renderedWorkspaceForms: [WorkspaceForm] = []
     private var renderedWorkspaceMode: Mode?
 
     private func workspaceDescendants(_ view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + workspaceDescendants($0) }
     }
 
-    private func workspaceDraftKey(_ mode: Mode) -> String? {
+    private func workspaceValues(_ controls: [String: NSView]) -> [String: WorkspaceDraftValue] {
+        controls.compactMapValues { control in
+            if let popup = control as? NSPopUpButton {
+                return .choice(popup.selectedItem?.representedObject as? String ?? popup.titleOfSelectedItem ?? "")
+            }
+            if let field = control as? NSTextField { return .text(field.stringValue) }
+            if let editor = control as? NSTextView { return .text(editor.string) }
+            if let button = control as? NSButton { return .checked(button.state == .on) }
+            return nil
+        }
+    }
+
+    /// Keep only actual edits. A clean form must be able to reveal changes
+    /// made by an agent or another editor instead of restoring an old copy.
+    private func captureWorkspaceDrafts() {
+        for form in renderedWorkspaceForms {
+            let changes = workspaceValues(form.controls).filter { form.baseline[$0.key] != $0.value }
+            workspaceDrafts[form.key] = changes.isEmpty ? nil
+                : WorkspaceDraft(changes: changes, revision: form.revision)
+        }
+    }
+
+    /// Saving one section cannot discard another section's unsaved work.
+    /// Updating its baseline also prevents rebuild from restashing the save.
+    private func clearWorkspaceDraft(_ key: String) {
+        workspaceDrafts[key] = nil
+        for index in renderedWorkspaceForms.indices where renderedWorkspaceForms[index].key == key {
+            renderedWorkspaceForms[index].baseline = workspaceValues(renderedWorkspaceForms[index].controls)
+        }
+    }
+
+    private func workspaceForm(_ key: String, revision: String? = nil,
+                               controls entries: [(String, NSView?, String)]) -> WorkspaceForm {
+        var controls: [String: NSView] = [:]
+        for (id, control, label) in entries {
+            guard let control else { continue }
+            controls[id] = control
+            control.identifier = NSUserInterfaceItemIdentifier(id)
+            control.setAccessibilityLabel(label)
+        }
+        return WorkspaceForm(key: key, controls: controls, baseline: workspaceValues(controls), revision: revision)
+    }
+
+    private func sourceFormControls(_ selection: SourceSelectionView?) -> [(String, NSView?, String)] {
+        guard let selection else { return [] }
+        return workspaceDescendants(selection).compactMap { view in
+            guard view is NSButton, let id = view.identifier?.rawValue else { return nil }
+            return (id, view, view.accessibilityLabel() ?? id)
+        }
+    }
+
+    private func currentWorkspaceForms() -> [WorkspaceForm] {
         switch mode {
-        case .assistantCreate, .assistantWorkspace, .automationCreate, .automationEdit, .systemAgent:
-            return String(describing: mode)
-        default: return nil
+        case .assistantCreate:
+            return [workspaceForm("assistant:create", controls: [
+                ("assistant-name", assistantNameField, "Assistant name"),
+                ("assistant-description", assistantDescriptionField, "Assistant description"),
+                ("assistant-instructions", assistantInstructionsView, "Assistant instructions")])]
+        case .assistantWorkspace(let slug, .settings):
+            return [workspaceForm("assistant:\(slug):settings", revision: assistantSettingsRevision, controls: [
+                ("assistant-name", assistantNameField, "Assistant name"),
+                ("assistant-description", assistantDescriptionField, "Assistant description"),
+                ("assistant-voice", assistantVoiceField, "Assistant reply voice"),
+                ("assistant-instructions", assistantInstructionsView, "Assistant instructions")]
+                + sourceFormControls(assistantSources))]
+        case .assistantWorkspace(let slug, .memory):
+            var forms = [workspaceForm("assistant:\(slug):skills", revision: assistantSkillsRevision,
+                controls: assistantSkillButtons.sorted { $0.key < $1.key }.map {
+                    ("assistant-skill-\($0.key)", $0.value, "Skill: \($0.key)") })]
+            if assistantMemoryView?.isEditable == true {
+                forms.append(workspaceForm("assistant:\(slug):memory:\(assistantMemoryKind)",
+                    revision: assistantMemoryRevision, controls: [
+                        ("assistant-memory-\(assistantMemoryKind)", assistantMemoryView, "\(assistantMemoryKind.capitalized) memory")]))
+            }
+            return forms
+        case .systemAgent(let kind):
+            return [workspaceForm("system:\(kind)", controls: [
+                ("system-model", systemAgentModelField, "System agent model"),
+                ("system-effort", systemAgentEffortPopUp, "System agent reasoning effort"),
+                ("system-instructions", systemAgentInstructionsView, "System agent instructions")])]
+        case .automationCreate, .automationEdit:
+            let key: String
+            if case .automationEdit(let id) = mode { key = "automation:\(id)" } else { key = "automation:create" }
+            return [workspaceForm(key, controls: [
+                ("automation-name", automationNameField, "Automation name"),
+                ("automation-instructions", automationInstructionsView, "Automation instructions"),
+                ("automation-assistant", automationAssistantPopUp, "Automation Assistant"),
+                ("automation-runtime", automationRuntimePopUp, "Automation runtime"),
+                ("automation-trigger", automationTriggerPopUp, "Automation trigger"),
+                ("automation-model", automationModelCombo, "OpenRouter model"),
+                ("automation-interval", automationIntervalField, "Automation interval in minutes"),
+                ("automation-daily-time", automationDailyTimeField, "Automation daily run time (HH:MM)"),
+                ("automation-budget", automationBudgetField, "Daily budget in dollars"),
+                ("automation-duration", automationDurationField, "Maximum runtime in minutes"),
+                ("automation-attempts", automationAttemptsField, "Maximum attempts")]
+                + sourceFormControls(automationSources))]
+        default: return []
         }
     }
 
-    private func captureWorkspaceDraft() -> WorkspaceDraft {
-        let views = workspaceDescendants(contentStack)
-        var choices: [String: NSControl.StateValue] = [:]
-        for button in views.compactMap({ $0 as? NSButton }) where !(button is NSPopUpButton) {
-            let key = button.identifier?.rawValue ?? button.title
-            if !key.isEmpty { choices[key] = button.state }
+    private func restoreWorkspaceDrafts() {
+        renderedWorkspaceForms = currentWorkspaceForms()
+        for index in renderedWorkspaceForms.indices {
+            let form = renderedWorkspaceForms[index]
+            guard let draft = workspaceDrafts[form.key] else { continue }
+            for (id, value) in draft.changes {
+                guard let control = form.controls[id] else { continue }
+                switch value {
+                case .text(let text):
+                    (control as? NSTextField)?.stringValue = text
+                    (control as? NSTextView)?.string = text
+                case .choice(let choice):
+                    guard let popup = control as? NSPopUpButton else { continue }
+                    if let item = popup.itemArray.first(where: { ($0.representedObject as? String ?? $0.title) == choice }) {
+                        popup.select(item)
+                    }
+                case .checked(let checked):
+                    if let button = control as? NSButton, button.isEnabled { button.state = checked ? .on : .off }
+                }
+            }
+            renderedWorkspaceForms[index].revision = draft.revision
+            if case .assistantWorkspace(_, .settings) = mode { assistantSettingsRevision = draft.revision }
+            if case .assistantWorkspace(let slug, .memory) = mode {
+                if form.key == "assistant:\(slug):skills" { assistantSkillsRevision = draft.revision }
+                else { assistantMemoryRevision = draft.revision }
+            }
         }
-        return WorkspaceDraft(
-            fields: views.compactMap { $0 as? NSTextField }.filter { $0.isEditable }.map(\.stringValue),
-            editors: views.compactMap { $0 as? NSTextView }.filter { $0.isEditable }.map(\.string),
-            choices: choices,
-            popups: views.compactMap { $0 as? NSPopUpButton }.map(\.titleOfSelectedItem),
-            scroll: scrollView.contentView.bounds.origin)
+        // Programmatic popup selection does not send its action. Reconcile
+        // explanatory copy and enabled fields with the values just restored.
+        for selection in [assistantSources, automationSources].compactMap({ $0 }) {
+            selection.select(ids: selection.selectedIDs, mode: selection.selectedMode)
+        }
+        updateAutomationFormAvailability()
     }
 
-    private func restoreWorkspaceDraft(_ draft: WorkspaceDraft) {
-        let views = workspaceDescendants(contentStack)
-        let fields = views.compactMap { $0 as? NSTextField }.filter { $0.isEditable }
-        for (field, value) in zip(fields, draft.fields) { field.stringValue = value }
-        let editors = views.compactMap { $0 as? NSTextView }.filter { $0.isEditable }
-        for (editor, value) in zip(editors, draft.editors) { editor.string = value }
-        for button in views.compactMap({ $0 as? NSButton }) where !(button is NSPopUpButton) {
-            let key = button.identifier?.rawValue ?? button.title
-            if let state = draft.choices[key], button.isEnabled { button.state = state }
+    private func workspaceFocus() -> WorkspaceFocus? {
+        guard let responder = window?.firstResponder else { return nil }
+        for form in renderedWorkspaceForms {
+            for (id, control) in form.controls {
+                if let field = control as? NSTextField, responder === field.currentEditor() {
+                    return WorkspaceFocus(control: id, selection: (field.currentEditor() as? NSTextView)?.selectedRange())
+                }
+                if responder === control {
+                    return WorkspaceFocus(control: id, selection: (control as? NSTextView)?.selectedRange())
+                }
+            }
         }
-        for (popup, title) in zip(views.compactMap({ $0 as? NSPopUpButton }), draft.popups) {
-            if let title { popup.selectItem(withTitle: title) }
+        return nil
+    }
+
+    private func restoreWorkspaceFocus(_ focus: WorkspaceFocus?) {
+        guard let focus, let control = renderedWorkspaceForms.compactMap({ $0.controls[focus.control] }).first,
+              window?.makeFirstResponder(control) == true else { return }
+        let editor = (control as? NSTextView) ?? ((control as? NSTextField)?.currentEditor() as? NSTextView)
+        if let editor, let selection = focus.selection {
+            let length = (editor.string as NSString).length
+            let location = min(selection.location, length)
+            editor.setSelectedRange(NSRange(location: location, length: min(selection.length, length - location)))
         }
-        contentStack.layoutSubtreeIfNeeded()
-        scrollView.contentView.scroll(to: draft.scroll)
-        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
 
@@ -533,6 +664,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var systemAgentTestResult: String?
     private var systemAgentTestRunning = false
     private var assistantMemoryRevision: String?
+    private var assistantSettingsRevision: String?
+    private var assistantSkillsRevision: String?
     private var assistantSkillButtons: [String: NSButton] = [:]
     private var assistantSources: SourceSelectionView?
     private var automationSources: SourceSelectionView?
@@ -617,6 +750,9 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     private var transientNoteLabel: NSTextField?
     private var transientNoteTimer: Timer?
     private var inlineError: String?
+    private weak var inlineFormErrorView: NSTextField?
+    private var renderedInlineFormError: String?
+    private var revealInlineFormError = false
     private var scrollObserver: NSObjectProtocol?
 
     override init(frame frameRect: NSRect) {
@@ -696,6 +832,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     /// Put the thread's composer in the pinned host (replacing any previous
     /// one) and let the host size to it.
     private func installComposer(_ composer: ComposerView) {
+        guard composer.superview !== composerHost else { return }
         composerHost.subviews.forEach { $0.removeFromSuperview() }
         composer.translatesAutoresizingMaskIntoConstraints = false
         composerHost.addSubview(composer)
@@ -1147,45 +1284,28 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 #if VOICE_FLOW_QA
         QAEventRecorder.shared.append("agents_refresh", ["rebuilt": true])
 #endif
+        let previousComposer = composerField
         let draft = composerField?.text ?? ""
-        let assistantSourceDraft = assistantSources.map { ($0.selectedIDs, $0.selectedMode) }
-        let assistantDraft = (
-            assistantNameField?.stringValue,
-            assistantDescriptionField?.stringValue,
-            assistantVoiceField?.stringValue,
-            assistantInstructionsView?.string,
-            assistantMemoryView?.string)
-        let automationDraft: AutomationFormValues? = {
-            switch mode {
-            case .automationCreate, .automationEdit: return currentAutomationFormValues()
-            default: return nil
-            }
-        }()
         let hadFocus = (composerField?.hasFocus ?? false) || composerFocusPending
         rebuild()
         lastRefreshInputs = readSurface ? inputs : nil
         if let composer = composerField {
-            if case .thread(let id) = mode {
-                composer.text = threadDrafts[id] ?? draft
-            } else if !draft.isEmpty {
-                composer.text = draft
+            if composer !== previousComposer {
+                if case .thread(let id) = mode {
+                    composer.text = threadDrafts[id] ?? draft
+                } else if !draft.isEmpty {
+                    composer.text = draft
+                }
+                if hadFocus { composer.focus() }
+            } else if composerFocusPending, !composer.hasFocus {
+                composer.focus()
             }
-            // rebuild() made a brand-new composer; focus() lays the window out
-            // first, so the text view never takes focus at a zero frame.
-            if hadFocus { composer.focus() }
             composerFocusPending = false
         } else if case .thread = mode {
             composerFocusPending = hadFocus
         } else {
             composerFocusPending = false
         }
-        if let value = assistantSourceDraft { assistantSources?.select(ids: value.0, mode: value.1) }
-        if let value = assistantDraft.0 { assistantNameField?.stringValue = value }
-        if let value = assistantDraft.1 { assistantDescriptionField?.stringValue = value }
-        if let value = assistantDraft.2 { assistantVoiceField?.stringValue = value }
-        if let value = assistantDraft.3 { assistantInstructionsView?.string = value }
-        if let value = assistantDraft.4 { assistantMemoryView?.string = value }
-        if let automationDraft { restoreAutomationForm(automationDraft) }
     }
 
     private func buildJob(_ jobId: String) {
@@ -1375,10 +1495,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     private func rebuild() {
         let workspaceRouteChanged = renderedWorkspaceMode != mode
-        if workspaceNavigation, workspaceRouteChanged,
-           let previous = renderedWorkspaceMode, let key = workspaceDraftKey(previous) {
-            workspaceDrafts[key] = captureWorkspaceDraft()
-        }
+        let formFocus = workspaceRouteChanged ? nil : workspaceFocus()
+        let formScroll = !workspaceRouteChanged && !renderedWorkspaceForms.isEmpty
+            ? scrollView.contentView.bounds.origin : nil
+        captureWorkspaceDrafts()
+        inlineFormErrorView = nil
         // Every navigation path funnels through here, so this is the one
         // choke point where an in-progress reply can be captured before its
         // field is torn down — Escape, back, Cmd shortcuts included.
@@ -1388,11 +1509,20 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             threadRowCache.removeAll()
             threadRowCacheThread = nil
         }
+        // A same-thread update must leave the live text editor attached:
+        // replacing it discards selection, undo, and in-progress input methods.
+        let keepComposer: Bool = {
+            guard case .thread(let id) = mode, id == composerThreadID,
+                  let detail = dataSource?.agentThreadDetail(for: id) else { return false }
+            return !detail.archived && (detail.canReply || (id.source == .assistant && detail.live))
+        }()
         contentStack.subviews.forEach { $0.removeFromSuperview() }
-        clearComposerHost()
+        if !keepComposer {
+            clearComposerHost()
+            composerField = nil
+            composerThreadID = nil
+        }
         clearHeaderHost()
-        composerField = nil
-        composerThreadID = nil
         automationSearchField = nil
         automationNameField = nil
         automationInstructionsView = nil
@@ -1438,10 +1568,21 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         case .assistantCreate: buildAssistantCreate()
         case .systemAgent(let kind): buildSystemAgent(kind: kind)
         }
-        if workspaceNavigation, workspaceRouteChanged,
-           let key = workspaceDraftKey(mode), let draft = workspaceDrafts[key] {
-            restoreWorkspaceDraft(draft)
+        restoreWorkspaceDrafts()
+        if !renderedWorkspaceForms.isEmpty {
+            contentStack.layoutSubtreeIfNeeded()
+            restoreWorkspaceFocus(formFocus)
+            if let formScroll {
+                scrollView.contentView.scroll(to: formScroll)
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+            if let error = inlineFormErrorView,
+               revealInlineFormError || inlineError != renderedInlineFormError {
+                error.scrollToVisible(error.bounds.insetBy(dx: 0, dy: -8))
+            }
         }
+        renderedInlineFormError = inlineFormErrorView == nil ? nil : inlineError
+        revealInlineFormError = false
         renderedWorkspaceMode = mode
         styleNavigation()
         onModeChanged?()
@@ -1659,7 +1800,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         context.maximumNumberOfLines = 0
         place(context, below: &top, gap: 8)
 
-        if let inlineError { place(errorLabel(inlineError), below: &top, gap: 10) }
+        if let inlineError { place(formErrorLabel(inlineError), below: &top, gap: 10) }
 
         place(formLabel("MODEL"), below: &top, gap: 16)
         let model = formField(placeholder: agent.defaultModel)
@@ -1759,8 +1900,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
                 instructions: systemAgentInstructionsView?.string)
             inlineError = nil
             systemAgentTestResult = "Saved. The next run of this agent uses it."
+            clearWorkspaceDraft("system:\(kind)")
         } catch {
             inlineError = error.localizedDescription
+            revealInlineFormError = true
         }
         rebuild()
     }
@@ -1771,8 +1914,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             try dataSource?.resetAgentSystemAgent(kind: kind)
             inlineError = nil
             systemAgentTestResult = "Back to the shipped defaults."
+            clearWorkspaceDraft("system:\(kind)")
         } catch {
             inlineError = error.localizedDescription
+            revealInlineFormError = true
         }
         rebuild()
     }
@@ -1808,7 +1953,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         assistantInstructionsView = editor.textView
         place(editor.view, below: &top, gap: 5)
 
-        if let inlineError { place(errorLabel(inlineError), below: &top, gap: 10) }
+        if let inlineError { place(formErrorLabel(inlineError), below: &top, gap: 10) }
         let create = NSButton(title: "Create assistant", target: self,
                               action: #selector(createAssistantTapped))
         create.bezelStyle = .rounded
@@ -1833,7 +1978,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         var top = contentStack.topAnchor
         place(assistantHeader(title: snapshot.document.definition.name), below: &top, gap: 0)
         place(assistantTabs(selected: tab), below: &top, gap: 8)
-        if let inlineError { place(errorLabel(inlineError), below: &top, gap: 8) }
+        if let inlineError { place(formErrorLabel(inlineError), below: &top, gap: 8) }
 
         switch tab {
         case .overview:
@@ -1910,6 +2055,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
 
     private func buildAssistantMemory(_ snapshot: AssistantWorkspaceSnapshot,
                                       top: inout NSLayoutYAxisAnchor) {
+        assistantSkillsRevision = snapshot.document.revision
         let selector = NSStackView()
         selector.orientation = .horizontal
         selector.spacing = 8
@@ -1946,6 +2092,12 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             save.bezelStyle = .rounded
             save.controlSize = .small
             place(save, below: &top, gap: 10)
+            let reload = NSButton(title: "Reload saved memory", target: self,
+                                  action: #selector(reloadAssistantMemoryTapped))
+            reload.bezelStyle = .inline
+            reload.controlSize = .small
+            reload.toolTip = "Discard unsaved changes to this memory document and load its latest saved version."
+            place(reload, below: &top, gap: 4)
         }
 
         place(sectionHeader("SKILLS", count: snapshot.skills.count), below: &top, gap: 20)
@@ -1964,11 +2116,18 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             saveSkills.bezelStyle = .rounded
             saveSkills.controlSize = .small
             place(saveSkills, below: &top, gap: 10)
+            let reload = NSButton(title: "Reload saved skills", target: self,
+                                  action: #selector(reloadAssistantSkillsTapped))
+            reload.bezelStyle = .inline
+            reload.controlSize = .small
+            reload.toolTip = "Discard unsaved skill selections and load the latest saved selection."
+            place(reload, below: &top, gap: 4)
         }
     }
 
     private func buildAssistantSettings(_ snapshot: AssistantWorkspaceSnapshot,
                                         top: inout NSLayoutYAxisAnchor) {
+        assistantSettingsRevision = snapshot.document.revision
         let definition = snapshot.document.definition
         place(formLabel("NAME"), below: &top, gap: 14)
         let name = formField(placeholder: "Assistant name")
@@ -2008,6 +2167,12 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         save.bezelStyle = .rounded
         save.controlSize = .small
         place(save, below: &top, gap: 12)
+        let reload = NSButton(title: "Reload saved settings", target: self,
+                              action: #selector(reloadAssistantSettingsTapped))
+        reload.bezelStyle = .inline
+        reload.controlSize = .small
+        reload.toolTip = "Discard unsaved settings changes and load the latest saved version."
+        place(reload, below: &top, gap: 4)
 
         let duplicate = NSButton(title: "Duplicate as template", target: self,
                                  action: #selector(duplicateAssistantTapped))
@@ -2173,22 +2338,14 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     private func rebuildPreservingAssistantDraft() {
-        let name = assistantNameField?.stringValue
-        let description = assistantDescriptionField?.stringValue
-        let voice = assistantVoiceField?.stringValue
-        let instructions = assistantInstructionsView?.string
-        let memory = assistantMemoryView?.string
-        let sourceIDs = assistantSources?.selectedIDs
-        let sourceMode = assistantSources?.selectedMode
-        let skillStates = assistantSkillButtons.mapValues(\.state)
+        revealInlineFormError = inlineError != nil
         rebuild()
-        if let name { assistantNameField?.stringValue = name }
-        if let description { assistantDescriptionField?.stringValue = description }
-        if let voice { assistantVoiceField?.stringValue = voice }
-        if let instructions { assistantInstructionsView?.string = instructions }
-        if let memory { assistantMemoryView?.string = memory }
-        for (name, state) in skillStates { assistantSkillButtons[name]?.state = state }
-        if let sourceIDs, let sourceMode { assistantSources?.select(ids: sourceIDs, mode: sourceMode) }
+    }
+
+    private func formErrorLabel(_ message: String) -> NSTextField {
+        let label = errorLabel(message)
+        inlineFormErrorView = label
+        return label
     }
 
     private func currentAutomationFormValues() -> AutomationFormValues {
@@ -2282,6 +2439,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     private func rebuildPreservingAutomationForm(_ values: AutomationFormValues) {
+        revealInlineFormError = inlineError != nil
         rebuild()
         restoreAutomationForm(values)
     }
@@ -2544,7 +2702,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             ("BUDGET / DAY", budget), ("MAX MIN", duration), ("ATTEMPTS", attempts),
         ]), below: &top, gap: 12)
 
-        if let inlineError { place(errorLabel(inlineError), below: &top, gap: 10) }
+        if let inlineError { place(formErrorLabel(inlineError), below: &top, gap: 10) }
         let save = NSButton(
             title: existing == nil ? "Create automation" : "Save changes",
             target: self, action: #selector(saveAutomationTapped(_:)))
@@ -2954,6 +3112,13 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         // The metadata still surfaces on hover.
         let details = [preview, stats].compactMap { $0 }.filter { !$0.isEmpty }
         row.toolTip = details.isEmpty ? nil : details.joined(separator: "\n")
+        row.setAccessibilityLabel(name)
+        row.setAccessibilityHelp(([unread ? "Unread" : "", time] + details)
+            .filter { !$0.isEmpty }.joined(separator: ". "))
+        row.onActivate = { [weak self, weak row] in
+            guard let row else { return }
+            self?.activateRow(row)
+        }
 
         let nameLabel = NSTextField(labelWithString: name)
         nameLabel.font = .systemFont(ofSize: 13.5, weight: unread ? .semibold : .medium)
@@ -3031,8 +3196,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func rowClicked(_ gesture: NSClickGestureRecognizer) {
-        guard let row = gesture.view as? AgentListRowView,
-              let action = row.rowAction else { return }
+        _ = (gesture.view as? AgentListRowView)?.performActivation()
+    }
+
+    private func activateRow(_ row: AgentListRowView) {
+        guard let action = row.rowAction else { return }
         switch action {
         case .newAssistantIdentity:
             currentDestination = .assistants
@@ -3348,10 +3516,15 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         if detail.archived {
             place(emptyLabel("Reopen this thread to reply"), below: &top, gap: 14)
         } else if detail.canReply || (assistantThread && detail.live) {
-            let composer = makeComposer(
-                placeholder: assistantThread ? "Message \(detail.owner)…" : "Message this thread…")
-            composer.text = threadDrafts[id] ?? ""
-            composer.attachments = threadAttachments[id] ?? []
+            let composer: ComposerView
+            if let existing = composerField, composerThreadID == id {
+                composer = existing
+            } else {
+                composer = makeComposer(
+                    placeholder: assistantThread ? "Message \(detail.owner)…" : "Message this thread…")
+                composer.text = threadDrafts[id] ?? ""
+                composer.attachments = threadAttachments[id] ?? []
+            }
             if assistantThread { configureAssistantComposer(composer, detail: detail) }
             installComposer(composer)
             composer.setRecording(recordingActive)
@@ -3444,9 +3617,10 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         composerField?.setRecording(on)
     }
 
-    /// The + button. The picker is non-modal and the pick lands on whichever
-    /// composer is live when it closes — a rebuild in between loses nothing.
+    /// A non-modal picker belongs to the thread that opened it, including
+    /// when the user navigates before choosing the files.
     private func pickAttachments() {
+        guard let originID = composerThreadID else { return }
         let picker = NSOpenPanel()
         picker.canChooseFiles = true
         picker.canChooseDirectories = false
@@ -3459,11 +3633,18 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         attachPicker = picker
         picker.begin { [weak self] response in
             guard response == .OK, let self else { return }
-            for url in picker.urls { self.composerField?.addAttachment(path: url.path) }
-            if let id = self.composerThreadID, let composer = self.composerField {
-                self.threadAttachments[id] = composer.attachments
-            }
-            self.composerField?.focus()
+            self.acceptPickedAttachments(picker.urls.map(\.path), for: originID)
+        }
+    }
+
+    func acceptPickedAttachments(_ paths: [String], for originID: AgentsThreadID) {
+        guard dataSource?.agentThreadDetail(for: originID) != nil else { return }
+        if composerThreadID == originID, let composer = composerField {
+            for path in paths { composer.addAttachment(path: path) }
+            threadAttachments[originID] = composer.attachments
+            composer.focus()
+        } else {
+            threadAttachments[originID, default: []].append(contentsOf: paths)
         }
     }
 
@@ -3679,9 +3860,11 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         do {
             if let id = sender.identifier?.rawValue {
                 try dataSource.updateAgentAutomation(id: id, draft: draft)
+                clearWorkspaceDraft("automation:\(id)")
                 mode = .job(id)
             } else {
                 let id = try dataSource.createAgentAutomation(draft)
+                clearWorkspaceDraft("automation:create")
                 mode = .job(id)
             }
             inlineError = nil
@@ -3793,6 +3976,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             instructions: assistantInstructionsView?.string ?? "")
         do {
             let slug = try dataSource.createAgentAssistant(draft)
+            clearWorkspaceDraft("assistant:create")
             inlineError = nil
             mode = .assistantWorkspace(slug, .overview)
             rebuild()
@@ -3835,7 +4019,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
     @objc private func saveAssistantSettingsTapped(_ sender: NSButton) {
         guard let dataSource,
               case .assistantWorkspace(let slug, _) = mode,
-              let revision = sender.identifier?.rawValue,
+              let revision = assistantSettingsRevision,
               let snapshot = try? dataSource.assistantWorkspace(slug: slug) else { return }
         let draft = AssistantDraft(
             name: assistantNameField?.stringValue ?? snapshot.document.definition.name,
@@ -3848,6 +4032,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         do {
             try dataSource.updateAgentAssistant(
                 slug: slug, draft: draft, expectedRevision: revision)
+            clearWorkspaceDraft("assistant:\(slug):settings")
             inlineError = nil
             rebuild()
         } catch {
@@ -3865,6 +4050,7 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             _ = try dataSource.updateAgentAssistantMemory(
                 slug: slug, kind: assistantMemoryKind,
                 content: content, expectedRevision: revision)
+            clearWorkspaceDraft("assistant:\(slug):memory:\(assistantMemoryKind)")
             inlineError = nil
             rebuild()
         } catch {
@@ -3873,9 +4059,31 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         }
     }
 
+    @objc private func reloadAssistantSettingsTapped() {
+        guard case .assistantWorkspace(let slug, _) = mode else { return }
+        clearWorkspaceDraft("assistant:\(slug):settings")
+        inlineError = nil
+        rebuild()
+    }
+
+    @objc private func reloadAssistantMemoryTapped() {
+        guard case .assistantWorkspace(let slug, _) = mode else { return }
+        clearWorkspaceDraft("assistant:\(slug):memory:\(assistantMemoryKind)")
+        inlineError = nil
+        rebuild()
+    }
+
+    @objc private func reloadAssistantSkillsTapped() {
+        guard case .assistantWorkspace(let slug, _) = mode else { return }
+        clearWorkspaceDraft("assistant:\(slug):skills")
+        inlineError = nil
+        rebuild()
+    }
+
     @objc private func saveAssistantSkillsTapped() {
         guard let dataSource,
               case .assistantWorkspace(let slug, _) = mode,
+              let revision = assistantSkillsRevision,
               let snapshot = try? dataSource.assistantWorkspace(slug: slug) else { return }
         let selected = assistantSkillButtons
             .filter { $0.value.state == .on }
@@ -3889,7 +4097,8 @@ final class AgentsView: NSView, NSTextFieldDelegate {
         do {
             try dataSource.updateAgentAssistant(
                 slug: slug, draft: draft,
-                expectedRevision: snapshot.document.revision)
+                expectedRevision: revision)
+            clearWorkspaceDraft("assistant:\(slug):skills")
             inlineError = nil
             rebuild()
         } catch {
@@ -4094,7 +4303,6 @@ final class AgentsView: NSView, NSTextFieldDelegate {
             DispatchQueue.main.async { self.refresh() }
         } catch {
             threadInlineError = error.localizedDescription
-            composerField?.text = text
             rebuild()
         }
     }
@@ -4116,10 +4324,58 @@ private enum AgentListRowAction {
 
 private final class AgentListRowView: HoverRowView {
     var rowAction: AgentListRowAction?
+    var onActivate: (() -> Void)?
+    private var hovered = false
+    private var keyboardFocused = false
+
+    override var acceptsFirstResponder: Bool { rowAction != nil }
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { rowAction == nil ? .group : .button }
+    override func accessibilityChildren() -> [Any]? { [] }
+    override func accessibilityPerformPress() -> Bool { performActivation() }
+    override func isAccessibilitySelectorAllowed(_ selector: Selector) -> Bool {
+        if selector == NSSelectorFromString("accessibilityPerformPress") { return rowAction != nil }
+        return super.isAccessibilitySelectorAllowed(selector)
+    }
+
+    @discardableResult
+    func performActivation() -> Bool {
+        guard rowAction != nil, let onActivate else { return false }
+        onActivate()
+        return true
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        keyboardFocused = true
+        updateAppearance()
+        scrollToVisible(bounds)
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        keyboardFocused = false
+        updateAppearance()
+        return true
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+           [36, 49, 76].contains(event.keyCode), !event.isARepeat,
+           performActivation() { return }
+        super.keyDown(with: event)
+    }
+
     // Rows are card surfaces: rest on Theme.card, brighten on hover.
     override func setHovered(_ hovered: Bool) {
-        layer?.backgroundColor = hovered ? Theme.cardHover.cgColor : Theme.card.cgColor
-        layer?.borderColor = hovered ? Theme.borderHover.cgColor : Theme.border.cgColor
+        self.hovered = hovered
+        updateAppearance()
+    }
+
+    private func updateAppearance() {
+        layer?.backgroundColor = hovered || keyboardFocused ? Theme.cardHover.cgColor : Theme.card.cgColor
+        layer?.borderColor = keyboardFocused ? Theme.accent.cgColor
+            : hovered ? Theme.borderHover.cgColor : Theme.border.cgColor
+        layer?.borderWidth = keyboardFocused ? 2 : 1
     }
 }
 

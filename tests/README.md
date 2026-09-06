@@ -23,6 +23,7 @@ Run one unit suite while developing:
 ./scripts/test-agent-harness.sh --unit --only capture_store
 ./scripts/test-agent-harness.sh --unit --only codex_appserver
 ./scripts/test-agent-harness.sh --unit --only opencode_http
+./scripts/test-agent-harness.sh --unit --only workspace_ui
 ```
 
 Suite names match the `compile_and_run` or `run_unit_command` names in the
@@ -33,6 +34,9 @@ visible.
 `--only` is available for the unit tier. It skips unrelated app builds and
 tests, and never emits full-gate evidence. Run the full unit gate before
 considering an integrated change verified.
+
+`workspace_ui` exercises native AppKit rows, composers, and setup editors with
+isolated data, including keyboard/accessibility activation and draft retention.
 
 ## Evidence and higher tiers
 

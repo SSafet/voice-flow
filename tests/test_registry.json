@@ -50,7 +50,8 @@
         "system_agents",
         "voice_flow_paths",
         "watcher_bus",
-        "window_placement"
+        "window_placement",
+        "workspace_ui"
       ]
     },
     "live": {
@@ -1231,6 +1232,13 @@
       "runner": "unit",
       "suites": [
         "fake_openai_server"
+      ]
+    },
+    {
+      "id": "tests/workspace_ui/main.swift",
+      "runner": "unit",
+      "suites": [
+        "workspace_ui"
       ]
     }
   ]

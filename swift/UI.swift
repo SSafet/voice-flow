@@ -2978,6 +2978,7 @@ final class TTSView: NSView {
         ttsVoicePopup.selectItem(withTitle: UserSettings.shared.ttsVoice)
         ttsVoicePopup.target = self
         ttsVoicePopup.action = #selector(ttsControlsChanged)
+        ttsVoicePopup.setAccessibilityLabel("Speech voice")
 
         ttsStylePresetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
         ttsStylePresetPopup.addItem(withTitle: "Quick styles…")
@@ -2987,10 +2988,12 @@ final class TTSView: NSView {
         ttsStylePresetPopup.selectItem(at: 0)
         ttsStylePresetPopup.target = self
         ttsStylePresetPopup.action = #selector(ttsStylePresetChanged)
+        ttsStylePresetPopup.setAccessibilityLabel("Speech style preset")
 
         ttsSpeedSlider = NSSlider(value: UserSettings.shared.ttsSpeed, minValue: 0.25, maxValue: 4.0, target: self, action: #selector(ttsControlsChanged))
         ttsSpeedSlider.numberOfTickMarks = 16
         ttsSpeedSlider.allowsTickMarkValuesOnly = false
+        ttsSpeedSlider.setAccessibilityLabel("Speech speed")
 
         ttsSpeedValueLabel = NSTextField(labelWithString: "")
         ttsSpeedValueLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
@@ -2999,6 +3002,7 @@ final class TTSView: NSView {
         ttsTimelineSlider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: self, action: #selector(ttsTimelineChanged))
         ttsTimelineSlider.isEnabled = false
         ttsTimelineSlider.isContinuous = true
+        ttsTimelineSlider.setAccessibilityLabel("Speech playback position")
 
         ttsTimelineValueLabel = NSTextField(labelWithString: "00:00 / 00:00")
         ttsTimelineValueLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
@@ -3034,6 +3038,7 @@ final class TTSView: NSView {
         ttsInstructionsField.placeholderString = DefaultTTSInstructions
         ttsInstructionsField.target = self
         ttsInstructionsField.action = #selector(ttsControlsChanged)
+        ttsInstructionsField.setAccessibilityLabel("Speech style instructions")
         controlsRow.addRow(with: [gridLabel("Voice:"), ttsVoicePopup])
         controlsRow.addRow(with: [gridLabel("Preset:"), ttsStylePresetPopup])
         controlsRow.addRow(with: [gridLabel("Speed:"), speedRow])
@@ -3042,7 +3047,7 @@ final class TTSView: NSView {
         controlsRow.addRow(with: [gridLabel("Timeline:"), timelineRow])
         controlsRow.translatesAutoresizingMaskIntoConstraints = false
 
-        ttsServerLabel = NSTextField(labelWithString: "Local API: starting…")
+        ttsServerLabel = NSTextField(labelWithString: "Paste or type text below to read it aloud.")
         ttsServerLabel.font = .systemFont(ofSize: 11)
         ttsServerLabel.textColor = Theme.text3
         ttsServerLabel.lineBreakMode = .byWordWrapping
@@ -3071,6 +3076,7 @@ final class TTSView: NSView {
         ttsTextView.textContainer?.widthTracksTextView = true
         ttsTextView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         ttsTextView.string = ""
+        ttsTextView.setAccessibilityLabel("Text to read aloud")
         ttsTextView.textContainerInset = NSSize(width: 12, height: 12)
         textScroll.documentView = ttsTextView
         textScroll.contentView.postsBoundsChangedNotifications = true
@@ -3161,7 +3167,8 @@ final class TTSView: NSView {
     }
 
     func setTTSServerLabel(_ text: String) {
-        ttsServerLabel?.stringValue = text
+        ttsServerLabel?.toolTip = text
+        ttsServerLabel?.setAccessibilityHelp(text)
     }
 
     private func updateTTSSpeedLabel() {

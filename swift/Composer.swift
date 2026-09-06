@@ -52,10 +52,14 @@ final class ComposerView: NSView {
     private let box = NSView()
     private let textView = ComposerTextView()
     private let attachmentsRow = NSStackView()
+    private let attachmentsScroll = NSScrollView()
     private var attachmentPaths: [String] = []
     private let scroll = NSScrollView()
     private let placeholderLabel = NSTextField(labelWithString: "")
     private let bar = NSStackView()
+    private let modelBar = NSStackView()
+    private var modelBarHeight: NSLayoutConstraint!
+    private var compactBar = false
     private let accessPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let attachButton = NSButton()
     private let micButton = NSButton()
@@ -80,6 +84,7 @@ final class ComposerView: NSView {
     var text: String {
         get { textView.string }
         set {
+            guard textView.string != newValue else { return }
             textView.string = newValue
             syncPlaceholder()
             updateHeight()
@@ -176,6 +181,8 @@ final class ComposerView: NSView {
             popUp.translatesAutoresizingMaskIntoConstraints = false
             popUp.widthAnchor.constraint(lessThanOrEqualToConstant: 180).isActive = true
         }
+        // Access modes are short fixed labels; keep the permission choice legible.
+        accessPopUp.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         accessPopUp.action = #selector(accessChanged)
         accessPopUp.toolTip = "What the assistant may do on this Mac"
         accessPopUp.setAccessibilityLabel("Access mode")
@@ -244,6 +251,23 @@ final class ComposerView: NSView {
             bar.addArrangedSubview(view)
         }
 
+        modelBar.orientation = .horizontal
+        modelBar.alignment = .centerY
+        modelBar.spacing = 8
+        modelBar.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        let modelSpacer = NSView()
+        modelSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        modelBar.addArrangedSubview(modelSpacer)
+        modelBar.isHidden = true
+
+        attachmentsScroll.drawsBackground = false
+        attachmentsScroll.hasHorizontalScroller = true
+        attachmentsScroll.autohidesScrollers = true
+        attachmentsScroll.scrollerStyle = .overlay
+        attachmentsScroll.documentView = attachmentsRow
+        attachmentsRow.translatesAutoresizingMaskIntoConstraints = false
+        attachmentsRow.leadingAnchor.constraint(equalTo: attachmentsScroll.contentView.leadingAnchor).isActive = true
+        attachmentsRow.topAnchor.constraint(equalTo: attachmentsScroll.contentView.topAnchor).isActive = true
         attachmentsRow.orientation = .horizontal
         attachmentsRow.spacing = 6
         attachmentsRow.isHidden = true
@@ -251,14 +275,15 @@ final class ComposerView: NSView {
 
         box.translatesAutoresizingMaskIntoConstraints = false
         addSubview(box)
-        for view in [attachmentsRow, scroll, placeholderLabel, bar] as [NSView] {
+        for view in [attachmentsScroll, scroll, placeholderLabel, bar, modelBar] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             box.addSubview(view)
         }
 
         heightConstraint = scroll.heightAnchor.constraint(equalToConstant: minHeight)
-        attachmentsHeight = attachmentsRow.heightAnchor.constraint(equalToConstant: 0)
-        attachmentsGap = scroll.topAnchor.constraint(equalTo: attachmentsRow.bottomAnchor, constant: 0)
+        attachmentsHeight = attachmentsScroll.heightAnchor.constraint(equalToConstant: 0)
+        modelBarHeight = modelBar.heightAnchor.constraint(equalToConstant: 0)
+        attachmentsGap = scroll.topAnchor.constraint(equalTo: attachmentsScroll.bottomAnchor, constant: 0)
         NSLayoutConstraint.activate([
             box.topAnchor.constraint(equalTo: topAnchor),
             box.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -267,16 +292,20 @@ final class ComposerView: NSView {
             heightConstraint,
             attachmentsHeight,
             attachmentsGap,
-            attachmentsRow.topAnchor.constraint(equalTo: box.topAnchor, constant: 8),
-            attachmentsRow.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: inset),
-            attachmentsRow.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -inset),
+            attachmentsScroll.topAnchor.constraint(equalTo: box.topAnchor, constant: 8),
+            attachmentsScroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: inset),
+            attachmentsScroll.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -inset),
             scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 2),
             scroll.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -2),
             bar.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 2),
             bar.leadingAnchor.constraint(equalTo: box.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: box.trailingAnchor),
             bar.heightAnchor.constraint(equalToConstant: 34),
-            bar.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -4),
+            modelBar.topAnchor.constraint(equalTo: bar.bottomAnchor),
+            modelBar.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            modelBar.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            modelBarHeight,
+            modelBar.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -4),
             placeholderLabel.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: inset),
             placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: scroll.trailingAnchor, constant: -inset),
             placeholderLabel.topAnchor.constraint(equalTo: scroll.topAnchor, constant: inset),
@@ -302,6 +331,7 @@ final class ComposerView: NSView {
 
     /// Which controls to show; nil hides the session controls.
     func setControls(_ value: ComposerControls?) {
+        guard controls != value else { return }
         controls = value
         let controls = value ?? ComposerControls()
         fill(accessPopUp, controls.accessOptions, controls.accessIndex)
@@ -312,6 +342,7 @@ final class ComposerView: NSView {
         micButton.isHidden = !controls.mic
         snapButton.isHidden = !controls.snap
         applyRunningState()
+        updateBarLayout()
     }
 
     private func fill(_ popUp: NSPopUpButton, _ options: [String], _ index: Int) {
@@ -359,6 +390,7 @@ final class ComposerView: NSView {
         statusLabel.isHidden = statusLabel.stringValue.isEmpty
         spinner.isHidden = !isRunning
         if isRunning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        sendButton.isEnabled = !isRunning && !isEmpty
         sendButton.isHidden = isRunning
         stopButton.isHidden = !isRunning
     }
@@ -366,14 +398,40 @@ final class ComposerView: NSView {
     func focus() {
         window?.layoutIfNeeded()
         window?.makeFirstResponder(textView)
-        textView.setSelectedRange(NSRange(location: textView.string.count, length: 0))
+        let end = NSRange(location: textView.string.utf16.count, length: 0)
+        textView.setSelectedRange(end)
+        textView.scrollRangeToVisible(end)
     }
 
     override func layout() {
+        updateBarLayout()
         super.layout()
         // Wrapping — and so the height — depends on the field's width, which
         // is only known once the panel has laid out.
         updateHeight()
+    }
+
+    /// Keep session choices readable when the panel is narrow; the primary
+    /// actions and current activity remain together above them.
+    private func updateBarLayout() {
+        let hasChoices = controls.map {
+            !$0.runtimeOptions.isEmpty || !$0.modelOptions.isEmpty || !$0.effortOptions.isEmpty
+        } ?? false
+        let compact = bounds.width > 0 && bounds.width < 780 && hasChoices
+        guard compact != compactBar else { return }
+        compactBar = compact
+        for popUp in [runtimePopUp, modelPopUp, effortPopUp] {
+            (popUp.superview as? NSStackView)?.removeArrangedSubview(popUp)
+            popUp.removeFromSuperview()
+            if compact {
+                modelBar.addArrangedSubview(popUp)
+            } else {
+                let index = bar.arrangedSubviews.firstIndex(of: sendButton) ?? bar.arrangedSubviews.count
+                bar.insertArrangedSubview(popUp, at: index)
+            }
+        }
+        modelBar.isHidden = !compact
+        modelBarHeight.constant = compact ? 30 : 0
     }
 
     @objc private func sendTapped() { submit() }
@@ -483,8 +541,10 @@ final class ComposerView: NSView {
         }
         let showing = !attachmentPaths.isEmpty
         attachmentsRow.isHidden = !showing
+        attachmentsScroll.isHidden = !showing
         attachmentsHeight.constant = showing ? 32 : 0
         attachmentsGap.constant = showing ? 6 : 0
+        sendButton.isEnabled = !isRunning && !isEmpty
     }
 
     @objc private func attachmentTapped(_ sender: NSButton) {
@@ -495,6 +555,7 @@ final class ComposerView: NSView {
 
     private func syncPlaceholder() {
         placeholderLabel.isHidden = !textView.string.isEmpty
+        sendButton.isEnabled = !isRunning && !isEmpty
     }
 
     private func updateHeight() {

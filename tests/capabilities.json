@@ -1644,6 +1644,16 @@
         "tests/test_harness_cli.py",
         "tests/test_fake_openai_server.py"
       ]
+    },
+    {
+      "id": "QA-05",
+      "area": "quality",
+      "name": "Workspace rows, composers, and setup forms preserve keyboard access and editing state",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/workspace_ui/main.swift"
+      ]
     }
   ]
 }

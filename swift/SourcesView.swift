@@ -7,7 +7,7 @@ struct SourceConsumerLink {
 
 /// Source browsing and editing share one pane. Drafts survive navigation and
 /// collector updates never rebuild an active text editor.
-final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
+final class SourcesView: NSView, NSTextViewDelegate, NSSearchFieldDelegate {
     private enum Route: Equatable {
         case inventory, connect, detail(String), items(String, String), snapshots(String), item(String, String, String)
     }
@@ -24,10 +24,15 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
     var consumers: ((String) -> [SourceConsumerLink])?
     var onOpenSettings: (() -> Void)?
     private var route: Route = .inventory
-    private var history: [Route] = []
+    private struct NavigationEntry {
+        let route: Route
+        let position: NSPoint
+    }
+    private var history: [NavigationEntry] = []
     private var drafts: [String: Draft] = [:]
     private let scroll = NSScrollView()
     private let stack = NSStackView()
+    private var inventoryRows: NSStackView?
     private var nameField: NSTextField?
     private var locationField: NSTextField?
     private var intervalField: NSTextField?
@@ -38,6 +43,7 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
     private var feedbackLabel: NSTextField?
     private var filter = ""
     private var error: String?
+    private var errorIsInline = false
     private var deleteConfirmation = false
     private var deferredRefresh = false
     private var renderedDraft: Draft?
@@ -80,41 +86,78 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         if case .detail(let id) = route { return id }
         return "new"
     }
-    private func stashDraft() {
-        guard let nameField, let locationField, let instructionsView else { return }
-        var value = drafts[draftKey] ?? renderedDraft ?? Draft()
+    private func sourceDraft(_ source: SourceDefinition) -> Draft {
+        Draft(name: source.name, location: source.location, instructions: source.instructions,
+              kind: source.kind, interval: String(source.intervalSeconds / 60), retention: String(source.retentionDays))
+    }
+    private func displayedDraft() -> Draft? {
+        guard let nameField, let instructionsView else { return nil }
+        var value = renderedDraft ?? Draft()
         value.name = nameField.stringValue
-        value.location = locationField.stringValue
+        value.location = locationField?.stringValue ?? value.location
         value.instructions = instructionsView.string
         value.interval = intervalField?.stringValue ?? value.interval
         value.retention = retentionField?.stringValue ?? value.retention
         if let kindPicker, (0..<3).contains(kindPicker.indexOfSelectedItem) { value.kind = [.website, .localFolder, .emailCopies][kindPicker.indexOfSelectedItem] }
-        // Only user edits create a draft. Repainting unchanged fields must not
-        // resurrect a draft after Save or hide a later store update.
-        if renderedDraftKey == draftKey && value != renderedDraft { drafts[draftKey] = value }
+        return value
+    }
+    private func stashDraft() {
+        guard let value = displayedDraft(), renderedDraftKey == draftKey else { return }
+        // An unchanged repaint must not hide a later store update. Existing
+        // drafts are reconciled too, so undoing back to saved values clears them.
+        guard value != renderedDraft || drafts[draftKey] != nil else { return }
+        let saved = store.source(id: draftKey).map(sourceDraft) ?? Draft()
+        if value == saved { drafts.removeValue(forKey: draftKey) }
+        else { drafts[draftKey] = value }
+    }
+    private var feedbackText: String {
+        if errorIsInline, let error { return error }
+        return savedMessage ?? (drafts[draftKey] == nil ? "" : "Unsaved changes")
+    }
+    private func updateFeedback() {
+        feedbackLabel?.stringValue = feedbackText
+        feedbackLabel?.textColor = errorIsInline && error != nil ? .systemOrange : Theme.accent
+    }
+    private func draftChanged() {
+        stashDraft()
+        savedMessage = nil
+        if errorIsInline { error = nil }
+        updateFeedback()
     }
     private func navigate(_ next: Route) {
         stashDraft()
-        history.append(route)
+        history.append(NavigationEntry(route: route, position: scroll.contentView.bounds.origin))
         route = next
         savedMessage = nil
         error = nil
         deleteConfirmation = false
         rebuild()
-        scroll.contentView.scroll(to: .zero)
+        restoreScrollPosition(.zero)
     }
     @discardableResult func goBack() -> Bool {
         guard let prior = history.popLast() else { return false }
         stashDraft()
-        route = prior
+        route = prior.route
         savedMessage = nil
         error = nil
         deleteConfirmation = false
         rebuild()
+        restoreScrollPosition(prior.position)
         return true
     }
     func showSource(_ id: String) { navigate(.detail(id)) }
-    func showInventory() { stashDraft(); route = .inventory; history = []; savedMessage = nil; rebuild() }
+    func showInventory() {
+        stashDraft(); route = .inventory; history = []; savedMessage = nil; error = nil
+        rebuild()
+        restoreScrollPosition(.zero)
+    }
+    private func restoreScrollPosition(_ position: NSPoint) {
+        var proposed = scroll.contentView.bounds
+        proposed.origin = position
+        // The destination may be shorter after filtering, refresh, or expiry.
+        scroll.contentView.scroll(to: scroll.contentView.constrainBoundsRect(proposed).origin)
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
     func refresh() {
         if case .detail(let id) = route { statusLabel?.stringValue = statusText(id) }
         // Async data arrivals may not erase a selection, move a cursor, or
@@ -131,6 +174,8 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         guard let editor = window?.firstResponder as? NSTextView else { return false }
         return editor.isDescendant(of: self) || (editor.delegate as? NSView)?.isDescendant(of: self) == true
     }
+    func textDidChange(_ notification: Notification) { draftChanged() }
+    func controlTextDidChange(_ notification: Notification) { draftChanged() }
     func textDidEndEditing(_ notification: Notification) { applyDeferredRefresh() }
     func controlTextDidEndEditing(_ notification: Notification) { applyDeferredRefresh() }
     private func applyDeferredRefresh() {
@@ -149,19 +194,20 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         v.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return v
     }
-    private func add(_ view: NSView, full: Bool = true) {
+    private func add(_ view: NSView, full: Bool = true, to destination: NSStackView? = nil) {
+        let parent = destination ?? stack
         view.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(view)
-        if !full { view.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true }
-        if full { view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        parent.addArrangedSubview(view)
+        if !full { view.widthAnchor.constraint(lessThanOrEqualTo: parent.widthAnchor).isActive = true }
+        if full { view.widthAnchor.constraint(equalTo: parent.widthAnchor).isActive = true }
     }
     private func heading(_ title: String, subtitle: String) {
         add(label(title, size: 26, color: Theme.text))
         add(label(subtitle))
     }
-    private func section(_ title: String) {
-        let line = NSBox(); line.boxType = .separator; add(line)
-        add(label(title.uppercased(), size: 11, color: Theme.accent))
+    private func section(_ title: String, to destination: NSStackView? = nil) {
+        let line = NSBox(); line.boxType = .separator; add(line, to: destination)
+        add(label(title.uppercased(), size: 11, color: Theme.accent), to: destination)
     }
     private func button(_ title: String, _ action: @escaping () -> Void) -> NSButton {
         let b = SourceActionButton(title: title, action: action)
@@ -224,9 +270,9 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         stack.arrangedSubviews.forEach { stack.removeArrangedSubview($0); $0.removeFromSuperview() }
         nameField = nil; locationField = nil; intervalField = nil; retentionField = nil
         instructionsView = nil; kindPicker = nil; statusLabel = nil; feedbackLabel = nil
-        renderedDraft = nil; renderedDraftKey = nil
+        renderedDraft = nil; renderedDraftKey = nil; inventoryRows = nil
         if !history.isEmpty { add(button("‹ Back") { [weak self] in _ = self?.goBack() }, full: false) }
-        if let error { add(label(error, color: .systemOrange)) }
+        if let error, !errorIsInline { add(label(error, color: .systemOrange)) }
         switch route {
         case .inventory: buildInventory()
         case .connect: buildConnect()
@@ -236,32 +282,45 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         case .item(let source, let snapshot, let item): buildItem(source, snapshot, item)
         }
         layoutSubtreeIfNeeded()
-        scroll.contentView.scroll(to: position)
+        restoreScrollPosition(position)
     }
     private func buildInventory() {
         heading("Your data", subtitle: "See what Voice Flow collects. Give your agents useful context before they run.")
         actions([button("Connect source") { [weak self] in self?.navigate(.connect) }])
         let search = NSSearchField(); search.placeholderString = "Filter sources"
         search.stringValue = filter
-        search.target = self; search.action = #selector(filterChanged(_:))
+        search.setAccessibilityLabel("Filter sources")
+        search.target = self; search.action = #selector(filterChanged(_:)); search.delegate = self
         add(search)
+        let rows = NSStackView(); rows.orientation = .vertical; rows.alignment = .leading; rows.spacing = 12
+        inventoryRows = rows; add(rows)
+        rebuildInventoryRows()
+    }
+    private func rebuildInventoryRows() {
+        guard let rows = inventoryRows else { return }
+        rows.arrangedSubviews.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
         let sources = store.listSources().filter { filter.isEmpty || ($0.name + " " + kindLabel($0.kind)).localizedCaseInsensitiveContains(filter) }
         for builtIn in [false, true] {
             let group = sources.filter { $0.builtIn == builtIn }
-            section(builtIn ? "From Voice Flow" : "Connected sources")
+            section(builtIn ? "From Voice Flow" : "Connected sources", to: rows)
             if group.isEmpty {
-                add(label(builtIn ? "No matching sources." : "Connect a website, a folder of documents, or exported email files. Collection runs while Voice Flow is open."))
+                let message = !filter.isEmpty ? (builtIn ? "No matching Voice Flow sources." : "No matching connected sources.")
+                    : builtIn ? "No matching sources." : "Connect a website, a folder of documents, or exported email files. Collection runs while Voice Flow is open."
+                add(label(message), to: rows)
             }
             for source in group {
                 let open = linkButton(source.name + "  ›", size: 16) { [weak self] in self?.showSource(source.id) }
-                add(open, full: false)
-                add(label("\(kindLabel(source.kind)) · \(statusText(source.id))", size: 12))
-                if !source.instructions.isEmpty { add(label(String(source.instructions.prefix(180)), size: 12)) }
-                if let failure = store.status(sourceID: source.id).lastError { add(label(String(failure.prefix(220)), size: 12, color: .systemOrange)) }
+                add(open, full: false, to: rows)
+                add(label("\(kindLabel(source.kind)) · \(statusText(source.id))", size: 12), to: rows)
+                if !source.instructions.isEmpty { add(label(String(source.instructions.prefix(180)), size: 12), to: rows) }
+                if let failure = store.status(sourceID: source.id).lastError { add(label(String(failure.prefix(220)), size: 12, color: .systemOrange), to: rows) }
             }
         }
     }
-    @objc private func filterChanged(_ sender: NSSearchField) { filter = sender.stringValue; rebuild() }
+    @objc private func filterChanged(_ sender: NSSearchField) {
+        filter = sender.stringValue
+        rebuildInventoryRows()
+    }
 
     private func field(_ title: String, value: String, placeholder: String = "") -> NSTextField {
         add(label(title, size: 12))
@@ -298,13 +357,15 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         kindPicker = picker; add(picker, full: false)
         buildFields(d, builtIn: false)
         add(button("Connect and collect") { [weak self] in self?.saveConnection() }, full: false)
+        addFormFeedback()
     }
     @objc private func kindChanged() { stashDraft(); rebuild() }
     private func buildFields(_ d: Draft, builtIn: Bool) {
         nameField = field("Name", value: d.name, placeholder: "A name you and your agents recognize")
-        locationField = field(d.kind == .website ? "Website URL" : "Folder", value: d.location,
-                              placeholder: d.kind == .website ? "https://example.com" : "/path/to/folder")
-        locationField?.isEnabled = !builtIn
+        if !builtIn {
+            locationField = field(d.kind == .website ? "Website URL" : "Folder", value: d.location,
+                                  placeholder: d.kind == .website ? "https://example.com" : "/path/to/folder")
+        }
         if !builtIn && d.kind != .website {
             add(button("Choose folder…") { [weak self] in self?.chooseFolder() }, full: false)
         }
@@ -366,11 +427,10 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         if links.isEmpty { add(label("No assignments yet. Select this source in an Assistant’s settings or an Automation’s Data section.")) }
         for link in links { add(linkButton(link.title + "  ›", link.open), full: false) }
         section("Source settings")
-        let d = drafts[id] ?? Draft(name: source.name, location: source.location, instructions: source.instructions,
-                                    kind: source.kind, interval: String(source.intervalSeconds / 60), retention: String(source.retentionDays))
+        let d = drafts[id] ?? sourceDraft(source)
         buildFields(d, builtIn: source.builtIn)
         add(button("Save source settings") { [weak self] in self?.saveConnection() }, full: false)
-        let feedback = label(savedMessage ?? "", color: Theme.accent); feedbackLabel = feedback; add(feedback)
+        addFormFeedback()
         if source.builtIn {
             add(label("These snapshots read existing Voice Flow stores once a minute; they do not enable the recorder. Original capture and retention settings remain in app settings. Snapshot copies expire after \(source.retentionDays) days or 100 collections.", size: 12))
             add(button("Open app settings") { [weak self] in self?.onOpenSettings?() }, full: false)
@@ -382,6 +442,13 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
                 catch { self?.showError(error) }
             }, full: false)
         }
+    }
+    private func addFormFeedback() {
+        let feedback = label(feedbackText, color: Theme.accent)
+        feedback.identifier = NSUserInterfaceItemIdentifier("source-form-feedback")
+        feedback.setAccessibilityLabel("Source settings feedback")
+        feedbackLabel = feedback; add(feedback)
+        updateFeedback()
     }
     private func buildItems(_ sourceID: String, _ snapshotID: String) {
         guard let snapshot = store.snapshots(sourceID: sourceID).first(where: { $0.id == snapshotID }) else {
@@ -422,13 +489,16 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         let picker = NSOpenPanel(); picker.canChooseFiles = false; picker.canChooseDirectories = true
         picker.allowsMultipleSelection = false; picker.prompt = "Use folder"
         picker.beginSheetModal(for: window) { [weak self] response in
-            if response == .OK { self?.locationField?.stringValue = picker.url?.path ?? ""; self?.stashDraft() }
+            if response == .OK { self?.locationField?.stringValue = picker.url?.path ?? ""; self?.draftChanged() }
         }
     }
     private func saveConnection() {
         stashDraft()
-        guard let d = drafts[draftKey] else { return }
+        guard let d = displayedDraft() else { return }
         do {
+            guard !d.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw DataSourceError.invalid("Enter a name for this source.")
+            }
             let isExisting: String? = { if case .detail(let id) = route { return id }; return nil }()
             var definition = isExisting.flatMap { store.source(id: $0) }
                 ?? SourceDefinition(name: d.name, kind: d.kind, location: d.location)
@@ -455,15 +525,22 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
                 deferredRefresh = false
                 rebuild()
             }
-        } catch { showError(error) }
+        } catch { showError(error, inline: true) }
     }
-    private func showError(_ failure: Error) { error = failure.localizedDescription; stashDraft(); rebuild() }
+    private func showError(_ failure: Error, inline: Bool = false) {
+        error = failure.localizedDescription; errorIsInline = inline; stashDraft()
+        if inline, let feedbackLabel {
+            updateFeedback()
+            layoutSubtreeIfNeeded()
+            feedbackLabel.scrollToVisible(feedbackLabel.bounds.insetBy(dx: 0, dy: -8))
+        } else { rebuild() }
+    }
 
 #if VOICE_FLOW_QA
     func qaState() -> [String: Any] {
         ["route": String(describing: route), "error": error ?? "", "source_count": store.listSources().count,
          "name": nameField?.stringValue ?? "", "location": locationField?.stringValue ?? "",
-         "instructions": instructionsView?.string ?? ""]
+         "instructions": instructionsView?.string ?? "", "feedback": feedbackText]
     }
     func qaAction(_ payload: [String: Any]) {
         switch payload["action"] as? String {
@@ -486,6 +563,7 @@ final class SourcesView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         if let value = payload["name"] as? String { nameField?.stringValue = value }
         if let value = payload["location"] as? String { locationField?.stringValue = value }
         if let value = payload["instructions"] as? String { instructionsView?.string = value }
+        if ["name", "location", "instructions"].contains(where: { payload[$0] != nil }) { draftChanged() }
         if payload["action"] as? String == "save" { saveConnection() }
     }
 #endif
