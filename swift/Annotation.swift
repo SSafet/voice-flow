@@ -45,12 +45,25 @@ enum AnnotationShapeKind: String, Codable {
     case line, arrow, rect, ellipse
 }
 
+/// How a note reads on top of whatever is under it. A hard outline cannot
+/// work below ~14 pt: any stroke wide enough to see fills the one-pixel gaps
+/// between and inside the letters. So the default is a soft halo (a blurred
+/// shadow in the contrast colour, the way subtitles and map labels do it),
+/// and a dark plate behind the text is the switch for the busiest backgrounds.
+enum AnnotationTextStyle: String, Codable, CaseIterable {
+    case halo, plate
+
+    var toggled: AnnotationTextStyle { self == .halo ? .plate : .halo }
+    var name: String { self == .halo ? "Halo" : "Plate" }
+}
+
 enum AnnotationItem {
     case stroke(points: [CGPoint], color: NSColor, width: CGFloat)
     case highlight(points: [CGPoint], color: NSColor, width: CGFloat)
     case shape(kind: AnnotationShapeKind, from: CGPoint, to: CGPoint, color: NSColor, width: CGFloat)
     case number(value: Int, center: CGPoint, color: NSColor, diameter: CGFloat)
-    case text(string: String, origin: CGPoint, color: NSColor, fontSize: CGFloat, width: CGFloat)
+    case text(string: String, origin: CGPoint, color: NSColor, fontSize: CGFloat, width: CGFloat,
+              style: AnnotationTextStyle)
 }
 
 /// Plain, versioned data: never archive AppKit views or their undo targets.
@@ -71,15 +84,15 @@ struct AnnotationSnapshot: Codable {
         case highlight([CGPoint], Color, CGFloat)
         case shape(AnnotationShapeKind, CGPoint, CGPoint, Color, CGFloat)
         case number(Int, CGPoint, Color, CGFloat)
-        case text(String, CGPoint, Color, CGFloat, CGFloat)
+        case text(String, CGPoint, Color, CGFloat, CGFloat, AnnotationTextStyle?)
         init(_ item: AnnotationItem) {
             switch item {
             case let .stroke(points, color, width): self = .stroke(points, Color(color), width)
             case let .highlight(points, color, width): self = .highlight(points, Color(color), width)
             case let .shape(kind, from, to, color, width): self = .shape(kind, from, to, Color(color), width)
             case let .number(value, center, color, diameter): self = .number(value, center, Color(color), diameter)
-            case let .text(text, origin, color, size, width):
-                self = .text(text, origin, Color(color), size, width)
+            case let .text(text, origin, color, size, width, style):
+                self = .text(text, origin, Color(color), size, width, style)
             }
         }
         var value: AnnotationItem {
@@ -90,8 +103,9 @@ struct AnnotationSnapshot: Codable {
                 return .shape(kind: kind, from: from, to: to, color: color.value, width: width)
             case let .number(value, center, color, diameter):
                 return .number(value: value, center: center, color: color.value, diameter: diameter)
-            case let .text(text, origin, color, size, width):
-                return .text(string: text, origin: origin, color: color.value, fontSize: size, width: width)
+            case let .text(text, origin, color, size, width, style):
+                return .text(string: text, origin: origin, color: color.value, fontSize: size, width: width,
+                             style: style ?? .halo)
             }
         }
     }
@@ -364,6 +378,18 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
             invalidateCursorRing()
         }
     }
+    /// Sticky like colour and size: the next note uses it, an open one restyles.
+    var textStyle: AnnotationTextStyle = .halo {
+        didSet {
+            guard textStyle != oldValue else { return }
+            if let editor = textEditor { styleEditor(editor) }
+            textChrome?.textStyle = textStyle
+            onContentChanged?()
+            onSelectionChanged?()
+        }
+    }
+
+    func toggleTextStyle() { textStyle = textStyle.toggled }
     /// Text size in points. The dial's S/M/L sets it; A−/A+ and ⌘[ / ⌘] walk
     /// a finer ladder so a note can be a caption or a headline.
     static let textSizeLadder: [CGFloat] = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48]
@@ -426,7 +452,8 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
             result.append(.text(string: editor.string, origin: textEditorOrigin,
                                 color: editor.textColor ?? color,
                                 fontSize: editor.font?.pointSize ?? fontSize,
-                                width: editor.frame.width))
+                                width: editor.frame.width,
+                                style: editor.textLayout?.style ?? textStyle))
         }
         return result
     }
@@ -484,6 +511,7 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         switch chars {
         case "[": stepSize(-1)
         case "]": stepSize(1)
+        case "b": toggleTextStyle()
         default: break  // swallow silently: a drawing surface has no beep to give
         }
     }
@@ -695,16 +723,17 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         editor.isAutomaticQuoteSubstitutionEnabled = false
         editor.isAutomaticDashSubstitutionEnabled = false
         editor.allowsUndo = true
-        editor.textContainerInset = NSSize(width: 0, height: 2)
-        editor.textContainer?.lineFragmentPadding = 3
+        editor.textContainer?.lineFragmentPadding = Self.lineFragmentPadding
         editor.textContainer?.widthTracksTextView = true
         editor.isVerticallyResizable = true
         editor.isHorizontallyResizable = false
-        editor.minSize = NSSize(width: editorWidth, height: fontSize + 12)
+        let inset = Self.textInset(style: textStyle, pointSize: fontSize)
+        editor.minSize = NSSize(width: editorWidth, height: fontSize + inset.height * 2 + 8)
         editor.maxSize = NSSize(width: editorWidth, height: bounds.height - point.y)
         editor.onCommit = { [weak self] in self?.commitPendingText() }
         editor.onChange = { [weak self] in self?.onContentChanged?() }
         editor.onSizeStep = { [weak self] delta in self?.stepTextSize(delta) }
+        editor.onStyleToggle = { [weak self] in self?.toggleTextStyle() }
         styleEditor(editor)
 
         // The box around the note: drag it by the header, resize it by the
@@ -712,9 +741,11 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         // the keyboard-free flow of writing on top of things.
         let chrome = AnnotationTextChrome(frame: AnnotationTextChrome.frame(around: editor.frame))
         chrome.color = color
+        chrome.textStyle = textStyle
         chrome.onMove = { [weak self] delta in self?.moveTextBox(by: delta) }
         chrome.onResize = { [weak self] delta in self?.resizeTextBox(by: delta) }
         chrome.onSizeStep = { [weak self] delta in self?.stepTextSize(delta) }
+        chrome.onStyleToggle = { [weak self] in self?.toggleTextStyle() }
         chrome.onDone = { [weak self] in self?.commitPendingText() }
         addSubview(chrome)
         addSubview(editor)
@@ -730,13 +761,10 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         needsDisplay = true
     }
 
-    /// Outlined glyphs in the live colour, so a note reads on top of anything
-    /// while the box itself stays see-through.
+    /// Glyphs in the live colour with the halo or plate under them, so a note
+    /// reads on top of anything while the box itself stays see-through.
     private func styleEditor(_ editor: AnnotationTextEditor) {
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: Self.annotationFont(ofSize: fontSize),
-            .foregroundColor: color,
-        ]
+        let attributes = Self.textAttributes(color: color, pointSize: fontSize)
         editor.font = Self.annotationFont(ofSize: fontSize)
         editor.textColor = color
         editor.insertionPointColor = color
@@ -744,29 +772,55 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         if let storage = editor.textStorage, storage.length > 0 {
             storage.addAttributes(attributes, range: NSRange(location: 0, length: storage.length))
         }
-        editor.outlineColor = Self.outlineColor(for: color)
-        editor.outlineWidth = Self.outlineWidth(forPointSize: fontSize)
+        if let layout = editor.textLayout {
+            Self.configure(layout, style: textStyle, color: color, pointSize: fontSize)
+        }
+        // Room for the halo's blur or the plate's padding, the same amount the
+        // committed renderer leaves, so the note does not shift on commit.
+        editor.textContainerInset = Self.textInset(style: textStyle, pointSize: fontSize)
+        editor.sizeToFit()
         editor.needsDisplay = true
     }
 
-    /// White outline around every glyph (dark only when the text itself is
-    /// white); the committed renderer and the live editor both draw a
-    /// stroke-only pass first, then the fill, so the outline sits all around
-    /// the letters without eating into them.
     static func textAttributes(color: NSColor, pointSize: CGFloat) -> [NSAttributedString.Key: Any] {
         [.font: annotationFont(ofSize: pointSize), .foregroundColor: color]
     }
 
-    /// Visible outline outside the glyph, in points: a hairline that only
-    /// grows a little with headline sizes.
-    static func outlineWidth(forPointSize pointSize: CGFloat) -> CGFloat {
-        max(0.5, pointSize * 0.03)
+    static let lineFragmentPadding: CGFloat = 3
+
+    /// The halo's spread in points: soft enough never to close a counter,
+    /// wide enough to darken the background around a headline.
+    static func haloBlur(forPointSize pointSize: CGFloat) -> CGFloat {
+        max(2, pointSize * 0.14)
     }
 
-    static func outlineColor(for color: NSColor) -> NSColor {
+    /// White halo (dark only when the text itself is white).
+    static func haloColor(for color: NSColor) -> NSColor {
         let rgb = color.usingColorSpace(.sRGB) ?? color
         let luminance = 0.299 * rgb.redComponent + 0.587 * rgb.greenComponent + 0.114 * rgb.blueComponent
         return luminance > 0.85 ? NSColor(r: 30, g: 28, b: 26) : .white
+    }
+
+    /// Space between the text and the edge of its box: the halo needs room to
+    /// fade, the plate needs padding to look like a label.
+    static func textInset(style: AnnotationTextStyle, pointSize: CGFloat) -> NSSize {
+        switch style {
+        case .halo:
+            let blur = haloBlur(forPointSize: pointSize)
+            return NSSize(width: ceil(max(0, blur - lineFragmentPadding)), height: ceil(max(2, blur)))
+        case .plate:
+            return NSSize(width: ceil(max(3, pointSize * 0.25)), height: ceil(max(2, pointSize * 0.18)))
+        }
+    }
+
+    /// One configuration for the live editor and the committed renderer.
+    static func configure(_ layout: AnnotationTextLayoutManager, style: AnnotationTextStyle,
+                          color: NSColor, pointSize: CGFloat) {
+        layout.style = style
+        layout.haloColor = haloColor(for: color)
+        layout.haloBlur = haloBlur(forPointSize: pointSize)
+        let inset = textInset(style: style, pointSize: pointSize)
+        layout.plateReach = NSSize(width: inset.width + lineFragmentPadding, height: inset.height)
     }
 
     private func layoutTextChrome() {
@@ -793,7 +847,8 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         guard let editor = textEditor else { return }
         let frame = editor.frame
         let width = max(120, min(bounds.width - frame.minX, frame.width + delta.width))
-        let minHeight = max(fontSize + 12, editor.minSize.height + delta.height)
+        let inset = Self.textInset(style: textStyle, pointSize: fontSize)
+        let minHeight = max(fontSize + inset.height * 2 + 8, editor.minSize.height + delta.height)
         editor.minSize = NSSize(width: width, height: minHeight)
         editor.maxSize = NSSize(width: width, height: max(minHeight, bounds.height - frame.minY))
         editor.setFrameSize(NSSize(width: width, height: max(minHeight, frame.height)))
@@ -809,9 +864,11 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         let itemColor = editor.textColor ?? color
         let pointSize = editor.font?.pointSize ?? fontSize
         let width = editor.frame.width
+        let style = editor.textLayout?.style ?? textStyle
         discardTextEditor()
         if !string.isEmpty {
-            append(.text(string: string, origin: origin, color: itemColor, fontSize: pointSize, width: width))
+            append(.text(string: string, origin: origin, color: itemColor, fontSize: pointSize, width: width,
+                         style: style))
             return
         }
         needsDisplay = true
@@ -1021,23 +1078,25 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
             label.draw(at: CGPoint(x: center.x - labelSize.width / 2, y: center.y - labelSize.height / 2),
                        withAttributes: attributes)
 
-        case .text(let string, let origin, let textColor, let pointSize, let width):
-            // Same geometry as the editor: wrap at its width, draw from its origin.
+        case .text(let string, let origin, let textColor, let pointSize, let width, let style):
+            // Same geometry as the editor: its inset, its padding, its width,
+            // drawn from its origin — so a committed note wraps and looks
+            // exactly like it did while typing.
+            let inset = Self.textInset(style: style, pointSize: pointSize)
             let rect = NSRect(
-                x: origin.x + 3, y: origin.y + 2,
-                width: width - 6, height: max(bounds.height - origin.y, 40)
+                x: origin.x + inset.width, y: origin.y + inset.height,
+                width: width - inset.width * 2, height: max(bounds.height - origin.y, 40)
             )
-            // The same outlining layout manager as the live editor, so a
-            // committed note wraps and looks exactly like it did while typing.
             let storage = NSTextStorage(string: string, attributes: Self.textAttributes(color: textColor, pointSize: pointSize))
-            let layout = OutlinedLayoutManager()
-            layout.outlineColor = Self.outlineColor(for: textColor)
-            layout.outlineWidth = Self.outlineWidth(forPointSize: pointSize)
+            let layout = AnnotationTextLayoutManager()
+            Self.configure(layout, style: style, color: textColor, pointSize: pointSize)
             storage.addLayoutManager(layout)
             let container = NSTextContainer(containerSize: rect.size)
-            container.lineFragmentPadding = 0
+            container.lineFragmentPadding = Self.lineFragmentPadding
             layout.addTextContainer(container)
-            layout.drawGlyphs(forGlyphRange: layout.glyphRange(for: container), at: rect.origin)
+            let range = layout.glyphRange(for: container)
+            layout.drawPlate(forGlyphRange: range, at: rect.origin)
+            layout.drawGlyphs(forGlyphRange: range, at: rect.origin)
         }
     }
 
@@ -1073,13 +1132,15 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
             return distance(from: point, toPolyline: outline) <= width / 2 + 6
         case let .number(_, center, _, diameter):
             return hypot(point.x - center.x, point.y - center.y) <= diameter / 2 + 2
-        case let .text(string, origin, _, pointSize, width):
+        case let .text(string, origin, _, pointSize, width, style):
+            let inset = textInset(style: style, pointSize: pointSize)
             let bounding = NSString(string: string).boundingRect(
-                with: NSSize(width: width - 6, height: .greatestFiniteMagnitude),
+                with: NSSize(width: width - (inset.width + lineFragmentPadding) * 2, height: .greatestFiniteMagnitude),
                 options: [.usesLineFragmentOrigin],
                 attributes: [.font: annotationFont(ofSize: pointSize)]
             )
-            return NSRect(x: origin.x, y: origin.y, width: width, height: bounding.height + 6).contains(point)
+            return NSRect(x: origin.x, y: origin.y, width: width,
+                          height: bounding.height + inset.height * 2 + 2).contains(point)
         }
     }
 
@@ -1108,20 +1169,21 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
 final class AnnotationTextEditor: NSTextView {
     var onCommit: (() -> Void)?
     var onChange: (() -> Void)?
-    var outlineColor: NSColor {
-        get { outlineLayout?.outlineColor ?? .white }
-        set { outlineLayout?.outlineColor = newValue }
-    }
-    var outlineWidth: CGFloat {
-        get { outlineLayout?.outlineWidth ?? 0 }
-        set { outlineLayout?.outlineWidth = newValue }
-    }
-    private var outlineLayout: OutlinedLayoutManager? { layoutManager as? OutlinedLayoutManager }
+    /// ⌘B while typing flips halo ↔ plate.
+    var onStyleToggle: (() -> Void)?
+    var textLayout: AnnotationTextLayoutManager? { layoutManager as? AnnotationTextLayoutManager }
 
-    /// A TextKit 1 stack with the outlining layout manager.
+    override func draw(_ dirtyRect: NSRect) {
+        if let layout = textLayout, let container = textContainer {
+            layout.drawPlate(forGlyphRange: layout.glyphRange(for: container), at: textContainerOrigin)
+        }
+        super.draw(dirtyRect)
+    }
+
+    /// A TextKit 1 stack with the halo/plate layout manager.
     static func make(frame: NSRect) -> AnnotationTextEditor {
         let storage = NSTextStorage()
-        let layout = OutlinedLayoutManager()
+        let layout = AnnotationTextLayoutManager()
         storage.addLayoutManager(layout)
         let container = NSTextContainer(containerSize: NSSize(width: frame.width, height: .greatestFiniteMagnitude))
         layout.addTextContainer(container)
@@ -1153,10 +1215,11 @@ final class AnnotationTextEditor: NSTextView {
             onCommit?()
             return
         }
-        if event.modifierFlags.contains(.command), let onSizeStep {
-            switch event.charactersIgnoringModifiers {
-            case "[": onSizeStep(-1); return
-            case "]": onSizeStep(1); return
+        if event.modifierFlags.contains(.command) {
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "[": onSizeStep?(-1); return
+            case "]": onSizeStep?(1); return
+            case "b": onStyleToggle?(); return
             default: break
             }
         }
@@ -1171,21 +1234,65 @@ final class AnnotationTextEditor: NSTextView {
 /// Draws every glyph run twice: a stroke-only pass in the outline colour,
 /// then the normal fill on top. Unlike the `.strokeWidth` attribute, this
 /// keeps the letter shapes intact and the outline fully outside them.
-final class OutlinedLayoutManager: NSLayoutManager {
-    var outlineColor: NSColor = .white
-    var outlineWidth: CGFloat = 2.5
+/// Draws the note's backing: a soft halo under every glyph, or one dark
+/// rounded plate under the whole paragraph. Shared by the live editor and the
+/// committed renderer so both look identical.
+final class AnnotationTextLayoutManager: NSLayoutManager {
+    static let plateColor = NSColor(white: 0.08, alpha: 0.82)
+
+    var style: AnnotationTextStyle = .halo
+    var haloColor: NSColor = .white
+    var haloBlur: CGFloat = 2
+    /// How far the plate reaches beyond the text's used rect on each side.
+    var plateReach = NSSize(width: 6, height: 3)
+
+    /// Called explicitly by the editor and the renderer before the glyphs:
+    /// NSTextView skips the layout manager's background pass when it draws no
+    /// background of its own.
+    func drawPlate(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+        guard style == .plate, let plate = plateRect(forGlyphRange: glyphsToShow, at: origin) else { return }
+        Self.plateColor.setFill()
+        let radius = min(plateReach.width, plate.height / 2)
+        NSBezierPath(roundedRect: plate, xRadius: radius, yRadius: radius).fill()
+    }
+
+    func plateRect(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) -> NSRect? {
+        guard glyphsToShow.length > 0, let container = textContainers.first,
+              let text = textStorage?.string as NSString? else { return nil }
+        // Glyph bounds line by line, not line-fragment used rects (those start
+        // at the container edge, before the line padding), and without each
+        // line's trailing whitespace: a newline's bounds run to the container
+        // edge and would stretch a wrapped note's plate across the whole box.
+        var bounds = NSRect.null
+        enumerateLineFragments(forGlyphRange: glyphsToShow) { _, _, _, lineGlyphs, _ in
+            var range = NSIntersectionRange(lineGlyphs, glyphsToShow)
+            while range.length > 0 {
+                let last = self.characterIndexForGlyph(at: range.location + range.length - 1)
+                guard let scalar = Unicode.Scalar(text.character(at: last)),
+                      CharacterSet.whitespacesAndNewlines.contains(scalar) else { break }
+                range.length -= 1
+            }
+            guard range.length > 0 else { return }
+            bounds = bounds.union(self.boundingRect(forGlyphRange: range, in: container))
+        }
+        guard !bounds.isNull, !bounds.isEmpty else { return nil }
+        return bounds.insetBy(dx: -plateReach.width, dy: -plateReach.height).offsetBy(dx: origin.x, dy: origin.y)
+    }
 
     override func showCGGlyphs(_ glyphs: UnsafePointer<CGGlyph>, positions: UnsafePointer<CGPoint>, count glyphCount: Int,
                                font: NSFont, textMatrix: CGAffineTransform, attributes: [NSAttributedString.Key: Any],
                                in CGContext: CGContext) {
-        if outlineWidth > 0 {
+        if style == .halo, haloBlur > 0 {
+            // A blurred shadow with no offset, stacked for density: it darkens
+            // (or lightens) the surroundings without a hard edge, so the gaps
+            // between and inside small letters stay open.
             CGContext.saveGState()
-            CGContext.setTextDrawingMode(.stroke)
-            CGContext.setStrokeColor(outlineColor.cgColor)
-            CGContext.setLineWidth(outlineWidth * 2)  // centred on the edge: half shows outside
-            CGContext.setLineJoin(.round)
-            super.showCGGlyphs(glyphs, positions: positions, count: glyphCount, font: font,
-                               textMatrix: textMatrix, attributes: attributes, in: CGContext)
+            CGContext.setShadow(offset: .zero, blur: haloBlur, color: haloColor.withAlphaComponent(0.92).cgColor)
+            CGContext.setTextDrawingMode(.fill)
+            for _ in 0..<3 {
+                super.showCGGlyphs(glyphs, positions: positions, count: glyphCount, font: font,
+                                   textMatrix: textMatrix, attributes: attributes, in: CGContext)
+            }
             CGContext.restoreGState()
         }
         CGContext.setTextDrawingMode(.fill)
@@ -1197,11 +1304,11 @@ final class OutlinedLayoutManager: NSLayoutManager {
 // ── Text box chrome ─────────────────────────────────────
 
 /// The see-through frame around a note being written: a white box line, a
-/// header to drag it by, A− / A+ / ✓ buttons, and a corner handle that
+/// header to drag it by, A− / A+ / Aa (plate) / ✓ buttons, and a corner handle that
 /// resizes the box. Sits under the editor in the canvas, so the editor keeps
 /// every click inside itself.
 final class AnnotationTextChrome: NSView {
-    enum Button: CaseIterable { case smaller, bigger, done }
+    enum Button: CaseIterable { case smaller, bigger, plate, done }
 
     static let headerHeight: CGFloat = 22
     static let pad: CGFloat = 4
@@ -1209,9 +1316,11 @@ final class AnnotationTextChrome: NSView {
     private static let buttonWidth: CGFloat = 26
 
     var color: NSColor = AnnotationColors[0] { didSet { needsDisplay = true } }
+    var textStyle: AnnotationTextStyle = .halo { didSet { needsDisplay = true } }
     var onMove: ((CGPoint) -> Void)?
     var onResize: ((CGSize) -> Void)?
     var onSizeStep: ((Int) -> Void)?
+    var onStyleToggle: (() -> Void)?
     var onDone: (() -> Void)?
 
     private enum Drag { case move, resize }
@@ -1220,6 +1329,16 @@ final class AnnotationTextChrome: NSView {
 
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        removeAllToolTips()
+        let tips: [Button: String] = [
+            .smaller: "Smaller text (⌘[)", .bigger: "Bigger text (⌘])",
+            .plate: "Plate behind the text (⌘B; B on the canvas)", .done: "Done (Escape)",
+        ]
+        for button in Button.allCases { addToolTip(rect(for: button), owner: tips[button]! as NSString, userData: nil) }
+    }
 
     static func frame(around editor: NSRect) -> NSRect {
         NSRect(x: editor.minX - pad, y: editor.minY - headerHeight - pad,
@@ -1266,15 +1385,35 @@ final class AnnotationTextChrome: NSView {
             .font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: dim,
         ].merging(glyphOutline) { current, _ in current }
         ("drag" as NSString).draw(at: NSPoint(x: 30, y: 4), withAttributes: labelAttributes)
-        let captions: [Button: (String, CGFloat)] = [.smaller: ("A−", 11), .bigger: ("A+", 13), .done: ("✓", 13)]
+        let captions: [Button: (String, CGFloat)] = [
+            .smaller: ("A−", 11), .bigger: ("A+", 13), .plate: ("Aa", 10), .done: ("✓", 13),
+        ]
         for button in Button.allCases {
             let (caption, fontSize) = captions[button]!
-            let attributes: [NSAttributedString.Key: Any] = [
+            var attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),
                 .foregroundColor: NSColor.white,
             ].merging(glyphOutline) { current, _ in current }
             let size = (caption as NSString).size(withAttributes: attributes)
             let target = rect(for: button)
+            if button == .plate {
+                // The control shows its own effect: "Aa" sits on a plate when
+                // the plate is on, and floats free when it is off.
+                let plate = NSRect(x: target.midX - size.width / 2 - 4, y: target.midY - size.height / 2 - 1,
+                                   width: size.width + 8, height: size.height + 2)
+                if textStyle == .plate {
+                    NSColor.white.withAlphaComponent(0.92).setFill()
+                    NSBezierPath(roundedRect: plate, xRadius: 4, yRadius: 4).fill()
+                    attributes[.foregroundColor] = NSColor(r: 30, g: 28, b: 26)
+                    attributes[.strokeWidth] = 0
+                } else {
+                    NSColor.white.withAlphaComponent(0.6).setStroke()
+                    let outline = NSBezierPath(roundedRect: plate.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
+                    outline.lineWidth = 1
+                    outline.setLineDash([2, 2], count: 2, phase: 0)
+                    outline.stroke()
+                }
+            }
             (caption as NSString).draw(at: NSPoint(x: target.midX - size.width / 2, y: target.midY - size.height / 2),
                                        withAttributes: attributes)
         }
@@ -1311,6 +1450,7 @@ final class AnnotationTextChrome: NSView {
             switch button {
             case .smaller: onSizeStep?(-1)
             case .bigger: onSizeStep?(1)
+            case .plate: onStyleToggle?()
             case .done: onDone?()
             }
             return

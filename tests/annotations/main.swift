@@ -62,7 +62,7 @@ func startText(_ text: String) -> AnnotationTextEditor {
     return editor
 }
 func savedText() throws -> String? {
-    if case let .text(string, _, _, _, _)? = try store.load().last { return string }
+    if case let .text(string, _, _, _, _, _)? = try store.load().last { return string }
     return nil
 }
 
@@ -100,7 +100,7 @@ menuKey()
 expect(canvas.items.isEmpty && (try! store.load()).isEmpty, "mark Undo did not persist")
 menuKey(redo: true)
 expect(canvas.items.count == 1, "mark Redo failed")
-if case let .text(text, origin, color, size, width) = try store.load()[0] {
+if case let .text(text, origin, color, size, width, _) = try store.load()[0] {
     expect(text == "first line\nunfinished second line" && size == 32 && width == 440,
            "snapshot lost text/typography")
     expect(origin.x == 100 && abs(color.alphaComponent - 0.9) < 0.001, "snapshot lost geometry/color")
@@ -234,7 +234,9 @@ autoreleasepool {
     let editor = startText("boxed note")
     let chrome = canvas.subviews.compactMap { $0 as? AnnotationTextChrome }.first!
     expect(!editor.drawsBackground, "text area is not see-through")
-    expect(editor.outlineWidth > 0 && editor.outlineColor == NSColor.white, "typed text has no white outline")
+    let layout = editor.textLayout!
+    expect(layout.style == .halo && layout.haloBlur >= 2 && layout.haloColor == NSColor.white,
+           "typed text has no white halo")
     expect(canvas.subviews.firstIndex(of: chrome)! < canvas.subviews.firstIndex(of: editor)!,
            "chrome sits above the editor")
     func chromeMouse(_ type: NSEvent.EventType, _ chromePoint: NSPoint, dx: CGFloat = 0, dy: CGFloat = 0) -> NSEvent {
@@ -264,7 +266,7 @@ autoreleasepool {
     let bigger = chrome.rect(for: .bigger)
     chrome.mouseDown(with: chromeMouse(.leftMouseDown, NSPoint(x: bigger.midX, y: bigger.midY)))
     expect(editor.font?.pointSize == 18 && canvas.size == .medium, "A+ did not step the text ladder: \(editor.font?.pointSize ?? 0)")
-    expect(editor.outlineWidth <= 1, "outline is not a hairline")
+    expect(layout.haloBlur == AnnotationCanvas.haloBlur(forPointSize: 18), "halo did not follow the text size")
     let cmdBracket = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0,
                                       windowNumber: window.windowNumber, context: nil, characters: "[",
                                       charactersIgnoringModifiers: "[", isARepeat: false, keyCode: 33)!
@@ -278,10 +280,66 @@ autoreleasepool {
     let done = chrome.rect(for: .done)
     chrome.mouseDown(with: chromeMouse(.leftMouseDown, NSPoint(x: done.midX, y: done.midY)))
     expect(editor.superview == nil && chrome.superview == nil, "✓ did not commit and remove the box")
-    if case let .text(text, origin, _, pointSize, width) = canvas.items.last! {
-        expect(text == "boxed note" && origin == movedOrigin && width == movedWidth && pointSize == 16,
+    if case let .text(text, origin, _, pointSize, width, style) = canvas.items.last! {
+        expect(text == "boxed note" && origin == movedOrigin && width == movedWidth && pointSize == 16 && style == .halo,
                "committed note lost the moved/resized geometry")
     } else { fatalError("boxed note changed kind") }
+}
+// Halo ↔ plate: ⌘B while typing, the Aa button in the header, B on the canvas;
+// the choice is sticky, persists per note, and old files read as halo.
+autoreleasepool {
+    canvas.size = .medium
+    let editor = startText("plated note")
+    let chrome = canvas.subviews.compactMap { $0 as? AnnotationTextChrome }.first!
+    let cmdB = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0,
+                                windowNumber: window.windowNumber, context: nil, characters: "b",
+                                charactersIgnoringModifiers: "b", isARepeat: false, keyCode: 11)!
+    editor.keyDown(with: cmdB)
+    expect(editor.textLayout?.style == .plate && chrome.textStyle == .plate && editor.string == "plated note",
+           "⌘B did not switch the open note to a plate")
+    expect(editor.textContainerInset.width >= 3 && editor.textContainerInset.height >= 2,
+           "plate left no padding around the text: \(editor.textContainerInset)")
+    // The plate really paints under the text in the live editor.
+    let editorRep = editor.bitmapImageRepForCachingDisplay(in: editor.bounds)!
+    editor.cacheDisplay(in: editor.bounds, to: editorRep)
+    let corner = editorRep.colorAt(x: 2, y: Int(editorRep.pixelsHigh / 2))!.usingColorSpace(.sRGB)!
+    expect(corner.alphaComponent > 0.5 && corner.redComponent < 0.3, "no dark plate under the typed text: \(corner)")
+    let plateButton = chrome.rect(for: .plate)
+    let click = NSEvent.mouseEvent(with: .leftMouseDown, location: canvas.convert(chrome.convert(
+        NSPoint(x: plateButton.midX, y: plateButton.midY), to: canvas), to: nil), modifierFlags: [], timestamp: 0,
+        windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+    chrome.mouseDown(with: click)
+    expect(editor.textLayout?.style == .halo, "Aa button did not switch back to the halo")
+    chrome.mouseDown(with: click)
+    expect(editor.textLayout?.style == .plate, "Aa button did not switch to the plate again")
+    let origin = editor.frame.origin
+    canvas.commitPendingText()
+    if case let .text(_, _, _, _, _, style) = canvas.items.last! {
+        expect(style == .plate, "committed note lost its plate")
+    } else { fatalError("plated note changed kind") }
+    if case let .text(_, _, _, _, _, style)? = try! store.load().last {
+        expect(style == .plate, "plate did not round-trip through the store")
+    } else { fatalError("stored plated note changed kind") }
+    // The committed note paints its plate at the same place the editor did.
+    let canvasRep = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds)!
+    canvas.cacheDisplay(in: canvas.bounds, to: canvasRep)
+    let scale = CGFloat(canvasRep.pixelsWide) / canvas.bounds.width  // retina-backed offscreen bitmap
+    let committed = canvasRep.colorAt(x: Int((origin.x + 2) * scale), y: Int((origin.y + 8) * scale))!.usingColorSpace(.sRGB)!
+    expect(committed.alphaComponent > 0.5 && committed.redComponent < 0.3,
+           "committed note has no plate where the editor had one: \(committed)")
+    expect(canvas.textStyle == .plate, "text style is not sticky")
+    canvas.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                          windowNumber: window.windowNumber, context: nil, characters: "b",
+                                          charactersIgnoringModifiers: "b", isARepeat: false, keyCode: 11)!)
+    expect(canvas.textStyle == .halo && canvas.tool == .text, "B on the canvas did not toggle the style")
+    // A snapshot written before the style existed decodes as halo.
+    let legacyStore = AnnotationStore(url: root.appendingPathComponent("legacy.json"))
+    try! Data("""
+    {"version":2,"items":[{"text":{"_0":"old note","_1":[10,20],"_2":{"red":1,"green":0,"blue":0,"alpha":1},"_3":16,"_4":300}}]}
+    """.utf8).write(to: legacyStore.url)
+    if case let .text(text, _, _, _, _, style)? = try! legacyStore.load().first {
+        expect(text == "old note" && style == .halo, "legacy note did not decode as halo")
+    } else { fatalError("legacy note did not load") }
 }
 let roundTrip = try store.load()
 expect(roundTrip.count == canvas.items.count, "new mark kinds did not round-trip: \(roundTrip.count)")
@@ -323,7 +381,7 @@ expect(writer.terminationReason == .uncaughtSignal && writer.terminationStatus =
        "crash recovery probe did not exit abruptly")
 let recovered = try AnnotationStore(url: killedRoot.appendingPathComponent("annotations.json")).load()
 expect(recovered.count == 2, "hard-killed process lost drawings or draft")
-if case let .text(text, _, _, _, _) = recovered[1] {
+if case let .text(text, _, _, _, _, _) = recovered[1] {
     expect(text == "draft survived SIGKILL", "hard-killed process lost draft text")
 } else { fatalError("hard-killed draft changed kind") }
 print("annotation regression tests passed (including native menu routing and SIGKILL recovery)")

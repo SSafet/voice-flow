@@ -212,9 +212,17 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   note being written sits in an opaque box (`AnnotationTextChrome`): drag it
   by the header, resize it by the corner handle, A− / A+ or ⌘[ / ⌘] walk a
   text-size ladder from 8 to 48 pt (the dial's S/M/L = 10/16/28), ✓ or Escape
-  commits; the box is see-through with a white line, and glyphs carry a
-  hairline white outline (dark for white text) so notes read on top of
-  anything, committed notes included.
+  commits; the box is see-through with a white line. Notes read on top of
+  anything through one of two backings (`AnnotationTextStyle`, per note,
+  sticky like colour and size, persisted): the default **halo** is a soft
+  blurred shadow in the contrast colour (white, dark for white text) drawn by
+  `AnnotationTextLayoutManager` under every glyph — a hard outline is not an
+  option because below ~14 pt any visible stroke fills the one-pixel gaps in
+  and between letters — and **plate** is a dark rounded plate behind the
+  paragraph for the busiest backgrounds. Switch with the header's Aa button,
+  ⌘B while typing, or B on the canvas. The live editor and the committed
+  renderer share the layout manager and the same inset, so a note does not
+  shift on commit.
 
 ## MCP server — Voice Flow as Claude Code's interaction layer
 
