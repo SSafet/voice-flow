@@ -13,6 +13,7 @@ uv sync                 # once — creates .venv with the Python backend deps
 open "/Applications/Voice Flow.app"
 ./uninstall.sh          # remove
 ./scripts/test-agent-harness.sh --unit     # deterministic compile + unit/contracts
+./scripts/test-agent-harness.sh --unit --only inbox  # fast single-suite check (no gate evidence)
 ./scripts/test-agent-harness.sh --live     # plus real Codex + pinned OpenCode smoke
 ./scripts/test-agent-harness.sh --e2e      # plus isolated signed-app computer QA
 ```
@@ -24,6 +25,8 @@ rebuilds (falls back to ad-hoc, which resets permissions each build).
 `--nightly` adds a two-hour three-agent soak. `--release` runs the complete
 gate plus the four-hour soak and emits audited evidence for every ID in
 `tests/capabilities.json` through `tests/test_registry.json`.
+Full-gate evidence requires successful execution receipts and an unchanged
+source fingerprint. See `tests/README.md` for targeted checks and evidence semantics.
 
 ## Dual-runtime Assistant harness
 

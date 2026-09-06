@@ -46,6 +46,36 @@ let supervisor = OpenCodeSupervisor()
 let runtime = OpenCodeAgentRuntime(supervisor: supervisor)
 var binding: RuntimeBinding?
 
+// Native commands are allowed by the production dial. Explicitly request
+// approvals on this isolated test session so the smoke actually exercises
+// the broker; changing production-wide permissions would test another policy.
+func requireCommandApprovals() async throws {
+    guard let sessionID = binding?.externalSessionID else {
+        throw TestFailure(description: "permission fixture has no session")
+    }
+    let connection = try await supervisor.connection(for: .workspace)
+    var request = URLRequest(url: connection.baseURL.appendingPathComponent("session/\(sessionID)"))
+    request.httpMethod = "PATCH"
+    request.timeoutInterval = 10
+    request.setValue(connection.authorizationHeader, forHTTPHeaderField: "Authorization")
+    request.setValue(directory.path, forHTTPHeaderField: "x-opencode-directory")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONSerialization.data(withJSONObject: [
+        "permission": [["permission": "bash", "pattern": "*", "action": "ask"]],
+    ])
+    let (_, response) = try await URLSession.shared.data(for: request)
+    try expect((response as? HTTPURLResponse)?.statusCode == 200,
+               "could not enable session-scoped approvals for the live fixture")
+}
+
+final class PermissionProbe {
+    private let lock = NSLock()
+    private var values: [AgentPermissionPrompt] = []
+    func record(_ prompt: AgentPermissionPrompt) { lock.withLock { values.append(prompt) } }
+    var prompts: [AgentPermissionPrompt] { lock.withLock { values } }
+}
+let permissionProbe = PermissionProbe()
+
 func run(prompt: String, images: [Data] = [], turnID: UUID = UUID()) async throws -> String {
     let request = AgentTurnRequest(
         turnID: turnID, conversationID: "live-conversation",
@@ -87,7 +117,9 @@ do {
     let image = try await run(prompt: "IMAGE_TURN", images: [validImage])
     try expect(image == "IMAGE_OK", "real OpenCode image turn did not reach provider")
 
+    try await requireCommandApprovals()
     await AgentPermissionBroker.shared.setHandler { prompt in
+        permissionProbe.record(prompt)
         Task { await AgentPermissionBroker.shared.resolve(id: prompt.id, response: .reject) }
     }
     do {
@@ -99,14 +131,22 @@ do {
     }
     try expect(!FileManager.default.fileExists(atPath: deniedMarker.path),
                "rejected OpenCode permission executed its shell command")
+    try expect(permissionProbe.prompts.count == 1,
+               "permission-deny fixture did not present exactly one approval")
+    try expect(permissionProbe.prompts.first?.title == "bash requested"
+               && permissionProbe.prompts.first?.detail.contains("PERMISSION_OK") == true,
+               "live approval omitted the requested capability or command")
 
     await AgentPermissionBroker.shared.setHandler { prompt in
+        permissionProbe.record(prompt)
         Task { await AgentPermissionBroker.shared.resolve(id: prompt.id, response: .once) }
     }
     let allowed = try await run(prompt: "CALL_PERMISSION_TOOL PERMISSION_ALLOW")
     try expect(allowed == "TOOL_OK", "permission-allow turn returned '\(allowed)'")
     try expect((try? String(contentsOf: allowedMarker, encoding: .utf8)) == "PERMISSION_OK",
                "allow-once did not execute exactly the requested shell command")
+    try expect(permissionProbe.prompts.count == 2,
+               "allow-once fixture bypassed the broker or duplicated its approval")
 
     let longPIDFile = directory.appendingPathComponent("long-child.pid")
     if FileManager.default.fileExists(atPath: longPIDFile.path) {

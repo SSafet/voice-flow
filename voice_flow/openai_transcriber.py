@@ -74,8 +74,14 @@ class OpenAITranscriber:
                     payload = json.loads(response.read().decode("utf-8"))
                 break
             except urllib.error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")
-                exc.close()
+                try:
+                    detail = exc.read().decode("utf-8", errors="replace")
+                except (OSError, http.client.HTTPException):
+                    # The response status still determines retry eligibility
+                    # when the connection drops while reading its error body.
+                    detail = str(exc)
+                finally:
+                    exc.close()
                 try:
                     parsed = json.loads(detail)
                     message = parsed.get("error", {}).get("message", detail)
@@ -94,7 +100,9 @@ class OpenAITranscriber:
                 on_retry(attempt + 1, attempts)
             time.sleep(attempt)
 
-        text = str(payload.get("text", "")).strip()
+        if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
+            raise RuntimeError("OpenAI returned an invalid transcription response")
+        text = payload["text"].strip()
         if text.lower().strip(".,!?") in FILLER_ONLY:
             return ""
         if _is_prompt_echo(text, vocabulary, wake_word):

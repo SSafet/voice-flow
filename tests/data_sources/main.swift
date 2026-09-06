@@ -32,6 +32,14 @@ let snapshot = store.snapshots(sourceID: local.id)[0]
 let inspected = try store.readItem(sourceID: local.id, snapshotID: snapshot.id, itemID: snapshot.items[0].id)
 expect(inspected == "Original local evidence", "Inspect local copy")
 let frozen = store.freezeContext(sourceIDs: [local.id])
+// A readable Latin-1 input can expand beyond the saved-item UTF-8 byte limit.
+// Such a refresh must fail visibly, preserving the previous usable snapshot.
+try Data(repeating: 0xE9, count: 1_100_000).write(to: files.appendingPathComponent("notes.md"))
+complete = false
+collector.refresh(sourceID: local.id) { result = $0; complete = true }
+wait("expanded text bounds") { complete }
+expect(result != nil, "UTF-8 expansion beyond the saved-item limit must not report successful collection")
+expect(store.snapshots(sourceID: local.id).count == 1 && store.snapshots(sourceID: local.id)[0].id == snapshot.id, "Oversized normalized text must preserve the last readable snapshot")
 try Data("Updated evidence".utf8).write(to: files.appendingPathComponent("notes.md"))
 complete = false
 collector.refresh(sourceID: local.id) { result = $0; complete = true }
@@ -85,6 +93,42 @@ let builtInResult = try SourceCollector.collect(builtIn, root: root)
 expect(builtInResult.documents[0].text == "Existing dictation", "Built-in reads actual isolated data")
 expect(builtInResult.documents[0].capturedAt == ISO8601DateFormatter().date(from: "2026-09-05T12:00:00Z"), "Built-in preserves recorded date")
 
+// DictationsView saves newest-first; a bounded turn must see the recent entries first.
+let dictationEntries = (0...SourceCollector.maxItems).map { ["text": "Dictation \($0)", "timestamp": "2026-09-05T12:00:00Z"] }
+try JSONSerialization.data(withJSONObject: dictationEntries).write(to: root.appendingPathComponent("dictations.json"))
+let orderedDictations = try SourceCollector.collect(builtIn, root: root)
+expect(orderedDictations.documents.first?.text == "Dictation 0", "Dictation projection must preserve newest-first storage order")
+expect(orderedDictations.documents.last?.text == "Dictation 199" && orderedDictations.skippedCount == 1, "Dictation item cap must omit the oldest entries")
+
+let dayFormatter = DateFormatter(); dayFormatter.dateFormat = "yyyy-MM-dd"
+let desktopFolder = root.appendingPathComponent("watcher").appendingPathComponent(dayFormatter.string(from: Date()))
+try FileManager.default.createDirectory(at: desktopFolder, withIntermediateDirectories: true)
+let desktopURL = desktopFolder.appendingPathComponent("activity.jsonl")
+let desktop = store.source(id: "builtin-desktop")!
+let latestEpoch = 1_788_609_600
+var latestEvent = "{\"e\":\(latestEpoch),\"text\":\"Recent desktop event\"}\n"
+// Ensure the byte tail begins on the second byte of a two-byte UTF-8 scalar.
+if (1 + latestEvent.utf8.count) % 2 == 0 { latestEvent = " " + latestEvent }
+let desktopLog = Data(("{\"text\":\"" + String(repeating: "Я", count: 120000) + "\"}\n" + latestEvent).utf8)
+expect(String(data: desktopLog.suffix(200000), encoding: .utf8) == nil, "Fixture must cut through a UTF-8 scalar")
+try desktopLog.write(to: desktopURL)
+let tailedDesktop = try SourceCollector.collect(desktop, root: root)
+expect(tailedDesktop.documents.count == 1 && tailedDesktop.documents[0].text.contains("Recent desktop event"), "UTF-8 byte-tail truncation must preserve complete recent events")
+expect(tailedDesktop.documents[0].capturedAt == Date(timeIntervalSince1970: Double(latestEpoch)), "Desktop projection preserves latest complete event time")
+
+// Reads race with the append-only writer: an unfinished final line is not an event.
+try Data((latestEvent + "{\"e\":").utf8).write(to: desktopURL)
+let partialDesktop = try SourceCollector.collect(desktop, root: root)
+expect(partialDesktop.documents.count == 1 && partialDesktop.documents[0].capturedAt == Date(timeIntervalSince1970: Double(latestEpoch)), "Incomplete trailing event must not replace the latest complete event time")
+expect(!partialDesktop.documents[0].text.hasSuffix("{\"e\":"), "Incomplete trailing event must not enter source context")
+
+let boundaryPrefix = "{\"e\":\(latestEpoch),\"text\":\""
+let boundarySuffix = "\"}\n"
+let boundaryEvent = boundaryPrefix + String(repeating: "x", count: 200000 - boundaryPrefix.utf8.count - boundarySuffix.utf8.count) + boundarySuffix
+try Data(("{\"e\":0}\n" + boundaryEvent).utf8).write(to: desktopURL)
+let boundaryDesktop = try SourceCollector.collect(desktop, root: root)
+expect(boundaryDesktop.documents.count == 1 && boundaryDesktop.documents[0].capturedAt == Date(timeIntervalSince1970: Double(latestEpoch)), "Tail beginning at a record boundary must retain that complete record")
+
 try Data("{\"unexpected\":[]}".utf8).write(to: root.appendingPathComponent("assistant-sessions.json"))
 var rejectedCorruptHistory = false
  do { _ = try SourceCollector.collect(store.source(id: "builtin-assistantHistory")!, root: root) } catch { rejectedCorruptHistory = true }
@@ -132,11 +176,29 @@ collector.refresh(sourceID: website.id) { result = $0; complete = true }
 try collector.pause(sourceID: website.id, paused: true)
 wait("pause in flight") { complete }
 expect(store.snapshots(sourceID: website.id).count == 2 && !store.status(sourceID: website.id).refreshing, "Paused work must not land late")
+// More refreshes than queue slots leaves at least one operation queued when stopped.
+var stoppedSources: [SourceDefinition] = []
+var stoppedCompletions = 0
+for index in 0..<4 {
+    let source = SourceDefinition(name: "Stopped collection \(index)", kind: .website, location: origin + "/slow")
+    try store.save(source)
+    stoppedSources.append(source)
+    collector.refresh(sourceID: source.id) { error in
+        expect(error != nil, "Stopped collection must report cancellation")
+        stoppedCompletions += 1
+    }
+}
+collector.stop()
+wait("all queued and running stop callbacks", timeout: 2) { stoppedCompletions == stoppedSources.count }
+expect(stoppedSources.allSatisfy { !store.status(sourceID: $0.id).refreshing && store.snapshots(sourceID: $0.id).isEmpty }, "Stopped collection cannot publish late evidence")
+for source in stoppedSources { try store.remove(sourceID: source.id) }
+
 var automatic = SourceDefinition(name: "Automatic website", kind: .website, location: origin + "/changed")
 try store.save(automatic)
 collector.start()
 wait("automatic source polling without desktop watcher") { store.status(sourceID: automatic.id).lastSuccess != nil }
 expect(store.status(sourceID: automatic.id).itemCount == 1, "Independent scheduler collects website with no WorkflowWatcher instance")
+expect(stoppedCompletions == stoppedSources.count, "Late stopped workers must not complete a second time")
 collector.stop()
 let old = store.snapshots(sourceID: mail.id)[0]
 let oldURL = store.snapshotURL(sourceID: mail.id, snapshotID: old.id)!.appendingPathComponent("snapshot.json")
@@ -150,4 +212,4 @@ try store.remove(sourceID: local.id)
 expect(store.source(id: local.id) == nil && FileManager.default.fileExists(atPath: sourceFolder.path), "Disconnect keeps copies")
 expect(store.snapshotURL(sourceID: "../escape", snapshotID: "bad") == nil, "Snapshot path traversal rejected")
 collector.stop()
-print("PASS: Sources registry, immutable snapshots, read projections, local bounds/symlinks, EML/mbox MIME, frozen context, persistence, real HTTP success/change/failure/oversize, pause cancellation, independent polling, age retention and disconnect retention")
+print("PASS: Sources registry, immutable snapshots, read projections, local bounds/symlinks, EML/mbox MIME, frozen context, persistence, normalized text limits, newest-first dictations, UTF-8/partial/boundary log tails, queued stop completion, real HTTP success/change/failure/oversize, pause cancellation, independent polling, age retention and disconnect retention")

@@ -25,8 +25,6 @@ class Cleaner:
         vocabulary: list[str] | None = None,
         wake_word: str | None = None,
     ) -> str:
-        if not self._loaded:
-            self.load()
         if not raw_text.strip():
             return ""
 
@@ -40,6 +38,8 @@ class Cleaner:
                 cleaned += "."
             return cleaned
 
+        if not self._loaded:
+            self.load()
         from mlx_lm import generate
 
         system_prompt = CLEANUP_SYSTEM_PROMPT

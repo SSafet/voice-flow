@@ -35,6 +35,84 @@ defer {
     try? FileManager.default.removeItem(at: outside)
 }
 
+// CONNECT can arrive with the first opaque tunnel bytes in the same socket
+// read as its headers. Exercise the real proxy with a loopback echo origin;
+// neither this fixture nor the proxy needs an external network destination.
+func verifyConnectOverflow() throws {
+    let proxy = EgressProxyServer(
+        policy: { EgressPolicy(allowedHosts: ["127.0.0.1"]) },
+        log: EgressLog(url: scratch.appendingPathComponent("proxy-overflow.jsonl")))
+    let connection = try proxy.start()
+    defer { proxy.stop() }
+    let client = Process()
+    client.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+    client.arguments = ["-c", """
+import socket, threading
+
+def roundtrip(early):
+    origin = socket.socket()
+    origin.bind(('127.0.0.1', 0))
+    origin.listen(1)
+    origin.settimeout(4)
+    port = origin.getsockname()[1]
+    errors = []
+    def echo():
+        try:
+            with origin.accept()[0] as peer:
+                peer.settimeout(4)
+                while True:
+                    data = peer.recv(8192)
+                    if not data:
+                        break
+                    peer.sendall(data)
+        except Exception as error:
+            errors.append(str(error))
+        finally:
+            origin.close()
+    worker = threading.Thread(target=echo, daemon=True)
+    worker.start()
+    with socket.create_connection(('127.0.0.1', \(connection.port)), timeout=4) as client:
+        request = f'CONNECT 127.0.0.1:{port} HTTP/1.1\\r\\nHost: 127.0.0.1:{port}\\r\\n\\r\\n'.encode()
+        client.sendall(request + early)
+        received = b''
+        while b'\\r\\n\\r\\n' not in received:
+            chunk = client.recv(8192)
+            assert chunk, 'proxy closed before CONNECT response'
+            received += chunk
+        header, received = received.split(b'\\r\\n\\r\\n', 1)
+        assert header.startswith(b'HTTP/1.1 200 '), header
+        late = b'after-connect-response'
+        client.sendall(late)
+        client.shutdown(socket.SHUT_WR)
+        while True:
+            chunk = client.recv(8192)
+            if not chunk:
+                break
+            received += chunk
+        assert received == early + late, f'CONNECT lost or reordered tunnel bytes: expected {len(early + late)}, received {len(received)}'
+    worker.join(timeout=4)
+    assert not worker.is_alive() and not errors, errors
+
+roundtrip(bytes(range(256)) * 16)
+roundtrip(b'')
+print('CONNECT coalesced and ordinary tunnel round trips passed')
+"""]
+    let output = Pipe()
+    client.standardOutput = output
+    client.standardError = output
+    try client.run()
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    client.waitUntilExit()
+    let text = String(data: data, encoding: .utf8) ?? ""
+    expect(client.terminationStatus == 0, "CONNECT byte preservation failed: \(text)")
+}
+
+try verifyConnectOverflow()
+if CommandLine.arguments.contains("--proxy-only") {
+    if failures == 0 { print("egress proxy transport tests passed") }
+    exit(failures == 0 ? 0 : 1)
+}
+
 /// A port nobody else holds — a fixed one makes the loopback check fail
 /// spuriously when a previous run's listener is still winding down.
 func freeLoopbackPort() -> UInt16 {

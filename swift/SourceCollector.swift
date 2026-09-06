@@ -5,7 +5,11 @@ final class SourceCollector {
     let store: DataSourceStore
     private var timer: Timer?
     private let lock = NSRecursiveLock()
-    private var active: [String: UUID] = [:]
+    private struct CollectionRun {
+        let token: UUID
+        let completion: ((String?) -> Void)?
+    }
+    private var active: [String: CollectionRun] = [:]
     private let queue: OperationQueue = {
         let queue = OperationQueue(); queue.maxConcurrentOperationCount = 2; queue.qualityOfService = .utility; return queue
     }()
@@ -18,17 +22,26 @@ final class SourceCollector {
     }
     func stop() {
         timer?.invalidate(); timer = nil
-        lock.lock(); let ids = Array(active.keys); active.removeAll(); lock.unlock()
-        for id in ids { store.failCollection(sourceID: id, error: "Collection stopped; saved copies are still available.") }
+        lock.lock(); defer { lock.unlock() }
+        for (id, run) in active {
+            store.failCollection(sourceID: id, error: "Collection stopped; saved copies are still available.")
+            DispatchQueue.main.async { run.completion?("Collection cancelled.") }
+        }
+        active.removeAll()
+        // Cancelled queued operations never execute their blocks, so stop owns
+        // their completion; running blocks use the token to avoid a second call.
         queue.cancelAllOperations()
     }
     func pause(sourceID: String, paused: Bool) throws {
+        lock.lock(); defer { lock.unlock() }
         guard var definition = store.source(id: sourceID) else { throw DataSourceError.invalid("Source was removed.") }
         definition.enabled = !paused
         try store.save(definition)
         if paused {
-            lock.lock(); let running = active.removeValue(forKey: sourceID) != nil; lock.unlock()
-            if running { store.failCollection(sourceID: sourceID, error: "Collection paused; saved copies are still available.") }
+            if let run = active.removeValue(forKey: sourceID) {
+                store.failCollection(sourceID: sourceID, error: "Collection paused; saved copies are still available.")
+                DispatchQueue.main.async { run.completion?("Collection cancelled.") }
+            }
         } else { refresh(sourceID: sourceID) }
     }
     private func refreshDue() {
@@ -39,33 +52,33 @@ final class SourceCollector {
         }
     }
     func refresh(sourceID: String, completion: ((String?) -> Void)? = nil) {
+        lock.lock(); defer { lock.unlock() }
         guard let definition = store.source(id: sourceID) else { completion?("Source was removed."); return }
-        lock.lock()
-        guard active[sourceID] == nil else { lock.unlock(); completion?("Collection is already running."); return }
-        let token = UUID(); active[sourceID] = token; lock.unlock()
+        guard active[sourceID] == nil else { completion?("Collection is already running."); return }
+        let token = UUID(); active[sourceID] = CollectionRun(token: token, completion: completion)
         store.beginCollection(sourceID: sourceID)
         queue.addOperation { [weak self] in
             guard let self else { return }
-            var errorText: String?
+            self.lock.lock()
+            let shouldCollect = self.active[sourceID]?.token == token
+            self.lock.unlock()
+            guard shouldCollect else { return }
             do {
                 let result = try Self.collect(definition, root: self.store.root)
                 self.lock.lock(); defer { self.lock.unlock() }
-                guard self.active[sourceID] == token else {
-                    DispatchQueue.main.async { completion?("Collection cancelled.") }; return
-                }
+                guard self.active[sourceID]?.token == token else { return }
                 guard self.store.source(id: sourceID)?.location == definition.location else { throw DataSourceError.invalid("Connection changed during collection; refresh again.") }
                 try self.store.commitCollection(sourceID: sourceID, result: result)
                 self.active.removeValue(forKey: sourceID)
+                DispatchQueue.main.async { completion?(nil) }
             } catch {
-                self.lock.lock()
-                if self.active[sourceID] == token {
-                    self.active.removeValue(forKey: sourceID)
-                    errorText = error.localizedDescription
-                    self.store.failCollection(sourceID: sourceID, error: error.localizedDescription)
-                } else { errorText = "Collection cancelled." }
-                self.lock.unlock()
+                self.lock.lock(); defer { self.lock.unlock() }
+                guard self.active[sourceID]?.token == token else { return }
+                self.active.removeValue(forKey: sourceID)
+                let errorText = error.localizedDescription
+                self.store.failCollection(sourceID: sourceID, error: errorText)
+                DispatchQueue.main.async { completion?(errorText) }
             }
-            DispatchQueue.main.async { completion?(errorText) }
         }
     }
 
@@ -87,7 +100,7 @@ final class SourceCollector {
             return try collectFolder(source)
         case .dictations:
             let entries = try jsonArray(root.appendingPathComponent("dictations.json"))
-            return SourceCollectionResult(documents: entries.suffix(maxItems).reversed().compactMap { entry in
+            return SourceCollectionResult(documents: entries.prefix(maxItems).compactMap { entry in
                 guard let text = entry["text"] as? String else { return nil }
                 let stamp = entry["timestamp"] as? String ?? entry["time"] as? String ?? "Date unavailable"
                 return CollectedSourceDocument(title: "Dictation · \(stamp)", text: text, capturedAt: parseDate(entry["timestamp"]) ?? Date())
@@ -128,10 +141,21 @@ final class SourceCollector {
                 // Tail from disk, bounded even after a long recording day.
                 let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
                 let size = try handle.seekToEnd(); let start = size > 200000 ? size - 200000 : 0
-                try handle.seek(toOffset: start)
-                let data = try handle.readToEnd() ?? Data()
-                var lines = (String(data: data, encoding: .utf8) ?? "").split(separator: "\n").map(String.init)
-                if start > 0 && !lines.isEmpty { lines.removeFirst() }
+                // Include the preceding byte so a cut exactly at a record boundary keeps
+                // that record. Discard the partial record as bytes before decoding UTF-8.
+                let readStart = start > 0 ? start - 1 : 0
+                try handle.seek(toOffset: readStart)
+                var data = try handle.read(upToCount: Int(size - readStart)) ?? Data()
+                if start > 0 {
+                    if let newline = data.firstIndex(of: 10) { data = Data(data.suffix(from: data.index(after: newline))) }
+                    else { data = Data() }
+                }
+                // DayBus appends newline-terminated records. A concurrent append may
+                // expose an unfinished final record, including half a UTF-8 scalar.
+                if let newline = data.lastIndex(of: 10) { data = Data(data.prefix(through: newline)) }
+                else { data = Data() }
+                guard let text = String(data: data, encoding: .utf8) else { throw DataSourceError.invalid("Desktop \(stream) log contains unreadable text.") }
+                let lines = text.split(separator: "\n").map(String.init)
                 let recent = Array(lines.suffix(100))
                 if !recent.isEmpty {
                     let lastEvent = recent.last.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }

@@ -234,6 +234,9 @@ final class EgressProxyServer {
 
         if method == "CONNECT" {
             guard Self.write(fd, Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8)) else { return }
+            // A client may send its first tunnel bytes with the CONNECT
+            // headers. Replay what readHead consumed before pumping the rest.
+            guard Self.write(upstream, head.overflow) else { return }
         } else {
             // Rewrite absolute-form to origin-form, which is what an origin
             // server expects, then replay the headers we already consumed.

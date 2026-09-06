@@ -53,6 +53,20 @@ expect(launch.contains("sandbox_workspace_write.writable_roots=[\"/tmp/a\", \"/t
 expect(!CodexAppServerProtocol.launchArguments(extraWritableRoots: []).contains { $0.hasPrefix("sandbox_workspace_write.writable_roots") },
        "no roots means no writable_roots override")
 
+// Backslashes and control characters are legal macOS filename characters.
+// A backslash-n in a folder name must never become a different writable root.
+let unusualRoots = ["/tmp/folder\\name", "/tmp/quote\"name", "/tmp/line\nfeed",
+                    "/tmp/tab\tname", "/tmp/control\u{7f}", "/tmp/Български"]
+let expectedRoots = #"sandbox_workspace_write.writable_roots=["/tmp/folder\\name", "/tmp/quote\"name", "/tmp/line\u000Afeed", "/tmp/tab\u0009name", "/tmp/control\u007F", "/tmp/Български"]"#
+expect(CodexAppServerProtocol.launchArguments(extraWritableRoots: unusualRoots).contains(expectedRoots),
+       "app-server writable-root names were altered or produced invalid TOML")
+for resumeThread: String? in [nil, "thread-a"] {
+    expect(CodexExecBackend.executionArguments(
+        prompt: "task", imagePaths: [], resumeThread: resumeThread,
+        extraWritableRoots: unusualRoots).contains(expectedRoots),
+           "Codex exec writable-root names were altered or produced invalid TOML")
+}
+
 let start = CodexAppServerProtocol.threadParams(cwd: "/work", resumeThread: nil)
 expect(start["approvalPolicy"] as? String == "never" && start["sandbox"] as? String == "workspace-write"
        && start["cwd"] as? String == "/work" && start["threadId"] == nil,

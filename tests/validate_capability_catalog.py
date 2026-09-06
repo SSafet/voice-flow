@@ -9,6 +9,8 @@ import re
 import sys
 from pathlib import Path
 
+from record_test_evidence import validate_registry, validate_evidence
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG = ROOT / "tests" / "capabilities.json"
@@ -80,6 +82,10 @@ def main() -> None:
         fail(f"MCP coverage mismatch; missing={missing}, stale={stale}")
 
     registry = json.loads(REGISTRY.read_text())
+    try:
+        validate_registry(registry)
+    except ValueError as error:
+        fail(str(error))
     if registry.get("version") != 1 or set(registry.get("runners", {})) != set(RUNNER_ORDER):
         fail("test registry must declare version 1 and unit/live/e2e/release runners")
     registered: dict[str, str] = {}
@@ -102,24 +108,10 @@ def main() -> None:
         if not args.mode:
             fail("--evidence requires --mode")
         evidence = json.loads(args.evidence.read_text())
-        if evidence.get("mode") != args.mode:
-            fail(f"evidence mode {evidence.get('mode')!r} != requested {args.mode!r}")
-        passed: dict[str, str] = {}
-        for row in evidence.get("tests", []):
-            if row.get("status") != "passed":
-                fail(f"evidence contains non-passing row {row}")
-            if row.get("id") in passed:
-                fail(f"evidence duplicates {row.get('id')}")
-            passed[row.get("id")] = row.get("runner")
-        required = {
-            test_id: runner for test_id, runner in registered.items()
-            if RUNNER_ORDER[runner] <= RUNNER_ORDER[args.mode]
-        }
-        if passed != required:
-            fail(
-                "evidence mismatch; missing="
-                f"{sorted(set(required) - set(passed))}, stale={sorted(set(passed) - set(required))}"
-            )
+        try:
+            validate_evidence(evidence, registry, args.mode, ROOT)
+        except (ValueError, OSError) as error:
+            fail(str(error))
 
     areas = len({capability["area"] for capability in capabilities})
     print(

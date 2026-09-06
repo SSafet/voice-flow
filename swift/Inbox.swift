@@ -184,16 +184,29 @@ final class MessageInbox {
         case .terminated: return ([], false, true)
         case .parked: break
         }
-        _ = semaphore.wait(timeout: .now() + timeout)
-        return queue.sync {
-            waiters.removeAll { $0.semaphore === semaphore }
-            // Checked before draining: a superseded waiter must not steal
-            // messages that now belong to its replacement.
-            if superseded.remove(ObjectIdentifier(semaphore)) != nil { return ([], true, false) }
-            // A deleted session must not steal a message that raced with the
-            // deletion and was queued after its waiter had been released.
-            if terminated.remove(ObjectIdentifier(semaphore)) != nil { return ([], false, true) }
-            return (drainLocked(session: session), false, false)
+        let deadline = DispatchTime.now() + timeout
+        while true {
+            let expired = semaphore.wait(timeout: deadline) == .timedOut
+            let result: (messages: [InboxMessage], superseded: Bool, terminated: Bool)? = queue.sync {
+                // Keep the listener registered until it really finishes. An
+                // unscoped message signals several eligible sessions and a
+                // competing drain may claim it before this listener wakes.
+                var finished = true
+                defer {
+                    if finished { waiters.removeAll { $0.semaphore === semaphore } }
+                }
+                // Checked before draining: a superseded waiter must not steal
+                // messages that now belong to its replacement.
+                if superseded.remove(ObjectIdentifier(semaphore)) != nil { return ([], true, false) }
+                // A deleted session must not steal a message that raced with
+                // deletion and was queued after its waiter had been released.
+                if terminated.remove(ObjectIdentifier(semaphore)) != nil { return ([], false, true) }
+                let drained = drainLocked(session: session)
+                if !drained.isEmpty || expired { return (drained, false, false) }
+                finished = false
+                return nil
+            }
+            if let result { return result }
         }
     }
 

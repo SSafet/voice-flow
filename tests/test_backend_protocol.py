@@ -6,16 +6,21 @@ import http.server
 import json
 import socket
 import sys
+import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
+import wave
+from pathlib import Path
 from unittest import mock
 
 import numpy as np
 
 from voice_flow import backend
+from voice_flow.cleaner import Cleaner
 from voice_flow.openai_transcriber import OpenAITranscriber, _is_prompt_echo, _transcription_prompt
+from voice_flow.transcriber import Transcriber
 
 
 class _Local:
@@ -54,7 +59,11 @@ class _Output(io.StringIO):
 
 
 def _run(command, cloud=_OpenAI):
-    stdin = io.StringIO(json.dumps(command) + "\n")
+    return _run_commands([command], cloud)
+
+
+def _run_commands(commands, cloud=_OpenAI):
+    stdin = io.StringIO("".join(json.dumps(command) + "\n" for command in commands))
     stdout = _Output()
     with (
         mock.patch.object(backend, "Transcriber", _Local),
@@ -76,6 +85,83 @@ class BackendProtocolTests(unittest.TestCase):
     def setUp(self):
         _Cleaner.last_kwargs = None
         _OpenAI.last_kwargs = None
+
+    def test_non_object_commands_do_not_kill_worker(self):
+        for command in (None, [], "ping", 1, True):
+            with self.subTest(command=command):
+                events = _run_commands([command, {"cmd": "ping"}])
+                self.assertEqual(events[-1], {"event": "pong"})
+
+    def test_invalid_sample_rate_is_contained_and_correlated(self):
+        for action in ("transcribe", "partial_transcribe"):
+            for rate in ("bad", {}, [], -1, 0, True, 16000.5):
+                with self.subTest(action=action, rate=rate):
+                    events = _run_commands([{
+                        "cmd": action, "request_id": "invalid-rate", "run_id": "run",
+                        "sample_rate": rate, "audio_b64": _audio(),
+                    }, {"cmd": "ping"}])
+                    terminal = events[-2]
+                    self.assertEqual(terminal["event"],
+                                     "error" if action == "transcribe" else "partial_result")
+                    self.assertEqual(terminal["request_id"], "invalid-rate")
+                    if action == "partial_transcribe":
+                        self.assertEqual(terminal["run_id"], "run")
+                        self.assertEqual(terminal["text"], "")
+                    self.assertEqual(events[-1], {"event": "pong"})
+
+    def test_base64_precedence_preserves_unused_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "unused.wav"
+            path.write_bytes(b"untouched")
+            events = _run({"cmd": "transcribe", "audio_b64": _audio(), "audio_path": str(path)})
+            self.assertEqual(events[-1]["event"], "result")
+            self.assertEqual(path.read_bytes(), b"untouched")
+
+    def test_invalid_path_does_not_kill_worker_during_cleanup(self):
+        for path in (["invalid"], {"path": "invalid"}, 1):
+            with self.subTest(path=path):
+                events = _run_commands([{"cmd": "transcribe", "audio_path": path}, {"cmd": "ping"}])
+                self.assertEqual(events[-2]["event"], "error")
+                self.assertEqual(events[-1], {"event": "pong"})
+
+    def test_invalid_base64_is_not_silently_transcribed(self):
+        events = _run({"cmd": "transcribe", "audio_b64": "!!!!" + _audio()})
+        self.assertEqual(events[-1]["event"], "error")
+
+    def test_wav_uses_file_rate_and_removes_consumed_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audio.wav"
+            with wave.open(str(path), "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(48000)
+                wav.writeframes(np.ones(6000, dtype=np.int16).tobytes())
+            events = _run({"cmd": "transcribe", "audio_path": str(path)})
+            self.assertEqual(events[-1]["event"], "result")
+            self.assertEqual(_OpenAI.last_kwargs["sample_rate"], 48000)
+            self.assertFalse(path.exists())
+
+    def test_unsupported_wav_format_fails_instead_of_corrupting_audio(self):
+        for channels, width in ((2, 2), (1, 1), (1, 3)):
+            with self.subTest(channels=channels, width=width), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "audio.wav"
+                with wave.open(str(path), "wb") as wav:
+                    wav.setnchannels(channels)
+                    wav.setsampwidth(width)
+                    wav.setframerate(16000)
+                    wav.writeframes(b"\x01" * (2000 * channels * width))
+                events = _run({"cmd": "transcribe", "audio_path": str(path)})
+                self.assertEqual(events[-1]["event"], "error")
+                self.assertFalse(path.exists())
+
+    def test_short_audio_threshold_uses_duration(self):
+        for action in ("transcribe", "partial_transcribe"):
+            with self.subTest(action=action):
+                # 2000 samples is only 42ms at 48kHz, shorter than either minimum.
+                _OpenAI.last_kwargs = None
+                events = _run({"cmd": action, "audio_b64": _audio(), "sample_rate": 48000})
+                self.assertEqual(events[-1].get("text", events[-1].get("raw")), "")
+                self.assertIsNone(_OpenAI.last_kwargs)
 
     def test_final_result_echoes_capture_run_id(self):
         events = _run({
@@ -185,6 +271,41 @@ class BackendProtocolTests(unittest.TestCase):
         self.assertEqual(retry["request_id"], "long-recording")
 
 
+class CleanupFastPathTests(unittest.TestCase):
+    def test_empty_and_short_text_do_not_load_model(self):
+        for raw, expected in (("  ", ""), ("hello", "Hello."), ("hello there!", "Hello there!")):
+            with self.subTest(raw=raw):
+                cleaner = Cleaner()
+                with mock.patch.object(cleaner, "load", side_effect=AssertionError("unnecessary model load")):
+                    self.assertEqual(cleaner.clean(raw), expected)
+
+
+class LocalTranscriptionTests(unittest.TestCase):
+    def test_empty_audio_does_not_load_model(self):
+        transcriber = Transcriber()
+        with mock.patch.object(transcriber, "load", side_effect=AssertionError("unnecessary model load")):
+            self.assertEqual(transcriber.transcribe(np.array([], dtype=np.float32)), "")
+
+    def test_fallback_temp_file_is_created_atomically_and_removed_on_failure(self):
+        transcriber = Transcriber()
+        transcriber._loaded = True
+        transcriber._model = mock.Mock()
+        paths = []
+
+        def fail_generate(path):
+            paths.append(Path(path))
+            self.assertTrue(paths[-1].is_file())
+            raise RuntimeError("model failed")
+
+        transcriber._model.generate.side_effect = fail_generate
+        with mock.patch.dict(sys.modules, {"mlx.core": None}), \
+                mock.patch("voice_flow.transcriber.tempfile.mktemp", side_effect=AssertionError("non-atomic temp path")):
+            with self.assertRaisesRegex(RuntimeError, "model failed"):
+                transcriber.transcribe(np.ones(2000, dtype=np.float32))
+        self.assertEqual(len(paths), 1)
+        self.assertFalse(paths[0].exists())
+
+
 class TranscriptionRetryTests(unittest.TestCase):
     def transcribe(self, **kwargs):
         return OpenAITranscriber().transcribe(np.ones(2000, dtype=np.float32), "test", **kwargs)
@@ -219,6 +340,31 @@ class TranscriptionRetryTests(unittest.TestCase):
                           cloud=OpenAITranscriber)
         self.assertEqual(request.call_count, 1)
         self.assertEqual(events[-1], {"event": "partial_result", "run_id": "run", "request_id": 1, "text": ""})
+
+    def test_failed_http_error_body_is_closed_and_status_still_controls_retry(self):
+        for code in (503, 401):
+            body = mock.Mock()
+            body.read.side_effect = http.client.IncompleteRead(b"partial", 20)
+            error = urllib.error.HTTPError("test", code, "error", {}, body)
+            with self.subTest(code=code), \
+                    mock.patch("urllib.request.urlopen", side_effect=[error, io.BytesIO(b'{"text":"ok"}')]) as request, \
+                    mock.patch("voice_flow.openai_transcriber.time.sleep"):
+                if code == 503:
+                    self.assertEqual(self.transcribe(), "ok")
+                    self.assertEqual(request.call_count, 2)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "401"):
+                        self.transcribe()
+                    self.assertEqual(request.call_count, 1)
+                body.close.assert_called_once()
+
+    def test_invalid_response_never_becomes_dictated_text(self):
+        for payload in ({"text": None}, {"text": ["bad"]}, {"text": {"bad": "text"}}, [], {}):
+            with self.subTest(payload=payload), \
+                    mock.patch("urllib.request.urlopen", return_value=io.BytesIO(json.dumps(payload).encode())) as request:
+                with self.assertRaisesRegex(RuntimeError, "invalid transcription response"):
+                    self.transcribe()
+                self.assertEqual(request.call_count, 1)
 
 
 if __name__ == "__main__":

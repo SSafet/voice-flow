@@ -93,7 +93,7 @@ enum CodexAppServerProtocol {
         ]
         if !extraWritableRoots.isEmpty {
             let toml = extraWritableRoots
-                .map { "\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+                .map(CodexExecBackend.tomlString)
                 .joined(separator: ", ")
             args.append(contentsOf: ["-c", "sandbox_workspace_write.writable_roots=[\(toml)]"])
         }

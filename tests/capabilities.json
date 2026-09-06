@@ -1632,6 +1632,18 @@
       "tests": [
         "tests/claude_code_runtime/main.swift"
       ]
+    },
+    {
+      "id": "QA-04",
+      "area": "quality",
+      "name": "Deterministic harness validates provider fixtures, failure propagation, and execution-backed evidence",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/test_evidence.py",
+        "tests/test_harness_cli.py",
+        "tests/test_fake_openai_server.py"
+      ]
     }
   ]
 }

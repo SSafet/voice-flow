@@ -291,6 +291,9 @@ final class DataSourceStore {
                 let itemID = "item-\(index + 1)"
                 let path = "\(itemID).txt"
                 let data = Data(document.text.utf8)
+                // Decoding Latin-1 or UTF-16 can expand a bounded input. Do not
+                // publish a successful snapshot that readItem cannot reopen.
+                guard data.count <= 2_000_000 else { throw DataSourceError.invalid("Collected text exceeds the 2 MB saved-item limit. Last good copy is preserved.") }
                 try data.write(to: staging.appendingPathComponent(path), options: .atomic); bytes += data.count
                 if let original = document.original {
                     let ext = document.originalExtension.filter { $0.isLetter || $0.isNumber }

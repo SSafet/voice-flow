@@ -126,6 +126,9 @@ final class CaptureStore {
         let duration = ended.timeIntervalSince(started)
         let id = activeDir.lastPathComponent
         let iso = ISO8601DateFormatter()
+        // A provisional close has no final narration yet. Its durable event
+        // is emitted by updateTranscript after the completed files are saved.
+        let finalized = (keepEmpty && transcript == nil) ? nil : onFinalized
 
         writeQueue.async { [maxStoredBundles] in
             // The frame writes were queued ahead of us on this serial queue,
@@ -142,13 +145,15 @@ final class CaptureStore {
                 transcript: text,
                 frames: written
             )
-            if let data = try? JSONEncoder().encode(meta) {
-                try? data.write(to: activeDir.appendingPathComponent("meta.json"), options: .atomic)
+            do {
+                try Self.writeBundle(meta, in: activeDir)
+            } catch {
+                vflog("capture: bundle write failed for \(id): \(error)")
+                return
             }
-            let markdown = Self.renderTranscript(meta: meta)
-            try? Data(markdown.utf8).write(
-                to: activeDir.appendingPathComponent("transcript.md"), options: .atomic)
             Self.pruneBundles(keep: maxStoredBundles)
+            let saved = Self.summary(for: meta, in: activeDir)
+            DispatchQueue.main.async { finalized?(saved) }
         }
 
         vflog("capture: finished bundle \(id) — \(collected.count) frames, \(Int(duration))s")
@@ -159,10 +164,6 @@ final class CaptureStore {
             transcript: text,
             framePaths: collected.map { activeDir.appendingPathComponent($0.file).path }
         )
-        // keepEmpty+nil is the provisional close used while continuous
-        // capture transcription is still in flight. Its durable event fires
-        // from updateTranscript, once the bundle has its final narration.
-        if !(keepEmpty && transcript == nil) { onFinalized?(summary) }
         return summary
     }
 
@@ -172,6 +173,7 @@ final class CaptureStore {
     func updateTranscript(_ transcript: String, in summary: CaptureSummary) -> CaptureSummary {
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         let directory = summary.directory
+        let finalized = onFinalized
         writeQueue.async {
             guard let old = Self.readMeta(in: directory) else { return }
             let updated = CaptureBundleMeta(
@@ -181,11 +183,14 @@ final class CaptureStore {
                 durationSeconds: old.durationSeconds,
                 transcript: text,
                 frames: old.frames)
-            if let data = try? JSONEncoder().encode(updated) {
-                try? data.write(to: directory.appendingPathComponent("meta.json"), options: .atomic)
+            do {
+                try Self.writeBundle(updated, in: directory)
+            } catch {
+                vflog("capture: transcript write failed for \(old.id): \(error)")
+                return
             }
-            try? Data(Self.renderTranscript(meta: updated).utf8).write(
-                to: directory.appendingPathComponent("transcript.md"), options: .atomic)
+            let saved = Self.summary(for: updated, in: directory)
+            DispatchQueue.main.async { finalized?(saved) }
         }
         let updatedSummary = CaptureSummary(
             id: summary.id,
@@ -194,8 +199,22 @@ final class CaptureStore {
             durationSeconds: summary.durationSeconds,
             transcript: text,
             framePaths: summary.framePaths)
-        onFinalized?(updatedSummary)
         return updatedSummary
+    }
+
+    private static func summary(for meta: CaptureBundleMeta, in directory: URL) -> CaptureSummary {
+        CaptureSummary(id: meta.id, directory: directory, frameCount: meta.frames.count,
+                       durationSeconds: meta.durationSeconds, transcript: meta.transcript,
+                       framePaths: meta.frames.map { directory.appendingPathComponent($0.file).path })
+    }
+
+    private static func writeBundle(_ meta: CaptureBundleMeta, in directory: URL) throws {
+        try Data(renderTranscript(meta: meta).utf8).write(
+            to: directory.appendingPathComponent("transcript.md"), options: .atomic)
+        // Publish metadata last so new bundles only become browsable after
+        // their narration and frame index have reached disk.
+        try JSONEncoder().encode(meta).write(
+            to: directory.appendingPathComponent("meta.json"), options: .atomic)
     }
 
     private static func renderTranscript(meta: CaptureBundleMeta) -> String {
@@ -315,10 +334,18 @@ final class CaptureStore {
 
     private static func pruneShots() {
         guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: shotsDir, includingPropertiesForKeys: nil) else { return }
-        let sorted = entries.sorted { $0.lastPathComponent > $1.lastPathComponent }
+            at: shotsDir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        // "shot-" and "pasted-" share this retention budget. Sorting their
+        // names would always evict pasted attachments ahead of screenshots.
+        let dated = entries.map { url in
+            (url: url, date: (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast)
+        }
+        let sorted = dated.sorted {
+            $0.date == $1.date ? $0.url.lastPathComponent > $1.url.lastPathComponent : $0.date > $1.date
+        }
         for stale in sorted.dropFirst(maxStoredShots) {
-            try? FileManager.default.removeItem(at: stale)
+            try? FileManager.default.removeItem(at: stale.url)
         }
     }
 }

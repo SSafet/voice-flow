@@ -1,0 +1,279 @@
+capability catalog: 161 capabilities across 22 areas; MCP 15/15; registry 164/164
+OpenCode manifest: v1.17.11, 2 macOS architectures, digests valid
+RUN: backend_protocol
+----------------------------------------------------------------------
+Ran 22 tests in 0.605s
+
+OK
+PASS: backend_protocol (1s)
+RUN: fake_openai_server
+----------------------------------------------------------------------
+Ran 3 tests in 1.513s
+
+OK
+PASS: fake_openai_server (1s)
+RUN: harness_cli
+----------------------------------------------------------------------
+Ran 8 tests in 5.162s
+
+OK
+PASS: harness_cli (6s)
+RUN: evidence
+----------------------------------------------------------------------
+Ran 12 tests in 3.882s
+
+OK
+PASS: evidence (4s)
+RUN: compile release app
+PASS: compile release app (135s)
+RUN: compile QA app
+PASS: compile QA app (152s)
+RUN: compile voice_flow_paths
+PASS: compile voice_flow_paths (2s)
+RUN: voice_flow_paths
+voice-flow paths: ok
+PASS: voice_flow_paths (0s)
+RUN: compile inbox
+PASS: compile inbox (1s)
+RUN: inbox
+inbox tests passed
+PASS: inbox (1s)
+RUN: compile assistant_wake
+PASS: compile assistant_wake (0s)
+RUN: assistant_wake
+assistant wake tests passed
+phone note routing tests passed
+PASS: assistant_wake (1s)
+RUN: compile capture_routing
+PASS: compile capture_routing (0s)
+RUN: capture_routing
+capture routing tests passed
+PASS: capture_routing (1s)
+RUN: compile display_context
+PASS: compile display_context (2s)
+RUN: display_context
+display context tests passed
+PASS: display_context (1s)
+RUN: compile annotations
+PASS: compile annotations (3s)
+RUN: annotations
+annotate: restored 2 marks
+annotate: could not restore snapshot: DecodingError.dataCorrupted: Data was corrupted. Debug description: The given data was not valid JSON.. Underlying error: Error Domain=NSCocoaErrorDomain Code=3840 "Unexpected character 'c' around line 1, column 1." UserInfo={NSJSONSerializationErrorIndex=0, NSDebugDescription=Unexpected character 'c' around line 1, column 1.}
+annotation regression tests passed (including native menu routing and SIGKILL recovery)
+PASS: annotations (2s)
+RUN: compile window_placement
+PASS: compile window_placement (1s)
+RUN: window_placement
+window placement tests passed
+PASS: window_placement (0s)
+RUN: compile agents_navigation
+PASS: compile agents_navigation (1s)
+RUN: agents_navigation
+agents navigation: ok
+PASS: agents_navigation (0s)
+RUN: compile capture_clipboard
+PASS: compile capture_clipboard (2s)
+RUN: capture_clipboard
+capture clipboard tests passed
+PASS: capture_clipboard (0s)
+RUN: compile capture_store
+PASS: compile capture_store (3s)
+RUN: capture_store
+capture store tests passed
+PASS: capture_store (0s)
+RUN: compile player
+PASS: compile player (1s)
+RUN: player
+player tests passed
+push selection tests passed
+PASS: player (0s)
+RUN: compile speech_sanitizer
+PASS: compile speech_sanitizer (2s)
+RUN: speech_sanitizer
+speech sanitizer tests passed
+PASS: speech_sanitizer (0s)
+RUN: compile system_agents
+PASS: compile system_agents (1s)
+RUN: system_agents
+system_agents: ok
+PASS: system_agents (0s)
+RUN: compile watcher_bus
+PASS: compile watcher_bus (0s)
+RUN: watcher_bus
+watcher bus and policy tests passed
+PASS: watcher_bus (1s)
+RUN: compile data_sources
+PASS: compile data_sources (1s)
+RUN: data_sources
+PASS: Sources registry, immutable snapshots, read projections, local bounds/symlinks, EML/mbox MIME, frozen context, persistence, normalized text limits, newest-first dictations, UTF-8/partial/boundary log tails, queued stop completion, real HTTP success/change/failure/oversize, pause cancellation, independent polling, age retention and disconnect retention
+PASS: data_sources (2s)
+RUN: compile data_sources_ui
+PASS: compile data_sources_ui (2s)
+RUN: data_sources_ui
+PASS: Sources pane preserves unsaved drafts across updates/navigation, clears saved drafts, reveals external edits, browses all items/history in app, saves built-in instructions, and lays out at narrow width
+PASS: data_sources_ui (1s)
+RUN: compile source_review
+PASS: compile source_review (6s)
+RUN: source_review
+source review tests passed: explicit selection, frozen context, persisted copies-only mode, no tools, zero mailbox requests, original unchanged
+PASS: source_review (0s)
+RUN: source_review transport
+source review real gateway transport passed
+source review tests passed: explicit selection, frozen context, persisted copies-only mode, no tools, zero mailbox requests, original unchanged
+{"delayed_upstream_cancelled": true, "gateway_credential_replacement": true, "gateway_output_limit": 512, "late_final_events": 0, "mailbox_requests": 0, "malicious_action_rejected": true, "model_requests": 4, "result": "passed", "subsequent_gateway_request_passed": true, "tools_exposed": false}
+PASS: source_review transport (1s)
+RUN: compile hotkey_precedence
+PASS: compile hotkey_precedence (52s)
+RUN: hotkey_precedence
+hotkey precedence tests passed
+PASS: hotkey_precedence (1s)
+RUN: compile speech_speed
+PASS: compile speech_speed (42s)
+RUN: speech_speed
+speech speed tests passed
+PASS: speech_speed (1s)
+RUN: compile audio_recorder
+PASS: compile audio_recorder (39s)
+RUN: audio_recorder
+[2026-09-06T22:24:08Z] audio: start during drain — settling previous recording first
+audio recorder tests passed
+PASS: audio_recorder (1s)
+RUN: compile overlay_contracts
+PASS: compile overlay_contracts (37s)
+RUN: overlay_contracts
+overlay contract tests passed
+PASS: overlay_contracts (1s)
+RUN: compile assistants
+PASS: compile assistants (1s)
+RUN: assistants
+assistants tests passed
+PASS: assistants (0s)
+RUN: compile agent_capabilities
+PASS: compile agent_capabilities (1s)
+RUN: agent_capabilities
+agent capabilities tests passed
+PASS: agent_capabilities (1s)
+RUN: compile agent_prompt
+PASS: compile agent_prompt (3s)
+RUN: agent_prompt
+agent prompt tests passed
+PASS: agent_prompt (0s)
+RUN: compile sandbox_containment
+PASS: compile sandbox_containment (7s)
+RUN: sandbox_containment
+sandbox containment tests passed (7 escape classes blocked, loopback intact, supervisor launch verified)
+PASS: sandbox_containment (10s)
+RUN: compile agent_permissions
+PASS: compile agent_permissions (2s)
+RUN: agent_permissions
+agent permission tests passed
+PASS: agent_permissions (0s)
+RUN: compile qa_control
+PASS: compile qa_control (2s)
+RUN: qa_control
+QA control tests passed
+PASS: qa_control (0s)
+RUN: compile agent_tools
+PASS: compile agent_tools (3s)
+RUN: agent_tools
+agent tools tests passed
+PASS: agent_tools (0s)
+RUN: compile agent_jobs
+PASS: compile agent_jobs (3s)
+RUN: agent_jobs
+agent job store tests passed
+PASS: agent_jobs (0s)
+RUN: compile openrouter_models
+PASS: compile openrouter_models (1s)
+RUN: openrouter_models
+OpenRouter model catalog tests passed
+PASS: openrouter_models (1s)
+RUN: compile opencode_updater
+PASS: compile opencode_updater (1s)
+RUN: opencode_updater
+opencode updater tests passed
+PASS: opencode_updater (0s)
+RUN: compile openrouter_model_picker
+PASS: compile openrouter_model_picker (2s)
+RUN: openrouter_model_picker
+Automation runtime and OpenRouter model picker selection tests passed
+PASS: openrouter_model_picker (0s)
+RUN: compile agent_supervisor
+PASS: compile agent_supervisor (4s)
+RUN: agent_supervisor
+agent supervisor tests passed
+PASS: agent_supervisor (3s)
+RUN: compile assistant_history
+PASS: compile assistant_history (1s)
+RUN: assistant_history
+assistant history: imported 1 pre-store Codex session(s)
+assistant history: imported 1 pre-store Codex session(s)
+assistant history tests passed
+PASS: assistant_history (1s)
+RUN: compile assistant_continuity
+PASS: compile assistant_continuity (2s)
+RUN: assistant_continuity
+assistant continuity tests passed
+PASS: assistant_continuity (1s)
+RUN: compile codex_runtime
+PASS: compile codex_runtime (4s)
+RUN: codex_runtime
+codex runtime tests passed
+PASS: codex_runtime (0s)
+RUN: compile codex_appserver
+PASS: compile codex_appserver (4s)
+RUN: codex_appserver
+codex app-server protocol tests passed
+PASS: codex_appserver (0s)
+RUN: compile claude_code_runtime
+PASS: compile claude_code_runtime (4s)
+RUN: claude_code_runtime
+claude code runtime tests passed
+PASS: claude_code_runtime (1s)
+RUN: compile opencode_runtime
+PASS: compile opencode_runtime (9s)
+RUN: opencode_runtime
+opencode runtime tests passed
+PASS: opencode_runtime (0s)
+RUN: compile opencode_http
+PASS: compile opencode_http (7s)
+RUN: opencode_http
+opencode HTTP failure tests passed
+PASS: opencode_http (1s)
+Prepared OpenCode 1.17.11 (arm64, 996fea55451be04cfa27c0d9dbbf0468cb611cde43075fe3dac799772d0b710f)
+RUN: compile model_gateway
+PASS: compile model_gateway (2s)
+RUN: model_gateway
+model gateway live tests passed
+PASS: model_gateway (1s)
+RUN: compile agent_tool_server
+./scripts/test-agent-harness.sh: line 82: 59363 Terminated: 15          python3 tests/fake_openai_server.py --port-file "$PORT_FILE"
+PASS: compile agent_tool_server (3s)
+RUN: agent_tool_server
+agent tool server live tests passed
+PASS: agent_tool_server (0s)
+RUN: compile opencode_live_turn
+PASS: compile opencode_live_turn (7s)
+RUN: opencode_live_turn
+opencode real text/tool/skill/image/permission/cancellation smoke passed
+PASS: opencode_live_turn (62s)
+RUN: compile opencode_supervisor
+./scripts/test-agent-harness.sh: line 82: 59406 Terminated: 15          python3 tests/fake_openai_server.py --port-file "$PORT_FILE"
+PASS: compile opencode_supervisor (7s)
+RUN: opencode_supervisor
+opencode supervisor live tests passed
+PASS: opencode_supervisor (3s)
+RUN: compile codex_live_turn
+PASS: compile codex_live_turn (1s)
+RUN: codex_live_turn
+codex real discovery/auth/new/resume/image/interrupt smoke passed
+PASS: codex_live_turn (44s)
+RUN: runtime_canary
+Codex/OpenCode shared canary comparison passed
+PASS: runtime_canary (0s)
+test evidence: 91 registered checks backed by execution receipts through live; /tmp/voice-flow-quality-final-live-evidence.json
+capability catalog: 161 capabilities across 22 areas; MCP 15/15; registry 164/164
+agent harness tests: --live gate passed
+real 730.05
+user 488.41
+sys 79.57

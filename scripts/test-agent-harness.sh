@@ -2,14 +2,52 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-MODE="${1:---unit}"
+MODE="--unit"
+ONLY_SUITE=""
+MODE_SET=0
+usage() {
+    echo "usage: $0 [--unit|--live|--e2e|--nightly|--release] [--only SUITE]"
+    echo "  --only SUITE  Run one unit suite (e.g. inbox, data_sources, backend_protocol, app)."
+    echo "                Skips unrelated builds and does not emit full-gate evidence."
+}
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --unit|--live|--e2e|--nightly|--release)
+            [ "$MODE_SET" -eq 0 ] || { usage >&2; exit 2; }
+            MODE="$1"; MODE_SET=1; shift ;;
+        --only)
+            [ "$#" -ge 2 ] && [ -z "$ONLY_SUITE" ] && [[ "$2" != -* ]] && [ -n "$2" ] || { usage >&2; exit 2; }
+            ONLY_SUITE="$2"; shift 2 ;;
+        --help|-h) usage; exit 0 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+done
+[ -z "$ONLY_SUITE" ] || [ "$MODE" = "--unit" ] || { usage >&2; exit 2; }
+
 BUILD_DIR="$(mktemp -d /tmp/voice-flow-tests.XXXXXX)"
 UPSTREAM_PID=""
+SELECTED_SUITES=0
+EVIDENCE_MODE="${MODE#--}"
+if [ "$EVIDENCE_MODE" = "nightly" ]; then EVIDENCE_MODE="e2e"; fi
+EVIDENCE_PATH="${VOICE_FLOW_EVIDENCE_PATH:-/tmp/voice-flow-agent-evidence-$EVIDENCE_MODE.json}"
+EXECUTION_JOURNAL="$BUILD_DIR/execution.jsonl"
 cleanup() {
     status=$?
-    if [ -n "${VOICE_FLOW_TEST_ARTIFACTS:-}" ] && [ -d "$BUILD_DIR/e2e-artifacts" ]; then
-        mkdir -p "$VOICE_FLOW_TEST_ARTIFACTS"
-        cp -R "$BUILD_DIR/e2e-artifacts/." "$VOICE_FLOW_TEST_ARTIFACTS/"
+    # Keep useful failure evidence from every tier. Copy failures must not
+    # prevent process cleanup or hide the original test exit status.
+    if [ -n "${VOICE_FLOW_TEST_ARTIFACTS:-}" ] && mkdir -p "$VOICE_FLOW_TEST_ARTIFACTS"; then
+        for artifact in "$EXECUTION_JOURNAL" "$BUILD_DIR/runtime-canary-report.json"; do
+            if [ -f "$artifact" ]; then cp "$artifact" "$VOICE_FLOW_TEST_ARTIFACTS/" || true; fi
+        done
+        if [ -d "$BUILD_DIR/e2e-artifacts" ]; then
+            cp -R "$BUILD_DIR/e2e-artifacts/." "$VOICE_FLOW_TEST_ARTIFACTS/" || true
+        fi
+        for runtime_log in "$BUILD_DIR"/config/runtime/opencode/*/logs/opencode.log; do
+            if [ -f "$runtime_log" ]; then
+                profile="$(basename "$(dirname "$(dirname "$runtime_log")")")"
+                cp "$runtime_log" "$VOICE_FLOW_TEST_ARTIFACTS/opencode-$profile.log" || true
+            fi
+        done
     fi
     if [ -n "$UPSTREAM_PID" ]; then kill "$UPSTREAM_PID" 2>/dev/null || true; fi
     # A force-interrupted Swift live probe can exit before its async defer runs,
@@ -37,24 +75,54 @@ export SWIFT_MODULECACHE_PATH="$BUILD_DIR/swift-module-cache"
 export CLANG_MODULE_CACHE_PATH="$BUILD_DIR/clang-module-cache"
 export VOICE_FLOW_CONFIG_ROOT="$BUILD_DIR/config"
 
+should_run() {
+    [ -z "$ONLY_SUITE" ] || [ "$ONLY_SUITE" = "$1" ]
+}
+
+run_step() {
+    local label="$1" started="$SECONDS" status
+    shift
+    echo "RUN: $label"
+    if "$@"; then
+        echo "PASS: $label ($((SECONDS - started))s)"
+    else
+        status=$?
+        echo "FAIL: $label ($((SECONDS - started))s, exit $status)" >&2
+        return "$status"
+    fi
+}
+
+run_unit_command() {
+    local name="$1"
+    shift
+    should_run "$name" || return 0
+    SELECTED_SUITES=$((SELECTED_SUITES + 1))
+    run_step "$name" "$@"
+    record_suite "$name"
+}
+
+record_suite() {
+    [ -z "$ONLY_SUITE" ] || return 0
+    python3 tests/record_test_evidence.py --journal "$EXECUTION_JOURNAL" --suite "$1" --exit-code 0
+}
+
 compile_and_run() {
     local name="$1"
     shift
-    if [[ " $* " != *"swift/AgentSourceConfiguration.swift "* ]]; then
-        swiftc "$@" "$PROJECT_DIR/swift/AgentSourceConfiguration.swift" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
-    else
-        swiftc "$@" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
-    fi
-    "$BUILD_DIR/$name"
+    should_run "$name" || return 0
+    SELECTED_SUITES=$((SELECTED_SUITES + 1))
+    compile_only "$name" "$@"
+    run_step "$name" "$BUILD_DIR/$name"
+    record_suite "$name"
 }
 
 compile_only() {
     local name="$1"
     shift
     if [[ " $* " != *"swift/AgentSourceConfiguration.swift "* ]]; then
-        swiftc "$@" "$PROJECT_DIR/swift/AgentSourceConfiguration.swift" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
+        run_step "compile $name" swiftc "$@" "$PROJECT_DIR/swift/AgentSourceConfiguration.swift" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
     else
-        swiftc "$@" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
+        run_step "compile $name" swiftc "$@" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
     fi
 }
 
@@ -88,15 +156,26 @@ else
     python3 tests/validate_capability_catalog.py
 fi
 python3 tests/validate_runtime_manifest.py
-compile_app
-if strings -a "$BUILD_DIR/voice-flow" | grep -F 'QA capability required' >/dev/null; then
-    echo "release binary contains QA control routes" >&2
-    exit 1
+if [ -z "$ONLY_SUITE" ]; then
+    python3 tests/record_test_evidence.py --mode "$EVIDENCE_MODE" --journal "$EXECUTION_JOURNAL" --out "$EVIDENCE_PATH" --start
 fi
-compile_qa_app
-if ! strings -a "$BUILD_DIR/voice-flow-qa" | grep -F 'QA capability required' >/dev/null; then
-    echo "QA binary is missing its control plane" >&2
-    exit 1
+run_unit_command backend_protocol "$PROJECT_DIR/.venv/bin/python" tests/test_backend_protocol.py -q
+run_unit_command fake_openai_server python3 tests/test_fake_openai_server.py -q
+run_unit_command harness_cli python3 tests/test_harness_cli.py -q
+run_unit_command evidence python3 tests/test_evidence.py -q
+if should_run app; then
+    SELECTED_SUITES=$((SELECTED_SUITES + 1))
+    run_step "compile release app" compile_app
+    if strings -a "$BUILD_DIR/voice-flow" | grep -F 'QA capability required' >/dev/null; then
+        echo "release binary contains QA control routes" >&2
+        exit 1
+    fi
+    run_step "compile QA app" compile_qa_app
+    if ! strings -a "$BUILD_DIR/voice-flow-qa" | grep -F 'QA capability required' >/dev/null; then
+        echo "QA binary is missing its control plane" >&2
+        exit 1
+    fi
+    record_suite app
 fi
 
 compile_and_run voice_flow_paths swift/VoiceFlowPaths.swift tests/voice_flow_paths/main.swift
@@ -125,7 +204,10 @@ compile_and_run source_review swift/VoiceFlowPaths.swift swift/AssistantWake.swi
     swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentJobStore.swift swift/DataSources.swift \
     swift/AgentSourceContext.swift swift/SourceReviewRuntime.swift swift/ModelGateway.swift \
     tests/source_review/main.swift -framework Security -lsqlite3
-python3 tests/source_review/transport_proof.py "$BUILD_DIR/source_review"
+if should_run source_review; then
+    run_step "source_review transport" python3 tests/source_review/transport_proof.py "$BUILD_DIR/source_review"
+    record_suite source_review_transport
+fi
 compile_and_run hotkey_precedence "${APP_SUPPORT_SOURCES[@]}" tests/hotkey_precedence/main.swift \
     -framework Cocoa -framework AVFoundation -framework CoreGraphics -framework ApplicationServices \
     -framework Accelerate -framework Security -framework ScreenCaptureKit
@@ -199,7 +281,14 @@ compile_and_run opencode_http swift/VoiceFlowPaths.swift swift/AssistantWake.swi
     swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift \
     swift/OpenCodeHTTPClient.swift tests/opencode_http/main.swift -framework Security
 
-"$PROJECT_DIR/.venv/bin/python" tests/test_backend_protocol.py -q
+if [ -n "$ONLY_SUITE" ]; then
+    if [ "$SELECTED_SUITES" -eq 0 ]; then
+        echo "Unknown unit suite: $ONLY_SUITE" >&2
+        exit 2
+    fi
+    echo "agent harness: selected unit suite '$ONLY_SUITE' passed; full gate not run"
+    exit 0
+fi
 
 case "$MODE" in
     --unit) ;;
@@ -218,7 +307,8 @@ case "$MODE" in
         done
         [ -s "$PORT_FILE" ] || { echo "fake provider did not start" >&2; exit 1; }
         UPSTREAM_PORT="$(<"$PORT_FILE")"
-        VOICE_FLOW_TEST_UPSTREAM="http://127.0.0.1:$UPSTREAM_PORT/v1" "$BUILD_DIR/model_gateway"
+        run_step model_gateway env VOICE_FLOW_TEST_UPSTREAM="http://127.0.0.1:$UPSTREAM_PORT/v1" "$BUILD_DIR/model_gateway"
+        record_suite model_gateway
         kill "$UPSTREAM_PID" 2>/dev/null || true
         UPSTREAM_PID=""
         compile_and_run agent_tool_server swift/VoiceFlowPaths.swift swift/AssistantWake.swift \
@@ -238,11 +328,12 @@ case "$MODE" in
             swift/Assistants.swift swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift \
             swift/AgentRuntime.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
             swift/AgentPromptComposer.swift swift/AgentTools.swift swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift \
-            swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
+            swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
             tests/opencode_live_turn/main.swift -framework Security
-        VOICE_FLOW_TEST_UPSTREAM="http://127.0.0.1:$UPSTREAM_PORT/v1" \
+        run_step opencode_live_turn env VOICE_FLOW_TEST_UPSTREAM="http://127.0.0.1:$UPSTREAM_PORT/v1" \
             VOICE_FLOW_CANARY_OPENCODE_REPORT="$BUILD_DIR/opencode-canary.json" \
             "$BUILD_DIR/opencode_live_turn"
+        record_suite opencode_live_turn
         kill "$UPSTREAM_PID" 2>/dev/null || true
         UPSTREAM_PID=""
         compile_and_run opencode_supervisor swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
@@ -251,13 +342,15 @@ case "$MODE" in
             swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
             swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift tests/opencode_supervisor/main.swift -framework Security
         compile_only codex_live_turn swift/Codex.swift tests/codex_live_turn/main.swift
-        VOICE_FLOW_CONFIG_ROOT="$BUILD_DIR/codex-live-config" \
+        run_step codex_live_turn env VOICE_FLOW_CONFIG_ROOT="$BUILD_DIR/codex-live-config" \
             VOICE_FLOW_CANARY_CODEX_REPORT="$BUILD_DIR/codex-canary.json" \
             "$BUILD_DIR/codex_live_turn"
-        python3 tests/compare_runtime_canary.py \
+        record_suite codex_live_turn
+        run_step runtime_canary python3 tests/compare_runtime_canary.py \
             --codex "$BUILD_DIR/codex-canary.json" \
             --opencode "$BUILD_DIR/opencode-canary.json" \
             --out "$BUILD_DIR/runtime-canary-report.json"
+        record_suite runtime_canary
         if [ "$MODE" = "--e2e" ] || [ "$MODE" = "--nightly" ] || [ "$MODE" = "--release" ]; then
             QA_APP="$BUILD_DIR/Voice Flow QA.app"
             VF_ADHOC=1 VOICE_FLOW_QA_APP_DEST="$QA_APP" \
@@ -266,12 +359,14 @@ case "$MODE" in
             SOAK_SECONDS=0
             if [ "$MODE" = "--nightly" ]; then SOAK_SECONDS=7200; fi
             if [ "$MODE" = "--release" ]; then SOAK_SECONDS=14400; fi
-            python3 tests/e2e_agent_harness.py \
+            run_step signed_e2e python3 tests/e2e_agent_harness.py \
                 --app "$QA_APP" \
                 --root "$BUILD_DIR/signed-qa-root" \
                 --repo "$PROJECT_DIR" \
                 --artifacts "$BUILD_DIR/e2e-artifacts" \
                 --soak-seconds "$SOAK_SECONDS"
+            record_suite signed_e2e
+            if [ "$MODE" = "--release" ]; then record_suite release_soak; fi
             if [ -n "${VOICE_FLOW_TEST_ARTIFACTS:-}" ]; then
                 mkdir -p "$VOICE_FLOW_TEST_ARTIFACTS"
                 cp -R "$BUILD_DIR/e2e-artifacts/." "$VOICE_FLOW_TEST_ARTIFACTS/"
@@ -286,10 +381,7 @@ case "$MODE" in
         ;;
 esac
 
-EVIDENCE_MODE="${MODE#--}"
-if [ "$EVIDENCE_MODE" = "nightly" ]; then EVIDENCE_MODE="e2e"; fi
-EVIDENCE_PATH="${VOICE_FLOW_EVIDENCE_PATH:-/tmp/voice-flow-agent-evidence-$EVIDENCE_MODE.json}"
-python3 tests/record_test_evidence.py --mode "$EVIDENCE_MODE" --out "$EVIDENCE_PATH"
+python3 tests/record_test_evidence.py --mode "$EVIDENCE_MODE" --journal "$EXECUTION_JOURNAL" --out "$EVIDENCE_PATH"
 if [ "$MODE" = "--release" ]; then
     python3 tests/validate_capability_catalog.py --release \
         --mode "$EVIDENCE_MODE" --evidence "$EVIDENCE_PATH"

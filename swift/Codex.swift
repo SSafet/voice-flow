@@ -90,6 +90,22 @@ final class CodexExecBackend {
         return result
     }
 
+    /// Basic TOML strings must preserve the exact filesystem path. Escaping
+    /// only quotes lets a literal backslash become an escape (or invalid TOML).
+    static func tomlString(_ value: String) -> String {
+        var encoded = "\""
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x22: encoded += "\\\""
+            case 0x5C: encoded += "\\\\"
+            case 0..<0x20, 0x7F:
+                encoded += String(format: "\\u%04X", scalar.value)
+            default: encoded.unicodeScalars.append(scalar)
+            }
+        }
+        return encoded + "\""
+    }
+
     static func executionArguments(
         prompt: String, imagePaths: [String], resumeThread: String?,
         extraWritableRoots: [String], model: String? = nil,
@@ -111,7 +127,7 @@ final class CodexExecBackend {
             // -c goes through TOML, and `resume` has no --add-dir flag, so the
             // extra roots ride the config key both paths accept.
             let toml = extraWritableRoots
-                .map { "\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+                .map(tomlString)
                 .joined(separator: ", ")
             args.append(contentsOf: ["-c", "sandbox_workspace_write.writable_roots=[\(toml)]"])
         }

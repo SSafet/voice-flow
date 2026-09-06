@@ -124,18 +124,15 @@ final class OpenCodeEventReducer {
             case "permission.asked", "permission.updated":
                 guard properties["sessionID"] as? String == sessionID,
                       let id = properties["id"] as? String else { return [] }
-                // Fields per the pinned 1.17 Permission type: `title` carries
-                // the human-readable action (for bash, the command itself) and
-                // `pattern` is the rule that matched, as a string or a list.
-                // This previously read `permission` and `patterns`, neither of
-                // which exists — so every prompt rendered as a bare
-                // "Permission requested" with no detail to decide on.
-                let type = properties["type"] as? String
+                // The pinned server's permission.asked payload uses
+                // permission/patterns. Keep the legacy updated-event fields
+                // readable too, so approvals always describe the actual action.
+                let type = properties["permission"] as? String ?? properties["type"] as? String
                 let title = properties["title"] as? String
                     ?? type.map { "\($0) requested" }
                     ?? "Permission requested"
                 let patterns: [String]
-                switch properties["pattern"] {
+                switch properties["patterns"] ?? properties["pattern"] {
                 case let single as String: patterns = [single]
                 case let many as [String]: patterns = many
                 default: patterns = []
@@ -281,8 +278,11 @@ final class OpenCodeHTTPClient: OpenCodeClienting {
             else {
                 throw OpenCodeClientError.invalidResponse("session status JSON is malformed")
             }
-            guard let raw = statuses[sessionID] as? [String: Any] else { return }
-            let type = raw["type"] as? String ?? "idle"
+            guard let raw = statuses[sessionID] else { return }
+            guard let status = raw as? [String: Any],
+                  let type = status["type"] as? String, !type.isEmpty else {
+                throw OpenCodeClientError.invalidResponse("session status entry is malformed")
+            }
             if type == "idle" { return }
             try await Task.sleep(nanoseconds: 50_000_000)
         }

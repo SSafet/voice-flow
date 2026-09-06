@@ -1,4 +1,3 @@
-import os
 import tempfile
 import wave
 
@@ -22,10 +21,10 @@ class Transcriber:
         self._loaded = True
 
     def transcribe(self, audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> str:
-        if not self._loaded:
-            self.load()
         if len(audio) == 0:
             return ""
+        if not self._loaded:
+            self.load()
 
         # Try passing audio directly as mlx array (avoids WAV I/O)
         try:
@@ -35,13 +34,9 @@ class Transcriber:
             result = self._model.generate(audio_mx)
         except Exception:
             # Fallback: write to temp WAV
-            tmp = tempfile.mktemp(suffix=".wav")
-            try:
-                _write_wav(tmp, audio, sample_rate)
-                result = self._model.generate(tmp)
-            finally:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
+            with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
+                _write_wav(tmp.name, audio, sample_rate)
+                result = self._model.generate(tmp.name)
 
         text = ""
         if hasattr(result, "text"):

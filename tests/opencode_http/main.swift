@@ -15,10 +15,12 @@ private final class StubProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var value: Mode = .normal
     private static var lastMessageBody: [String: Any] = [:]
+    private static var messageRequests = 0
 
     static func set(_ mode: Mode) { lock.withLock { value = mode } }
     private static func mode() -> Mode { lock.withLock { value } }
     static func sentMessageBody() -> [String: Any] { lock.withLock { lastMessageBody } }
+    static func sentMessageCount() -> Int { lock.withLock { messageRequests } }
 
     /// URLSession hands URLProtocol the body as a stream, not httpBody.
     private static func bodyObject(of request: URLRequest) -> [String: Any]? {
@@ -45,7 +47,10 @@ private final class StubProtocol: URLProtocol {
     override func startLoading() {
         let path = request.url?.path ?? ""
         if path.hasSuffix("/message"), let body = Self.bodyObject(of: request) {
-            Self.lock.withLock { Self.lastMessageBody = body }
+            Self.lock.withLock {
+                Self.lastMessageBody = body
+                Self.messageRequests += 1
+            }
         }
         switch Self.mode() {
         case .stall:
@@ -140,6 +145,21 @@ expect(openCodeEnvironment == [
 ], "OpenCode child inherited a non-allowlisted environment value")
 
 let directory = FileManager.default.temporaryDirectory
+// Fields from the pinned runtime's PermissionRequest / permission.asked
+// schema. The command must survive normalization so the approval is reviewable.
+let permissionReducer = OpenCodeEventReducer()
+let permissionCommand = "printf PERMISSION_OK > permission-deny.txt"
+let permissionEvents = permissionReducer.reduce([
+    "type": "permission.asked", "properties": [
+        "id": "permission-a", "sessionID": "session-a", "permission": "bash",
+        "patterns": [permissionCommand], "metadata": [:], "always": ["printf *"],
+    ],
+], sessionID: "session-a")
+if case .permission(let permission)? = permissionEvents.first {
+    expect(permission.title == "bash requested" && permission.detail == permissionCommand,
+           "pinned OpenCode approval lost the capability or command being requested")
+} else { expect(false, "pinned OpenCode approval event was dropped") }
+
 for status in [401, 409, 429, 500] {
     StubProtocol.set(.status(status, Data("fault-\(status)".utf8)))
     do {
@@ -173,6 +193,22 @@ let request = AgentTurnRequest(
     priorMessages: [], prompt: "task", screenshots: [],
     workingDirectory: directory, extraWritableRoots: [], trustProfile: .workspace,
     model: AgentModelSelection(provider: "test", model: "model"))
+// Missing sessions are idle, but malformed entries must never authorize a
+// new POST: the previous turn may still be running in the server.
+for malformed in [#"{"session-a":42}"#, #"{"session-a":{}}"#,
+                  #"{"session-a":{"type":false}}"#] {
+    StubProtocol.set(.status(200, Data(malformed.utf8)))
+    let sentBefore = StubProtocol.sentMessageCount()
+    do {
+        _ = try await client.sendMessage(
+            sessionID: "session-a", directory: directory, request: request) { _ in }
+        expect(false, "malformed session state was accepted as idle")
+    } catch OpenCodeClientError.invalidResponse { }
+    catch { expect(false, "malformed session state produced wrong error: \(error)") }
+    expect(StubProtocol.sentMessageCount() == sentBefore,
+           "malformed session state sent a new message before failing")
+}
+StubProtocol.set(.normal)
 let result = try await client.sendMessage(
     sessionID: "session-a", directory: directory, request: request) { event in
         switch event {

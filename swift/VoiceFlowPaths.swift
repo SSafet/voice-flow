@@ -10,24 +10,27 @@ struct VoiceFlowPaths: Equatable {
     static let shared = VoiceFlowPaths()
 
     let configRoot: URL
+    let isIsolated: Bool
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment,
          homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
+        let productionRoot = homeDirectory
+            .appendingPathComponent(".config", isDirectory: true)
+            .appendingPathComponent("voice-flow", isDirectory: true)
+            .standardizedFileURL
         if let raw = environment[Self.configRootEnvironmentKey], !raw.isEmpty,
            NSString(string: raw).isAbsolutePath {
             configRoot = URL(fileURLWithPath: raw, isDirectory: true).standardizedFileURL
+            // QA authority must describe the resolved storage location, not
+            // merely the presence of an environment variable. An explicit
+            // production path (including a symlink) is still production.
+            isIsolated = configRoot.resolvingSymlinksInPath() != productionRoot.resolvingSymlinksInPath()
         } else {
-            configRoot = homeDirectory
-                .appendingPathComponent(".config", isDirectory: true)
-                .appendingPathComponent("voice-flow", isDirectory: true)
-                .standardizedFileURL
+            configRoot = productionRoot
+            isIsolated = false
         }
         try? FileManager.default.createDirectory(
             at: configRoot, withIntermediateDirectories: true)
-    }
-
-    var isIsolated: Bool {
-        ProcessInfo.processInfo.environment[Self.configRootEnvironmentKey] != nil
     }
 
     func file(_ name: String) -> URL {

@@ -3,665 +3,1235 @@
   "runners": {
     "unit": {
       "command": "scripts/test-agent-harness.sh --unit",
-      "description": "Static, compile, unit, schema, and deterministic contract gate."
+      "description": "Static, compile, unit, schema, and deterministic contract gate.",
+      "required_suites": [
+        "agent_capabilities",
+        "agent_jobs",
+        "agent_permissions",
+        "agent_prompt",
+        "agent_supervisor",
+        "agent_tools",
+        "agents_navigation",
+        "annotations",
+        "app",
+        "assistant_continuity",
+        "assistant_history",
+        "assistant_wake",
+        "assistants",
+        "audio_recorder",
+        "backend_protocol",
+        "capture_clipboard",
+        "capture_routing",
+        "capture_store",
+        "claude_code_runtime",
+        "codex_appserver",
+        "codex_runtime",
+        "data_sources",
+        "data_sources_ui",
+        "display_context",
+        "evidence",
+        "fake_openai_server",
+        "harness_cli",
+        "hotkey_precedence",
+        "inbox",
+        "opencode_http",
+        "opencode_runtime",
+        "opencode_updater",
+        "openrouter_model_picker",
+        "openrouter_models",
+        "overlay_contracts",
+        "player",
+        "qa_control",
+        "sandbox_containment",
+        "source_review",
+        "source_review_transport",
+        "speech_sanitizer",
+        "speech_speed",
+        "system_agents",
+        "voice_flow_paths",
+        "watcher_bus",
+        "window_placement"
+      ]
     },
     "live": {
       "command": "scripts/test-agent-harness.sh --live",
-      "description": "Unit gate plus pinned real Codex/OpenCode runtime smoke and canary."
+      "description": "Unit gate plus pinned real Codex/OpenCode runtime smoke and canary.",
+      "required_suites": [
+        "model_gateway",
+        "agent_tool_server",
+        "opencode_live_turn",
+        "opencode_supervisor",
+        "codex_live_turn",
+        "runtime_canary"
+      ]
     },
     "e2e": {
       "command": "scripts/test-agent-harness.sh --e2e",
-      "description": "Live gate plus isolated signed-app UI, hotkey, tool, failure, and persistence checks."
+      "description": "Live gate plus isolated signed-app UI, hotkey, tool, failure, and persistence checks.",
+      "required_suites": [
+        "signed_e2e"
+      ]
     },
     "release": {
       "command": "scripts/test-agent-harness.sh --release",
-      "description": "E2E gate plus the four-hour three-agent soak and release evidence audit."
+      "description": "E2E gate plus the four-hour three-agent soak and release evidence audit.",
+      "required_suites": [
+        "release_soak"
+      ]
     }
   },
   "tests": [
     {
       "id": "tests/annotations/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "annotations"
+      ]
     },
     {
       "id": "contract:capture_bundle",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "capture_store"
+      ]
     },
     {
       "id": "contract:capture_frame_dedupe",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "capture_store"
+      ]
     },
     {
       "id": "contract:capture_pruning",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "capture_store"
+      ]
     },
     {
       "id": "contract:capture_recent_list",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "capture_store"
+      ]
     },
     {
       "id": "contract:dirty_turn_recovery",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "assistant_history"
+      ]
     },
     {
       "id": "contract:job_budget",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ]
     },
     {
       "id": "contract:job_cancel",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ]
     },
     {
       "id": "contract:job_concurrency",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ]
     },
     {
       "id": "contract:job_exclusion",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ]
     },
     {
       "id": "contract:job_idempotency",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ]
     },
     {
       "id": "contract:job_leases",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ]
     },
     {
       "id": "contract:job_model_pin",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ]
     },
     {
       "id": "contract:job_retry_attempts",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ]
     },
     {
       "id": "contract:job_triggers",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_annotate_screen",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_check_messages",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_clear_annotations",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_get_latest_capture",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_get_recent_dictations",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_list_captures",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_list_overlays",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_remove_overlay",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_report_to_user",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_set_session_name",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_show_guide",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_show_panel",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_take_screenshot",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_update_guide",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:mcp_wait_for_message",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:memory_ledger",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ]
     },
     {
       "id": "contract:memory_revision",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ]
     },
     {
       "id": "contract:model_catalog",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "openrouter_models"
+      ]
     },
     {
       "id": "contract:overlay_documents",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "overlay_contracts"
+      ]
     },
     {
       "id": "contract:prompt_layers",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_prompt"
+      ]
     },
     {
       "id": "contract:runtime_binding_switch",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "assistant_history"
+      ]
     },
     {
       "id": "contract:runtime_failure_note",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:skill_manifest",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ]
     },
     {
       "id": "contract:skill_projection",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ]
     },
     {
       "id": "contract:skill_validation",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ]
     },
     {
       "id": "contract:sync_dedupe_upsert",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:sync_ingest",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:sync_pairing",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:sync_recovery",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:tool_results",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ]
     },
     {
       "id": "contract:tool_schemas",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ]
     },
     {
       "id": "contract:tts_configuration",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "contract:watcher_activity",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ]
     },
     {
       "id": "contract:watcher_camera",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ]
     },
     {
       "id": "contract:watcher_capture",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ]
     },
     {
       "id": "contract:watcher_lock",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ]
     },
     {
       "id": "contract:watcher_retention",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ]
     },
     {
       "id": "contract:watcher_review",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ]
     },
     {
       "id": "e2e:accessibility_labels",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:annotation_escape",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:assistant_callback_reduction",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:assistant_image",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:assistant_interrupt",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:continuous_capture",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:dictate_hold",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:dictate_inbox",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:dictate_snapshot",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:double_select_speech",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:escape_panic",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:ghost_pushes",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:install_signature",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:job_model_pin",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:job_result_push",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:launch_relaunch",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:live_reply_speech",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:message_speaker",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:migration_presentation",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:no_arrival_autoplay",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:overlay_file_poll",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:overlay_session_scope",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:overlay_user_close",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:paste_fallback",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:pasteboard_write",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:permission_prompt",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:push_close_keep",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:push_stack_persistence",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:push_trash_delete",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:qa_physical_input_isolation",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:runtime_selector",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:runtime_selector_running",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:session_slots",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:tts_barge_in",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:tts_speak",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:tts_transport",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "e2e:unread_ring",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "failure:job_lease_recovery",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_supervisor",
+        "agent_jobs"
+      ]
     },
     {
       "id": "failure:job_timeout",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_supervisor"
+      ]
     },
     {
       "id": "failure:opencode_restart",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "live:codex_discovery_auth",
-      "runner": "live"
+      "runner": "live",
+      "suites": [
+        "codex_live_turn"
+      ]
     },
     {
       "id": "live:codex_image_interrupt",
-      "runner": "live"
+      "runner": "live",
+      "suites": [
+        "codex_live_turn"
+      ]
     },
     {
       "id": "live:codex_new_resume",
-      "runner": "live"
+      "runner": "live",
+      "suites": [
+        "codex_live_turn"
+      ]
     },
     {
       "id": "live:opencode_image_read",
-      "runner": "live"
+      "runner": "live",
+      "suites": [
+        "opencode_live_turn"
+      ]
     },
     {
       "id": "live:opencode_session_stream",
-      "runner": "live"
+      "runner": "live",
+      "suites": [
+        "opencode_live_turn"
+      ]
     },
     {
       "id": "live:skill_runtime_parity",
-      "runner": "live"
+      "runner": "live",
+      "suites": [
+        "runtime_canary"
+      ]
     },
     {
       "id": "scripts/test-agent-harness.sh:compile_app",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "app"
+      ]
     },
     {
       "id": "security:capability_scope",
-      "runner": "live"
+      "runner": "live",
+      "suites": [
+        "agent_tool_server"
+      ]
     },
     {
       "id": "security:child_environment",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "codex_runtime",
+        "opencode_http"
+      ]
     },
     {
       "id": "security:config_isolation",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "security:log_redaction",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_permissions"
+      ]
     },
     {
       "id": "security:loopback_bind",
-      "runner": "unit"
+      "runner": "live",
+      "suites": [
+        "opencode_supervisor"
+      ]
     },
     {
       "id": "security:mcp_allowlist",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_permissions"
+      ]
     },
     {
       "id": "security:memory_boundaries",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ]
     },
     {
       "id": "security:model_catalog_secret",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "openrouter_models"
+      ]
     },
     {
       "id": "security:path_containment",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities",
+        "sandbox_containment"
+      ]
     },
     {
       "id": "security:permission_policy",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "security:provider_key_canary",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "security:release_qa_absent",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "app"
+      ]
     },
     {
       "id": "security:runtime_auth",
-      "runner": "live"
+      "runner": "live",
+      "suites": [
+        "opencode_supervisor"
+      ]
     },
     {
       "id": "security:skill_isolation",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ]
     },
     {
       "id": "security:tool_session_isolation",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ]
     },
     {
       "id": "security:tool_token_replay",
-      "runner": "live"
+      "runner": "live",
+      "suites": [
+        "agent_tool_server"
+      ]
     },
     {
       "id": "soak:three_agents",
-      "runner": "release"
+      "runner": "release",
+      "suites": [
+        "signed_e2e",
+        "release_soak"
+      ]
     },
     {
       "id": "tests/agent_permissions/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_permissions"
+      ]
     },
     {
       "id": "tests/agents_navigation/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agents_navigation"
+      ]
     },
     {
       "id": "tests/assistant_continuity/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "assistant_continuity"
+      ]
     },
     {
       "id": "tests/assistant_history/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "assistant_history"
+      ]
     },
     {
       "id": "tests/assistant_wake/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "assistant_wake"
+      ]
     },
     {
       "id": "tests/assistants/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "assistants"
+      ]
     },
     {
       "id": "tests/audio_recorder/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "audio_recorder"
+      ]
     },
     {
       "id": "tests/capture_clipboard/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "capture_clipboard"
+      ]
     },
     {
       "id": "tests/capture_routing/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "capture_routing"
+      ]
     },
     {
       "id": "tests/codex_runtime/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "codex_runtime"
+      ]
     },
     {
       "id": "tests/hotkey_precedence/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "hotkey_precedence"
+      ]
     },
     {
       "id": "tests/model_gateway/main.swift",
-      "runner": "unit"
+      "runner": "live",
+      "suites": [
+        "model_gateway"
+      ]
     },
     {
       "id": "tests/opencode_runtime/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "opencode_runtime"
+      ]
     },
     {
       "id": "tests/opencode_supervisor/main.swift",
-      "runner": "unit"
+      "runner": "live",
+      "suites": [
+        "opencode_supervisor"
+      ]
     },
     {
       "id": "tests/opencode_updater/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "opencode_updater"
+      ]
     },
     {
       "id": "tests/openrouter_model_picker/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "openrouter_model_picker"
+      ]
     },
     {
       "id": "tests/openrouter_models/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "openrouter_models"
+      ]
     },
     {
       "id": "tests/player/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "player"
+      ]
     },
     {
       "id": "tests/sandbox_containment/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "sandbox_containment"
+      ]
     },
     {
       "id": "tests/speech_sanitizer/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "speech_sanitizer"
+      ]
     },
     {
       "id": "tests/speech_speed/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "speech_speed"
+      ]
     },
     {
       "id": "tests/system_agents/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "system_agents"
+      ]
     },
     {
       "id": "tests/test_backend_protocol.py",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "backend_protocol"
+      ]
     },
     {
       "id": "tests/voice_flow_paths/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "voice_flow_paths"
+      ]
     },
     {
       "id": "tool:computer_control",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ]
     },
     {
       "id": "tool:computer_screenshot",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ]
     },
     {
       "id": "tool:context",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ]
     },
     {
       "id": "tool:memory",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ]
     },
     {
       "id": "tool:overlay",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ]
     },
     {
       "id": "tool:user_interaction",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ]
     },
     {
       "id": "visual:assistant_receipt",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "visual:automation_model_picker",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "visual:job_status",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "visual:overlay_coordinates",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "visual:pill_modes",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "visual:runtime_default",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "visual:runtime_health",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "visual:settings_model_picker",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "visual:watcher_status",
-      "runner": "e2e"
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ]
     },
     {
       "id": "tests/data_sources/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "data_sources"
+      ]
     },
     {
       "id": "tests/source_review/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "source_review"
+      ]
     },
     {
       "id": "tests/data_sources/ui/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "data_sources_ui"
+      ]
     },
     {
       "id": "tests/codex_appserver/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "codex_appserver"
+      ]
     },
     {
       "id": "tests/claude_code_runtime/main.swift",
-      "runner": "unit"
+      "runner": "unit",
+      "suites": [
+        "claude_code_runtime"
+      ]
+    },
+    {
+      "id": "tests/test_evidence.py",
+      "runner": "unit",
+      "suites": [
+        "evidence"
+      ]
+    },
+    {
+      "id": "tests/test_harness_cli.py",
+      "runner": "unit",
+      "suites": [
+        "harness_cli"
+      ]
+    },
+    {
+      "id": "tests/test_fake_openai_server.py",
+      "runner": "unit",
+      "suites": [
+        "fake_openai_server"
+      ]
     }
   ]
 }

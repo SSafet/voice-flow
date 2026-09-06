@@ -34,7 +34,7 @@ private func waitFor(_ message: String, timeout: TimeInterval = 4,
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
         if condition() { return }
-        Thread.sleep(forTimeInterval: 0.02)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
     }
     expect(false, message)
 }
@@ -63,7 +63,7 @@ waitFor("capture metadata was not serialized") {
     return meta.transcript == "ordered narration" && meta.frames.count == 2
         && meta.frames.map(\.file) == meta.frames.map(\.file).sorted()
 }
-expect(finalized?.id == summary?.id, "capture finalization event did not fire exactly once")
+waitFor("capture finalization event did not fire") { finalized?.id == summary?.id }
 let latest = CaptureStore.latestBundle()
 expect(latest?.meta.id == summary?.id, "latest capture retrieval did not return newest bundle")
 expect(CaptureStore.listBundles(limit: 1).count == 1,
@@ -111,5 +111,79 @@ guard let saved = NSImage(contentsOfFile: pastedPath),
 let ratio = Double(rep.pixelsWide) / Double(rep.pixelsHigh)
 expect(abs(ratio - 4.0) < 0.05,
        "pasted image lost its aspect ratio (got \(rep.pixelsWide)x\(rep.pixelsHigh))")
+
+// The durable capture event must describe only frames actually saved, and
+// both files must already be readable when a capture-triggered job starts.
+let durableStore = CaptureStore()
+var durableCallbacks = 0
+var durableEventWasReadable = false
+durableStore.onFinalized = { final in
+    durableCallbacks += 1
+    let meta = CaptureStore.readMeta(in: final.directory)
+    let markdown = try? String(contentsOfFile: final.transcriptPath)
+    durableEventWasReadable = meta?.transcript == "durable narration"
+        && markdown?.contains("durable narration") == true
+        && final.frameCount == 0 && final.framePaths.isEmpty
+        && meta?.frames.isEmpty == true
+}
+durableStore.beginSession(runId: UUID())
+durableStore.addFrame(Data("not an image".utf8))
+_ = durableStore.endSession(transcript: "durable narration")
+waitFor("durable capture event did not arrive") { durableCallbacks == 1 }
+expect(durableEventWasReadable, "capture event preceded durable files or included a failed frame")
+
+var revisedEventWasReadable = false
+let provisionalStore = CaptureStore()
+provisionalStore.onFinalized = { final in
+    let meta = CaptureStore.readMeta(in: final.directory)
+    let markdown = try? String(contentsOfFile: final.transcriptPath)
+    revisedEventWasReadable = meta?.transcript == "revised narration"
+        && markdown?.contains("revised narration") == true
+}
+provisionalStore.beginSession(runId: UUID())
+let provisional = provisionalStore.endSession(transcript: nil, keepEmpty: true)!
+_ = provisionalStore.updateTranscript("revised narration", in: provisional)
+waitFor("revised capture event preceded durable narration") { revisedEventWasReadable }
+
+// A persistence failure must not launch a capture job for narration that
+// was never saved. A later successful close drains the same serial queue.
+let failingStore = CaptureStore()
+var completedIDs: [String] = []
+failingStore.onFinalized = { completedIDs.append($0.id) }
+failingStore.beginSession(runId: UUID())
+let failing = failingStore.endSession(transcript: nil, keepEmpty: true)!
+waitFor("provisional failure fixture was not saved") {
+    CaptureStore.readMeta(in: failing.directory) != nil
+}
+try FileManager.default.removeItem(atPath: failing.transcriptPath)
+try FileManager.default.createDirectory(atPath: failing.transcriptPath, withIntermediateDirectories: true)
+_ = failingStore.updateTranscript("unsaved narration", in: failing)
+failingStore.beginSession(runId: UUID())
+let barrier = failingStore.endSession(transcript: "next successful capture")!
+waitFor("successful capture did not follow failed persistence") { completedIDs.contains(barrier.id) }
+expect(completedIDs == [barrier.id], "failed persistence emitted a capture-completed event")
+
+// Existing screenshots must not outrank a fresh pasted attachment just
+// because their names begin with "shot-" instead of "pasted-".
+let shots = CaptureStore.baseDir.appendingPathComponent("shots")
+for existing in try FileManager.default.contentsOfDirectory(at: shots, includingPropertiesForKeys: nil) {
+    try FileManager.default.removeItem(at: existing)
+}
+for index in 0..<60 {
+    let old = shots.appendingPathComponent("shot-2000-01-01-\(index).jpg")
+    try red.write(to: old)
+    try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: Double(index))],
+                                         ofItemAtPath: old.path)
+}
+guard let retainedPaste = CaptureStore.savePastedImage(wide) else {
+    fputs("FAIL: could not save retention fixture\n", stderr); exit(1)
+}
+expect(FileManager.default.fileExists(atPath: retainedPaste),
+       "new pasted attachment was pruned behind older screenshots")
+expect(!FileManager.default.fileExists(atPath: shots.appendingPathComponent("shot-2000-01-01-0.jpg").path),
+       "oldest screenshot was not pruned")
+let retainedImages = try FileManager.default.contentsOfDirectory(at: shots, includingPropertiesForKeys: nil)
+expect(retainedImages.count == 60,
+       "mixed screenshot retention exceeded its limit")
 
 print("capture store tests passed")

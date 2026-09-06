@@ -237,6 +237,30 @@ do {
            "the queued reply was not delivered after reopen")
 }
 
+// An unscoped message wakes every eligible listener but can only be claimed
+// once. Losing that race must not turn a live listener into a false timeout.
+do {
+    let inbox = makeInbox("competing-waiters")
+    let a = startWait(inbox, session: "A")
+    let b = startWait(inbox, session: "B")
+    expect(waitUntil { inbox.hasWaiter(exactSession: "A") && inbox.hasWaiter(exactSession: "B") },
+           "competing listeners should both park")
+    inbox.add(text: "shared message", attachments: [])
+    expect(waitUntil { a.box.get() != nil || b.box.get() != nil },
+           "one listener should claim the shared message")
+    expect(!waitUntil(timeout: 0.1) { a.box.get() != nil && b.box.get() != nil },
+           "the listener that loses a shared-message race must keep waiting")
+    let remainingSession = a.box.get() == nil ? "A" : "B"
+    let remaining = remainingSession == "A" ? a : b
+    expect(inbox.hasWaiter(exactSession: remainingSession),
+           "the remaining listener should stay registered")
+    inbox.add(text: "next message", attachments: [], session: remainingSession)
+    expect(remaining.done.wait(timeout: .now() + 0.5) == .success,
+           "the remaining listener should receive its next message")
+    expect(texts(remaining.box.get()?.messages ?? []) == ["next message"],
+           "a shared-message wake must not end the losing session's listener")
+}
+
 if failures > 0 {
     fputs("\(failures) inbox test(s) failed\n", stderr)
     exit(1)
