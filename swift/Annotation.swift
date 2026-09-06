@@ -348,8 +348,8 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
     }
     var color: NSColor = AnnotationColors[0] {
         didSet {
-            textEditor?.textColor = color
-            textEditor?.insertionPointColor = color
+            if let editor = textEditor { styleEditor(editor) }
+            textChrome?.color = color
             onContentChanged?()
             onSelectionChanged?()
             invalidateCursorRing()
@@ -357,7 +357,7 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
     }
     var size: AnnotationSize = .medium {
         didSet {
-            textEditor?.font = Self.annotationFont(ofSize: size.fontSize)
+            if let editor = textEditor { styleEditor(editor) }
             onContentChanged?()
             onSelectionChanged?()
             invalidateCursorRing()
@@ -390,6 +390,8 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
     private var activeShape: (from: CGPoint, to: CGPoint)?
     private var textEditor: AnnotationTextEditor?
     private var textEditorOrigin: CGPoint = .zero
+    private var textChrome: AnnotationTextChrome?
+    private var editorFrameObserver: NSObjectProtocol?
     private var undoStack: [Edit] = []
     private var redoStack: [Edit] = []
     private var cursorPoint: CGPoint?
@@ -673,10 +675,7 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
             x: point.x, y: point.y - fontSize * 0.7,
             width: editorWidth, height: fontSize + 12
         ))
-        editor.font = Self.annotationFont(ofSize: fontSize)
-        editor.textColor = color
-        editor.insertionPointColor = color
-        editor.backgroundColor = NSColor.black.withAlphaComponent(0.25)
+        editor.backgroundColor = AnnotationTextChrome.ground
         editor.drawsBackground = true
         editor.isRichText = false
         editor.isAutomaticQuoteSubstitutionEnabled = false
@@ -691,12 +690,85 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         editor.maxSize = NSSize(width: editorWidth, height: bounds.height - point.y)
         editor.onCommit = { [weak self] in self?.commitPendingText() }
         editor.onChange = { [weak self] in self?.onContentChanged?() }
+        editor.onSizeStep = { [weak self] delta in self?.stepSize(delta) }
+        styleEditor(editor)
+
+        // The box around the note: drag it by the header, resize it by the
+        // corner, step the text size, or tick it done — all without leaving
+        // the keyboard-free flow of writing on top of things.
+        let chrome = AnnotationTextChrome(frame: AnnotationTextChrome.frame(around: editor.frame))
+        chrome.color = color
+        chrome.onMove = { [weak self] delta in self?.moveTextBox(by: delta) }
+        chrome.onResize = { [weak self] delta in self?.resizeTextBox(by: delta) }
+        chrome.onSizeStep = { [weak self] delta in self?.stepSize(delta) }
+        chrome.onDone = { [weak self] in self?.commitPendingText() }
+        addSubview(chrome)
         addSubview(editor)
+        editor.postsFrameChangedNotifications = true
+        editorFrameObserver = NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification, object: editor, queue: .main
+        ) { [weak self] _ in self?.layoutTextChrome() }
         window?.makeFirstResponder(editor)
         textEditor = editor
+        textChrome = chrome
         textEditorOrigin = editor.frame.origin
         cursorPoint = nil
         needsDisplay = true
+    }
+
+    /// Outlined glyphs in the live colour, so a note reads on top of anything
+    /// even before the opaque box is gone.
+    private func styleEditor(_ editor: AnnotationTextEditor) {
+        let attributes = Self.textAttributes(color: color, pointSize: size.fontSize)
+        editor.font = Self.annotationFont(ofSize: size.fontSize)
+        editor.textColor = color
+        editor.insertionPointColor = color
+        editor.typingAttributes = attributes
+        if let storage = editor.textStorage, storage.length > 0 {
+            storage.addAttributes(attributes, range: NSRange(location: 0, length: storage.length))
+        }
+    }
+
+    static func textAttributes(color: NSColor, pointSize: CGFloat) -> [NSAttributedString.Key: Any] {
+        [
+            .font: annotationFont(ofSize: pointSize),
+            .foregroundColor: color,
+            .strokeColor: NSColor.black.withAlphaComponent(0.85),
+            .strokeWidth: -2.5,  // negative: fill and outline
+        ]
+    }
+
+    private func layoutTextChrome() {
+        guard let editor = textEditor, let chrome = textChrome else { return }
+        chrome.frame = AnnotationTextChrome.frame(around: editor.frame)
+        chrome.needsDisplay = true
+    }
+
+    private func moveTextBox(by delta: CGPoint) {
+        guard let editor = textEditor else { return }
+        let frame = editor.frame
+        let origin = CGPoint(
+            x: max(0, min(bounds.width - frame.width, frame.minX + delta.x)),
+            y: max(AnnotationTextChrome.headerHeight + 4, min(bounds.height - frame.height, frame.minY + delta.y))
+        )
+        editor.setFrameOrigin(origin)
+        editor.maxSize = NSSize(width: frame.width, height: bounds.height - origin.y)
+        textEditorOrigin = origin
+        layoutTextChrome()
+        onContentChanged?()
+    }
+
+    private func resizeTextBox(by delta: CGSize) {
+        guard let editor = textEditor else { return }
+        let frame = editor.frame
+        let width = max(120, min(bounds.width - frame.minX, frame.width + delta.width))
+        let minHeight = max(size.fontSize + 12, editor.minSize.height + delta.height)
+        editor.minSize = NSSize(width: width, height: minHeight)
+        editor.maxSize = NSSize(width: width, height: max(minHeight, bounds.height - frame.minY))
+        editor.setFrameSize(NSSize(width: width, height: max(minHeight, frame.height)))
+        editor.sizeToFit()
+        layoutTextChrome()
+        onContentChanged?()
     }
 
     func commitPendingText() {
@@ -725,7 +797,11 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
         window?.makeFirstResponder(self)
         editor.undoManager?.removeAllActions()
         editor.allowsUndo = false
+        if let observer = editorFrameObserver { NotificationCenter.default.removeObserver(observer) }
+        editorFrameObserver = nil
         editor.removeFromSuperview()
+        textChrome?.removeFromSuperview()
+        textChrome = nil
         textEditor = nil
     }
 
@@ -919,11 +995,8 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
             shadow.shadowColor = NSColor.black.withAlphaComponent(0.6)
             shadow.shadowBlurRadius = 3
             shadow.shadowOffset = NSSize(width: 0, height: 1)
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: Self.annotationFont(ofSize: pointSize),
-                .foregroundColor: textColor,
-                .shadow: shadow,
-            ]
+            var attributes = Self.textAttributes(color: textColor, pointSize: pointSize)
+            attributes[.shadow] = shadow
             // Same geometry as the editor: wrap at its width, draw from its origin.
             let rect = NSRect(
                 x: origin.x + 3, y: origin.y + 2,
@@ -1000,6 +1073,8 @@ final class AnnotationCanvas: NSView, NSUserInterfaceValidations {
 final class AnnotationTextEditor: NSTextView {
     var onCommit: (() -> Void)?
     var onChange: (() -> Void)?
+    /// ⌘[ / ⌘] while typing step the shared size dial.
+    var onSizeStep: ((Int) -> Void)?
     private lazy var textUndoManager: UndoManager = {
         let manager = UndoManager()
         for name in [NSNotification.Name.NSUndoManagerDidUndoChange, NSNotification.Name.NSUndoManagerDidRedoChange] {
@@ -1024,11 +1099,150 @@ final class AnnotationTextEditor: NSTextView {
             onCommit?()
             return
         }
+        if event.modifierFlags.contains(.command), let onSizeStep {
+            switch event.charactersIgnoringModifiers {
+            case "[": onSizeStep(-1); return
+            case "]": onSizeStep(1); return
+            default: break
+            }
+        }
         super.keyDown(with: event)
     }
 
     override func cancelOperation(_ sender: Any?) {
         onCommit?()
+    }
+}
+
+// ── Text box chrome ─────────────────────────────────────
+
+/// The opaque frame around a note being written: a header to drag it by,
+/// A− / A+ / ✓ buttons, and a corner handle that resizes the box. Sits under
+/// the editor in the canvas, so the editor keeps every click inside itself.
+final class AnnotationTextChrome: NSView {
+    enum Button: CaseIterable { case smaller, bigger, done }
+
+    static let ground = NSColor(r: 28, g: 26, b: 24)
+    static let headerHeight: CGFloat = 22
+    static let pad: CGFloat = 4
+    static let handle: CGFloat = 14
+    private static let buttonWidth: CGFloat = 26
+
+    var color: NSColor = AnnotationColors[0] { didSet { needsDisplay = true } }
+    var onMove: ((CGPoint) -> Void)?
+    var onResize: ((CGSize) -> Void)?
+    var onSizeStep: ((Int) -> Void)?
+    var onDone: (() -> Void)?
+
+    private enum Drag { case move, resize }
+    private var drag: Drag?
+    private var lastPoint: CGPoint = .zero
+
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    static func frame(around editor: NSRect) -> NSRect {
+        NSRect(x: editor.minX - pad, y: editor.minY - headerHeight - pad,
+               width: editor.width + pad * 2,
+               height: editor.height + headerHeight + pad * 2 + handle)
+    }
+
+    func rect(for button: Button) -> NSRect {
+        let index = CGFloat(Button.allCases.firstIndex(of: button) ?? 0)
+        let count = CGFloat(Button.allCases.count)
+        return NSRect(x: bounds.width - Self.pad - (count - index) * Self.buttonWidth,
+                      y: 1, width: Self.buttonWidth, height: Self.headerHeight - 2)
+    }
+
+    var handleRect: NSRect {
+        NSRect(x: bounds.width - Self.handle - 2, y: bounds.height - Self.handle - 2,
+               width: Self.handle, height: Self.handle)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6)
+        Self.ground.setFill()
+        box.fill()
+        color.setStroke()
+        box.lineWidth = 2
+        box.stroke()
+
+        // Header: grip dots on the left, the buttons on the right.
+        let dim = NSColor.white.withAlphaComponent(0.55)
+        dim.setFill()
+        for row in 0..<2 {
+            for column in 0..<3 {
+                NSBezierPath(ovalIn: NSRect(x: 10 + CGFloat(column) * 5, y: 7 + CGFloat(row) * 5,
+                                            width: 2.5, height: 2.5)).fill()
+            }
+        }
+        let labelAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: dim,
+        ]
+        ("drag" as NSString).draw(at: NSPoint(x: 30, y: 4), withAttributes: labelAttributes)
+        let captions: [Button: (String, CGFloat)] = [.smaller: ("A−", 11), .bigger: ("A+", 13), .done: ("✓", 13)]
+        for button in Button.allCases {
+            let (caption, fontSize) = captions[button]!
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
+                .foregroundColor: button == .done ? color : NSColor.white,
+            ]
+            let size = (caption as NSString).size(withAttributes: attributes)
+            let target = rect(for: button)
+            (caption as NSString).draw(at: NSPoint(x: target.midX - size.width / 2, y: target.midY - size.height / 2),
+                                       withAttributes: attributes)
+        }
+
+        // Corner handle: two diagonal grip lines.
+        let handle = handleRect
+        dim.setStroke()
+        for offset in [4.0, 9.0] as [CGFloat] {
+            let line = NSBezierPath()
+            line.move(to: NSPoint(x: handle.maxX - 2, y: handle.maxY - offset))
+            line.line(to: NSPoint(x: handle.maxX - offset, y: handle.maxY - 2))
+            line.lineWidth = 1.5
+            line.stroke()
+        }
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(NSRect(x: 0, y: 0, width: bounds.width, height: Self.headerHeight), cursor: .openHand)
+        addCursorRect(handleRect, cursor: .crosshair)
+    }
+
+    // Deltas are measured in the canvas so the chrome's own movement never
+    // feeds back into the drag.
+    private func canvasPoint(_ event: NSEvent) -> CGPoint {
+        superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        for button in Button.allCases where rect(for: button).contains(point) {
+            switch button {
+            case .smaller: onSizeStep?(-1)
+            case .bigger: onSizeStep?(1)
+            case .done: onDone?()
+            }
+            return
+        }
+        drag = handleRect.contains(point) ? .resize : .move
+        lastPoint = canvasPoint(event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let drag else { return }
+        let point = canvasPoint(event)
+        let delta = CGPoint(x: point.x - lastPoint.x, y: point.y - lastPoint.y)
+        lastPoint = point
+        switch drag {
+        case .move: onMove?(delta)
+        case .resize: onResize?(CGSize(width: delta.x, height: delta.y))
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        drag = nil
     }
 }
 

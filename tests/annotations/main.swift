@@ -227,6 +227,57 @@ autoreleasepool {
     expect(canvas.tool == .text && editor.string == "typedp", "a tool key fired while typing a note")
     canvas.commitPendingText()
 }
+// The text box: opaque, outlined, draggable by its header, resizable by its
+// corner, with A−/A+ and ⌘[ ⌘] stepping the shared size dial.
+autoreleasepool {
+    canvas.size = .medium
+    let editor = startText("boxed note")
+    let chrome = canvas.subviews.compactMap { $0 as? AnnotationTextChrome }.first!
+    expect(editor.backgroundColor.alphaComponent == 1, "text box is translucent")
+    expect(((editor.typingAttributes[.strokeWidth] as? NSNumber)?.doubleValue ?? 0) < 0, "typed text has no outline")
+    expect(canvas.subviews.firstIndex(of: chrome)! < canvas.subviews.firstIndex(of: editor)!,
+           "chrome sits above the editor")
+    func chromeMouse(_ type: NSEvent.EventType, _ chromePoint: NSPoint, dx: CGFloat = 0, dy: CGFloat = 0) -> NSEvent {
+        var canvasPoint = chrome.convert(chromePoint, to: canvas)
+        canvasPoint.x += dx; canvasPoint.y += dy
+        let windowPoint = canvas.convert(canvasPoint, to: nil)
+        return NSEvent.mouseEvent(with: type, location: windowPoint, modifierFlags: [], timestamp: 0,
+                                  windowNumber: window.windowNumber, context: nil,
+                                  eventNumber: 1, clickCount: 1, pressure: 1)!
+    }
+    let originBefore = editor.frame.origin
+    let header = NSPoint(x: 60, y: 10)
+    chrome.mouseDown(with: chromeMouse(.leftMouseDown, header))
+    chrome.mouseDragged(with: chromeMouse(.leftMouseDragged, header, dx: 40, dy: 30))
+    chrome.mouseUp(with: chromeMouse(.leftMouseUp, header, dx: 40, dy: 30))
+    expect(editor.frame.origin == CGPoint(x: originBefore.x + 40, y: originBefore.y + 30),
+           "header drag did not move the box: \(editor.frame.origin) vs \(originBefore)")
+    expect(chrome.frame == AnnotationTextChrome.frame(around: editor.frame), "chrome did not follow the editor")
+    let widthBefore = editor.frame.width
+    let corner = NSPoint(x: chrome.handleRect.midX, y: chrome.handleRect.midY)
+    chrome.mouseDown(with: chromeMouse(.leftMouseDown, corner))
+    chrome.mouseDragged(with: chromeMouse(.leftMouseDragged, corner, dx: -60, dy: 20))
+    chrome.mouseUp(with: chromeMouse(.leftMouseUp, corner, dx: -60, dy: 20))
+    expect(editor.frame.width == widthBefore - 60, "corner drag did not resize the box: \(editor.frame.width)")
+    expect(editor.frame.height >= editor.minSize.height && editor.minSize.height > editor.font!.pointSize + 12,
+           "corner drag did not make the box taller")
+    let bigger = chrome.rect(for: .bigger)
+    chrome.mouseDown(with: chromeMouse(.leftMouseDown, NSPoint(x: bigger.midX, y: bigger.midY)))
+    expect(canvas.size == .large && editor.font?.pointSize == 32, "A+ did not step the size")
+    let cmdBracket = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0,
+                                      windowNumber: window.windowNumber, context: nil, characters: "[",
+                                      charactersIgnoringModifiers: "[", isARepeat: false, keyCode: 33)!
+    editor.keyDown(with: cmdBracket)
+    expect(canvas.size == .medium && editor.string == "boxed note", "⌘[ did not step the size down without typing")
+    let movedOrigin = editor.frame.origin, movedWidth = editor.frame.width
+    let done = chrome.rect(for: .done)
+    chrome.mouseDown(with: chromeMouse(.leftMouseDown, NSPoint(x: done.midX, y: done.midY)))
+    expect(editor.superview == nil && chrome.superview == nil, "✓ did not commit and remove the box")
+    if case let .text(text, origin, _, pointSize, width) = canvas.items.last! {
+        expect(text == "boxed note" && origin == movedOrigin && width == movedWidth && pointSize == 22,
+               "committed note lost the moved/resized geometry")
+    } else { fatalError("boxed note changed kind") }
+}
 let roundTrip = try store.load()
 expect(roundTrip.count == canvas.items.count, "new mark kinds did not round-trip: \(roundTrip.count)")
 canvas.clear()

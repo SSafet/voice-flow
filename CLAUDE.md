@@ -208,7 +208,11 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   menu only reaches it when the app is active), ⌫ undoes the last mark, ⌘⌫
   clears and is itself undoable. The toolbar is a draggable HUD strip with the
   key printed under each control; while editing, an amber frame outlines each
-  display and a ring at the cursor previews the active colour and width.
+  display and a ring at the cursor previews the active colour and width. A
+  note being written sits in an opaque box (`AnnotationTextChrome`): drag it
+  by the header, resize it by the corner handle, A− / A+ or ⌘[ / ⌘] step the
+  shared size, ✓ or Escape commits; glyphs are outlined so text reads on
+  top of anything, committed notes included.
 
 ## MCP server — Voice Flow as Claude Code's interaction layer
 
