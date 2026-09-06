@@ -197,7 +197,18 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   before the reply finishes. The read-aloud hotkey doubles as *stop speech*;
   starting any recording barges in and silences playback.
 - Escape commits a pending annotation text note, then exits annotate mode; it
-  stays the panic button while the agent is acting.
+  stays the panic button while the agent is acting. Annotate mode
+  (`AnnotationOverlay`, `swift/Annotation.swift`) is keyboard-driven so the
+  mouse stays on the thing being marked: tools P draw · H highlight · L line ·
+  A arrow · R rectangle · C circle · N number stamp · T text · E eraser (Shift
+  constrains lines to 45°, rect→square, ellipse→circle); colours 1–6 (red,
+  amber, green, blue, magenta, white); one size dial S/M/L (`[` / `]`) that
+  sets pen width, highlighter width, shape stroke, badge diameter, and text
+  size together; ⌘Z / ⇧⌘Z undo/redo handled by the canvas itself (the Edit
+  menu only reaches it when the app is active), ⌫ undoes the last mark, ⌘⌫
+  clears and is itself undoable. The toolbar is a draggable HUD strip with the
+  key printed under each control; while editing, an amber frame outlines each
+  display and a ring at the cursor previews the active colour and width.
 
 ## MCP server — Voice Flow as Claude Code's interaction layer
 

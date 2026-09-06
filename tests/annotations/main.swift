@@ -136,6 +136,103 @@ autoreleasepool {
     expect(canvas.items.isEmpty && (try! store.load()).isEmpty, "Clear resurrected data")
 }
 
+// Keyboard control: tools, colours, sizes, undo/redo/clear — never while typing.
+func key(_ chars: String, keyCode: UInt16 = 0, _ flags: NSEvent.ModifierFlags = []) {
+    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                                 windowNumber: window.windowNumber, context: nil, characters: chars,
+                                 charactersIgnoringModifiers: chars, isARepeat: false, keyCode: keyCode)!
+    canvas.keyDown(with: event)
+}
+func shiftMouse(_ type: NSEvent.EventType, _ x: CGFloat, _ y: CGFloat) -> NSEvent {
+    NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: y), modifierFlags: [.shift],
+                       timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                       eventNumber: 1, clickCount: 1, pressure: 1)!
+}
+func drag(_ x1: CGFloat, _ y1: CGFloat, _ x2: CGFloat, _ y2: CGFloat) {
+    canvas.mouseDown(with: mouse(.leftMouseDown, x1, y1))
+    canvas.mouseDragged(with: mouse(.leftMouseDragged, (x1 + x2) / 2, (y1 + y2) / 2))
+    canvas.mouseUp(with: mouse(.leftMouseUp, x2, y2))
+}
+canvas.clear()
+canvas.tool = .pen; canvas.size = .medium; canvas.color = AnnotationColors[0]
+var selectionChanges = 0
+canvas.onSelectionChanged = { selectionChanges += 1 }
+key("a"); expect(canvas.tool == .arrow, "A did not pick the arrow tool")
+key("3"); expect(canvas.color == AnnotationColors[2], "3 did not pick the third colour")
+key("9"); expect(canvas.color == AnnotationColors[2], "an unbound digit changed the colour")
+key("]"); expect(canvas.size == .large, "] did not step the size up")
+key("]"); expect(canvas.size == .large, "size stepped past large")
+key("["); key("["); expect(canvas.size == .small, "[ did not step the size down")
+expect(selectionChanges == 5, "toolbar sync fired \(selectionChanges) times, expected 5")
+key("r")
+canvas.mouseDown(with: mouse(.leftMouseDown, 100, 100))
+canvas.mouseDragged(with: shiftMouse(.leftMouseDragged, 200, 150))
+expect(try! store.load().count == 1, "in-flight shape missing from disk")
+canvas.mouseUp(with: shiftMouse(.leftMouseUp, 200, 150))
+if case let .shape(kind, from, to, _, width) = canvas.items[0] {
+    let side = to.x - from.x  // the canvas is flipped: window y runs the other way
+    expect(kind == .rect && from == canvas.convert(NSPoint(x: 100, y: 100), from: nil)
+           && side == 100 && abs(to.y - from.y) == side,
+           "shift did not constrain the rectangle to a square: \(from) → \(to)")
+    expect(width == AnnotationSize.small.penWidth, "shape ignored the size dial")
+} else { fatalError("rectangle changed kind") }
+expect(try! store.load().count == 1, "completed shape was duplicated")
+key("a")
+canvas.mouseDown(with: mouse(.leftMouseDown, 0, 0))
+canvas.mouseUp(with: mouse(.leftMouseUp, 1, 1))
+expect(canvas.items.count == 1, "a click without a drag produced a shape")
+key("h"); drag(50, 400, 250, 400)
+if case let .highlight(_, _, width) = canvas.items[1] {
+    expect(width == AnnotationSize.small.highlightWidth, "highlighter ignored the size dial")
+} else { fatalError("highlight changed kind") }
+key("n")
+canvas.mouseDown(with: mouse(.leftMouseDown, 300, 300)); canvas.mouseUp(with: mouse(.leftMouseUp, 300, 300))
+canvas.mouseDown(with: mouse(.leftMouseDown, 340, 300)); canvas.mouseUp(with: mouse(.leftMouseUp, 340, 300))
+func numbers() -> [Int] {
+    canvas.items.compactMap { if case let .number(value, _, _, _) = $0 { return value }; return nil }
+}
+expect(numbers() == [1, 2], "number stamps did not count up: \(numbers())")
+canvas.undo()
+canvas.mouseDown(with: mouse(.leftMouseDown, 380, 300)); canvas.mouseUp(with: mouse(.leftMouseUp, 380, 300))
+expect(numbers() == [1, 2], "the counter did not follow undo: \(numbers())")
+key("e")
+let countBeforeErase = canvas.items.count
+canvas.mouseDown(with: mouse(.leftMouseDown, 302, 298))
+expect(canvas.items.count == countBeforeErase - 1 && numbers() == [2], "eraser did not remove only the mark under the click")
+canvas.mouseDown(with: mouse(.leftMouseDown, 700, 550))
+expect(canvas.items.count == countBeforeErase - 1, "eraser removed something on an empty click")
+canvas.undo()
+expect(numbers() == [1, 2], "undo did not put the erased mark back in order: \(numbers())")
+canvas.mouseDown(with: mouse(.leftMouseDown, 150, 100))  // on the square's top edge
+expect(canvas.items.count == countBeforeErase - 1, "eraser missed the rectangle edge")
+canvas.undo()
+let countBeforeClear = canvas.items.count
+key("\u{8}", keyCode: 51, [.command])
+expect(canvas.items.isEmpty, "⌘⌫ did not clear")
+key("z", keyCode: 6, [.command])
+expect(canvas.items.count == countBeforeClear, "⌘Z did not undo Clear")
+key("z", keyCode: 6, [.command, .shift])
+expect(canvas.items.isEmpty, "⇧⌘Z did not redo Clear")
+key("z", keyCode: 6, [.command])
+key("\u{8}", keyCode: 51)
+expect(canvas.items.count == countBeforeClear - 1, "⌫ did not undo the last mark")
+key("z", keyCode: 6, [.command, .shift])
+expect(canvas.items.count == countBeforeClear, "⇧⌘Z did not redo after ⌫")
+autoreleasepool {
+    let editor = startText("typed")
+    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                 windowNumber: window.windowNumber, context: nil, characters: "p",
+                                 charactersIgnoringModifiers: "p", isARepeat: false, keyCode: 35)!
+    editor.keyDown(with: event)
+    expect(canvas.tool == .text && editor.string == "typedp", "a tool key fired while typing a note")
+    canvas.commitPendingText()
+}
+let roundTrip = try store.load()
+expect(roundTrip.count == canvas.items.count, "new mark kinds did not round-trip: \(roundTrip.count)")
+canvas.clear()
+canvas.onSelectionChanged = nil
+canvas.tool = .pen; canvas.size = .medium
+
 // The checkpoint includes a stroke before mouse-up, and one copy after it.
 canvas.tool = .pen
 canvas.mouseDown(with: mouse(.leftMouseDown))
@@ -143,7 +240,7 @@ canvas.mouseDragged(with: mouse(.leftMouseDragged, 120, 220))
 expect(try! store.load().count == 1, "in-flight stroke missing from disk")
 canvas.mouseUp(with: mouse(.leftMouseUp, 150, 250))
 expect(try! store.load().count == 1, "completed stroke was duplicated")
-if case let .stroke(points, _) = try store.load()[0] {
+if case let .stroke(points, _, _) = try store.load()[0] {
     expect(points.count == 3, "stroke geometry did not round-trip")
 } else { fatalError("stroke changed kind") }
 
