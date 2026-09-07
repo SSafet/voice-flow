@@ -156,11 +156,11 @@ view hierarchy. The menu-bar "Dictation History" item and the pill's context
 menu open the panel on the Inbox tab.
 
 Rows expose individual accessible actions and accept Return/Space. Same-thread
-refresh keeps the mounted composer and its undo/selection state. Below 780
-points the composer's runtime/model/effort choices use a second row; attachments
-scroll horizontally. Setup forms keep independent drafts with their original
-revisions, and explicit Reload saved actions recover from conflicts. Behavioral
-proof lives in `tests/workspace_ui/`; run it with `--unit --only workspace_ui`.
+refresh keeps the mounted composer and its undo/selection state. The composer's
+access/runtime/model/effort choices and Send/Stop share one bottom row; live
+activity appears above it, and attachments scroll horizontally. Setup forms keep
+independent drafts with their original revisions, and explicit Reload saved
+actions recover from conflicts. Behavioral proof lives in `tests/workspace_ui/`; run it with `--unit --only workspace_ui`.
 
 ## Hotkey-driven agent flows (no panel required)
 

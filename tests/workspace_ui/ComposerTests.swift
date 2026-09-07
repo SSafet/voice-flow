@@ -53,7 +53,7 @@ func runComposerTests() {
         expect(composer.accessControl!.bounds.width >= composer.accessControl!.intrinsicContentSize.width - 1,
                "access mode must remain fully readable at width \(width)")
         expect(status.bounds.width >= 100, "running activity became unreadable at width \(width)")
-        expect(composer.modelControl!.bounds.width >= 100, "model control became unreadable at width \(width)")
+        expect(composer.modelControl!.bounds.width >= 50, "model control became unreadable at width \(width)")
         let stop = composer.convert(composer.stopControl.bounds, from: composer.stopControl)
         expect(stop.minX >= 0 && stop.maxX <= width && stop.width >= 24, "Stop must remain reachable at width \(width)")
         composer.attachments = (1...15).map { "/tmp/composer-fixture-\($0).png" }

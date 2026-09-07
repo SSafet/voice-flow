@@ -7,8 +7,8 @@ import Cocoa
 //  pinned to the bottom of the thread, with everything about the session
 //  around the text. Bottom-left is what the agent may do here — access
 //  mode, attach an image, dictate, snap the screen. Bottom-right is what
-//  answers — runtime, reasoning effort — plus the live status with a
-//  spinner, and Send, which becomes Stop while the turn runs.
+//  answers — runtime, model, reasoning effort — and Send, which becomes
+//  Stop while the turn runs. Live status sits just above the control row.
 //
 //  The box never disappears during a turn: the draft you type while the
 //  assistant works stays put, Return waits, Stop is one tap away. Attached
@@ -57,9 +57,8 @@ final class ComposerView: NSView {
     private let scroll = NSScrollView()
     private let placeholderLabel = NSTextField(labelWithString: "")
     private let bar = NSStackView()
-    private let modelBar = NSStackView()
-    private var modelBarHeight: NSLayoutConstraint!
-    private var compactBar = false
+    private let activityBar = NSStackView()
+    private var activityBarHeight: NSLayoutConstraint!
     private let accessPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let attachButton = NSButton()
     private let micButton = NSButton()
@@ -183,6 +182,10 @@ final class ComposerView: NSView {
         }
         // Access modes are short fixed labels; keep the permission choice legible.
         accessPopUp.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        // Preserve the short choices before shortening a long model name.
+        runtimePopUp.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        effortPopUp.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        modelPopUp.widthAnchor.constraint(greaterThanOrEqualToConstant: 50).isActive = true
         accessPopUp.action = #selector(accessChanged)
         accessPopUp.toolTip = "What the assistant may do on this Mac"
         accessPopUp.setAccessibilityLabel("Access mode")
@@ -247,18 +250,18 @@ final class ComposerView: NSView {
         bar.spacing = 8
         bar.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
         for view in [accessPopUp, attachButton, micButton, snapButton, spacer,
-                     spinner, statusLabel, runtimePopUp, modelPopUp, effortPopUp, sendButton, stopButton] {
+                     runtimePopUp, modelPopUp, effortPopUp, sendButton, stopButton] {
             bar.addArrangedSubview(view)
         }
 
-        modelBar.orientation = .horizontal
-        modelBar.alignment = .centerY
-        modelBar.spacing = 8
-        modelBar.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
-        let modelSpacer = NSView()
-        modelSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        modelBar.addArrangedSubview(modelSpacer)
-        modelBar.isHidden = true
+        activityBar.orientation = .horizontal
+        activityBar.alignment = .centerY
+        activityBar.spacing = 8
+        activityBar.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+        activityBar.addArrangedSubview(spinner)
+        activityBar.addArrangedSubview(statusLabel)
+        activityBar.addArrangedSubview(NSView())
+        activityBar.isHidden = true
 
         attachmentsScroll.drawsBackground = false
         attachmentsScroll.hasHorizontalScroller = true
@@ -275,14 +278,14 @@ final class ComposerView: NSView {
 
         box.translatesAutoresizingMaskIntoConstraints = false
         addSubview(box)
-        for view in [attachmentsScroll, scroll, placeholderLabel, bar, modelBar] as [NSView] {
+        for view in [attachmentsScroll, scroll, placeholderLabel, bar, activityBar] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             box.addSubview(view)
         }
 
         heightConstraint = scroll.heightAnchor.constraint(equalToConstant: minHeight)
         attachmentsHeight = attachmentsScroll.heightAnchor.constraint(equalToConstant: 0)
-        modelBarHeight = modelBar.heightAnchor.constraint(equalToConstant: 0)
+        activityBarHeight = activityBar.heightAnchor.constraint(equalToConstant: 0)
         attachmentsGap = scroll.topAnchor.constraint(equalTo: attachmentsScroll.bottomAnchor, constant: 0)
         NSLayoutConstraint.activate([
             box.topAnchor.constraint(equalTo: topAnchor),
@@ -297,15 +300,15 @@ final class ComposerView: NSView {
             attachmentsScroll.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -inset),
             scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 2),
             scroll.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -2),
-            bar.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 2),
+            activityBar.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 2),
+            activityBar.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            activityBar.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            activityBarHeight,
+            bar.topAnchor.constraint(equalTo: activityBar.bottomAnchor),
             bar.leadingAnchor.constraint(equalTo: box.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: box.trailingAnchor),
             bar.heightAnchor.constraint(equalToConstant: 34),
-            modelBar.topAnchor.constraint(equalTo: bar.bottomAnchor),
-            modelBar.leadingAnchor.constraint(equalTo: box.leadingAnchor),
-            modelBar.trailingAnchor.constraint(equalTo: box.trailingAnchor),
-            modelBarHeight,
-            modelBar.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -4),
+            bar.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -4),
             placeholderLabel.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: inset),
             placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: scroll.trailingAnchor, constant: -inset),
             placeholderLabel.topAnchor.constraint(equalTo: scroll.topAnchor, constant: inset),
@@ -342,7 +345,6 @@ final class ComposerView: NSView {
         micButton.isHidden = !controls.mic
         snapButton.isHidden = !controls.snap
         applyRunningState()
-        updateBarLayout()
     }
 
     private func fill(_ popUp: NSPopUpButton, _ options: [String], _ index: Int) {
@@ -388,6 +390,8 @@ final class ComposerView: NSView {
         snapButton.isEnabled = !isRunning
         micButton.isEnabled = !isRunning
         statusLabel.isHidden = statusLabel.stringValue.isEmpty
+        activityBar.isHidden = !isRunning && statusLabel.stringValue.isEmpty
+        activityBarHeight.constant = activityBar.isHidden ? 0 : 26
         spinner.isHidden = !isRunning
         if isRunning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         sendButton.isEnabled = !isRunning && !isEmpty
@@ -404,34 +408,11 @@ final class ComposerView: NSView {
     }
 
     override func layout() {
-        updateBarLayout()
+        bar.spacing = bounds.width < 540 ? 4 : 8
         super.layout()
         // Wrapping — and so the height — depends on the field's width, which
         // is only known once the panel has laid out.
         updateHeight()
-    }
-
-    /// Keep session choices readable when the panel is narrow; the primary
-    /// actions and current activity remain together above them.
-    private func updateBarLayout() {
-        let hasChoices = controls.map {
-            !$0.runtimeOptions.isEmpty || !$0.modelOptions.isEmpty || !$0.effortOptions.isEmpty
-        } ?? false
-        let compact = bounds.width > 0 && bounds.width < 780 && hasChoices
-        guard compact != compactBar else { return }
-        compactBar = compact
-        for popUp in [runtimePopUp, modelPopUp, effortPopUp] {
-            (popUp.superview as? NSStackView)?.removeArrangedSubview(popUp)
-            popUp.removeFromSuperview()
-            if compact {
-                modelBar.addArrangedSubview(popUp)
-            } else {
-                let index = bar.arrangedSubviews.firstIndex(of: sendButton) ?? bar.arrangedSubviews.count
-                bar.insertArrangedSubview(popUp, at: index)
-            }
-        }
-        modelBar.isHidden = !compact
-        modelBarHeight.constant = compact ? 30 : 0
     }
 
     @objc private func sendTapped() { submit() }
