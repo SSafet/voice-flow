@@ -206,4 +206,91 @@ expect(LocalAssistantSessionAdapter.slug(from: localId) == "flora", "local Assis
 expect(LocalAssistantSessionAdapter.slug(from: "mcp-session") == nil,
        "MCP ids must never be mistaken for local Assistant ids")
 
+let providerCalls = LockedCounter()
+let recovered = awaitOutcome(AssistantContinuityClassifier(runner: { _ in
+    throw ContinuityAPIFallback.Failure(message: "Reading additional input from stdin...\nYou have hit your usage limit")
+}, fallbackRunner: { _ in
+    providerCalls.increment()
+    return #"{"decision":"new","confidence":0.97,"reason":"new topic"}"#
+}), current: current, incoming: "Plan tomorrow's gym session")
+expect(recovered.decision == .new && !recovered.usedFallback && providerCalls.count == 1,
+       "subscription failure must still allow a new conversation via the API")
+expect(recovered.reason.contains("usage limit") && !recovered.reason.contains("stdin"), "recovery must retain the real cause")
+let bothFailed = awaitOutcome(AssistantContinuityClassifier(runner: { _ in
+    throw ContinuityAPIFallback.Failure(message: "Codex usage limit")
+}, fallbackRunner: { _ in throw ContinuityAPIFallback.Failure(message: "API HTTP 401") }),
+current: current, incoming: "New topic")
+expect(bothFailed.usedFallback && bothFailed.reason.contains("401") && bothFailed.reason.contains("usage limit"),
+       "total failure must retain both diagnostics for the visible fallback")
+let malformedRecovered = awaitOutcome(AssistantContinuityClassifier(runner: { _ in "broken" }, fallbackRunner: { _ in
+    #"{"decision":"reuse","confidence":0.9,"reason":"follow-up"}"#
+}), current: current, incoming: "And then?")
+expect(!malformedRecovered.usedFallback, "invalid primary output must use the API")
+let timeoutRecovered = awaitOutcome(AssistantContinuityClassifier(timeoutSeconds: 0.05, runner: { _ in
+    try await Task.sleep(nanoseconds: 2_000_000_000); return "late"
+}, fallbackRunner: { _ in #"{"decision":"new","confidence":1,"reason":"new topic"}"# }),
+current: current, incoming: "New topic")
+expect(timeoutRecovered.decision == .new && !timeoutRecovered.usedFallback, "primary timeout must leave API time")
+let noFallbackCalls = LockedCounter()
+_ = awaitOutcome(AssistantContinuityClassifier(runner: { _ in
+    #"{"decision":"reuse","confidence":1,"reason":"follow-up"}"#
+}, fallbackRunner: { _ in noFallbackCalls.increment(); return "" }), current: current, incoming: "And then?")
+expect(noFallbackCalls.count == 0, "valid primary decisions must not incur API work")
+expect(AssistantContinuityClassifier.failureReason("Reading additional input from stdin...\nBanner\nERROR: usage limit\n") == "ERROR: usage limit",
+       "diagnostics must select the useful last error")
+let apiConfig = ContinuityAPIFallback.Configuration(key: "test-key", baseURL: URL(string: "https://example.invalid/v1")!, model: "chosen/model")
+let apiRequest = try ContinuityAPIFallback.request(prompt: "conversation data", instructions: "edited brief", config: apiConfig)
+let payload = try JSONSerialization.jsonObject(with: apiRequest.httpBody!) as! [String: Any]
+expect(payload["model"] as? String == "chosen/model", "fallback must use the saved API model")
+let apiMessages = payload["messages"] as! [[String: String]]
+expect(apiMessages[0]["content"] == "edited brief" && apiMessages[1]["content"] == "conversation data", "edited instructions and data must stay separate")
+expect(payload["tools"] == nil && payload["max_tokens"] as? Int == 512, "fallback must be bounded and tool-free")
+let transportRecovery = awaitOutcome(AssistantContinuityClassifier(runner: { _ in throw StubFailure.processExit }, fallbackRunner: { prompt in
+    try await ContinuityAPIFallback.run(prompt, config: apiConfig, transport: { request in
+        let data = Data(#"{"choices":[{"message":{"content":"{\"decision\":\"new\",\"confidence\":0.99,\"reason\":\"new topic\"}"}}]}"#.utf8)
+        return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    })
+}), current: current, incoming: "New topic")
+expect(transportRecovery.decision == .new && !transportRecovery.usedFallback, "real API request/decoder must produce a decision")
+let apiDenied = awaitOutcome(AssistantContinuityClassifier(runner: { _ in throw StubFailure.processExit }, fallbackRunner: { prompt in
+    try await ContinuityAPIFallback.run(prompt, config: apiConfig, transport: { request in
+        (Data(#"{"error":{"message":"invalid credential test-key"}}"#.utf8),
+         HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!)
+    })
+}), current: current, incoming: "New topic")
+expect(apiDenied.usedFallback && apiDenied.reason.contains("401") && !apiDenied.reason.contains("test-key"),
+       "HTTP errors must be meaningful and redact the configured credential")
+let cancelledCalls = LockedCounter()
+let cancelDone = DispatchSemaphore(value: 0)
+let cancelledTask = Task {
+    let classifier = AssistantContinuityClassifier(runner: { _ in
+        try await Task.sleep(nanoseconds: 2_000_000_000); return "late"
+    }, fallbackRunner: { _ in cancelledCalls.increment(); return "" })
+    _ = await classifier.decide(current: current, incoming: "New topic")
+    cancelDone.signal()
+}
+cancelledTask.cancel(); cancelDone.wait()
+expect(cancelledCalls.count == 0, "cancellation must not start a paid fallback request")
+
+if ProcessInfo.processInfo.environment["VF_CONTINUITY_LIVE"] == "1" {
+    // Keep the credential in process memory; never print it or store it in evidence.
+    let proc = Process(); let pipe = Pipe()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+    proc.arguments = ["find-generic-password", "-s", "com.voiceflow.app", "-a", "agent_api_key", "-w"]
+    proc.standardOutput = pipe; proc.standardError = FileHandle.nullDevice
+    try proc.run()
+    let key = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)!.trimmingCharacters(in: .whitespacesAndNewlines)
+    proc.waitUntilExit(); expect(proc.terminationStatus == 0 && !key.isEmpty, "saved API credential required for live proof")
+    let settingsURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/voice-flow/settings.json")
+    let settings = try JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as! [String: Any]
+    let config = ContinuityAPIFallback.Configuration(key: key,
+        baseURL: URL(string: settings["agent_base_url"] as? String ?? "https://openrouter.ai/api/v1")!,
+        model: settings["agent_model"] as? String ?? "")
+    let live = awaitOutcome(AssistantContinuityClassifier(runner: { _ in
+        throw ContinuityAPIFallback.Failure(message: "Codex subscription unavailable (injected)")
+    }, fallbackRunner: { prompt in try await ContinuityAPIFallback.run(prompt, config: config) }),
+    current: current, incoming: "Unrelated new topic: plan my gym workout tomorrow.")
+    expect(live.decision == .new && !live.usedFallback, "real provider must recover when Codex is unavailable: \(live.reason)")
+    print("LIVE PASS: Codex unavailable → actual saved Assistant API model \(config.model) → new, confidence=\(live.confidence)")
+}
 print("assistant continuity tests passed")

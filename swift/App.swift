@@ -809,6 +809,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupCore() {
+        ContinuityAPIFallback.configuration = {
+            let settings = UserSettings.shared
+            return ContinuityAPIFallback.Configuration(
+                key: KeychainStore.shared.loadAgentAPIKey(),
+                baseURL: URL(string: settings.agentBaseURL) ?? URL(string: DefaultAgentBaseURL)!,
+                model: settings.agentModel)
+        }
         // The sandbox reads the granted roots and dial the same just-in-time
         // way the model gateway reads credentials, so a settings change applies
         // to the next runtime start without restarting the app (VF-59).
@@ -2302,6 +2309,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let outcome = await self.assistantContinuityDecision(
                     incoming: turn.displayText, staleRetries: 1)
                 vflog("assistant continuity: \(outcome.decision.rawValue) confidence=\(outcome.confidence) fallback=\(outcome.usedFallback) reason=\(outcome.reason)")
+                if outcome.usedFallback {
+                    self.replyBubble.showTransient("FLORA couldn’t decide — continuing this conversation. Check Continuity router in Assistants.", seconds: 6)
+                }
                 if outcome.decision == .new {
                     let conversation = self.agent.createConversation()
                     self.chatPanel.restoreAssistantConversation(conversation)

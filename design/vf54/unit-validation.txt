@@ -1,0 +1,8 @@
+capability catalog: 162 capabilities across 22 areas; MCP 15/15; registry 165/165
+OpenCode manifest: v1.17.11, 2 macOS architectures, digests valid
+RUN: compile assistant_continuity
+PASS: compile assistant_continuity (2s)
+RUN: assistant_continuity
+assistant continuity tests passed
+PASS: assistant_continuity (1s)
+agent harness: selected unit suite 'assistant_continuity' passed; full gate not run

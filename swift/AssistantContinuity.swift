@@ -94,17 +94,22 @@ final class AssistantContinuityClassifier {
     static let defaultRecentReuseSeconds: TimeInterval = 180
 
     private let runner: Runner
+    private let fallbackRunner: Runner?
     private let timeoutNanoseconds: UInt64
     private let recentReuseSeconds: TimeInterval
 
     init(timeoutSeconds: TimeInterval = AssistantContinuityClassifier.defaultTimeoutSeconds,
          recentReuseSeconds: TimeInterval = AssistantContinuityClassifier.defaultRecentReuseSeconds,
-         runner: Runner? = nil) {
+         runner: Runner? = nil,
+         fallbackRunner: Runner? = nil) {
         self.timeoutNanoseconds = UInt64(max(0.05, timeoutSeconds) * 1_000_000_000)
         self.recentReuseSeconds = recentReuseSeconds
         self.runner = runner ?? { prompt in
             try await Self.runCodex(prompt)
         }
+        self.fallbackRunner = fallbackRunner ?? (runner == nil ? { prompt in
+            try await ContinuityAPIFallback.run(prompt)
+        } : nil)
     }
 
     func decide(current: AssistantConversation, incoming: String) async -> AssistantContinuityOutcome {
@@ -131,8 +136,8 @@ final class AssistantContinuityClassifier {
             }
         }
 
-        do {
-            let raw = try await runWithTimeout(Self.prompt(current: current, incoming: incoming))
+        let prompt = Self.prompt(current: current, incoming: incoming)
+        func decode(_ raw: String) throws -> AssistantContinuityOutcome {
             let data = Data(raw.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).utf8)
             let response = try JSONDecoder().decode(AssistantContinuityResponse.self, from: data)
             let confidence = min(1, max(0, response.confidence))
@@ -145,8 +150,20 @@ final class AssistantContinuityClassifier {
                 confidence: confidence,
                 reason: String(response.reason.prefix(240)),
                 usedFallback: false)
+        }
+        do {
+            return try decode(await runWithTimeout(prompt, runner: runner, timeout: timeoutNanoseconds))
         } catch {
-            return .fallback(error.localizedDescription)
+            let primaryReason = Self.failureReason(error.localizedDescription)
+            guard !Task.isCancelled, let fallbackRunner else { return .fallback(primaryReason) }
+            vflog("continuity router: Codex failed; trying Assistant API: \(primaryReason)")
+            do {
+                let outcome = try decode(await runWithTimeout(prompt, runner: fallbackRunner, timeout: 10_000_000_000))
+                return AssistantContinuityOutcome(decision: outcome.decision, confidence: outcome.confidence,
+                    reason: "Assistant API after Codex failure (\(primaryReason)): \(outcome.reason)", usedFallback: outcome.usedFallback)
+            } catch {
+                return .fallback("Codex: \(primaryReason); API: \(Self.failureReason(error.localizedDescription))")
+            }
         }
     }
 
@@ -180,11 +197,12 @@ final class AssistantContinuityClassifier {
         """
     }
 
-    private func runWithTimeout(_ prompt: String) async throws -> String {
+    private func runWithTimeout(_ prompt: String, runner: @escaping Runner, timeout: UInt64) async throws -> String {
         try await withThrowingTaskGroup(of: String.self) { group in
-            group.addTask { try await self.runner(prompt) }
+            defer { group.cancelAll() }
+            group.addTask { try await runner(prompt) }
             group.addTask {
-                try await Task.sleep(nanoseconds: self.timeoutNanoseconds)
+                try await Task.sleep(nanoseconds: timeout)
                 throw AssistantContinuityError.timedOut
             }
             guard let first = try await group.next() else { throw AssistantContinuityError.missingOutput }
@@ -192,6 +210,28 @@ final class AssistantContinuityClassifier {
             return first
         }
     }
+
+    static func failureReason(_ stderr: String) -> String {
+        let lines = stderr.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("Reading additional input") }
+        let meaningful = lines.last { line in
+            let lower = line.lowercased()
+            return lower.contains("error") || lower.contains("limit") || lower.contains("failed")
+                || lower.contains("unauthorized") || lower.contains("timed out")
+        } ?? lines.last ?? "continuity classifier failed without diagnostics"
+        return String(meaningful.suffix(500))
+    }
+
+    static let responseSchema: [String: Any] = [
+        "type": "object",
+        "properties": [
+            "decision": ["type": "string", "enum": ["reuse", "new"]],
+            "confidence": ["type": "number", "minimum": 0, "maximum": 1],
+            "reason": ["type": "string"],
+        ],
+        "required": ["decision", "confidence", "reason"],
+        "additionalProperties": false,
+    ]
 
     private static func findCodexBinary() -> String? {
         var candidates = [
@@ -220,17 +260,7 @@ final class AssistantContinuityClassifier {
         let schemaURL = directory.appendingPathComponent("schema.json")
         let outputURL = directory.appendingPathComponent("output.json")
         let errorURL = directory.appendingPathComponent("stderr.txt")
-        let schema: [String: Any] = [
-            "type": "object",
-            "properties": [
-                "decision": ["type": "string", "enum": ["reuse", "new"]],
-                "confidence": ["type": "number", "minimum": 0, "maximum": 1],
-                "reason": ["type": "string"],
-            ],
-            "required": ["decision", "confidence", "reason"],
-            "additionalProperties": false,
-        ]
-        try JSONSerialization.data(withJSONObject: schema, options: [.prettyPrinted])
+        try JSONSerialization.data(withJSONObject: responseSchema, options: [.prettyPrinted])
             .write(to: schemaURL, options: .atomic)
         fm.createFile(atPath: errorURL.path, contents: nil)
         let errorHandle = try FileHandle(forWritingTo: errorURL)
@@ -285,7 +315,7 @@ final class AssistantContinuityClassifier {
             let message = (try? String(contentsOf: errorURL, encoding: .utf8))?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             throw AssistantContinuityError.processFailed(
-                message.isEmpty ? "continuity classifier exited with status \(status)" : String(message.prefix(1_000)))
+                message.isEmpty ? "continuity classifier exited with status \(status)" : failureReason(message))
         }
         guard let output = try? String(contentsOf: outputURL, encoding: .utf8),
               !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

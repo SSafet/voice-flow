@@ -263,7 +263,7 @@ compile_and_run assistant_history swift/VoiceFlowPaths.swift swift/AgentRuntimeT
     swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift tests/assistant_history/main.swift
 compile_and_run queue_editor swift/QueueEditorStore.swift swift/QueueEditor.swift tests/queue_editor/main.swift -framework Cocoa
 compile_and_run assistant_continuity swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift \
-    swift/SystemAgents.swift swift/AssistantContinuity.swift tests/assistant_continuity/main.swift
+    swift/SystemAgents.swift swift/AssistantContinuity.swift swift/ContinuityAPIFallback.swift tests/assistant_continuity/main.swift
 compile_and_run codex_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift swift/Codex.swift \
     swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/CodexAppServer.swift \
