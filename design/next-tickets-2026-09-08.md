@@ -36,3 +36,9 @@ The queue editor now lives in **Queue**, immediately below Inbox in the main wor
 Validation for this follow-up: the targeted `queue_editor` suite passed (store persistence, external-edit conflicts, malformed-file preservation, metadata preservation, real Add/Remove actions, draft retention). The production app was rebuilt, signed and relaunched for live sidebar verification. The earlier full-gate result above applies to the prior batch; this follow-up uses targeted validation.
 
 Live verification on the installed signed app: Queue is visible below Inbox; Add saved a temporary item; navigating Now → Queue retained the unsent draft; Remove deleted the temporary item. Test content was cleared and Queue left open. [Sidebar screenshot](vf62/queue-sidebar.png).
+
+### VF-62 drag reordering
+
+Queue uses native draggable rows with visible grips and insertion feedback. Dropping saves the complete reordered items to the existing queue file and refreshes the queue projection. During a drag the displayed revision stays frozen; an external file change rejects the stale move and refreshes with a visible explanation.
+
+Validation: `queue_editor` passed, covering upward/downward moves, adjacent gaps, duplicate labels, metadata preservation, invalid destinations and stale-drag conflicts, plus the existing Add/Remove checks. Production app compiled, signed and relaunched. Live native drags moved A to the bottom, back to the top, then B before A; the saved file and Reload both confirmed B/A/C. All three temporary items were removed afterward. [Reorder screenshot](vf62/queue-reorder.png).

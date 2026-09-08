@@ -63,6 +63,17 @@ final class QueueEditorStore {
         }
     }
 
+    /// Destination is an insertion gap in the original list (0...count).
+    func move(from source: Int, to destination: Int) throws {
+        try mutate {
+            guard $0.indices.contains(source), (0...$0.count).contains(destination) else {
+                throw EditError.changed
+            }
+            let item = $0.remove(at: source)
+            $0.insert(item, at: destination > source ? destination - 1 : destination)
+        }
+    }
+
     private func mutate(_ edit: (inout [[String: Any]]) throws -> Void) throws {
         guard loaded, try read() == revision else { throw EditError.changed }
         var updated = rows

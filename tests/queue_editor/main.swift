@@ -34,6 +34,28 @@ expect(store.items.count == 2, "duplicate strings must remove independently")
 let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
 expect(saved["extra"] as? String == "keep", "unknown top-level metadata must survive")
 expect((saved["items"] as! [[String: Any]])[0]["custom"] as? Int == 42, "item metadata must survive")
+// Move across both ends, adjacent gaps, and duplicates without losing metadata.
+try store.add("Third step")
+try store.move(from: 0, to: 3)
+let reordered = QueueEditorStore(url: url)
+try reordered.reload()
+expect(reordered.items.map(\.text) == ["duplicate", "Third step", "Changed externally"], "downward move must persist")
+let movedDocument = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+expect(movedDocument["extra"] as? String == "keep", "reorder must preserve root metadata")
+expect((movedDocument["items"] as! [[String: Any]])[2]["custom"] as? Int == 42, "reorder must move the entire item")
+try store.move(from: 2, to: 0)
+expect(store.items.map(\.text) == ["Changed externally", "duplicate", "Third step"], "upward move must reach first position")
+try store.move(from: 1, to: 2)
+expect(store.items[1].text == "duplicate", "dropping after itself must keep order")
+try store.add("duplicate")
+try store.move(from: 3, to: 1)
+expect(store.items.map(\.text) == ["Changed externally", "duplicate", "duplicate", "Third step"], "duplicate labels must move independently")
+let beforeInvalidMove = try Data(contentsOf: url)
+do { try store.move(from: 9, to: 0); fatalError("invalid move must fail") } catch QueueEditorStore.EditError.changed {}
+expect((try? Data(contentsOf: url)) == beforeInvalidMove, "invalid move must not write")
+try external.write(to: url, options: .atomic)
+do { try store.move(from: 0, to: 2); fatalError("external change during drag must reject move") } catch QueueEditorStore.EditError.changed {}
+expect((try? Data(contentsOf: url)) == external, "stale drag must preserve external edit")
 try Data("broken".utf8).write(to: url)
 do { try store.reload(); fatalError("malformed file must fail") } catch {}
 do { try store.add("No data loss"); fatalError("malformed file must not be overwritten") } catch {}
@@ -81,4 +103,4 @@ if let path = ProcessInfo.processInfo.environment["VF_QUEUE_SCREENSHOT"] {
     expect(capture.terminationStatus == 0, "window screenshot must succeed")
 }
 window.close()
-print("queue editor: store persistence, stale-delete protection, malformed-file protection, metadata preservation, Add/Remove buttons and draft retention passed")
+print("queue editor: store persistence, reorder in both directions, reorder metadata and stale-drag protection, stale-delete protection, malformed-file protection, metadata preservation, Add/Remove buttons and draft retention passed")
