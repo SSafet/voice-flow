@@ -1,0 +1,13 @@
+{
+  "checked_at": "2026-09-08T09:38:10.223552+00:00",
+  "model": "SM-S938B",
+  "android": "16",
+  "api_level": "36",
+  "security_patch": "2026-08-05",
+  "voiceflow_installed": true,
+  "tailscale_installed": false,
+  "usage_access_screen": "priority=1 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\ncom.android.settings/.Settings$UsageAccessSettingsActivity",
+  "overlay_settings_screen": "priority=1 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\ncom.android.settings/.Settings$OverlaySettingsActivity",
+  "voiceflow_usage_appop": "No operations.\nDefault mode: default",
+  "voiceflow_overlay_appop": "SYSTEM_ALERT_WINDOW: allow; time=+16d13h4m40s311ms ago; duration=+5s592ms"
+}
