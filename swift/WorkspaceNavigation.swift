@@ -2,7 +2,7 @@ import Cocoa
 
 /// Durable workspace destinations. The pill continues to own quick interaction.
 enum WorkspaceDestination: String, CaseIterable {
-    case now, inbox, threads, sources, assistants, automations, speech, settings
+    case now, inbox, queue, threads, sources, assistants, automations, speech, settings
 
     var label: String {
         switch self {
@@ -14,6 +14,7 @@ enum WorkspaceDestination: String, CaseIterable {
         switch self {
         case .now: return "circle.dotted"
         case .inbox: return "tray"
+        case .queue: return "checklist"
         case .threads: return "text.bubble"
         case .sources: return "externaldrive"
         case .assistants: return "sparkles"

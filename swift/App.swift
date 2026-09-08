@@ -998,6 +998,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         indicator.setWatcherActive(workflowWatcher.isRunning)
         nextQueue = NextQueue(isBusy: { [weak self] in self?.surfaceBusy ?? false })
+        chatPanel.setQueueView(nextQueue.editorView)
+        nextQueue.onShowEditor = { [weak self] in
+            guard let self else { return }
+            self.chatPanel.show()
+            self.chatPanel.showWorkspaceDestination(.queue)
+        }
         nextQueue.applySettings()
         captureScheduler = CaptureScheduler(
             screenCapture: screenCapture,

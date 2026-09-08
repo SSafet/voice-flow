@@ -54,6 +54,7 @@ final class ChatPanel {
     private var workspaceContent: NSView!
     private var workspaceHeading: NSTextField!
     private var sidebarWidth: NSLayoutConstraint!
+    private var queueView: QueueEditorView?
     private var sourcesView: NSView?
     private var settingsView: NSView?
     private(set) var workspaceDestination: WorkspaceDestination = .now
@@ -63,7 +64,14 @@ final class ChatPanel {
     var onSettingsSelected: (() -> Void)?
     var onWorkspaceDestinationChanged: ((WorkspaceDestination) -> Void)?
     private var showsConversationSurface: Bool {
-        ![WorkspaceDestination.sources, .settings, .speech, .inbox].contains(workspaceDestination)
+        ![WorkspaceDestination.sources, .settings, .speech, .inbox, .queue].contains(workspaceDestination)
+    }
+
+    func setQueueView(_ view: QueueEditorView) {
+        queueView?.removeFromSuperview()
+        queueView = view
+        attachWorkspaceView(view)
+        view.isHidden = workspaceDestination != .queue
     }
 
     func setSourcesView(_ view: NSView) {
@@ -119,6 +127,7 @@ final class ChatPanel {
         case .threads: if !resumeExistingAgentsRoute { agentsView.showWorkspaceRoot(.threads) }
         case .assistants: if !resumeExistingAgentsRoute { agentsView.showWorkspaceRoot(.assistants) }
         case .automations: if !resumeExistingAgentsRoute { agentsView.showWorkspaceRoot(.automations) }
+        case .queue: queueView?.activate()
         case .sources: onSourcesSelected?()
         case .settings: onSettingsSelected?()
         case .inbox, .speech: break
@@ -131,6 +140,7 @@ final class ChatPanel {
         agentsView.isHidden = !showsConversationSurface
         dictationsView.isHidden = workspaceDestination != .inbox
         ttsView.isHidden = workspaceDestination != .speech
+        queueView?.isHidden = workspaceDestination != .queue
         sourcesView?.isHidden = workspaceDestination != .sources
         settingsView?.isHidden = workspaceDestination != .settings
         workspaceHeading.stringValue = workspaceDestination.label

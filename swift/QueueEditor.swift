@@ -1,6 +1,6 @@
 import Cocoa
 
-final class QueueEditorController: NSWindowController, NSWindowDelegate {
+final class QueueEditorView: NSView {
     private let store: QueueEditorStore
     private let input = NSTextField()
     private let status = NSTextField(wrappingLabelWithString: "")
@@ -10,17 +10,8 @@ final class QueueEditorController: NSWindowController, NSWindowDelegate {
 
     init(url: URL) {
         store = QueueEditorStore(url: url)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 420),
-                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.title = "Next queue"
-        window.minSize = NSSize(width: 360, height: 260)
-        window.isReleasedWhenClosed = false
-        window.backgroundColor = Theme.bg
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.level = .floating
-        super.init(window: window)
-        window.delegate = self
-        let content = window.contentView!
+        super.init(frame: .zero)
+        let content = self
         input.placeholderString = "Add something to do…"
         input.setAccessibilityLabel("New queue item")
         input.target = self; input.action = #selector(addItem)
@@ -67,16 +58,20 @@ final class QueueEditorController: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func open() {
-        refresh(force: true)
-        if window?.isVisible != true { window?.center() }
-        showWindow(nil); NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil); window?.makeFirstResponder(input)
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.refresh() }
+        timer = nil
+        guard window != nil else { return }
+        refresh(force: true)
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, !self.isHiddenOrHasHiddenAncestor else { return }
+            self.refresh()
+        }
     }
 
-    func windowWillClose(_ notification: Notification) { timer?.invalidate(); timer = nil }
+    func activate() { refresh(force: true) }
+    deinit { timer?.invalidate() }
     @objc private func reloadNow() { refresh(force: true) }
 
     private func refresh(force: Bool = false) {

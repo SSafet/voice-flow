@@ -45,18 +45,17 @@ final class NextQueue {
     private let isBusy: () -> Bool
     private var timer: Timer?
     private var appSwitchObserver: NSObjectProtocol?
-    private var editor: QueueEditorController?
-
-    func showEditor() {
-        if editor == nil {
-            editor = QueueEditorController(url: fileURL)
-            editor?.onChange = { [weak self] in
-                self?.loadStore(initial: false)
-                if UserSettings.shared.queueEnabled { self?.tick() }
-            }
+    var onShowEditor: (() -> Void)?
+    lazy var editorView: QueueEditorView = {
+        let view = QueueEditorView(url: fileURL)
+        view.onChange = { [weak self] in
+            self?.loadStore(initial: false)
+            if UserSettings.shared.queueEnabled { self?.tick() }
         }
-        editor?.open()
-    }
+        return view
+    }()
+
+    func showEditor() { onShowEditor?() }
 
     // ── Store state (main thread) ──
     private(set) var items: [QueueItem] = []

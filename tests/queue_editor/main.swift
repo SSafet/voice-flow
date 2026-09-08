@@ -44,10 +44,15 @@ do { try store.add("   "); fatalError("blank item must fail") } catch QueueEdito
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
-let editor = QueueEditorController(url: url)
-editor.open()
+let editor = QueueEditorView(url: url)
+let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 420),
+                      styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+window.isReleasedWhenClosed = false
+window.contentView = editor
+window.makeKeyAndOrderFront(nil)
+editor.activate()
 func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-let content = editor.window!.contentView!
+let content = editor
 let input = descendants(content).compactMap { $0 as? NSTextField }.first { $0.placeholderString != nil }!
 let add = descendants(content).compactMap { $0 as? NSButton }.first { $0.title == "Add" }!
 input.stringValue = "Finish the focused work block"
@@ -65,15 +70,15 @@ try store.add("Plan tomorrow’s first step")
 let reload = descendants(content).compactMap { $0 as? NSButton }.first { $0.title == "Reload" }!
 reload.performClick(nil)
 expect(input.stringValue == "Draft stays while the list refreshes", "refresh must retain typing")
-editor.window!.setContentSize(NSSize(width: 440, height: 420))
+window.setContentSize(NSSize(width: 440, height: 420))
 RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 content.layoutSubtreeIfNeeded()
 if let path = ProcessInfo.processInfo.environment["VF_QUEUE_SCREENSHOT"] {
     let capture = Process()
     capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-    capture.arguments = ["-x", "-o", "-l", String(editor.window!.windowNumber), path]
+    capture.arguments = ["-x", "-o", "-l", String(window.windowNumber), path]
     try capture.run(); capture.waitUntilExit()
     expect(capture.terminationStatus == 0, "window screenshot must succeed")
 }
-editor.close()
+window.close()
 print("queue editor: store persistence, stale-delete protection, malformed-file protection, metadata preservation, Add/Remove buttons and draft retention passed")
