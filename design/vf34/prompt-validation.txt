@@ -1,0 +1,8 @@
+capability catalog: 162 capabilities across 22 areas; MCP 15/15; registry 165/165
+OpenCode manifest: v1.17.11, 2 macOS architectures, digests valid
+RUN: compile agent_prompt
+PASS: compile agent_prompt (3s)
+RUN: agent_prompt
+agent prompt tests passed
+PASS: agent_prompt (0s)
+agent harness: selected unit suite 'agent_prompt' passed; full gate not run

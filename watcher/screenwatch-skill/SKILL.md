@@ -40,6 +40,12 @@ ceiling — read as many as the question needs — but choose them deliberately
 rather than sweeping the folder; a day holds several hundred.
 
 ## `analyze [date]` (default: today; use yesterday if today has <100 lines)
+First read the full ANALYZE.md protocol, including its daily-briefing rule.
+Read `~/.config/voice-flow/FOCUS-NOW.md` fresh for each review and compare its
+Updated timestamp to the reviewed day in the Mac's local timezone. Missing,
+invalid, empty, future, or other-day context is not that day's declared focus.
+Apply relevant current goals/corrections without widening the review's write
+or action permissions. Never blend superseded focus into the new briefing.
 Follow steps 2–8 of `~/.config/voice-flow/watcher/ANALYZE.md` for the given day:
 aggregate into activity blocks / per-app time / switch rate / top titles+URLs /
 churn bursts (>6 app switches in 2 min); look at frames from block transitions,

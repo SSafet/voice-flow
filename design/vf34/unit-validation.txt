@@ -1,0 +1,8 @@
+capability catalog: 162 capabilities across 22 areas; MCP 15/15; registry 165/165
+OpenCode manifest: v1.17.11, 2 macOS architectures, digests valid
+RUN: compile daily_focus
+PASS: compile daily_focus (2s)
+RUN: daily_focus
+daily focus: fresh/stale/future/undated, midnight expiry, replacement, conflict protection, bounds and stable instruction fingerprint passed
+PASS: daily_focus (0s)
+agent harness: selected unit suite 'daily_focus' passed; full gate not run

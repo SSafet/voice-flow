@@ -119,6 +119,9 @@ compile_and_run() {
 compile_only() {
     local name="$1"
     shift
+    if [[ " $* " == *"swift/AgentPromptComposer.swift "* && " $* " != *"swift/DailyFocus.swift "* ]]; then
+        set -- "$@" "$PROJECT_DIR/swift/DailyFocus.swift"
+    fi
     if [[ " $* " != *"swift/AgentSourceConfiguration.swift "* ]]; then
         run_step "compile $name" swiftc "$@" "$PROJECT_DIR/swift/AgentSourceConfiguration.swift" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
     else
@@ -261,6 +264,7 @@ compile_and_run agent_supervisor swift/VoiceFlowPaths.swift swift/AssistantWake.
     tests/agent_supervisor/main.swift -lsqlite3
 compile_and_run assistant_history swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
     swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift tests/assistant_history/main.swift
+compile_and_run daily_focus swift/VoiceFlowPaths.swift swift/DailyFocus.swift tests/daily_focus/main.swift
 compile_and_run queue_editor swift/QueueEditorStore.swift swift/QueueEditor.swift tests/queue_editor/main.swift -framework Cocoa
 compile_and_run assistant_continuity swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift \
     swift/SystemAgents.swift swift/AssistantContinuity.swift swift/ContinuityAPIFallback.swift tests/assistant_continuity/main.swift

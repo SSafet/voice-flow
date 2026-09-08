@@ -1,0 +1,27 @@
+{
+  "checked_at": "2026-09-08T09:59:27.424559+00:00",
+  "model": "gpt-5.6-luna",
+  "scope": "Real assistant file writes and shipping Watcher daily-context rule; synthetic fixture, not full nightly review",
+  "cases": [
+    {
+      "case": "01-new-focus",
+      "exit_code": 0,
+      "reply": "Saved today\u2019s focus as **ORCHID release checklist**."
+    },
+    {
+      "case": "02-replace-stale-focus",
+      "exit_code": 0,
+      "reply": "Saved today\u2019s focus:\n\n> CEDAR onboarding friction\n\nUpdated [FOCUS-NOW.md](/private/var/folders/w1/wzsh3lx90y18qn37rcwwjm640000gn/T/vf-focus-live-mvfkvv3n/FOCUS-NOW.md)."
+    },
+    {
+      "case": "03-review-current-focus",
+      "exit_code": 0,
+      "reply": "{\"declared_focus\":\"CEDAR onboarding friction\",\"interpretation\":\"Review date: 2026-09-08. Briefing date: 2026-09-08 (Mac local time). CEDAR received 35 minutes versus 20 minutes on ORCHID, so activity aligned with the declared focus on CEDAR onboarding friction; ORCHID release notes were secondary.\"}"
+    },
+    {
+      "case": "04-review-stale-focus",
+      "exit_code": 0,
+      "reply": "{\"briefing_is_current\":false,\"declared_focus\":null}"
+    }
+  ]
+}

@@ -39,4 +39,19 @@ expect(!resumed.contains("PERSONA_MARKER") && !resumed.contains("HANDOFF_MARKER"
        "resumed prompt repeated identity or handoff")
 expect(resumed.contains("memory marker") && resumed.contains("TASK_MARKER") && resumed.contains("SOURCE_COPY_MARKER"),
        "resumed prompt omitted dynamic context")
+let beforeFocus = try DailyFocus.read()
+try DailyFocus.replace("CURRENT_FOCUS_MARKER", expected: beforeFocus)
+let focusedLayers = AgentPromptComposer.layers(assistant: assistant, priorMessages: history,
+    task: "Follow up", includeHandoff: false, includeSkillBodies: false)
+expect(focusedLayers.dailyContext.contains("CURRENT_FOCUS_MARKER"),
+       "every resumed assistant must receive the current shared briefing")
+let firstFocus = try DailyFocus.read()
+try DailyFocus.replace("REPLACED_FOCUS_MARKER", expected: firstFocus)
+let updatedFocusLayers = AgentPromptComposer.layers(assistant: assistant, priorMessages: history,
+    task: "Follow up", includeHandoff: false, includeSkillBodies: false)
+expect(updatedFocusLayers.dailyContext.contains("REPLACED_FOCUS_MARKER")
+       && !updatedFocusLayers.dailyContext.contains("CURRENT_FOCUS_MARKER"),
+       "focus replacement must reach the next turn without a restart")
+if let bytes = beforeFocus.bytes { try bytes.write(to: DailyFocus.url, options: .atomic) }
+else { try FileManager.default.removeItem(at: DailyFocus.url) }
 print("agent prompt tests passed")

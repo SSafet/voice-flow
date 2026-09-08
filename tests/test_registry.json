@@ -26,6 +26,7 @@
         "claude_code_runtime",
         "codex_appserver",
         "codex_runtime",
+        "daily_focus",
         "data_sources",
         "data_sources_ui",
         "display_context",

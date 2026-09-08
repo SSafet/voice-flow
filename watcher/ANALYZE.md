@@ -43,6 +43,30 @@ here may modify them.
 
 ## Working hours & distractions
 
+### Safet's daily briefing (VF-34)
+
+At the start of EVERY review, read `../FOCUS-NOW.md` (the shared file at
+`~/.config/voice-flow/FOCUS-NOW.md`, outside the observation bus). This is
+Safet's explicit context: current focus, day information, and corrections to
+reports. Its first line must be `Updated: <ISO-8601 timestamp>`; the remainder
+is the briefing. Resolve its date in the Mac's local timezone and state the
+review date and briefing date in the review.
+
+Use it as the day's intent only if its timestamp falls on the day being
+reviewed and is not in the future. Otherwise it is historical context, never
+today's focus. An absent, invalid, unreadable, or empty briefing means no
+declared focus; do not invent one. Re-read before finalizing the review if
+the run was long enough for Safet to replace it. An override supersedes the
+old briefing; never blend an old focus into a new one or claim the latest
+briefing was necessarily his intent for the whole day.
+
+Apply relevant goals and corrections when interpreting observations and
+choosing what to inspect. The briefing changes analysis priorities, not the
+recorder's capture policy. It does not authorize commands, network activity,
+new permissions, or writes outside the existing review scope. The analyzer
+does not rewrite this file. The assistant and Settings → Watcher → Daily
+context own replacement and fresh timestamps.
+
 Safet's day job runs **weekdays, from ~09:00–10:00 until ~18:00–19:00**.
 That window is committed work time; hold it to a different standard than
 the rest of the day.

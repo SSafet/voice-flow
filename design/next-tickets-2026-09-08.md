@@ -1,0 +1,26 @@
+# Next tickets — 8 September 2026
+
+The pickup snapshot contained VF-34, VF-36, VF-54 and VF-62. VF-36 is a research ticket; the other three change the macOS app. The Android companion was inspected on the connected physical phone without enabling additional monitoring or changing its permissions.
+
+| Ticket | Delivered | Proof |
+|---|---|---|
+| VF-34 | Shared timestamped `FOCUS-NOW.md`, current/historical handling, replacement on a new focus, per-turn assistant context, Watcher review rule, and Settings → Watcher → Daily context editor | [Live cases](vf34/live/receipt.json), [date/store tests](vf34/unit-validation.txt), [prompt tests](vf34/prompt-validation.txt), [native editor](vf34/daily-context.png), [ticket-only staged-source check](vf34/committed-scope-validation.txt) |
+| VF-36 | Platform feasibility, grant/revocation design, privacy/battery tradeoffs, Android-first recommendation, and local kill-switch contract | [Assessment with official sources](vf36/phone-distraction-controls.md), [physical-device capability inspection](vf36/device-capabilities.json); commit `aa6b4a4` |
+| VF-54 | Bounded recovery through the saved Assistant API provider after Codex failure; same editable routing instructions, real diagnostics, and a visible receipt when no provider can decide | [Real provider recovery](vf54/fallback-validation.txt), [routing tests](vf54/unit-validation.txt), [persisted configuration tests](vf54/config-validation.txt); commit `bbfd39e` |
+| VF-62 | Basic Add/Remove editor from the menu bar, pill menu and queue overlay; existing file persistence, live reload, preserved drafts and stale-edit rejection | [Native editor](vf62/queue-editor.png), [button/store tests](vf62/validation.txt); commit `dd824e5` |
+
+The live VF-34 cases use a disposable fixture and the shipping prompt/review rule: a real Codex assistant wrote X, replaced X dated three days earlier with Y, a review adopted Y, and another review rejected stale focus. They do not claim that tonight's scheduled full archive review has already run. VF-54 injects only the Codex failure; its successful fallback uses the actual saved OpenRouter model and credential. No secrets appear in these artifacts.
+
+Focused reproduction:
+
+```sh
+./scripts/test-agent-harness.sh --unit --only queue_editor
+./scripts/test-agent-harness.sh --unit --only daily_focus
+./scripts/test-agent-harness.sh --unit --only agent_prompt
+./scripts/test-agent-harness.sh --unit --only assistant_continuity
+./scripts/test-agent-harness.sh --unit --only system_agents
+```
+
+The **full unit gate passed**: 49 successful suite receipts support 80 registered checks, including release/QA app compilation, workspace UI, clipboard, capture, all three runtimes, queue editing, daily context and provider fallback. [Full log](next-evidence-2026-09-08/unit-gate.txt), [audited evidence](next-evidence-2026-09-08/unit-evidence.json), [execution journal](next-evidence-2026-09-08/execution.jsonl).
+
+This validates the integrated working checkout, including the runtime edits already present at pickup. Ticket commits preserve those pre-existing edits separately. The gate records revision `bbfd39e` plus the working-source fingerprint `fbbfcf58a7a9a2d2d2b7e6047a47e1ffbcb5159db1a4ad59dca2845b7f8db2c4`; source bytes were frozen during execution. Committing the VF-34 changes afterwards changes the Git revision, not those tested source bytes. No full live/e2e/nightly/release-tier gate is claimed.

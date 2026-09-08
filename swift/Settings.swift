@@ -906,6 +906,14 @@ private struct WatcherSettingsView: View {
             }
 
             Section {
+                DailyFocusEditor()
+            } header: {
+                Text("Daily context")
+            } footer: {
+                Text("Shared with assistants and subsequent Watcher reviews. Save replaces the previous briefing; it expires at local midnight. Older context stays historical. This changes analysis guidance, not what the recorder captures.")
+            }
+
+            Section {
                 Toggle(isOn: $store.watcherActionsEnabled) {
                     SettingRowLabel(title: "Record what I do, not just what's on screen",
                                     subtitle: "Typing, clicks, scrolls and shortcuts, as readable actions")
