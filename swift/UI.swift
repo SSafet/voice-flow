@@ -131,6 +131,7 @@ class MenuBarManager: NSObject {
         menu.setSubmenu(claudeSessionsMenu, for: voiceTargetItem)
         menu.addItem(withTitle: "Annotate Screen", action: #selector(annotateAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Show Next Queue", action: #selector(showQueueAction), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Edit Next Queue…", action: #selector(editQueueAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Show Chat", action: #selector(chatAction), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Dictation History", action: #selector(historyAction), keyEquivalent: "").target = self
@@ -170,6 +171,7 @@ class MenuBarManager: NSObject {
     @objc private func copyInboxAction() { onCopyInbox?() }
     @objc private func annotateAction() { onToggleAnnotate?() }
     @objc private func showQueueAction() { onShowQueue?() }
+    @objc private func editQueueAction() { NextQueue.shared?.showEditor() }
     @objc private func chatAction() { onShowChat?() }
     @objc private func quitAction() { onQuit?() }
     @objc private func selectClaudeSessionAction(_ sender: NSMenuItem) {
@@ -1857,6 +1859,7 @@ class FloatingIndicator: NSObject {
         watcherItem.state = watcherActive ? .on : .off
         menu.addItem(withTitle: "Annotate Screen", action: #selector(ctxAnnotate), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Show Next Queue", action: #selector(ctxShowQueue), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Edit Next Queue…", action: #selector(ctxEditQueue), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Dictation History", action: #selector(ctxHistory), keyEquivalent: "").target = self
         // Kick a Claude session out of the picker by hand (it comes back
@@ -1881,6 +1884,7 @@ class FloatingIndicator: NSObject {
     @objc private func ctxToggleWatcher() { onToggleWatcher?() }
     @objc private func ctxAnnotate() { onToggleAnnotate?() }
     @objc private func ctxShowQueue() { onShowQueue?() }
+    @objc private func ctxEditQueue() { NextQueue.shared?.showEditor() }
     @objc private func ctxHistory() { onShowHistory?() }
     @objc private func ctxRemoveSession(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? String { onRemoveSession?(id) }

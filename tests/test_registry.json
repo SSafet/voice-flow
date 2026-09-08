@@ -42,6 +42,7 @@
         "overlay_contracts",
         "player",
         "qa_control",
+        "queue_editor",
         "sandbox_containment",
         "source_review",
         "source_review_transport",

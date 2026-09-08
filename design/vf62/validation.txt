@@ -1,0 +1,1 @@
+queue editor: store persistence, stale-delete protection, malformed-file protection, metadata preservation, Add/Remove buttons and draft retention passed

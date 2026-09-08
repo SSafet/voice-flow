@@ -380,7 +380,15 @@ private final class OverlayPanelWindow {
         closeButton.toolTip = "Dismiss (removes the overlay)"
         closeButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        let header = NSStackView(views: [titleLabel, closeButton])
+        var headerViews: [NSView] = [titleLabel]
+        if id == "next-queue" {
+            let edit = NSButton(title: "Edit", target: self, action: #selector(editQueueTapped))
+            edit.bezelStyle = .rounded
+            edit.setAccessibilityLabel("Edit next queue")
+            headerViews.append(edit)
+        }
+        headerViews.append(closeButton)
+        let header = NSStackView(views: headerViews)
         header.orientation = .horizontal
         header.alignment = .top
         header.spacing = 8
@@ -672,6 +680,8 @@ private final class OverlayPanelWindow {
         panel = newPanel
         return newPanel
     }
+
+    @objc private func editQueueTapped() { NextQueue.shared?.showEditor() }
 
     @objc private func closeTapped() {
         onClose?(id)
