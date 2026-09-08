@@ -1,0 +1,12 @@
+{
+  "checked_at": "2026-09-08T10:13:29.235576+00:00",
+  "implementation_commit": "491be07eaa855cd4566a0fe4a6dcedab62e7a9af",
+  "source_fingerprint": "fbbfcf58a7a9a2d2d2b7e6047a47e1ffbcb5159db1a4ad59dca2845b7f8db2c4",
+  "matches_tested_source_bytes": true,
+  "running_pid": "51425",
+  "status_http": 200,
+  "codesign_verify_exit_code": 0,
+  "installed_binary_sha256": "bdeabfc1378a0353dcd53c7252fbd987fbc754be6c455c4abe182c4ae231281c",
+  "watcher_protocol_matches_source": true,
+  "screenwatch_skill_matches_source": true
+}
