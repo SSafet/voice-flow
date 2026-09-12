@@ -1,0 +1,42 @@
+{
+  "checks": [
+    "new capture delivered by Android without opening the app",
+    "phone acknowledges the delivered capture",
+    "continued dictation automatically updates the same entry",
+    "automatic upload encounters a temporary connection outage",
+    "Android retry delivers after connection recovery without a manual trigger",
+    "recovered uploads are acknowledged without duplicates",
+    "bubble startup recovers finished transcripts with an empty audio queue",
+    "bubble recovery is acknowledged"
+  ],
+  "apk_sha256": "c2827d12f29db181092acec48b032aec543c70e201ab39dd27e1c3e19ba4277c",
+  "result": "passed",
+  "requests": [
+    {
+      "time": 1789208513.2098072,
+      "ids": [
+        "auto-capture"
+      ]
+    },
+    {
+      "time": 1789208582.589102,
+      "ids": [
+        "auto-capture"
+      ]
+    },
+    {
+      "time": 1789208686.107645,
+      "ids": [
+        "outage-capture"
+      ]
+    },
+    {
+      "time": 1789208688.818014,
+      "ids": [
+        "bubble-recovery"
+      ]
+    }
+  ],
+  "logs": "         1789208511.089 20590 20617 I VoiceFlowSync: scheduled delivery result=1\n         1789208511.186 20621 20639 I VoiceFlowSync: start trigger=delivery-job pending=1\n         1789208513.221 20621 20639 I VoiceFlowSync: finish trigger=delivery-job success=true pending=0 elapsedMs=2035\n         1789208513.221 20621 20621 I VoiceFlowSync: job finished id=8794 retry=false\n         1789208513.953 20728 20744 I VoiceFlowSync: scheduled delivery result=1\n         1789208580.546 20834 20849 I VoiceFlowSync: start trigger=delivery-job pending=1\n         1789208582.601 20834 20849 I VoiceFlowSync: finish trigger=delivery-job success=true pending=0 elapsedMs=2056\n         1789208582.602 20834 20834 I VoiceFlowSync: job finished id=8794 retry=false\n         1789208583.325 20873 20886 I VoiceFlowSync: scheduled delivery result=1\n         1789208600.987 20893 20907 I VoiceFlowSync: start trigger=delivery-job pending=1\n         1789208610.628 20893 20907 I VoiceFlowSync: finish trigger=delivery-job success=false pending=1 elapsedMs=9641\n         1789208610.628 20893 20893 I VoiceFlowSync: job finished id=8794 retry=true\n         1789208684.085 20893 20991 I VoiceFlowSync: start trigger=delivery-job pending=1\n         1789208686.123 20893 20991 I VoiceFlowSync: finish trigger=delivery-job success=true pending=0 elapsedMs=2039\n         1789208686.123 20893 20893 I VoiceFlowSync: job finished id=8794 retry=false\n         1789208686.790 21039 21039 I VoiceFlowSync: scheduled periodic result=1\n         1789208686.796 21039 21058 I VoiceFlowSync: start trigger=bubble pending=1\n         1789208688.830 21039 21058 I VoiceFlowSync: finish trigger=bubble success=true pending=0 elapsedMs=2038\n         1789208688.830 21039 21060 I VoiceFlowSync: start trigger=periodic-job pending=0",
+  "device": "Samsung SM-S938B, Android 16"
+}

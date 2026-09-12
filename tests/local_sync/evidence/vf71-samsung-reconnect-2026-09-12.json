@@ -1,0 +1,26 @@
+{
+  "checks": [
+    "bubble startup recovers finished transcripts with an empty audio queue",
+    "bubble recovery is acknowledged",
+    "existing bubble reconnect callback delivers after Wi-Fi returns",
+    "Wi-Fi recovery is acknowledged"
+  ],
+  "apk_sha256": "c2827d12f29db181092acec48b032aec543c70e201ab39dd27e1c3e19ba4277c",
+  "result": "passed",
+  "requests": [
+    {
+      "time": 1789208734.20413,
+      "ids": [
+        "bubble-recovery"
+      ]
+    },
+    {
+      "time": 1789208743.783305,
+      "ids": [
+        "wifi-recovery"
+      ]
+    }
+  ],
+  "logs": "         1789208732.166 21413 21413 I VoiceFlowSync: scheduled periodic result=1\n         1789208732.169 21413 21428 I VoiceFlowSync: start trigger=bubble pending=1\n         1789208734.216 21413 21428 I VoiceFlowSync: finish trigger=bubble success=true pending=0 elapsedMs=2048\n         1789208734.217 21413 21430 I VoiceFlowSync: start trigger=periodic-job pending=0\n         1789208735.167 21413 21413 I VoiceFlowSync: job stopped id=8793\n         1789208741.756 21413 21430 I VoiceFlowSync: finish trigger=periodic-job success=false pending=1 elapsedMs=7539\n         1789208741.757 21413 21428 I VoiceFlowSync: start trigger=bubble pending=1\n         1789208743.795 21413 21428 I VoiceFlowSync: finish trigger=bubble success=true pending=0 elapsedMs=2038\n         1789208743.796 21413 21562 I VoiceFlowSync: start trigger=periodic-job pending=0",
+  "device": "Samsung SM-S938B, Android 16"
+}

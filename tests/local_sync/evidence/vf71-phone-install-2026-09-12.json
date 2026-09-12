@@ -1,0 +1,53 @@
+{
+  "device": "Samsung SM-S938B",
+  "android": "16",
+  "installed_apk_sha256": "019573a9f4c6ebf7cbc758e798113c45fced7bb189c1fe1a578acdf23c8910db",
+  "installation_verified_by_pulling_installed_apk": true,
+  "data_preservation": {
+    "dictations.json": {
+      "before": 500,
+      "after": 500,
+      "all_original_entries_unchanged": true
+    },
+    "chat.json": {
+      "before": 8,
+      "after": 8,
+      "all_original_entries_unchanged": true
+    },
+    "queue.json": {
+      "before": 0,
+      "after": 0,
+      "all_original_entries_unchanged": true
+    },
+    "prefs": {
+      "sync_last_success": "1789207863537",
+      "sync_last_trigger": "activity",
+      "paired": "true",
+      "sync_last_attempt": "1789208331069",
+      "bubble_enabled": "true"
+    }
+  },
+  "pre_fix_state": {
+    "paired": true,
+    "periodic_job_registered": true,
+    "battery_exempt": true,
+    "standby_bucket": "EXEMPTED",
+    "bubble_foreground_service_running": true,
+    "last_failed_periodic_run_local": "2026-09-12 12:19:44",
+    "last_successful_periodic_run_local": "2026-09-12 13:11:03"
+  },
+  "current_sync": {
+    "paired": "true",
+    "sync_last_attempt": "1789208743950",
+    "sync_last_success": "1789208746090",
+    "sync_last_trigger": "bubble",
+    "sync_last_error": null,
+    "sync_pending": "0"
+  },
+  "network_restored": {
+    "wifi": "1",
+    "mobile_data": "1"
+  },
+  "production_logs": "--------- beginning of main\n         1789208331.161 19749 19795 I VoiceFlowSync: start trigger=activity pending=0\n         1789208333.508 19749 19795 I VoiceFlowSync: finish trigger=activity success=true pending=0 elapsedMs=2439\n         1789208333.522 19749 19817 I VoiceFlowSync: start trigger=bubble pending=0\n         1789208335.731 19749 19817 I VoiceFlowSync: finish trigger=bubble success=true pending=0 elapsedMs=2223\n         1789208335.745 19749 19795 I VoiceFlowSync: start trigger=activity pending=0\n         1789208337.969 19749 19795 I VoiceFlowSync: finish trigger=activity success=true pending=0 elapsedMs=2237\n         1789208337.982 19749 19817 I VoiceFlowSync: start trigger=bubble pending=0\n         1789208340.158 19749 19817 I VoiceFlowSync: finish trigger=bubble success=true pending=0 elapsedMs=2189\n         1789208731.501 19749 21316 I VoiceFlowSync: start trigger=periodic-job pending=0\n         1789208733.722 19749 21316 I VoiceFlowSync: finish trigger=periodic-job success=true pending=0 elapsedMs=2245\n         1789208733.743 19749 19749 I VoiceFlowSync: job finished id=8793 retry=false\n         1789208735.292 19749 19795 I VoiceFlowSync: start trigger=activity pending=0\n         1789208739.363 19749 19795 I VoiceFlowSync: finish trigger=activity success=false pending=0 elapsedMs=4102\n         1789208739.386 19749 19817 I VoiceFlowSync: start trigger=bubble pending=0\n         1789208741.746 19749 19817 I VoiceFlowSync: finish trigger=bubble success=true pending=0 elapsedMs=2382\n         1789208741.782 19749 19795 I VoiceFlowSync: start trigger=activity pending=0\n         1789208743.950 19749 19795 I VoiceFlowSync: finish trigger=activity success=true pending=0 elapsedMs=2203\n         1789208743.960 19749 19817 I VoiceFlowSync: start trigger=bubble pending=0\n         1789208746.100 19749 19817 I VoiceFlowSync: finish trigger=bubble success=true pending=0 elapsedMs=2150\n",
+  "real_side_key_capture": "Requested from Safet; no new capture observed yet."
+}

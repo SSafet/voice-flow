@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import secrets
@@ -19,6 +20,9 @@ import xml.etree.ElementTree as ET
 parser = argparse.ArgumentParser()
 parser.add_argument("--serial", required=True)
 parser.add_argument("--host", default="10.0.2.2")
+parser.add_argument("--reverse", action="store_true", help="Reach the isolated fixture over USB on a physical phone")
+parser.add_argument("--network-cycle", action="store_true", help="Also exercise Wi-Fi return on a physical phone")
+parser.add_argument("--reconnect-only", action="store_true", help="Run only bubble startup and network recovery checks")
 parser.add_argument("--adb", default=str(Path.home() / "Library/Android/sdk/platform-tools/adb"))
 parser.add_argument("--apk", type=Path, default=Path("android/app/build/outputs/apk/syncQa/app-syncQa.apk"))
 parser.add_argument("--evidence", type=Path, required=True)
@@ -29,6 +33,9 @@ token = secrets.token_hex(24)
 state = {"blocked": False, "rejected": 0, "entries": {}, "requests": []}
 evidence = {"serial": args.serial, "checks": []}
 restore_network = False
+network_before = {}
+log_start = 0
+log_uid = None
 
 
 def adb(*command, check=True):
@@ -106,7 +113,11 @@ try:
     evidence["apk_sha256"] = hashlib.sha256(args.apk.read_bytes()).hexdigest()
     adb("install", "-r", str(args.apk))
     adb("shell", "pm", "clear", package)
-    driver("configure", token=token, host=args.host, port=port)
+    uid_match = re.search(r"uid:(\d+)", adb("shell", "cmd", "package", "list", "packages", "-U", package))
+    log_uid = uid_match.group(1) if uid_match else None
+    if args.reverse:
+        adb("reverse", f"tcp:{port}", f"tcp:{port}")
+    driver("configure", token=token, host="127.0.0.1" if args.reverse else args.host, port=port)
     if args.expect_old_failure:
         driver("capture", id="old-auto-capture")
         time.sleep(12)
@@ -120,32 +131,39 @@ try:
         print("REPRODUCED: old bubble startup skips pending transcript with empty audio queue", flush=True)
         evidence["checks"].append("old build: bubble startup leaves finished transcript unsynced")
     else:
-        driver("capture", id="auto-capture")
-        wait_for(lambda: "auto-capture" in state["entries"], "new capture delivered by Android without opening the app")
-        wait_for(lambda: phone_entries()[0]["synced"], "phone acknowledges the delivered capture")
-        assert preferences()["sync_last_trigger"] == "delivery-job"
-        driver("continue", id="auto-capture")
-        wait_for(lambda: state["entries"]["auto-capture"]["text"].endswith("continued"), "continued dictation automatically updates the same entry")
-        assert len(state["entries"]) == 1
+        if not args.reconnect_only:
+            driver("capture", id="auto-capture")
+            wait_for(lambda: "auto-capture" in state["entries"], "new capture delivered by Android without opening the app")
+            wait_for(lambda: phone_entries()[0]["synced"], "phone acknowledges the delivered capture")
+            assert preferences()["sync_last_trigger"] == "delivery-job"
+            driver("continue", id="auto-capture")
+            wait_for(lambda: state["entries"]["auto-capture"]["text"].endswith("continued"), "continued dictation automatically updates the same entry")
+            assert len(state["entries"]) == 1
 
-        state["blocked"] = True
-        driver("capture", id="outage-capture")
-        wait_for(lambda: state["rejected"] > 0, "automatic upload encounters a temporary connection outage")
-        assert not next(e for e in phone_entries() if e["id"] == "outage-capture")["synced"]
-        state["blocked"] = False
-        wait_for(lambda: "outage-capture" in state["entries"], "Android retry delivers after connection recovery without a manual trigger", timeout=150)
-        wait_for(lambda: all(e["synced"] for e in phone_entries()), "recovered uploads are acknowledged without duplicates")
+            state["blocked"] = True
+            driver("capture", id="outage-capture")
+            wait_for(lambda: state["rejected"] > 0, "automatic upload encounters a temporary connection outage")
+            assert not next(e for e in phone_entries() if e["id"] == "outage-capture")["synced"]
+            state["blocked"] = False
+            wait_for(lambda: "outage-capture" in state["entries"], "Android retry delivers after connection recovery without a manual trigger", timeout=150)
+            wait_for(lambda: all(e["synced"] for e in phone_entries()), "recovered uploads are acknowledged without duplicates")
 
         driver("seed", id="bubble-recovery")
         assert not next(e for e in phone_entries() if e["id"] == "bubble-recovery")["synced"]
         start_bubble()
         wait_for(lambda: "bubble-recovery" in state["entries"], "bubble startup recovers finished transcripts with an empty audio queue")
         wait_for(lambda: all(e["synced"] for e in phone_entries()), "bubble recovery is acknowledged")
-        if args.serial.startswith("emulator-"):
-            # Cut both emulator network transports; the production phone is
-            # never affected. Restore Wi-Fi and mobile data in finally too.
+        if args.serial.startswith("emulator-") or args.network_cycle:
+            # A physical-phone network cycle requires the explicit flag.
+            # Restore the original transport settings, including on failure.
+            network_before = {name: adb("shell", "settings", "get", "global", setting).strip() == "1"
+                              for name, setting in [("wifi", "wifi_on"), ("data", "mobile_data")]}
             restore_network = True
-            adb("shell", "svc", "data", "disable")
+            # The USB route stays available during radio loss; make the
+            # fixture unreachable too so only recovery can deliver the seed.
+            state["blocked"] = True
+            if args.serial.startswith("emulator-"):
+                adb("shell", "svc", "data", "disable")
             adb("shell", "svc", "wifi", "disable")
             time.sleep(3)
             result = adb("shell", "am", "broadcast", "-n", f"{package}/com.voiceflow.mobile.SyncQASeedReceiver",
@@ -153,10 +171,12 @@ try:
             assert "result=-1" in result, result
             assert "wifi-recovery" not in state["entries"]
             assert not next(e for e in phone_entries() if e["id"] == "wifi-recovery")["synced"]
+            state["blocked"] = False
             adb("shell", "svc", "wifi", "enable")
             wait_for(lambda: "wifi-recovery" in state["entries"], "existing bubble reconnect callback delivers after Wi-Fi returns")
             wait_for(lambda: all(e["synced"] for e in phone_entries()), "Wi-Fi recovery is acknowledged")
-        assert "MainActivity" not in adb("shell", "dumpsys", "activity", "activities")
+        activities = adb("shell", "dumpsys", "activity", "activities")
+        assert not any(package in line and "MainActivity" in line for line in activities.splitlines())
     evidence["result"] = "passed"
 except Exception as error:
     evidence["result"] = "failed"
@@ -164,7 +184,8 @@ except Exception as error:
     raise
 finally:
     evidence["requests"] = state["requests"]
-    logs = adb("logcat", "-v", "epoch", "-d", "-s", "VoiceFlowSync:I", "*:S", check=False)
+    logs = adb("logcat", *([f"--uid={log_uid}"] if log_uid else []),
+               "-v", "epoch", "-d", "-s", "VoiceFlowSync:I", "*:S", check=False)
     evidence["logs"] = "\n".join(line for line in logs.splitlines()
                                  if line.split() and line.split()[0].replace(".", "", 1).isdigit()
                                  and float(line.split()[0]) >= log_start)
@@ -172,6 +193,8 @@ finally:
     args.evidence.write_text(json.dumps(evidence, indent=2) + "\n")
     server.shutdown()
     adb("shell", "am", "force-stop", package, check=False)
+    if args.reverse:
+        adb("reverse", "--remove", f"tcp:{port}", check=False)
     if restore_network:
-        adb("shell", "svc", "wifi", "enable", check=False)
-        adb("shell", "svc", "data", "enable", check=False)
+        for name, enabled in network_before.items():
+            adb("shell", "svc", name, "enable" if enabled else "disable", check=False)

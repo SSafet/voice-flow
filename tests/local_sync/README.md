@@ -43,5 +43,19 @@ times and redacted sync logs. `--expect-old-failure --apk <baseline-qa.apk>` run
 the same save/startup paths against the pre-fix build to demonstrate the gaps.
 
 The HTTP fixture exercises the Android scheduling/transport path; `test_sync.py`
-separately exercises the production Swift server. These checks do not establish
-Samsung scheduling behavior or prove installation on Safet's physical phone.
+separately exercises the production Swift server. For a physical Samsung:
+
+```bash
+python3 tests/local_sync/test_android_delivery.py --serial <device> --reverse \
+  --evidence /tmp/voiceflow-samsung-delivery.json
+python3 tests/local_sync/test_android_delivery.py --serial <device> --reverse \
+  --network-cycle --reconnect-only --evidence /tmp/voiceflow-samsung-reconnect.json
+```
+
+USB reverse reaches the isolated fixture without changing Mac firewall rules.
+`--network-cycle` explicitly permits a brief Wi-Fi interruption on a physical
+phone; mobile data stays enabled, and original radio settings are restored.
+Synthetic records stay in the QA package/fixture. Logs are scoped to its UID.
+These checks establish scheduling/recovery on that device, but do not exercise
+the microphone or assert that a QA APK is the installed production APK. The
+separate installation receipt records its actual hash and preserved user data.
