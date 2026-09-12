@@ -122,7 +122,8 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
             let message = history.completeRuntimeTurn(
                 sessionId: job.conversationID, runtime: job.runtime,
                 text: result.text, externalSessionID: result.externalSessionID,
-                runtimeVersion: result.runtimeVersion)
+                runtimeVersion: result.runtimeVersion,
+                contextUsage: result.usage?.contextUsage)
             return AgentJobExecutionResult(
                 resultMessageID: message?.id, usage: result.usage)
         } catch {

@@ -248,7 +248,8 @@ final class OpenCodeHTTPClient: OpenCodeClienting {
         let outputTokens = (tokens?["output"] as? NSNumber)?.intValue
         let cost = (info?["cost"] as? NSNumber).map { Decimal($0.doubleValue) }
         let usage: AgentUsage? = (inputTokens != nil || outputTokens != nil || cost != nil)
-            ? AgentUsage(inputTokens: inputTokens, outputTokens: outputTokens, costUSD: cost)
+            ? AgentUsage(inputTokens: inputTokens, outputTokens: outputTokens, costUSD: cost,
+                         contextUsage: tokens.flatMap(AgentContextUsage.openCode))
             : nil
         return OpenCodeMessageResult(text: text, usage: usage)
     }

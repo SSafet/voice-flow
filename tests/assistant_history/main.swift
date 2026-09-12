@@ -467,6 +467,31 @@ expect(oldBinding.instructionVersion == nil && !oldBinding.canResume(through: ni
 let modernBinding = RuntimeBinding(externalSessionID: "separate-instructions", state: .clean)
 let roundTripBinding = try JSONDecoder().decode(RuntimeBinding.self, from: JSONEncoder().encode(modernBinding))
 expect(roundTripBinding.canResume(through: nil), "new instruction format must resume after a restart")
+expect(oldBinding.contextUsage == nil, "old conversations must load with unknown context usage")
+
+let usageURL = directory.appendingPathComponent("context-usage.json")
+let usageStore = AssistantHistoryStore(url: usageURL, legacySessionsRoot: nil)
+let usageSession = usageStore.activeConversation().id
+_ = usageStore.beginRuntimeTurn(sessionId: usageSession, runtime: .codex, text: "large task")
+usageStore.recordRuntimeStarted(sessionId: usageSession, runtime: .codex, externalSessionID: "large", fresh: true)
+let measuredContext = AgentContextUsage(inputTokens: 80_000, outputTokens: 1_000, contextWindow: 128_000)!
+usageStore.completeRuntimeTurn(sessionId: usageSession, runtime: .codex, text: "done", contextUsage: measuredContext)
+let reopenedUsage = AssistantHistoryStore(url: usageURL, legacySessionsRoot: nil)
+expect(reopenedUsage.conversation(usageSession)?.runtimeBinding(.codex)?.contextUsage == measuredContext,
+       "context usage must survive restart on the correct runtime binding")
+_ = reopenedUsage.beginRuntimeTurn(sessionId: usageSession, runtime: .opencode, text: "switch")
+reopenedUsage.recordRuntimeStarted(sessionId: usageSession, runtime: .opencode, externalSessionID: "oc", fresh: true)
+expect(reopenedUsage.conversation(usageSession)?.runtimeBinding(.opencode)?.contextUsage == nil
+       && reopenedUsage.conversation(usageSession)?.runtimeBinding(.codex)?.contextUsage == measuredContext,
+       "runtime context snapshots must not overwrite one another")
+reopenedUsage.completeRuntimeTurn(sessionId: usageSession, runtime: .opencode, text: "done")
+_ = reopenedUsage.beginRuntimeTurn(sessionId: usageSession, runtime: .codex, text: "rebuild")
+reopenedUsage.recordRuntimeStarted(sessionId: usageSession, runtime: .codex, externalSessionID: "fresh", fresh: true)
+expect(reopenedUsage.conversation(usageSession)?.runtimeBinding(.codex)?.contextUsage == nil,
+       "a new external session must not inherit the old session's large footprint")
+reopenedUsage.completeRuntimeTurn(sessionId: usageSession, runtime: .codex, text: "no telemetry")
+expect(reopenedUsage.conversation(usageSession)?.runtimeBinding(.codex)?.contextUsage == nil,
+       "missing telemetry must remain unknown")
 
 for runtime in AgentRuntimeKind.allCases {
     let upgradeURL = directory.appendingPathComponent("instruction-upgrade-\(runtime.rawValue).json")

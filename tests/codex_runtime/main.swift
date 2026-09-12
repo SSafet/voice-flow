@@ -71,7 +71,8 @@ final class FakeCodex: CodexExecuting {
         onToolActivity("Reading files")
         onAgentText("first ")
         onAgentText("second")
-        return CodexExecBackend.TurnResult(text: "first second", threadId: "codex-new")
+        return CodexExecBackend.TurnResult(text: "first second", threadId: "codex-new",
+            contextUsage: AgentContextUsage(inputTokens: 80_000, outputTokens: 500, contextWindow: 128_000))
     }
 }
 
@@ -119,6 +120,8 @@ expect(fake.receivedEffort == "low",
        "adapter dropped the reasoning effort from the shared model config")
 expect(result?.externalSessionID == "codex-new", "adapter did not return authoritative thread id")
 expect(result?.text == "first second", "adapter changed final text")
+expect(result?.usage?.contextUsage?.tokens == 80_500,
+       "the Codex adapter must return the measured context for persistence")
 expect(events == [
     "started:codex-new", "activity:Reading files",
     "delta:first ", "delta:second", "completed:first second",

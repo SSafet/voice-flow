@@ -43,8 +43,7 @@ let current = AssistantConversation(
         AssistantHistoryMessage(at: anHourAgo, role: .assistant, text: "Use a 48-hour follow-up and measure return rate"),
     ])
 
-// Recent activity reuses without a model call: the round trip is the whole
-// wake latency, so it is paid only when the choice is real.
+// Only recent, measured small contexts get the latency shortcut.
 expect(AssistantContinuityClassifier.defaultRecentReuseSeconds == 180,
        "the recent-activity window should be three minutes")
 let recentCalls = LockedCounter()
@@ -52,16 +51,55 @@ let recentClassifier = AssistantContinuityClassifier(runner: { _ in
     recentCalls.increment()
     return #"{"decision":"new","confidence":0.99,"reason":"model must not be asked"}"#
 })
-let recent = AssistantConversation(
+var recent = AssistantConversation(
     codexThreadId: "thread-recent",
     title: "Live exchange",
     messages: [
         AssistantHistoryMessage(at: anHourAgo, role: .user, text: "Earlier question"),
         AssistantHistoryMessage(at: Date().addingTimeInterval(-40), role: .assistant, text: "Reply 40 s ago"),
     ])
+recent.runtimeBindings = ["codex": RuntimeBinding(externalSessionID: "thread-recent",
+    syncedThroughMessageID: recent.lastContextMessageID, state: .clean,
+    contextUsage: AgentContextUsage(inputTokens: 12_000, outputTokens: 500, contextWindow: 200_000))]
 let recentOutcome = awaitOutcome(recentClassifier, current: recent, incoming: "Plan tomorrow's gym session")
 expect(recentOutcome.decision == .reuse && !recentOutcome.usedFallback && recentCalls.count == 0,
-       "a wake within the window must reuse the current conversation without a model call")
+       "a recent small measured context should reuse without a model call")
+var large = recent
+large.runtimeBindings?["codex"]?.contextUsage = AgentContextUsage(
+    inputTokens: 140_000, outputTokens: 2_000, contextWindow: 200_000)
+let contextCalls = LockedCounter()
+let contextClassifier = AssistantContinuityClassifier(runner: { prompt in
+    contextCalls.increment()
+    expect(prompt.contains("140000 input tokens") && prompt.contains("71% used")
+           && prompt.contains("<CONTEXT_USAGE>"), "router did not receive the actual large context")
+    return #"{"decision":"new","confidence":0.99,"reason":"unrelated request would carry 142k unnecessary tokens"}"#
+})
+expect(awaitOutcome(contextClassifier, current: large, incoming: "Plan tomorrow's gym session").decision == .new
+       && contextCalls.count == 1, "recent large contexts must reach the router")
+let relatedLarge = awaitOutcome(AssistantContinuityClassifier(runner: { _ in
+    #"{"decision":"reuse","confidence":0.99,"reason":"the follow-up needs the prior work"}"#
+}), current: large, incoming: "Apply that correction to the same draft")
+expect(relatedLarge.decision == .reuse, "context size must not force a split for dependent follow-ups")
+var unknownRecent = recent
+unknownRecent.runtimeBindings?["codex"]?.contextUsage = nil
+let unknownCalls = LockedCounter()
+let unknownContext = AssistantContinuityClassifier(runner: { prompt in
+    unknownCalls.increment()
+    expect(prompt.contains("Runtime context tokens and capacity: unknown")
+           && prompt.contains("Saved text estimate:"), "unknown must be explicit and separate from estimates")
+    return #"{"decision":"new","confidence":0.99,"reason":"independent task"}"#
+})
+expect(awaitOutcome(unknownContext, current: unknownRecent, incoming: "Independent task").decision == .new
+       && unknownCalls.count == 1, "unknown usage must not get the recent shortcut")
+var nearCapacity = recent
+nearCapacity.runtimeBindings?["codex"]?.contextUsage = AgentContextUsage(
+    inputTokens: 20_000, outputTokens: 1_000, contextWindow: 32_000)
+expect(awaitOutcome(recentClassifier, current: nearCapacity, incoming: "Independent task").decision == .new,
+       "a small absolute count near capacity must reach the router")
+var otherRuntime = large
+otherRuntime.preferredRuntime = .opencode
+expect(AssistantContinuityClassifier.prompt(current: otherRuntime, incoming: "T").contains("Runtime context tokens and capacity: unknown"),
+       "Codex measurements must not be attributed to OpenCode")
 let staleCalls = LockedCounter()
 let staleClassifier = AssistantContinuityClassifier(runner: { _ in
     staleCalls.increment()
@@ -248,6 +286,11 @@ expect(apiMessages[0]["content"] == "edited brief" && apiMessages[1]["content"] 
 expect(payload["tools"] == nil && payload["max_tokens"] as? Int == 512, "fallback must be bounded and tool-free")
 let transportRecovery = awaitOutcome(AssistantContinuityClassifier(runner: { _ in throw StubFailure.processExit }, fallbackRunner: { prompt in
     try await ContinuityAPIFallback.run(prompt, config: apiConfig, transport: { request in
+        let sent = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+        let messages = sent["messages"] as! [[String: String]]
+        expect(messages[0]["content"]!.contains(AssistantContinuityClassifier.contextPolicy)
+               && messages[1]["content"]!.contains("<CONTEXT_USAGE>"),
+               "API recovery must retain the same context-aware routing policy and measurements")
         let data = Data(#"{"choices":[{"message":{"content":"{\"decision\":\"new\",\"confidence\":0.99,\"reason\":\"new topic\"}"}}]}"#.utf8)
         return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
     })
@@ -293,5 +336,21 @@ if ProcessInfo.processInfo.environment["VF_CONTINUITY_LIVE"] == "1" {
     current: current, incoming: "Unrelated new topic: plan my gym workout tomorrow.")
     expect(live.decision == .new && !live.usedFallback, "real provider must recover when Codex is unavailable: \(live.reason)")
     print("LIVE PASS: Codex unavailable → actual saved Assistant API model \(config.model) → new, confidence=\(live.confidence)")
+    var heavyCurrent = current
+    heavyCurrent.runtimeBindings = ["codex": RuntimeBinding(externalSessionID: "heavy",
+        syncedThroughMessageID: heavyCurrent.lastContextMessageID, state: .clean,
+        contextUsage: AgentContextUsage(inputTokens: 140_000, outputTokens: 2_000, contextWindow: 200_000))]
+    for (incoming, expected) in [
+        ("What should I cook for dinner tonight?", AssistantContinuityDecision.new),
+        ("Write that 48-hour follow-up message for the cohort.", .reuse),
+        ("For Pantrella, add a weekly meal-plan export button to Settings.", .new),
+    ] {
+        let outcome = awaitOutcome(AssistantContinuityClassifier(runner: { prompt in
+            try await ContinuityAPIFallback.run(prompt, config: config)
+        }), current: heavyCurrent, incoming: incoming)
+        expect(outcome.decision == expected && !outcome.usedFallback,
+               "context-aware live router: expected \(expected.rawValue), got \(outcome.decision.rawValue): \(outcome.reason)")
+        print("LIVE PASS: 142k context → \(expected.rawValue): \(outcome.reason)")
+    }
 }
 print("assistant continuity tests passed")

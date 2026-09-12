@@ -84,14 +84,19 @@ final class AssistantContinuityClassifier {
     /// Resolved per run, not captured once: the user retunes this agent from
     /// the Agents panel and the very next wake must use the new setting.
     static var config: SystemAgentConfig { SystemAgentStore.shared.config(for: .continuity) }
+    static let contextPolicy = """
+        Use CONTEXT_USAGE to weigh the cost of carrying the current conversation forward. These figures describe the assistant conversation, not your own short routing prompt. Prefer new for a self-contained request that does not benefit from the current conversation, especially when its context is large. Sharing a broad project alone is not a dependency. Preserve reuse for corrections, references, and follow-ups that need the previous work, even when context is large. Size alone is never a reason to discard needed context. Unknown usage is not zero; text estimates omit tool results, instructions, and images. Return only the required reuse/new JSON decision.
+        """
+    static var routingInstructions: String { config.instructions + "\n\n" + contextPolicy }
     static let minimumNewConfidence = 0.65
     static let maxContextCharacters = 6_000
     static let maxIncomingCharacters = 4_000
     static let defaultTimeoutSeconds: TimeInterval = 15
-    /// A wake that lands this soon after the current conversation's last
-    /// message is a continuation: the model round trip (5–8 s, the whole
-    /// wake latency) is only paid when the choice is real.
+    /// Only a measured small conversation gets the latency shortcut. Large
+    /// or unmeasured conversations must be checked even during a quick burst.
     static let defaultRecentReuseSeconds: TimeInterval = 180
+    static let maximumFastReuseTokens = 32_000
+    static let maximumFastReuseFraction = 0.25
 
     private let runner: Runner
     private let fallbackRunner: Runner?
@@ -112,7 +117,9 @@ final class AssistantContinuityClassifier {
         } : nil)
     }
 
-    func decide(current: AssistantConversation, incoming: String) async -> AssistantContinuityOutcome {
+    func decide(current: AssistantConversation, incoming: String,
+                runtime: AgentRuntimeKind? = nil,
+                contextUsage: AgentContextUsage? = nil) async -> AssistantContinuityOutcome {
         // An ineligible thread is decided here, before the empty-draft shortcut:
         // an automation's conversation is still blank until its first run.
         if let reason = current.wakeIneligibilityReason {
@@ -127,16 +134,23 @@ final class AssistantContinuityClassifier {
                 reason: "the current conversation is an empty draft", usedFallback: false)
         }
 
-        if let last = relevant.last {
+        let selectedRuntime = runtime ?? current.preferredRuntime ?? .codex
+        let binding = current.runtimeBinding(selectedRuntime)
+        let measured = contextUsage ?? binding?.contextUsage
+        if let last = relevant.last, let measured, measured.isValid, measured.outputTokens != nil,
+           binding?.canResume(through: current.lastContextMessageID) == true,
+           measured.tokens < Self.maximumFastReuseTokens,
+           measured.fractionUsed.map({ $0 < Self.maximumFastReuseFraction }) ?? true {
             let age = Date().timeIntervalSince(last.at)
             if age >= 0, age <= recentReuseSeconds {
                 return AssistantContinuityOutcome(
                     decision: .reuse, confidence: 1,
-                    reason: "the current conversation was active \(Int(age)) s ago", usedFallback: false)
+                    reason: "small measured context (\(measured.tokens) tokens), active \(Int(age)) s ago", usedFallback: false)
             }
         }
 
-        let prompt = Self.prompt(current: current, incoming: incoming)
+        let prompt = Self.prompt(current: current, incoming: incoming,
+                                 runtime: selectedRuntime, contextUsage: measured)
         func decode(_ raw: String) throws -> AssistantContinuityOutcome {
             let data = Data(raw.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).utf8)
             let response = try JSONDecoder().decode(AssistantContinuityResponse.self, from: data)
@@ -167,7 +181,33 @@ final class AssistantContinuityClassifier {
         }
     }
 
-    static func prompt(current: AssistantConversation, incoming: String) -> String {
+    static func prompt(current: AssistantConversation, incoming: String,
+                       runtime: AgentRuntimeKind? = nil,
+                       contextUsage: AgentContextUsage? = nil) -> String {
+        let selectedRuntime = runtime ?? current.preferredRuntime ?? .codex
+        let binding = current.runtimeBinding(selectedRuntime)
+        let measured = contextUsage ?? binding?.contextUsage
+        let relevant = current.messages.filter { $0.role != .note }
+        let textBytes = relevant.reduce(0) { $0 + $1.text.utf8.count }
+        var footprint = ["Runtime: \(selectedRuntime.label)",
+            "Saved user/assistant messages: \(relevant.count)",
+            "Saved text estimate: approximately \((textBytes + 3) / 4) tokens (UTF-8 bytes / 4; excludes tool results, instructions, and images)."]
+        if let measured, measured.isValid {
+            if let output = measured.outputTokens {
+                footprint.append("Last model request: \(measured.inputTokens) input tokens including cache + \(output) output tokens = \(measured.tokens) tokens.")
+            } else {
+                footprint.append("Last model request: \(measured.inputTokens) input tokens including cache. Output contribution unavailable; this is a lower bound.")
+            }
+            if let window = measured.contextWindow, let fraction = measured.fractionUsed {
+                footprint.append("Last reported context capacity: \(window) tokens; \(Int(min(fraction * 100, 100_000)))% used.")
+            } else { footprint.append("Context capacity: unknown.") }
+            footprint.append("This is the last request's footprint, not accumulated billing usage; the new message is not included. Compaction or a model change can alter it.")
+        } else {
+            footprint.append("Runtime context tokens and capacity: unknown. The saved text estimate can greatly undercount a tool-heavy conversation; unknown does not mean small.")
+        }
+        if binding?.canResume(through: current.lastContextMessageID) != true {
+            footprint.append("The runtime binding requires a rebuild from saved history; any prior runtime measurement is historical.")
+        }
         let messages = current.messages
             .filter { $0.role != .note }
             .suffix(6)
@@ -184,6 +224,10 @@ final class AssistantContinuityClassifier {
         // developer_instructions; these delimiters and the output schema stay
         // app-owned so editing the brief cannot remove the data contract.
         return """
+        <CONTEXT_USAGE>
+        \(footprint.joined(separator: "\n"))
+        </CONTEXT_USAGE>
+
         <CURRENT_CONVERSATION>
         \(context)
         </CURRENT_CONVERSATION>
@@ -281,7 +325,7 @@ final class AssistantContinuityClassifier {
         }
         arguments.append(contentsOf: [
             "-c", "mcp_servers={}",
-            "-c", resolved.codexInstructionOverride,
+            "-c", "developer_instructions=\(AgentInstructionEncoding.tomlString(routingInstructions))",
             "--output-schema", schemaURL.path,
             "-o", outputURL.path,
             prompt,

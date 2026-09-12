@@ -658,7 +658,8 @@ final class AgentSession {
                 sessionId: sessionId, runtime: .opencode,
                 text: result.text,
                 externalSessionID: result.externalSessionID,
-                runtimeVersion: result.runtimeVersion)
+                runtimeVersion: result.runtimeVersion,
+                contextUsage: result.usage?.contextUsage)
             finish(result.text, finalAlreadyPersisted: true)
         } catch is CancellationError {
             handleInterruption()
@@ -805,7 +806,8 @@ final class AgentSession {
                 sessionId: sessionId, runtime: kind,
                 text: result.text,
                 externalSessionID: kind == .codex ? codexThreadId : result.externalSessionID,
-                runtimeVersion: result.runtimeVersion)
+                runtimeVersion: result.runtimeVersion,
+                contextUsage: result.usage?.contextUsage)
             finish(result.text, finalAlreadyPersisted: true)
         } catch is CancellationError {
             handleInterruption()

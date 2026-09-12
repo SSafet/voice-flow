@@ -42,7 +42,7 @@ enum ContinuityAPIFallback {
                     transport: Transport = send) async throws -> String {
         let config = config ?? configuration()
         let request = try request(prompt: prompt,
-            instructions: AssistantContinuityClassifier.config.instructions, config: config)
+            instructions: AssistantContinuityClassifier.routingInstructions, config: config)
         let (data, response) = try await transport(request)
         guard (200..<300).contains(response.statusCode) else {
             let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
