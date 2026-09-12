@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "pluginVersion": "1.17.11",
+  "zodVersion": "4.1.8",
+  "entryPoints": [
+    "@opencode-ai/plugin",
+    "@opencode-ai/plugin/tool"
+  ],
+  "scope": "Unmodified upstream tool entry points and their Zod runtime dependency. Optional Effect and TUI APIs are outside this tool-only distribution.",
+  "packages": [
+    {
+      "version": "1.17.11",
+      "resolved": "https://registry.npmjs.org/@opencode-ai/plugin/-/plugin-1.17.11.tgz",
+      "integrity": "sha512-mE6SR1tVxL98zbZrlneqF/+dpIKLeZHKzWZy35Hq54uEnuCM1gKq3LK8F2PG2zMBDKQtz2fahEIksJ7svoPLLw==",
+      "license": "MIT",
+      "name": "@opencode-ai/plugin"
+    },
+    {
+      "version": "4.1.8",
+      "resolved": "https://registry.npmjs.org/zod/-/zod-4.1.8.tgz",
+      "integrity": "sha512-5R1P+WwQqmmMIEACyzSvo4JXHY5WiAFHRMg+zBZKgKS+Q1viRa0C1hmUKtHltoIFKtIdki3pRxkmpP74jnNYHQ==",
+      "license": "MIT",
+      "name": "zod"
+    }
+  ],
+  "archiveSHA256": "d8e285c51b764e39867c89b9508699e86dacc95e464b767ba233730be2fa4529"
+}

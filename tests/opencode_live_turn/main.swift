@@ -21,6 +21,16 @@ ModelGatewayCredentials.shared.configure {
         apiKey: "provider-secret", upstreamBaseURL: upstream,
         allowedModels: ["test/model"])
 }
+AgentSandboxSettings.shared.configure {
+    var dial = AgentCapabilityDial()
+    dial.reachNetwork = false
+    return AgentSandboxSnapshot(dial: dial)
+}
+let deadline = DispatchWorkItem {
+    fputs("FAIL: cold native tool smoke exceeded its 90-second deadline\n", stderr)
+    exit(1)
+}
+DispatchQueue.global().asyncAfter(deadline: .now() + 90, execute: deadline)
 
 let directory = VoiceFlowPaths.shared.directory("assistants/live-open-code")
 try FileManager.default.createDirectory(
@@ -94,6 +104,8 @@ func run(prompt: String, images: [Data] = [], turnID: UUID = UUID()) async throw
 do {
     let canaryStarted = Date()
     let sharedCanary = try await run(prompt: "CANARY_SHARED_TEXT")
+    try expect(Date().timeIntervalSince(canaryStarted) < 30,
+               "cold native turn waited for an external dependency install")
     try expect(sharedCanary == "CANARY_SHARED_OK",
                "OpenCode shared canary returned '\(sharedCanary)'")
     if let reportPath = ProcessInfo.processInfo.environment["VOICE_FLOW_CANARY_OPENCODE_REPORT"] {
@@ -174,8 +186,10 @@ do {
                "OpenCode cancellation left descendant PID \(childPID) alive")
     await AgentPermissionBroker.shared.setHandler(nil)
 
-    print("opencode real text/tool/skill/image/permission/cancellation smoke passed")
+    deadline.cancel()
+    print("opencode real text/tool/skill/image/permission/cancellation smoke passed, with external network disabled")
 } catch {
+    deadline.cancel()
     await AgentPermissionBroker.shared.setHandler(nil)
     await supervisor.stopAll()
     fputs("FAIL: \(error)\n", stderr)

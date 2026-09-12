@@ -1,6 +1,129 @@
 import Foundation
 import Darwin
 import Security
+import CryptoKit
+
+/// App-owned tools must load on a cold, offline runtime. OpenCode otherwise
+/// installs its plugin SDK while resolving the first tool, inside the sandbox.
+/// Keep the exact tool entry points in a verified app asset and link that SDK
+/// into generated config trees without replacing unrelated npm dependencies.
+enum OpenCodeToolDependencies {
+    private static let lock = NSLock()
+
+    static func source(bundleRoot: URL? = nil) throws -> URL {
+        lock.lock(); defer { lock.unlock() }
+        let candidates = bundleRoot.map { [$0] } ?? [
+            Bundle.main.resourceURL?.appendingPathComponent("Runtime/OpenCode"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent("runtime/opencode"),
+        ].compactMap { $0 }
+        guard let root = candidates.first(where: {
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("tool-sdk.json").path)
+        }) else { throw failure("the bundled tool SDK is missing; reinstall Voice Flow") }
+        let manifest = try object(root.appendingPathComponent("tool-sdk.json"))
+        guard let expected = manifest["archiveSHA256"] as? String,
+              expected.count == 64,
+              let pluginVersion = manifest["pluginVersion"] as? String,
+              let zodVersion = manifest["zodVersion"] as? String else {
+            throw failure("the tool SDK manifest is invalid")
+        }
+        let archive = root.appendingPathComponent("tool-sdk.tar.gz")
+        let digest = SHA256.hash(data: try Data(contentsOf: archive))
+            .map { String(format: "%02x", $0) }.joined()
+        guard digest == expected else { throw failure("the tool SDK checksum does not match") }
+        let destination = VoiceFlowPaths.shared.directory("runtime/opencode/tool-sdk-\(expected)")
+        func valid() -> Bool {
+            let modules = destination.appendingPathComponent("node_modules")
+            return (try? object(modules.appendingPathComponent("@opencode-ai/plugin/package.json"))["version"] as? String) == pluginVersion
+                && (try? object(modules.appendingPathComponent("zod/package.json"))["version"] as? String) == zodVersion
+                && FileManager.default.fileExists(atPath: modules.appendingPathComponent("@opencode-ai/plugin/dist/tool.js").path)
+                && FileManager.default.fileExists(atPath: modules.appendingPathComponent("zod/index.js").path)
+        }
+        if valid() { return destination }
+        let staging = destination.deletingLastPathComponent()
+            .appendingPathComponent(".tool-sdk-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        process.arguments = ["-xzf", archive.path, "-C", staging.path]
+        let output = Pipe(); process.standardOutput = output; process.standardError = output
+        try process.run(); process.waitUntilExit()
+        guard process.terminationStatus == 0 else { throw failure("the tool SDK could not be unpacked") }
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        try FileManager.default.moveItem(at: staging.appendingPathComponent("ToolSDK"), to: destination)
+        guard valid() else { throw failure("the unpacked tool SDK is incomplete") }
+        return destination
+    }
+
+    static func install(from source: URL, into directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        let manager = FileManager.default
+        let package = source.appendingPathComponent("node_modules/@opencode-ai/plugin")
+            .resolvingSymlinksInPath()
+        guard manager.fileExists(atPath: package.appendingPathComponent("dist/tool.js").path) else {
+            throw failure("the tool SDK entry point is missing")
+        }
+        let modules = directory.appendingPathComponent("node_modules/@opencode-ai")
+        let canonicalRoot = directory.resolvingSymlinksInPath().path + "/"
+        guard modules.resolvingSymlinksInPath().path.hasPrefix(canonicalRoot) else {
+            throw failure("the generated dependency directory points outside its config tree")
+        }
+        try manager.createDirectory(at: modules, withIntermediateDirectories: true)
+        let link = modules.appendingPathComponent("plugin")
+        if link.resolvingSymlinksInPath().path != package.path {
+            let previous = modules.appendingPathComponent(".voiceflow-plugin-\(UUID().uuidString)")
+            let existed = (try? manager.attributesOfItem(atPath: link.path)) != nil
+            if existed { try manager.moveItem(at: link, to: previous) }
+            do { try manager.createSymbolicLink(at: link, withDestinationURL: package) }
+            catch {
+                if existed { try? manager.moveItem(at: previous, to: link) }
+                throw error
+            }
+            if existed { try manager.removeItem(at: previous) }
+        }
+        let localReference = "file:\(package.path)"
+        let packageURL = directory.appendingPathComponent("package.json")
+        var packageJSON = try object(packageURL, allowMissing: true)
+        var dependencies = packageJSON["dependencies"] as? [String: Any] ?? [:]
+        dependencies["@opencode-ai/plugin"] = localReference
+        packageJSON["dependencies"] = dependencies
+        try write(packageJSON, to: packageURL)
+
+        // The pinned runtime checks declared names against this root lock
+        // before deciding whether npm is needed. Describe the real local link;
+        // retain every unrelated package and locked dependency.
+        let lockURL = directory.appendingPathComponent("package-lock.json")
+        var lockJSON = try object(lockURL, allowMissing: true)
+        var packages = lockJSON["packages"] as? [String: Any] ?? [:]
+        var root = packages[""] as? [String: Any] ?? [:]
+        var locked = root["dependencies"] as? [String: Any] ?? [:]
+        locked["@opencode-ai/plugin"] = localReference
+        root["dependencies"] = locked; packages[""] = root
+        packages["node_modules/@opencode-ai/plugin"] = ["resolved": package.path, "link": true]
+        lockJSON["lockfileVersion"] = 3; lockJSON["packages"] = packages
+        try write(lockJSON, to: lockURL)
+    }
+
+    private static func object(_ url: URL, allowMissing: Bool = false) throws -> [String: Any] {
+        if allowMissing && !FileManager.default.fileExists(atPath: url.path) { return [:] }
+        guard let value = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+            throw failure("invalid dependency metadata at \(url.lastPathComponent)")
+        }
+        return value
+    }
+
+    private static func write(_ value: [String: Any], to url: URL) throws {
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        if (try? Data(contentsOf: url)) != data { try data.write(to: url, options: .atomic) }
+    }
+
+    private static func failure(_ detail: String) -> OpenCodeSupervisorError {
+        .launchFailed("OpenCode tools: \(detail)")
+    }
+}
 
 private final class OpenCodeProcessLog {
     private static let maxBytes = 512 * 1_024
@@ -62,15 +185,18 @@ struct OpenCodeConnection: Equatable {
     let version: String
     let toolEndpoint: URL?
     let toolToken: String?
+    let toolDependencySource: URL?
 
     init(baseURL: URL, username: String, password: String, version: String,
-         toolEndpoint: URL? = nil, toolToken: String? = nil) {
+         toolEndpoint: URL? = nil, toolToken: String? = nil,
+         toolDependencySource: URL? = nil) {
         self.baseURL = baseURL
         self.username = username
         self.password = password
         self.version = version
         self.toolEndpoint = toolEndpoint
         self.toolToken = toolToken
+        self.toolDependencySource = toolDependencySource
     }
 
     var authorizationHeader: String {
@@ -411,6 +537,15 @@ actor OpenCodeSupervisor: OpenCodeServing {
         for directory in [configRoot, dataRoot, cacheRoot, stateRoot] {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
+        let toolDependencies: URL
+        do {
+            toolDependencies = try OpenCodeToolDependencies.source()
+            try OpenCodeToolDependencies.install(from: toolDependencies, into: configRoot)
+            try OpenCodeToolDependencies.install(from: toolDependencies, into: configRoot.appendingPathComponent("opencode"))
+        } catch {
+            gateway.stop(); toolServer.stop()
+            throw error
+        }
 
         // Custom OpenAI-compatible models default to text-only in OpenCode's
         // v1 API unless their input modalities are declared explicitly. Voice
@@ -546,6 +681,9 @@ actor OpenCodeSupervisor: OpenCodeServing {
         environment["OPENCODE_SERVER_USERNAME"] = username
         environment["OPENCODE_SERVER_PASSWORD"] = password
         environment["OPENCODE_DISABLE_AUTOUPDATE"] = "true"
+        // Voice Flow supplies the exact OpenRouter catalog through its model
+        // gateway; the native runtime needs no second external catalog fetch.
+        environment["OPENCODE_DISABLE_MODELS_FETCH"] = "true"
         environment["OPENCODE_DISABLE_CLAUDE_CODE_PROMPT"] = "true"
         process.environment = environment
         let output = Pipe()
@@ -590,7 +728,8 @@ actor OpenCodeSupervisor: OpenCodeServing {
         let connection = OpenCodeConnection(
             baseURL: URL(string: "http://127.0.0.1:\(port)")!,
             username: username, password: password, version: actualVersion,
-            toolEndpoint: toolConnection.endpoint, toolToken: toolConnection.token)
+            toolEndpoint: toolConnection.endpoint, toolToken: toolConnection.token,
+            toolDependencySource: toolDependencies)
         instances[profile] = Instance(
             process: process, connection: connection, root: root,
             output: output, log: log,

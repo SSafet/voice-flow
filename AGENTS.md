@@ -43,6 +43,10 @@ trust profile. Its XDG roots are isolated under the Voice Flow config root,
 auto-update/sharing/subagents are disabled, concurrent cold starts coalesce,
 and stop/cancel terminates the process tree. Long-lived provider credentials
 stay in Keychain: a rotating loopback model-gateway token is all OpenCode sees.
+The pinned tool SDK and Zod are bundled as a verified, architecture-independent
+asset. Generated config trees link to a shared extracted copy before OpenCode
+loads tools; first turns do not depend on npm downloads. See
+`runtime/opencode/README.md` for provenance and reproduction.
 
 Assistant folders remain canonical for persona, bounded `memory/core.md` and
 `memory/ledger.md`, and selected `skills/<name>/SKILL.md`. Voice Flow projects

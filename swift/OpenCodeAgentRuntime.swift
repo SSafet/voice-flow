@@ -47,6 +47,10 @@ final class OpenCodeAgentRuntime: AgentRuntime {
                 Task { await self.supervisor.releaseConnection(for: request.trustProfile) }
             }
             let client = factory.make(connection: connection)
+            if let dependencies = connection.toolDependencySource {
+                try OpenCodeToolDependencies.install(
+                    from: dependencies, into: request.workingDirectory.appendingPathComponent(".opencode"))
+            }
             if let endpoint = connection.toolEndpoint, let token = connection.toolToken {
                 try AgentToolProjection(endpoint: endpoint, token: token)
                     .project(into: request.workingDirectory)

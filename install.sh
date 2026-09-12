@@ -49,6 +49,7 @@ cp "$PROJECT_DIR/assets/icon.icns"                     "$BUILD_DEST/Contents/Res
 mkdir -p "$BUILD_DEST/Contents/Resources/Runtime/OpenCode"
 cp "$RUNTIME_STAGE/OpenCode/opencode" "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/opencode"
 cp "$RUNTIME_STAGE/OpenCode/versions.json" "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/versions.json"
+cp "$RUNTIME_STAGE/OpenCode/tool-sdk.json" "$RUNTIME_STAGE/OpenCode/tool-sdk.tar.gz" "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/"
 chmod 755 "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/opencode"
 
 # Write project directory path into bundle (used to locate .venv).

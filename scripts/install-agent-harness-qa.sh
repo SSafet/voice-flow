@@ -34,6 +34,8 @@ cp "$RUNTIME_STAGE/OpenCode/opencode" \
     "$STAGED_APP/Contents/Resources/Runtime/OpenCode/opencode"
 cp "$RUNTIME_STAGE/OpenCode/versions.json" \
     "$STAGED_APP/Contents/Resources/Runtime/OpenCode/versions.json"
+cp "$RUNTIME_STAGE/OpenCode/tool-sdk.json" "$RUNTIME_STAGE/OpenCode/tool-sdk.tar.gz" \
+    "$STAGED_APP/Contents/Resources/Runtime/OpenCode/"
 cp "$PROJECT_DIR/tests/capabilities.json" \
     "$STAGED_APP/Contents/Resources/QA/capabilities.json"
 chmod 755 "$STAGED_APP/Contents/Resources/Runtime/OpenCode/opencode"

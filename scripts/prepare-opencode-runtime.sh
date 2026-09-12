@@ -3,6 +3,7 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 MANIFEST="$PROJECT_DIR/runtime/opencode/versions.json"
+TOOL_SDK="$PROJECT_DIR/runtime/opencode/tool-sdk.tar.gz"
 DESTINATION="${1:?usage: prepare-opencode-runtime.sh DESTINATION}"
 
 case "$(uname -m)" in
@@ -25,6 +26,12 @@ SOURCE_OVERRIDE="${VOICE_FLOW_OPENCODE_BINARY:-}"
 sha256() {
     /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'
 }
+
+SDK_SHA="$(/usr/bin/plutil -extract archiveSHA256 raw -o - "$PROJECT_DIR/runtime/opencode/tool-sdk.json")"
+if [ "$(sha256 "$TOOL_SDK")" != "$SDK_SHA" ]; then
+    echo "OpenCode tool SDK checksum mismatch" >&2
+    exit 1
+fi
 
 mkdir -p "$DESTINATION"
 TARGET="$DESTINATION/opencode"
@@ -68,6 +75,8 @@ if [ "$("$TARGET" --version)" != "$VERSION" ]; then
     exit 1
 fi
 /bin/cp "$MANIFEST" "$DESTINATION/versions.json"
+/bin/cp "$PROJECT_DIR/runtime/opencode/tool-sdk.json" "$DESTINATION/tool-sdk.json"
+/bin/cp "$PROJECT_DIR/runtime/opencode/tool-sdk.tar.gz" "$DESTINATION/tool-sdk.tar.gz"
 /usr/bin/printf '{"version":"%s","architecture":"%s","sourceBinarySHA256":"%s","installedBinarySHA256":"%s"}\n' \
     "$VERSION" "$ARCH" "$BINARY_SHA" "$ACTUAL_BINARY_SHA" \
     > "$DESTINATION/installed.json"

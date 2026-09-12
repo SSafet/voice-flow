@@ -9,6 +9,43 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
+// Cold tool setup uses the verified local SDK and preserves unrelated npm
+// state. This runs from an empty isolated root, before any native process.
+let dependencySource = try OpenCodeToolDependencies.source()
+let dependencyFixture = VoiceFlowPaths.shared.directory("tool-dependency-fixture/.opencode")
+try Data(#"{"name":"existing","dependencies":{"other-package":"1.0.0"}}"#.utf8)
+    .write(to: dependencyFixture.appendingPathComponent("package.json"))
+try Data(#"{"lockfileVersion":3,"packages":{"":{"dependencies":{"other-package":"1.0.0"}},"node_modules/other-package":{"version":"1.0.0"}}}"#.utf8)
+    .write(to: dependencyFixture.appendingPathComponent("package-lock.json"))
+let otherPackage = dependencyFixture.appendingPathComponent("node_modules/other-package")
+try FileManager.default.createDirectory(at: otherPackage, withIntermediateDirectories: true)
+try Data("keep".utf8).write(to: otherPackage.appendingPathComponent("marker"))
+for _ in 0..<2 { try OpenCodeToolDependencies.install(from: dependencySource, into: dependencyFixture) }
+let packageJSON = try JSONSerialization.jsonObject(with: Data(contentsOf: dependencyFixture.appendingPathComponent("package.json"))) as! [String: Any]
+expect((packageJSON["dependencies"] as? [String: String])?["other-package"] == "1.0.0", "SDK setup changed an unrelated dependency")
+expect((try? String(contentsOf: otherPackage.appendingPathComponent("marker"))) == "keep", "SDK setup removed an unrelated package")
+let linkedSDK = dependencyFixture.appendingPathComponent("node_modules/@opencode-ai/plugin").resolvingSymlinksInPath()
+expect(linkedSDK.path == dependencySource.appendingPathComponent("node_modules/@opencode-ai/plugin").resolvingSymlinksInPath().path, "SDK link does not resolve to the verified dependency")
+try FileManager.default.removeItem(at: dependencySource.appendingPathComponent("node_modules/@opencode-ai/plugin/dist/tool.js"))
+_ = try OpenCodeToolDependencies.source()
+expect(FileManager.default.fileExists(atPath: linkedSDK.appendingPathComponent("dist/tool.js").path), "incomplete SDK cache was not repaired")
+let foreignModules = VoiceFlowPaths.shared.directory("unrelated-node-modules")
+let unsafeFixture = VoiceFlowPaths.shared.directory("unsafe-dependency-fixture/.opencode")
+try FileManager.default.createSymbolicLink(at: unsafeFixture.appendingPathComponent("node_modules"), withDestinationURL: foreignModules)
+do {
+    try OpenCodeToolDependencies.install(from: dependencySource, into: unsafeFixture)
+    expect(false, "SDK setup followed an unrelated node_modules symlink")
+} catch { }
+let foreignContents = try FileManager.default.contentsOfDirectory(atPath: foreignModules.path)
+expect(foreignContents.isEmpty, "SDK setup wrote outside its generated tree")
+let invalidBundle = VoiceFlowPaths.shared.directory("invalid-tool-sdk")
+try Data(#"{"archiveSHA256":"0000000000000000000000000000000000000000000000000000000000000000","pluginVersion":"1.17.11","zodVersion":"4.1.8"}"#.utf8).write(to: invalidBundle.appendingPathComponent("tool-sdk.json"))
+try Data("corrupt".utf8).write(to: invalidBundle.appendingPathComponent("tool-sdk.tar.gz"))
+do {
+    _ = try OpenCodeToolDependencies.source(bundleRoot: invalidBundle)
+    expect(false, "corrupt bundled SDK was accepted")
+} catch { }
+
 final class FakeOpenCodeSupervisor: OpenCodeServing {
     let value = OpenCodeConnection(
         baseURL: URL(string: "http://127.0.0.1:9")!,

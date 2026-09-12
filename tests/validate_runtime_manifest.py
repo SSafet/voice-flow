@@ -5,12 +5,27 @@ import json
 import pathlib
 import re
 import subprocess
+import tarfile
 
 root = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument("--app", type=pathlib.Path)
 args = parser.parse_args()
 manifest = json.loads((root / "runtime/opencode/versions.json").read_text())
+sdk_root = root / "runtime/opencode"
+sdk = json.loads((sdk_root / "tool-sdk.json").read_text())
+sdk_archive = sdk_root / "tool-sdk.tar.gz"
+assert hashlib.sha256(sdk_archive.read_bytes()).hexdigest() == sdk["archiveSHA256"]
+assert sdk["pluginVersion"] == manifest["version"]
+with tarfile.open(sdk_archive) as archive:
+    for member in archive.getmembers():
+        parts = pathlib.PurePosixPath(member.name).parts
+        assert parts[0] == "ToolSDK" and ".." not in parts
+        assert member.isfile() or member.isdir()
+        assert not member.name.endswith(".node"), "tool SDK must be architecture independent"
+    for package, version in [("@opencode-ai/plugin", sdk["pluginVersion"]), ("zod", sdk["zodVersion"])]:
+        data = json.load(archive.extractfile(f"ToolSDK/node_modules/{package}/package.json"))
+        assert data["version"] == version
 version = manifest["version"]
 assert re.fullmatch(r"\d+\.\d+\.\d+", version)
 assert set(manifest["assets"]) == {"arm64", "x86_64"}
@@ -27,6 +42,8 @@ for architecture, asset in manifest["assets"].items():
         assert actual == version
 if args.app:
     runtime = args.app / "Contents/Resources/Runtime/OpenCode"
+    assert (runtime / "tool-sdk.json").read_bytes() == (sdk_root / "tool-sdk.json").read_bytes()
+    assert hashlib.sha256((runtime / "tool-sdk.tar.gz").read_bytes()).hexdigest() == sdk["archiveSHA256"]
     installed = json.loads((runtime / "installed.json").read_text())
     architecture = subprocess.check_output(["uname", "-m"], text=True).strip()
     if architecture != "x86_64":
