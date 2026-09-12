@@ -80,3 +80,21 @@ oversized.text = "edited into a portable record"
 reopened.captureDictations([oversized])
 try prove(reopened.reviewCount() == 0, "valid correction resolves review while preserving archive")
 try prove(reopened.store!.state(partition).records["dictations:oversized"]?.payload?.text == oversized.text, "corrected record is queued")
+
+// A download projection or unchanged save must not wake the controller again.
+// The old callback fired even when the lock closure returned before a write,
+// creating an endless sync -> project -> sync loop in the native settings UI.
+reopened.installHooks()
+var wakes = 0
+reopened.onChange = { wakes += 1 }
+reopened.captureDictations([])
+reopened.captureDictations([independent])
+reopened.capturePreferences()
+try reopened.projectPreferences()
+try prove(wakes == 0, "unchanged or projected native values triggered another sync")
+independent.text = "a real follow-up edit"
+reopened.captureDictations([independent])
+try prove(wakes == 1, "a real native edit must wake sync exactly once")
+reopened.captureDictations([independent])
+try prove(wakes == 1, "repeated native persistence must not wake sync again")
+print("PASS cloud native scheduling: unchanged/projected saves stay quiet; a real edit wakes sync once")

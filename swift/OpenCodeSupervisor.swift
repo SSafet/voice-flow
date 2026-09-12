@@ -68,6 +68,13 @@ enum OpenCodeToolDependencies {
         }
         let modules = directory.appendingPathComponent("node_modules/@opencode-ai")
         let canonicalRoot = directory.resolvingSymlinksInPath().path + "/"
+        // Resolving a path whose final component does not exist can retain
+        // its unresolved spelling. Inspect existing parent links directly.
+        for parent in [directory.appendingPathComponent("node_modules"), modules] {
+            if (try? manager.attributesOfItem(atPath: parent.path)[.type] as? FileAttributeType) == .typeSymbolicLink {
+                throw failure("the generated dependency directory is a symbolic link")
+            }
+        }
         guard modules.resolvingSymlinksInPath().path.hasPrefix(canonicalRoot) else {
             throw failure("the generated dependency directory points outside its config tree")
         }

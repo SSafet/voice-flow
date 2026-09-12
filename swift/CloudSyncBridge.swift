@@ -126,14 +126,14 @@ final class CloudSyncBridge {
         capture(changed)
     }
     private func capture(_ edits: [CloudLocalEdit]) {
-        lock.withLock {
-            guard !projecting, let partition = selection.partition, !edits.isEmpty else { return }
+        let changed = lock.withLock { () -> Bool in
+            guard !projecting, let partition = selection.partition, !edits.isEmpty else { return false }
             do {
                 // The journal is intentional durability, not an unbounded copy
                 // of source files: only new portable differences are staged.
                 let state = try? store?.state(partition)
                 let changed = edits.filter { selection.included.includes($0.collection) && state?.records[CloudSyncStore.key($0.collection, $0.recordId)]?.payload != $0.payload }
-                guard !changed.isEmpty else { return }
+                guard !changed.isEmpty else { return false }
                 try FileManager.default.createDirectory(at: recoveryURL, withIntermediateDirectories: true)
                 intentSequence += 1
                 try String(intentSequence).write(to: sequenceURL, atomically: true, encoding: .utf8)
@@ -145,8 +145,12 @@ final class CloudSyncBridge {
                 try replayIntents()
                 failure = nil
             } catch { failure = error.localizedDescription }
+            return true
         }
-        onChange?()
+        // A return inside withLock only exits that closure. Notifying for an
+        // empty/suppressed capture makes a downloaded projection start another
+        // sync, which projects again forever without any local edit.
+        if changed { onChange?() }
     }
     func replayIntents() throws {
         try lock.withLock {
