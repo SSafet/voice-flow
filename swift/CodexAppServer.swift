@@ -20,6 +20,7 @@ enum CodexAppServerMessage: Equatable {
     case agentDelta(threadId: String?, delta: String)
     case itemStarted(threadId: String?, itemType: String)
     case agentMessageCompleted(threadId: String?, text: String)
+    case contextUsage(threadId: String, turnId: String, usage: AgentContextUsage)
     /// `status` is completed | interrupted | failed; `message` rides a failure.
     case turnFinished(threadId: String?, status: String, message: String?)
     /// A server→client request we must answer (approvals). `id` is theirs.
@@ -43,6 +44,13 @@ enum CodexAppServerProtocol {
                 return .serverRequest(id: id, method: method)
             }
             switch method {
+            case "thread/tokenUsage/updated":
+                guard let threadId, let turnId = params["turnId"] as? String,
+                      let usage = params["tokenUsage"] as? [String: Any],
+                      let last = usage["last"] as? [String: Any],
+                      let context = AgentContextUsage.codex(last, window: usage["modelContextWindow"], camelCase: true)
+                else { return .other(method: method) }
+                return .contextUsage(threadId: threadId, turnId: turnId, usage: context)
             case "item/agentMessage/delta":
                 return .agentDelta(threadId: threadId, delta: params["delta"] as? String ?? "")
             case "item/started":
@@ -162,6 +170,7 @@ final class CodexAppServerBackend: CodexExecuting {
         var interruptWhenStarted = false
         var replyParts: [String] = []
         var streamedText = ""
+        var contextUsage: AgentContextUsage?
         let onText: (String) -> Void
         let onActivity: (String) -> Void
         var completion: CheckedContinuation<(status: String, message: String?), Error>?
@@ -323,7 +332,8 @@ final class CodexAppServerBackend: CodexExecuting {
         if finished.status == "failed" {
             throw Self.classify(finished.message ?? "Codex turn failed.")
         }
-        return CodexExecBackend.TurnResult(text: text, threadId: threadId)
+        return CodexExecBackend.TurnResult(text: text, threadId: threadId,
+                                          contextUsage: lock.withLock { state.contextUsage })
     }
 
     // ── Process lifecycle ──
@@ -524,6 +534,13 @@ final class CodexAppServerBackend: CodexExecuting {
         case .agentMessageCompleted(let threadId, let text):
             guard let turn = activeTurn(for: threadId), !text.isEmpty else { return }
             lock.withLock { turn.replyParts.append(text) }
+        case .contextUsage(let threadId, let turnId, let usage):
+            guard let turn = activeTurn(for: threadId) else { return }
+            lock.withLock {
+                // A usage notification may arrive before turn/start's reply.
+                guard turn.turnId == nil || turn.turnId == turnId else { return }
+                turn.contextUsage = usage
+            }
         case .turnFinished(let threadId, let status, let errorMessage):
             guard let turn = activeTurn(for: threadId) else { return }
             finishTurn(turn, status: status, message: errorMessage)

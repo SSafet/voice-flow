@@ -2365,8 +2365,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         staleRetries: Int
     ) async -> AssistantContinuityOutcome {
         let snapshot = agent.currentConversation
-        let outcome = await assistantContinuityClassifier.decide(current: snapshot, incoming: incoming)
-        guard agent.currentSessionId != snapshot.id else { return outcome }
+        let runtime = agent.preferredRuntime
+        var contextUsage = snapshot.runtimeBinding(runtime)?.contextUsage
+        // Backfill old Codex conversations from their own saved telemetry,
+        // without starting a runtime or putting the whole transcript in the router.
+        if contextUsage == nil, runtime == .codex,
+           let id = snapshot.runtimeBinding(.codex)?.externalSessionID ?? snapshot.codexThreadId {
+            contextUsage = await Task.detached(priority: .utility) {
+                CodexRolloutUsage.read(threadID: id)
+            }.value
+        }
+        let outcome = await assistantContinuityClassifier.decide(
+            current: snapshot, incoming: incoming, runtime: runtime, contextUsage: contextUsage)
+        guard agent.currentSessionId != snapshot.id || agent.preferredRuntime != runtime else { return outcome }
         guard staleRetries > 0 else {
             return .fallback("the active conversation changed while continuity was being classified")
         }

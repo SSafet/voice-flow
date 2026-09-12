@@ -75,12 +75,16 @@ final class CodexAgentRuntime: AgentRuntime {
                     if cancelNow { self.backend.interrupt(threadId: id) }
                 })
             externalSessionID = result.threadId ?? externalSessionID
+            let usage = result.contextUsage.map {
+                AgentUsage(inputTokens: nil, outputTokens: nil, costUSD: nil, contextUsage: $0)
+            }
+            if let usage { emit(.usage(usage)) }
             emit(.completed(text: result.text))
             return AgentTurnResult(
                 externalSessionID: externalSessionID,
                 runtimeVersion: nil,
                 text: result.text,
-                usage: nil)
+                usage: usage)
         } catch is CancellationError {
             emit(.interrupted)
             throw CancellationError()

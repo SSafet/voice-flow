@@ -119,6 +119,9 @@ for (label, backend) in [("app-server", CodexAppServerBackend() as any CodexExec
             model: AgentModelSelection.codex(model: "gpt-5.6-luna", reasoningEffort: "low"),
             instructions: instructions)
         let result = try await runtime.run(request, binding: binding) { _ in }
+        try expect((result.usage?.contextUsage?.tokens ?? 0) > 0
+                   && (result.usage?.contextUsage?.contextWindow ?? 0) > 0,
+                   "\(label) turn \(index) must return last-call context usage and capacity")
         try expect(result.text.trimmingCharacters(in: .whitespacesAndNewlines) == marker,
                   "\(label) turn \(index): \(result.text)")
         if index == 1 { try expect(result.externalSessionID == previousID, "unchanged instructions must resume") }

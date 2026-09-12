@@ -27,6 +27,17 @@ enum ClaudeCodeStreamMessage: Equatable {
 }
 
 enum ClaudeCodeProtocol {
+    /// Assistant message usage is per model call. The final result's usage
+    /// sums tool-loop calls and must never be treated as a context window.
+    static func contextUsage(_ line: Data) -> AgentContextUsage? {
+        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              object["type"] as? String == "assistant",
+              object["parent_tool_use_id"] == nil || object["parent_tool_use_id"] is NSNull,
+              let message = object["message"] as? [String: Any],
+              let usage = message["usage"] as? [String: Any] else { return nil }
+        return AgentContextUsage.claude(usage)
+    }
+
     static func decode(_ line: Data) -> ClaudeCodeStreamMessage? {
         guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let type = object["type"] as? String else { return nil }
@@ -294,9 +305,13 @@ final class ClaudeCodeAgentRuntime: AgentRuntime {
             var result: (text: String, isError: Bool, sessionID: String?,
                          inputTokens: Int?, outputTokens: Int?, costUSD: Double?)?
             var startedSession: String?
+            var contextUsage: AgentContextUsage?
         }
         let collector = Collector()
         let handleLine: (Data) -> Void = { line in
+            if let usage = ClaudeCodeProtocol.contextUsage(line) {
+                collector.lock.withLock { collector.contextUsage = usage }
+            }
             guard let message = ClaudeCodeProtocol.decode(line) else { return }
             switch message {
             case .sessionStarted(let id, let model):
@@ -424,7 +439,8 @@ final class ClaudeCodeAgentRuntime: AgentRuntime {
         let text = result.text.isEmpty ? (streamed.isEmpty ? blocks.joined(separator: "\n\n") : streamed) : result.text
         let usage = AgentUsage(
             inputTokens: result.inputTokens, outputTokens: result.outputTokens,
-            costUSD: result.costUSD.map { Decimal($0) })
+            costUSD: result.costUSD.map { Decimal($0) },
+            contextUsage: collector.lock.withLock { collector.contextUsage })
         emit(.usage(usage))
         emit(.completed(text: text))
         return AgentTurnResult(

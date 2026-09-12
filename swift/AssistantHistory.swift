@@ -488,7 +488,10 @@ final class AssistantHistoryStore {
             guard let index = envelope.sessions.firstIndex(where: { $0.id == sessionId }) else { return }
             var bindings = envelope.sessions[index].runtimeBindings ?? [:]
             var binding = bindings[runtime.rawValue] ?? RuntimeBinding()
-            if fresh { binding.generation += 1 }
+            if fresh {
+                binding.generation += 1
+                binding.contextUsage = nil
+            }
             binding.externalSessionID = externalSessionID
             binding.instructionVersion = RuntimeBinding.currentInstructionVersion
             binding.instructionFingerprint = instructionFingerprint
@@ -506,7 +509,8 @@ final class AssistantHistoryStore {
     @discardableResult
     func completeRuntimeTurn(sessionId: String, runtime: AgentRuntimeKind,
                              text: String, externalSessionID: String? = nil,
-                             runtimeVersion: String? = nil) -> AssistantHistoryMessage? {
+                             runtimeVersion: String? = nil,
+                             contextUsage: AgentContextUsage? = nil) -> AssistantHistoryMessage? {
         lock.withLock {
             guard let index = envelope.sessions.firstIndex(where: { $0.id == sessionId }),
                   let message = appendMessageLocked(index: index, role: .assistant, text: text,
@@ -515,6 +519,8 @@ final class AssistantHistoryStore {
             var binding = bindings[runtime.rawValue] ?? RuntimeBinding()
             binding.externalSessionID = externalSessionID ?? binding.externalSessionID
             binding.runtimeVersion = runtimeVersion ?? binding.runtimeVersion
+            // Missing telemetry is unknown, never the previous turn's size.
+            binding.contextUsage = contextUsage?.isValid == true ? contextUsage : nil
             binding.syncedThroughMessageID = message.id
             binding.state = .clean
             binding.lastUsedAt = Date()

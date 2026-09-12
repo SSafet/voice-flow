@@ -99,7 +99,8 @@ private final class StubProtocol: URLProtocol {
                 Thread.sleep(forTimeInterval: 0.2)
                 let body = try! JSONSerialization.data(withJSONObject: [
                     "parts": [["type": "text", "text": "authoritative final"]],
-                    "info": ["tokens": ["input": 3, "output": 2], "cost": 0.01],
+                    "info": ["tokens": ["input": 3, "output": 2, "reasoning": 500,
+                                        "cache": ["read": 90_000, "write": 5_000]], "cost": 0.01],
                 ])
                 send(status: 200, body: body, contentType: "application/json")
             } else if path.contains("/permissions/") || path.hasSuffix("/abort") {
@@ -225,6 +226,8 @@ expect(deltas == ["Hi"],
        "duplicate, reordered, or prompt SSE parts were not reduced exactly once: \(deltas)")
 expect(failures == ["injected SSE failure"],
        "OpenCode SSE session failure was not normalized")
+expect(result.usage?.contextUsage?.tokens == 95_505,
+       "OpenCode context must include cached input and reasoning without changing billing fields")
 let plainBody = StubProtocol.sentMessageBody()
 expect(plainBody["system"] as? String == "SYSTEM_PERSONA"
        && (plainBody["parts"] as? [[String: Any]])?.first?["text"] as? String == "task",

@@ -54,6 +54,7 @@ final class CodexExecBackend {
     struct TurnResult {
         let text: String
         let threadId: String?
+        var contextUsage: AgentContextUsage? = nil
     }
 
     private var process: Process?
@@ -277,7 +278,8 @@ final class CodexExecBackend {
             let message = failure ?? (stderrText.isEmpty ? "Codex exited with status \(proc.terminationStatus)." : stderrText)
             throw Self.classify(message)
         }
-        return TurnResult(text: text, threadId: finalThread)
+        return TurnResult(text: text, threadId: finalThread,
+                          contextUsage: finalThread.flatMap { CodexRolloutUsage.read(threadID: $0) })
     }
 
     private static func classify(_ message: String) -> CodexBackendError {
@@ -327,6 +329,66 @@ final class CodexExecBackend {
 
 /// Injection seam for deterministic runtime contract tests. Production uses
 /// `CodexExecBackend`; tests provide a JSONL-free fake with the same lifecycle.
+/// `codex exec --json` exposes accumulated billing totals, not the last
+/// request's context. Read only the bounded tail of its exact saved session.
+/// This also supplies telemetry for conversations created before we stored it.
+enum CodexRolloutUsage {
+    private static let lock = NSLock()
+    private static var paths: [String: URL] = [:]
+    static let maxReadBytes = 1_048_576
+
+    static func read(threadID: String, sessionsRoot: URL? = nil) -> AgentContextUsage? {
+        guard UUID(uuidString: threadID) != nil else { return nil }
+        let home = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+        let root = sessionsRoot ?? home.appendingPathComponent("sessions")
+        let key = root.path + "/" + threadID
+        var path = lock.withLock { paths[key] }
+        if path == nil || !FileManager.default.fileExists(atPath: path!.path) {
+            guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return nil }
+            var inspected = 0
+            for case let file as URL in files {
+                inspected += 1
+                if inspected > 20_000 { break }
+                if file.lastPathComponent.hasSuffix("-\(threadID).jsonl") {
+                    path = file
+                    lock.withLock { paths[key] = file }
+                    break
+                }
+            }
+        }
+        guard let path, let handle = try? FileHandle(forReadingFrom: path) else { return nil }
+        defer { try? handle.close() }
+        do {
+            // Validate identity before reading telemetry from a cached path.
+            let head = try handle.read(upToCount: maxReadBytes) ?? Data()
+            guard let first = head.split(separator: 0x0A).first,
+                  let meta = try? JSONSerialization.jsonObject(with: Data(first)) as? [String: Any],
+                  meta["type"] as? String == "session_meta",
+                  (meta["payload"] as? [String: Any])?["id"] as? String == threadID else { return nil }
+            let end = try handle.seekToEnd()
+            try handle.seek(toOffset: end > UInt64(maxReadBytes) ? end - UInt64(maxReadBytes) : 0)
+            return decodeTail(try handle.read(upToCount: maxReadBytes) ?? Data())
+        } catch { return nil }
+    }
+
+    static func decodeTail(_ data: Data) -> AgentContextUsage? {
+        for line in data.split(separator: 0x0A).reversed() {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
+            // An older measurement cannot describe a freshly compacted context.
+            if object["type"] as? String == "compacted" { return nil }
+            guard object["type"] as? String == "event_msg",
+                  let payload = object["payload"] as? [String: Any],
+                  payload["type"] as? String == "token_count",
+                  let info = payload["info"] as? [String: Any],
+                  let last = info["last_token_usage"] as? [String: Any] else { continue }
+            return AgentContextUsage.codex(last, window: info["model_context_window"], camelCase: false)
+        }
+        return nil
+    }
+}
+
 protocol CodexExecuting: AnyObject {
     func interrupt()
     /// Interrupt one thread's turn where the backend can tell them apart;

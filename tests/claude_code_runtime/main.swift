@@ -116,3 +116,12 @@ expect(explicitUser["USER"] == "other" && explicitUser["LOGNAME"] == "other",
        "an explicit USER in the source environment must win over the fallback")
 
 print("claude code runtime tests passed")
+
+let stepUsage = Data(#"{"type":"assistant","parent_tool_use_id":null,"message":{"usage":{"input_tokens":100,"cache_read_input_tokens":90000,"cache_creation_input_tokens":5000,"output_tokens":1}}}"#.utf8)
+expect(ClaudeCodeProtocol.contextUsage(stepUsage)?.inputTokens == 95_100
+       && ClaudeCodeProtocol.contextUsage(stepUsage)?.outputTokens == nil,
+       "Claude context must include cached input and label placeholder output as unavailable")
+expect(ClaudeCodeProtocol.contextUsage(Data(#"{"type":"result","usage":{"input_tokens":900000,"output_tokens":20000}}"#.utf8)) == nil,
+       "turn billing totals must never be used as context size")
+expect(ClaudeCodeProtocol.contextUsage(Data(#"{"type":"assistant","parent_tool_use_id":"child","message":{"usage":{"input_tokens":12}}}"#.utf8)) == nil,
+       "subagent messages must not replace the main conversation's context")

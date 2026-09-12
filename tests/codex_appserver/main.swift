@@ -41,6 +41,33 @@ expect(CodexAppServerProtocol.decode(line(#"{"jsonrpc":"2.0","id":3,"method":"it
 expect(CodexAppServerProtocol.decode(line(#"{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{}}"#))
        == .other(method: "thread/tokenUsage/updated"), "unknown notifications must not crash")
 expect(CodexAppServerProtocol.decode(line("not json")) == nil, "garbage lines decode to nil")
+let measured = AgentContextUsage(inputTokens: 80_000, outputTokens: 2_000, contextWindow: 128_000)!
+expect(CodexAppServerProtocol.decode(line(#"{"method":"thread/tokenUsage/updated","params":{"threadId":"thr_1","turnId":"t1","tokenUsage":{"last":{"inputTokens":80000,"cachedInputTokens":60000,"outputTokens":2000,"totalTokens":82000},"total":{"totalTokens":9000000},"modelContextWindow":128000}}}"#))
+       == .contextUsage(threadId: "thr_1", turnId: "t1", usage: measured),
+       "context must use the last call, include cache exactly once, and preserve thread/turn identity")
+expect(AgentContextUsage(inputTokens: -1) == nil
+       && AgentContextUsage(inputTokens: Int.max, outputTokens: 1) == nil
+       && AgentContextUsage.count(true) == nil, "invalid usage must not masquerade as a small context")
+
+let oldUsage = #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":80000,"output_tokens":2000},"total_token_usage":{"total_tokens":9000000},"model_context_window":128000}}}"#
+let compacted = #"{"type":"compacted","payload":{}}"#
+let newUsage = #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":12000,"output_tokens":500},"model_context_window":128000}}}"#
+expect(CodexRolloutUsage.decodeTail(Data((oldUsage + "\n" + compacted).utf8)) == nil,
+       "pre-compaction usage must not survive without a new measurement")
+expect(CodexRolloutUsage.decodeTail(Data((oldUsage + "\n" + compacted + "\n" + newUsage).utf8))?.tokens == 12_500,
+       "post-compaction context must replace the old size rather than accumulate")
+let usageRoot = FileManager.default.temporaryDirectory.appendingPathComponent("vf-usage-test-\(UUID().uuidString)")
+try FileManager.default.createDirectory(at: usageRoot, withIntermediateDirectories: true)
+defer { try? FileManager.default.removeItem(at: usageRoot) }
+let usageID = UUID().uuidString.lowercased()
+let usageFile = usageRoot.appendingPathComponent("rollout-test-\(usageID).jsonl")
+let metadata = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"\(usageID)\"}}\n"
+try Data((metadata + String(repeating: " ", count: CodexRolloutUsage.maxReadBytes + 10) + "\n" + oldUsage).utf8).write(to: usageFile)
+expect(CodexRolloutUsage.read(threadID: usageID, sessionsRoot: usageRoot) == measured,
+       "bounded tail recovery must read this conversation's usage even from a large rollout")
+try Data(("{\"type\":\"session_meta\",\"payload\":{\"id\":\"wrong\"}}\n" + oldUsage).utf8).write(to: usageFile)
+expect(CodexRolloutUsage.read(threadID: usageID, sessionsRoot: usageRoot) == nil,
+       "a cached path must be rechecked against session identity")
 
 // ── Request shapes ──
 
