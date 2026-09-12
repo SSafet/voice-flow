@@ -1,8 +1,10 @@
 # Native Atika cloud sync — implementation and proof
 
 Updated 12 September 2026. This branch adds opt-in cloud metadata sync to the
-existing macOS and Android apps. The macOS application has not been installed
-or launched as part of this work. Android acceptance uses an isolated emulator;
+existing macOS and Android apps. The signed macOS application was installed
+after the merged verification gate. Its previously running process was left
+open; restarting Voice Flow loads the new build. Android acceptance uses an
+isolated emulator; no physical phone was connected for installation.
 Atika deployment is tracked separately. The evidence below names the exact scope.
 
 ## What a person can sync
@@ -154,4 +156,12 @@ account storage-quota UI or history compaction in this wave. The Swift store
 currently stores each account state as one JSON value inside SQLite, which
 provides atomicity but needs a normalized-table performance pass for very
 large histories beyond the tested 1,200-record import. Release/live runtime
-soaks, macOS visual interaction and installation remain separate gates.
+soaks and complete macOS cloud-form interaction remain separate gates. An
+isolated signed QA app rendered the Settings workspace and its new Sync tab;
+this is not a claim of clicking through native cloud sign-in.
+
+The production Android debug APK is available at
+`android/app/build/outputs/apk/debug/app-debug.apk`, SHA-256
+`6485459354f2ba771b6162c98834f87bc2914e655f031c8729fe002bac0a6633`.
+It includes the exact Android sources covered by the native and cross-device
+receipts. It is ready to install when the phone is connected.
