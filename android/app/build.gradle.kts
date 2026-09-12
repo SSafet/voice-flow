@@ -19,6 +19,11 @@ android {
         release {
             isMinifyEnabled = false
         }
+        // Separate app/data/Keystore for automatic-sync device checks.
+        create("syncQa") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".syncqa"
+        }
     }
 
     compileOptions {
@@ -32,4 +37,7 @@ android {
 
 // No external dependencies on purpose: HttpURLConnection + org.json ship with
 // the platform, which keeps the sideloaded APK small and the build offline-safe.
-dependencies {}
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+}

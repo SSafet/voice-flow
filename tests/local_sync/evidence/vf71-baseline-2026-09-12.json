@@ -1,0 +1,11 @@
+{
+  "serial": "emulator-5580",
+  "checks": [
+    "old build: no automatic delivery after 12 seconds; entry remains unsynced",
+    "old build: bubble startup leaves finished transcript unsynced"
+  ],
+  "apk_sha256": "138dabc55be4e8394c9c54270de213b0f71b45d6dbe5b019d273198c9b7ea870",
+  "result": "passed",
+  "requests": [],
+  "logs": ""
+}

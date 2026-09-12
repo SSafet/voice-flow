@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <instrumentation android:name="com.voiceflow.mobile.SyncQADriver"
+        android:targetPackage="com.voiceflow.mobile.syncqa" />
+    <application android:label="Voice Flow Sync QA" tools:replace="android:label">
+        <service android:name=".BubbleService" android:exported="true"
+            android:permission="android.permission.DUMP" tools:replace="android:exported" />
+        <receiver android:name="com.voiceflow.mobile.SyncQASeedReceiver" android:exported="true"
+            android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

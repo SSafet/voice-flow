@@ -88,9 +88,9 @@ data class QueueItem(
 }
 
 /// JSON-file persistence in filesDir, newest-first like the Mac stores.
-/// All access from the single background executor in MainActivity, so no
-/// locking beyond @Synchronized safety belts.
+/// Activity, bubble and scheduled sync share the same transaction lock.
 class Store(private val context: Context) {
+    companion object { val lock = Any() }
     private val dictationsFile get() = File(context.filesDir, "dictations.json")
     private val chatFile get() = File(context.filesDir, "chat.json")
     private val queueFile get() = File(context.filesDir, "queue.json")
@@ -107,35 +107,32 @@ class Store(private val context: Context) {
     }
 
     // ── dictations ──
-    @Synchronized
-    fun dictations(): MutableList<DictationEntry> {
+    fun dictations(): MutableList<DictationEntry> = synchronized(lock) {
         val arr = readArray(dictationsFile)
-        return MutableList(arr.length()) { DictationEntry.fromJson(arr.getJSONObject(it)) }
+        return@synchronized MutableList(arr.length()) { DictationEntry.fromJson(arr.getJSONObject(it)) }
     }
 
-    @Synchronized
-    fun saveDictations(list: List<DictationEntry>) {
+    fun saveDictations(list: List<DictationEntry>) = synchronized(lock) {
         val arr = JSONArray()
         list.take(500).forEach { arr.put(it.toJson()) }
         writeArray(dictationsFile, arr)
     }
 
-    @Synchronized
-    fun addDictation(entry: DictationEntry) {
+    fun addDictation(entry: DictationEntry) = synchronized(lock) {
         val list = dictations()
         list.add(0, entry)
         saveDictations(list)
+        if (!entry.synced) SyncJob.request(context)
     }
 
     /// Continue-append (ticket #36): the new transcript joins the existing
     /// entry with a paragraph break; time/date refresh to now and the entry
     /// moves to the top, marked unsynced so the next sync UPDATES the Mac's
     /// copy (matched by id). Returns false when the entry is gone.
-    @Synchronized
-    fun appendToDictation(id: String, text: String): Boolean {
+    fun appendToDictation(id: String, text: String): Boolean = synchronized(lock) {
         val list = dictations()
         val idx = list.indexOfFirst { it.id == id }
-        if (idx < 0) return false
+        if (idx < 0) return@synchronized false
         val d = Date()
         val entry = list.removeAt(idx)
         list.add(0, entry.copy(
@@ -145,53 +142,52 @@ class Store(private val context: Context) {
             synced = false,
         ))
         saveDictations(list)
-        return true
+        SyncJob.request(context)
+        return@synchronized true
     }
 
     // ── assistant chat ──
-    @Synchronized
-    fun chat(): MutableList<ChatMessage> {
+    fun chat(): MutableList<ChatMessage> = synchronized(lock) {
         val arr = readArray(chatFile)
-        return MutableList(arr.length()) { ChatMessage.fromJson(arr.getJSONObject(it)) }
+        return@synchronized MutableList(arr.length()) { ChatMessage.fromJson(arr.getJSONObject(it)) }
     }
 
-    @Synchronized
-    fun saveChat(list: List<ChatMessage>) {
+    fun saveChat(list: List<ChatMessage>) = synchronized(lock) {
         val arr = JSONArray()
         list.takeLast(400).forEach { arr.put(it.toJson()) }
         writeArray(chatFile, arr)
     }
 
-    @Synchronized
-    fun addChat(msg: ChatMessage) {
+    fun addChat(msg: ChatMessage) = synchronized(lock) {
         val list = chat()
         list.add(msg)
         saveChat(list)
+        if (!msg.synced) SyncJob.request(context)
+    }
+
+    fun pendingSyncCount(): Int = synchronized(lock) {
+        dictations().count { !it.synced } + chat().count { !it.synced }
     }
 
     // ── pending-audio queue ──
-    @Synchronized
-    fun queue(): MutableList<QueueItem> {
+    fun queue(): MutableList<QueueItem> = synchronized(lock) {
         val arr = readArray(queueFile)
-        return MutableList(arr.length()) { QueueItem.fromJson(arr.getJSONObject(it)) }
+        return@synchronized MutableList(arr.length()) { QueueItem.fromJson(arr.getJSONObject(it)) }
     }
 
-    @Synchronized
-    fun saveQueue(list: List<QueueItem>) {
+    fun saveQueue(list: List<QueueItem>) = synchronized(lock) {
         val arr = JSONArray()
         list.forEach { arr.put(it.toJson()) }
         writeArray(queueFile, arr)
     }
 
-    @Synchronized
-    fun enqueue(item: QueueItem) {
+    fun enqueue(item: QueueItem) = synchronized(lock) {
         val list = queue()
         list.add(item)
         saveQueue(list)
     }
 
-    @Synchronized
-    fun dequeue(id: String) {
+    fun dequeue(id: String) = synchronized(lock) {
         val list = queue()
         list.firstOrNull { it.id == id }?.let { File(it.file).delete() }
         saveQueue(list.filterNot { it.id == id })

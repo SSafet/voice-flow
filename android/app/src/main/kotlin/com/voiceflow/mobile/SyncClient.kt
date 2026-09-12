@@ -5,11 +5,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /// Talks to the Mac's sync server (swift/Sync.swift, port 8793, bearer
-/// token) over Tailscale. Pushes unsynced dictations + chat, pulls the
+/// token) over the local network. Pushes unsynced dictations + chat, pulls the
 /// Mac's recent dictation history plus settings parity (custom_vocabulary,
 /// agent_model). The Mac stays the source of truth; the phone only ever
 /// re-sends what the Mac hasn't acknowledged.
-class SyncClient(context: Context, private val store: Store, private val keys: Keys) {
+class SyncClient(private val context: Context, private val store: Store, private val keys: Keys) {
     private val prefs = context.getSharedPreferences("app", Context.MODE_PRIVATE)
 
     var lastError: String? = null
@@ -35,8 +35,21 @@ class SyncClient(context: Context, private val store: Store, private val keys: K
 
     /// One sync round trip. Returns a human status line; null on "nothing to do
     /// and not configured". Blocking — background executor only.
-    fun sync(): String? {
-        if (!configured()) { lastError = null; return null }
+    fun sync(trigger: String = "activity"): String? = synchronized(syncLock) {
+        val started = System.currentTimeMillis()
+        prefs.edit().putLong("sync_last_attempt", started).putString("sync_last_trigger", trigger).apply()
+        android.util.Log.i("VoiceFlowSync", "start trigger=$trigger pending=${store.pendingSyncCount()}")
+        try { syncOnce() }
+        catch (e: Exception) { lastError = "Sync could not finish; changes remain on this phone"; throw e }
+        finally {
+            val pending = store.pendingSyncCount()
+            prefs.edit().putString("sync_last_error", lastError).putInt("sync_pending", pending).apply()
+            android.util.Log.i("VoiceFlowSync", "finish trigger=$trigger success=${lastError == null} pending=$pending elapsedMs=${System.currentTimeMillis() - started}")
+        }
+    }
+
+    private fun syncOnce(): String? {
+        if (!configured()) { lastError = "Pair this phone with VoiceFlow on the Mac"; return null }
         val port = prefs.getString("sync_port", "8793")!!.trim().ifBlank { "8793" }
         val token = keys.load(Keys.SYNC_TOKEN) ?: return null
 
@@ -50,97 +63,73 @@ class SyncClient(context: Context, private val store: Store, private val keys: K
             .put("dictations", JSONArray().also { arr -> outDictations.forEach { arr.put(it.toJson()) } })
             .put("chat", JSONArray().also { arr -> outChat.forEach { arr.put(it.toJson()) } })
 
-        // Try every known address, Tailscale first — whichever answers wins.
+        // Rediscovery repairs DHCP changes. A fresh HMAC challenge proves the
+        // candidate knows our pairing secret before it receives that secret or history.
+        val discovered = runCatching { LocalSyncDiscovery.hosts(context) }.getOrDefault(emptyList())
+        val candidates = (discovered + hosts()).distinct().take(8).toMutableList()
+        lastError = "Mac unavailable — check Wi-Fi, VoiceFlow, and the Mac firewall"
+
         var payload: JSONObject? = null
-        for (host in hosts()) {
+        var candidateIndex = 0
+        while (true) {
+            if (candidateIndex == candidates.size) {
+                val now = System.currentTimeMillis()
+                if (now - prefs.getLong("sync_last_scan", 0) < 5 * 60_000) break
+                prefs.edit().putLong("sync_last_scan", now).apply()
+                val recovered = runCatching { LocalSyncDiscovery.findPairedHost(context, port, token) }.getOrNull() ?: break
+                if (recovered in candidates) break
+                candidates.add(recovered)
+            }
+            val host = candidates[candidateIndex++]
             payload = try {
-                Net.postJson("http://$host:$port/sync", body, mapOf("Authorization" to "Bearer $token"), 20_000)
+                if (!SyncIdentity.verify(host, port, token)) continue
+                Net.postJson("http://$host:$port/sync", body, mapOf("Authorization" to "Bearer $token"), 20_000, 2_000)
+                    .also {
+                        check(it.optBoolean("ok") && it.optJSONArray("dictations") != null) { "Invalid sync response" }
+                        prefs.edit().putString("sync_hosts", JSONArray(listOf(host) + hosts().filter { it != host }).toString()).apply()
+                    }
             } catch (e: Net.HttpError) {
-                if (e.code == 401) {   // token revoked on the Mac → re-pair
-                    prefs.edit().putBoolean("paired", false).apply()
-                    lastError = "unpaired"
-                    return null
-                }
-                lastError = e.message?.take(120); continue
+                // A stale address may now belong to another device; it must
+                // never revoke this phone's pairing or acknowledge its uploads.
+                continue
             } catch (e: Exception) {
-                lastError = e.message?.take(120); continue
+                continue
             }
             break
         }
-        if (payload == null) return null   // Mac unreachable — offline is a delay, not a failure
+        val response = payload ?: return null   // Mac unreachable — offline is a delay, not a failure
         lastError = null
 
-        // Everything we sent is now on the Mac.
-        if (outDictations.isNotEmpty() || outChat.isNotEmpty()) {
-            dictations.forEach { it.synced = true }
-            chat.forEach { it.synced = true }
-        }
+        return synchronized(Store.lock) {
+            // Reload after the network request so a concurrent capture/append survives.
+            val dictations = store.dictations()
+            val chat = store.chat()
+            val pulled = SyncMerge.apply(dictations, chat, outDictations, outChat, response)
+            store.saveDictations(dictations)
+            store.saveChat(chat)
 
-        // Merge the Mac's history into ours. Entries match by stable id
-        // first (ticket #36): a known id with changed text is a Mac-side
-        // update (Continue-append) adopted in place — unless our copy has
-        // unsynced local edits, which win until pushed. Id-less entries keep
-        // the old time+text dedupe; new ones adopt the Mac's id so later
-        // continues sync as updates, not duplicates.
-        val seen = dictations.map { it.time + "" + it.text }.toHashSet()
-        var pulled = 0
-        payload.optJSONArray("dictations")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                val text = o.optString("text")
-                if (text.isBlank()) continue
-                val macId = o.optString("id")
-                if (macId.isNotBlank()) {
-                    val idx = dictations.indexOfFirst { it.id == macId }
-                    if (idx >= 0) {
-                        val local = dictations[idx]
-                        if (local.synced && local.text != text) {
-                            dictations.removeAt(idx)
-                            dictations.add(0, local.copy(
-                                text = text,
-                                time = o.optString("time"),
-                                date = o.optString("timestamp").take(10),
-                                synced = true,
-                            ))
-                            pulled++
-                        }
-                        continue
-                    }
-                }
-                val key = o.optString("time") + "" + text
-                if (key in seen) continue
-                seen.add(key)
-                dictations.add(DictationEntry(
-                    macId.ifBlank { java.util.UUID.randomUUID().toString() },
-                    o.optString("time"), o.optString("timestamp").take(10),
-                    text,
-                    o.optString("destination", "pasted"),
-                    true,
-                ))
-                pulled++
+            // Adopt the Mac's API keys for any slot still empty on the phone.
+            response.optJSONObject("keys")?.let { served ->
+                if (keys.load(Keys.OPENAI).isNullOrBlank() && served.optString("openai").isNotBlank())
+                    keys.save(Keys.OPENAI, served.optString("openai"))
+                if (keys.load(Keys.AGENT).isNullOrBlank() && served.optString("agent").isNotBlank())
+                    keys.save(Keys.AGENT, served.optString("agent"))
             }
-        }
-        store.saveDictations(dictations)
-        store.saveChat(chat)
 
-        // Adopt the Mac's API keys for any slot still empty on the phone.
-        payload.optJSONObject("keys")?.let { served ->
-            if (keys.load(Keys.OPENAI).isNullOrBlank() && served.optString("openai").isNotBlank())
-                keys.save(Keys.OPENAI, served.optString("openai"))
-            if (keys.load(Keys.AGENT).isNullOrBlank() && served.optString("agent").isNotBlank())
-                keys.save(Keys.AGENT, served.optString("agent"))
-        }
+            response.optJSONArray("vocabulary")?.let {
+                prefs.edit().putString("vocabulary", it.toString()).apply()
+            }
+            response.optString("agent_model").takeIf { it.isNotBlank() }?.let {
+                prefs.edit().putString("agent_model", it).apply()
+            }
+            if (response.has("cleanup_enabled")) {
+                prefs.edit().putBoolean("cleanup_enabled", response.optBoolean("cleanup_enabled", true)).apply()
+            }
 
-        payload.optJSONArray("vocabulary")?.let {
-            prefs.edit().putString("vocabulary", it.toString()).apply()
+            prefs.edit().putLong("sync_last_success", System.currentTimeMillis()).apply()
+            "synced ↑${outDictations.size + outChat.size} ↓$pulled"
         }
-        payload.optString("agent_model").takeIf { it.isNotBlank() }?.let {
-            prefs.edit().putString("agent_model", it).apply()
-        }
-        if (payload.has("cleanup_enabled")) {
-            prefs.edit().putBoolean("cleanup_enabled", payload.optBoolean("cleanup_enabled", true)).apply()
-        }
-
-        return "synced ↑${outDictations.size + outChat.size} ↓$pulled"
     }
+
+    companion object { private val syncLock = Any() }
 }

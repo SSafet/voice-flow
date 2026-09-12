@@ -48,8 +48,8 @@ There is no settings screen at all: on first launch the app finds the Mac
 (Bonjour `_voiceflow-sync._tcp` + candidate probing), you click **Pair
 Phone** in the Voice Flow menu bar, and the phone receives everything —
 sync token, host list (Tailscale first, LAN fallback), port, both API keys,
-vocabulary, model, cleanup setting. A 401 later (revoked token) drops the
-app back to the pairing screen.
+vocabulary, model, cleanup setting. An unreachable or unauthenticated address
+never acknowledges pending uploads or silently clears the saved pairing.
 
 ## Build
 
@@ -102,3 +102,61 @@ to `mobile-chat.json`, and answers with recent dictations plus
 - Tailscale on Mac + phone, same account.
 - Mac energy settings: prevent sleep on power / wake for network.
 - Phone: allow installs from unknown sources.
+
+## Local sync reliability
+
+For local use, keep both devices on the same Wi-Fi, the Mac awake, and Voice Flow
+running. Keep the Mac firewall enabled, disable its **Block all incoming
+connections** option, and allow **Voice Flow** in its app list. No router port
+forwarding or cloud account is needed.
+
+The phone rediscovers `_voiceflow-sync._tcp` each sync and remembers the address
+that worked. When multicast discovery and saved addresses fail, it probes only
+port 8793 on at most 254 neighboring Wi-Fi addresses, within the current subnet
+and capped to the phone's /24. The fallback is bounded to 10 seconds and retried
+at most every five minutes (a network change or explicit tap resets that delay).
+Before sending its bearer token/history to any candidate (including
+an old cached address), it checks a fresh HMAC challenge against its existing
+pairing secret. This prevents an unrelated Mac or reassigned address from
+receiving the credentials. Both apps must be updated for this check. The existing
+HTTP transport remains intended for a trusted local network; the identity check
+is not transport encryption.
+
+Sync runs on app resume, after captures, on connectivity changes, and every
+30 seconds while the phone app is open. Saving a new dictation, continuation,
+or chat message also schedules a persisted delivery job immediately, independent
+of the Activity. Android 12+ uses expedited delivery when quota permits, with
+a regular-job fallback. Failed delivery retries with exponential backoff starting
+at 30 seconds. A separate persisted 15-minute job catches up with Mac history;
+both the Activity and bubble service ensure it is registered. Android can still
+defer background work for battery/Doze or quota.
+
+The bubble retries finished transcripts on startup and network return even when
+its pending-audio queue is empty, and resets the discovery cooldown on a new
+connection. A stopped job cannot finish a replacement run. New changes replace
+the delivery job so an edit arriving at the end of an upload is not stranded.
+The Record page shows the last successful sync and a tap-to-retry status.
+A sleeping/offline Mac means changes wait on the phone until a later retry.
+`VoiceFlowSync` logs contain trigger, pending count, outcome and elapsed time;
+they contain no transcript, host, token, or API key. The last attempt, trigger,
+success, error and pending count are also recorded in the app preferences.
+
+Uploads merge under a shared phone-store lock, acknowledging only the versions
+actually sent, so concurrent captures and Continue edits survive. The Mac
+serializes sync requests and completes upserts before returning its history.
+
+Targeted checks (no full-release-gate claim):
+
+```bash
+gradle -p android testDebugUnitTest assembleDebug
+python3 tests/local_sync/test_sync.py
+gradle -p android assembleSyncQa
+python3 tests/local_sync/test_android_delivery.py --serial emulator-5580 \
+  --evidence /tmp/voiceflow-sync-evidence.json
+```
+
+`syncQa` installs as **Voice Flow Sync QA**, a separate package, store and
+Keystore. Its driver and shell-accessible bubble service exist only in that
+build. The device check uses synthetic records and an isolated HTTP fixture;
+it never launches the main Activity or forces Android jobs to run. Use an
+Android emulator reachable through `10.0.2.2` (the default test host).

@@ -48,6 +48,7 @@ final class SyncServer: NSObject {
     private let queue = DispatchQueue(label: "voiceflow.sync-server", qos: .utility)
     private let clientQueue = DispatchQueue(
         label: "voiceflow.sync-server.clients", qos: .utility, attributes: .concurrent)
+    private let syncLock = NSLock()
     private var listenFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
 
@@ -167,6 +168,9 @@ final class SyncServer: NSObject {
 
     private func handleClient(fd: Int32) {
         defer { Darwin.shutdown(fd, SHUT_RDWR); Darwin.close(fd) }
+        var timeout = timeval(tv_sec: 10, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         guard let (head, body) = readRequest(fd: fd) else {
             write(fd: fd, status: 400, json: ["error": "bad request"]); return
         }
@@ -185,6 +189,14 @@ final class SyncServer: NSObject {
         }
         if method == "POST", path == "/pair" {
             handlePair(body: body, fd: fd); return
+        }
+        if method == "POST", path == "/sync-probe" {
+            guard let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  let nonce = payload["nonce"] as? String,
+                  let proof = SyncIdentity.proof(nonce: nonce, token: Self.token()) else {
+                write(fd: fd, status: 400, json: ["error": "invalid challenge"]); return
+            }
+            write(fd: fd, status: 200, json: ["proof": proof]); return
         }
         guard auth == "Bearer \(Self.token())" else {
             write(fd: fd, status: 401, json: ["error": "bad token"]); return
@@ -218,7 +230,11 @@ final class SyncServer: NSObject {
     }
 
     private func handleSync(body: Data, fd: Int32) {
-        let payload = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+        syncLock.lock()
+        defer { syncLock.unlock() }
+        guard let payload = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+            write(fd: fd, status: 400, json: ["error": "invalid sync payload"]); return
+        }
 
         // ── incoming dictations → the live store, deduped ──
         // Items carrying an id the Mac already knows are updates (phone-side
@@ -249,7 +265,9 @@ final class SyncServer: NSObject {
         }
         if !fresh.isEmpty {
             let toAdd = fresh
-            DispatchQueue.main.async { [weak self] in self?.onDictations?(toAdd) }
+            // Complete the upsert before returning history: otherwise the phone
+            // can replace its just-uploaded edit with the Mac's stale copy.
+            DispatchQueue.main.sync { [weak self] in self?.onDictations?(toAdd) }
         }
 
         // ── incoming assistant chat → mobile-chat.json archive ──

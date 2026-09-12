@@ -57,6 +57,18 @@ class MainActivity : Activity() {
     private val recorder = Recorder()
     private val executor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
+    private var syncVisible = false
+    private var syncGeneration = 0
+    private val syncRefresh = object : Runnable {
+        override fun run() {
+            if (!syncVisible) return
+            val generation = syncGeneration
+            executor.execute {
+                quietSync()
+                main.post { if (syncVisible && generation == syncGeneration) main.postDelayed(this, 30_000) }
+            }
+        }
+    }
     private val prefs by lazy { getSharedPreferences("app", Context.MODE_PRIVATE) }
 
     private lateinit var pages: FrameLayout
@@ -145,6 +157,7 @@ class MainActivity : Activity() {
         applyPairedState()
         if (savedInstanceState == null) handleIntent(intent)
         watchConnectivity()
+        SyncJob.schedule(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -154,6 +167,10 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        syncVisible = true
+        syncGeneration++
+        main.removeCallbacks(syncRefresh)
+        main.postDelayed(syncRefresh, 30_000)
         applyPairedState()
         refreshHistory()
         refreshChat()
@@ -170,6 +187,9 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        syncVisible = false
+        syncGeneration++
+        main.removeCallbacks(syncRefresh)
         if (recorder.isRecording) stopRecording()
         pairing.stopDiscovery()
         pairingLoopRunning = false
@@ -389,6 +409,11 @@ class MainActivity : Activity() {
             background = roundBg(Color.parseColor("#1FE8A33D"), 10)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             visibility = View.GONE
+            setOnClickListener {
+                text = "Checking local sync…"
+                prefs.edit().remove("sync_last_scan").apply()
+                executor.execute { quietSync() }
+            }
         }
         page.addView(offlineBanner, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
@@ -1056,11 +1081,17 @@ class MainActivity : Activity() {
     // ══════════════════════ sync + connectivity ══════════════════════
 
     private fun quietSync() {
-        val result = syncClient.sync()
+        val result = runCatching { syncClient.sync() }
         main.post {
-            showOffline(syncClient.lastError != null && pairing.paired)
-            if (syncClient.lastError == "unpaired") applyPairedState()
-            if (result != null) refreshHistory()
+            if (!pairing.paired) return@post
+            val last = prefs.getLong("sync_last_success", 0)
+            val lastText = if (last == 0L) "Not synced yet" else "Last synced " +
+                java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(last))
+            offlineBanner.visibility = View.VISIBLE
+            offlineBanner.text = if (result.isFailure || syncClient.lastError != null)
+                "$lastText · Mac unavailable\nSame Wi-Fi, Mac awake, VoiceFlow allowed through firewall. Tap to retry."
+            else "$lastText · ${syncClient.macName()} · Tap to sync"
+            if (result.getOrNull() != null) refreshHistory()
         }
     }
 
@@ -1068,6 +1099,7 @@ class MainActivity : Activity() {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                prefs.edit().remove("sync_last_scan").apply()
                 executor.execute { processQueue(); quietSync() }
             }
         })

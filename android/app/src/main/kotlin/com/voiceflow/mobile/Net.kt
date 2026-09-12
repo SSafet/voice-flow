@@ -12,16 +12,19 @@ import java.util.UUID
 object Net {
     class HttpError(val code: Int, message: String) : Exception(message)
 
-    fun postJson(url: String, body: JSONObject, headers: Map<String, String>, timeoutMs: Int = 90_000): JSONObject {
+    fun postJson(url: String, body: JSONObject, headers: Map<String, String>, timeoutMs: Int = 90_000, connectTimeoutMs: Int = 15_000): JSONObject {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.requestMethod = "POST"
-        conn.connectTimeout = 15_000
+        conn.connectTimeout = connectTimeoutMs
+        conn.instanceFollowRedirects = false
         conn.readTimeout = timeoutMs
         conn.doOutput = true
         conn.setRequestProperty("Content-Type", "application/json")
         headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
-        conn.outputStream.use { it.write(body.toString().toByteArray()) }
-        return readResponse(conn)
+        try {
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            return readResponse(conn)
+        } finally { conn.disconnect() }
     }
 
     /// multipart/form-data upload, same layout as the Mac backend's

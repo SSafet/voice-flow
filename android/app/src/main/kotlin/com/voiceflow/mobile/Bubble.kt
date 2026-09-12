@@ -75,9 +75,13 @@ class BubbleService : Service() {
         keys = Keys(this)
         syncClient = SyncClient(this, store, keys)
         startInForeground(recording = false)
+        SyncJob.schedule(this)
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
         val cb = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) { executor.execute { drain(null) } }
+            override fun onAvailable(network: Network) {
+                prefs.edit().remove("sync_last_scan").apply()
+                executor.execute { drainAndSync(null) }
+            }
         }
         cm.registerDefaultNetworkCallback(cb)
         netCallback = cb
@@ -97,7 +101,7 @@ class BubbleService : Service() {
         // the service is not exported) marks one queued item as
         // just-recorded so the insertion path is exercisable end to end.
         val freshId = intent?.getStringExtra("fresh_id")
-        executor.execute { drain(freshId) }
+        executor.execute { drainAndSync(freshId) }
         return START_STICKY
     }
 
@@ -326,7 +330,14 @@ class BubbleService : Service() {
             System.currentTimeMillis()))
         setState(State.TRANSCRIBING)
         val freshId = file.name
-        executor.execute { drain(freshId) }
+        executor.execute { drainAndSync(freshId) }
+    }
+
+    private fun drainAndSync(freshId: String?) {
+        // Finished dictations outlive the audio queue. Always retry them on
+        // reconnect/start, even when there is nothing left to transcribe.
+        try { drain(freshId) }
+        finally { runCatching { syncClient.sync("bubble") } }
     }
 
     /// Drain "bubble" items from the shared queue (MainActivity's drain skips
@@ -375,7 +386,6 @@ class BubbleService : Service() {
             store.addDictation(DictationEntry.now(cleaned, "pasted"))
             val insert = item.id == freshId
             main.post { deliver(cleaned, insert) }
-            syncClient.sync()
         }
         main.post { if (state == State.TRANSCRIBING) setState(State.IDLE) }
     }
