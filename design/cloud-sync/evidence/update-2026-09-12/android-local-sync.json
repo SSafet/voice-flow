@@ -1,0 +1,50 @@
+{
+  "serial": "emulator-5554",
+  "checks": [
+    "new capture delivered by Android without opening the app",
+    "phone acknowledges the delivered capture",
+    "continued dictation automatically updates the same entry",
+    "automatic upload encounters a temporary connection outage",
+    "Android retry delivers after connection recovery without a manual trigger",
+    "recovered uploads are acknowledged without duplicates",
+    "bubble startup recovers finished transcripts with an empty audio queue",
+    "bubble recovery is acknowledged",
+    "existing bubble reconnect callback delivers after Wi-Fi returns",
+    "Wi-Fi recovery is acknowledged"
+  ],
+  "apk_sha256": "8edf073ee4d3bc3f2264b922c2332bba501ca937ec412b0294f53d1f10032bfb",
+  "result": "passed",
+  "requests": [
+    {
+      "time": 1789228009.3095958,
+      "ids": [
+        "auto-capture"
+      ]
+    },
+    {
+      "time": 1789228015.870519,
+      "ids": [
+        "auto-capture"
+      ]
+    },
+    {
+      "time": 1789228080.9481668,
+      "ids": [
+        "outage-capture"
+      ]
+    },
+    {
+      "time": 1789228086.895995,
+      "ids": [
+        "bubble-recovery"
+      ]
+    },
+    {
+      "time": 1789228096.8168828,
+      "ids": [
+        "wifi-recovery"
+      ]
+    }
+  ],
+  "logs": "         1789228003.543  7454  7472 I VoiceFlowSync: scheduled delivery result=1\n         1789228003.645  7476  7494 I VoiceFlowSync: start trigger=delivery-job pending=1\n         1789228009.476  7476  7494 I VoiceFlowSync: finish trigger=delivery-job success=true pending=0 elapsedMs=5831\n         1789228009.479  7476  7476 I VoiceFlowSync: job finished id=8794 retry=false\n         1789228009.907  7536  7554 I VoiceFlowSync: scheduled delivery result=1\n         1789228010.001  7559  7577 I VoiceFlowSync: start trigger=delivery-job pending=1\n         1789228016.035  7559  7577 I VoiceFlowSync: finish trigger=delivery-job success=true pending=0 elapsedMs=6035\n         1789228016.038  7559  7559 I VoiceFlowSync: job finished id=8794 retry=false\n         1789228016.229  7605  7627 I VoiceFlowSync: scheduled delivery result=1\n         1789228016.330  7632  7650 I VoiceFlowSync: start trigger=delivery-job pending=1\n         1789228022.462  7632  7650 I VoiceFlowSync: finish trigger=delivery-job success=false pending=1 elapsedMs=6133\n         1789228022.464  7632  7632 I VoiceFlowSync: job finished id=8794 retry=true\n         1789228075.099  7632  7814 I VoiceFlowSync: start trigger=delivery-job pending=1\n         1789228080.669  7632  7814 I VoiceFlowSync: finish trigger=delivery-job success=true pending=0 elapsedMs=5570\n         1789228080.671  7632  7632 I VoiceFlowSync: job finished id=8794 retry=false\n         1789228081.040  7864  7864 I VoiceFlowSync: scheduled periodic result=1\n         1789228081.045  7864  7885 I VoiceFlowSync: start trigger=bubble pending=1\n         1789228087.048  7864  7885 I VoiceFlowSync: finish trigger=bubble success=true pending=0 elapsedMs=6006\n         1789228087.049  7864  7887 I VoiceFlowSync: start trigger=periodic-job pending=0\n         1789228087.852  7864  7864 I VoiceFlowSync: job stopped id=8793\n         1789228087.860  7864  7887 I VoiceFlowSync: finish trigger=periodic-job success=false pending=0 elapsedMs=812\n         1789228087.861  7864  7885 I VoiceFlowSync: start trigger=bubble pending=0\n         1789228089.870  7864  7885 I VoiceFlowSync: finish trigger=bubble success=false pending=0 elapsedMs=2010\n         1789228091.709  7864  7885 I VoiceFlowSync: start trigger=bubble pending=1\n         1789228096.982  7864  7885 I VoiceFlowSync: finish trigger=bubble success=true pending=0 elapsedMs=5275\n         1789228096.983  7864  8020 I VoiceFlowSync: start trigger=periodic-job pending=0"
+}

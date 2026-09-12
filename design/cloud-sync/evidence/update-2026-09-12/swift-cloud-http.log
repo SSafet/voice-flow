@@ -1,0 +1,4 @@
+PASS native HTTP: code login, separate device enrollment, 1200-record import/pagination
+PASS native HTTP: offline edits, retained conflict, tombstone, explicit restore/resolution
+PASS native HTTP: dropped committed response, recreated client/refresh, exact receipt, foreign-account cursor rejection
+PASS native HTTP: redirects rejected, revoked access+refresh rejected, local queue retained

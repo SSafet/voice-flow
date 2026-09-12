@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "task": "CANARY_SHARED_TEXT",
+  "runtimes": [
+    {
+      "completed": true,
+      "errors": 0,
+      "latency_seconds": 7.774137020111084,
+      "output": "CANARY_SHARED_OK",
+      "runtime": "codex",
+      "task": "CANARY_SHARED_TEXT"
+    },
+    {
+      "completed": true,
+      "errors": 0,
+      "latency_seconds": 2.5405399799346924,
+      "output": "CANARY_SHARED_OK",
+      "runtime": "opencode",
+      "task": "CANARY_SHARED_TEXT"
+    }
+  ],
+  "rollback_ready": true
+}

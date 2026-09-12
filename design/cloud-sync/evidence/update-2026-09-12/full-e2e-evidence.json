@@ -1,0 +1,1648 @@
+{
+  "version": 2,
+  "mode": "e2e",
+  "generated_at": "2026-09-12T16:57:40.330534+00:00",
+  "source": {
+    "revision": "d196e1368952e105d31415b51c6485146fcfbcea",
+    "dirty": false,
+    "fingerprint": "068fb2e58e3545e020327989a4724f81ad645eeb484a747985c7bfc7bda256a0"
+  },
+  "revision": "d196e1368952e105d31415b51c6485146fcfbcea",
+  "journal": [
+    {
+      "type": "start",
+      "version": 1,
+      "mode": "e2e",
+      "started_at": "2026-09-12T16:43:24.195505+00:00",
+      "excluded_paths": [],
+      "source": {
+        "revision": "d196e1368952e105d31415b51c6485146fcfbcea",
+        "dirty": false,
+        "fingerprint": "068fb2e58e3545e020327989a4724f81ad645eeb484a747985c7bfc7bda256a0"
+      }
+    },
+    {
+      "type": "suite",
+      "suite": "backend_protocol",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "fake_openai_server",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "harness_cli",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "evidence",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "app",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "voice_flow_paths",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "cloud_sync",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "cloud_sync_bridge",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "inbox",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "assistant_wake",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "capture_routing",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "display_context",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "annotations",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "window_placement",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "agents_navigation",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "workspace_ui",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "capture_clipboard",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "capture_store",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "player",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "speech_sanitizer",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "system_agents",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "watcher_bus",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "data_sources",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "data_sources_ui",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "source_review",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "source_review_transport",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "hotkey_precedence",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "speech_speed",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "audio_recorder",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "overlay_contracts",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "assistants",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "agent_capabilities",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "agent_prompt",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "sandbox_containment",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "agent_permissions",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "qa_control",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "agent_tools",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "agent_jobs",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "openrouter_models",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "opencode_updater",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "openrouter_model_picker",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "agent_supervisor",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "assistant_history",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "daily_focus",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "queue_editor",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "assistant_continuity",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "codex_runtime",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "codex_appserver",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "claude_code_runtime",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "opencode_runtime",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "opencode_http",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "model_gateway",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "agent_tool_server",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "opencode_live_turn",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "opencode_supervisor",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "codex_live_turn",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "runtime_canary",
+      "exit_code": 0
+    },
+    {
+      "type": "suite",
+      "suite": "signed_e2e",
+      "exit_code": 0
+    }
+  ],
+  "tests": [
+    {
+      "id": "tests/annotations/main.swift",
+      "runner": "unit",
+      "suites": [
+        "annotations"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:capture_bundle",
+      "runner": "unit",
+      "suites": [
+        "capture_store"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:capture_frame_dedupe",
+      "runner": "unit",
+      "suites": [
+        "capture_store"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:capture_pruning",
+      "runner": "unit",
+      "suites": [
+        "capture_store"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:capture_recent_list",
+      "runner": "unit",
+      "suites": [
+        "capture_store"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:dirty_turn_recovery",
+      "runner": "unit",
+      "suites": [
+        "assistant_history"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_budget",
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_cancel",
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_concurrency",
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_exclusion",
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_idempotency",
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_leases",
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_model_pin",
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_retry_attempts",
+      "runner": "unit",
+      "suites": [
+        "agent_jobs"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:job_triggers",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_annotate_screen",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_check_messages",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_clear_annotations",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_get_latest_capture",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_get_recent_dictations",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_list_captures",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_list_overlays",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_remove_overlay",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_report_to_user",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_set_session_name",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_show_guide",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_show_panel",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_take_screenshot",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_update_guide",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:mcp_wait_for_message",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:memory_ledger",
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:memory_revision",
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:model_catalog",
+      "runner": "unit",
+      "suites": [
+        "openrouter_models"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:overlay_documents",
+      "runner": "unit",
+      "suites": [
+        "overlay_contracts"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:prompt_layers",
+      "runner": "unit",
+      "suites": [
+        "agent_prompt"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:runtime_binding_switch",
+      "runner": "unit",
+      "suites": [
+        "assistant_history"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:runtime_failure_note",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:skill_manifest",
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:skill_projection",
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:skill_validation",
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:sync_dedupe_upsert",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:sync_ingest",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:sync_pairing",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:sync_recovery",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:tool_results",
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:tool_schemas",
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:tts_configuration",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_activity",
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_camera",
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_capture",
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_lock",
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_retention",
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "contract:watcher_review",
+      "runner": "unit",
+      "suites": [
+        "watcher_bus"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:accessibility_labels",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:annotation_escape",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:assistant_callback_reduction",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:assistant_image",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:assistant_interrupt",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:continuous_capture",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:dictate_hold",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:dictate_inbox",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:dictate_snapshot",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:double_select_speech",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:escape_panic",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:ghost_pushes",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:install_signature",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:job_model_pin",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:job_result_push",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:launch_relaunch",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:live_reply_speech",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:message_speaker",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:migration_presentation",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:no_arrival_autoplay",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:overlay_file_poll",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:overlay_session_scope",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:overlay_user_close",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:paste_fallback",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:pasteboard_write",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:permission_prompt",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:push_close_keep",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:push_stack_persistence",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:push_trash_delete",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:qa_physical_input_isolation",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:runtime_selector",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:runtime_selector_running",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:session_slots",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:tts_barge_in",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:tts_speak",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:tts_transport",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "e2e:unread_ring",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "failure:job_lease_recovery",
+      "runner": "unit",
+      "suites": [
+        "agent_supervisor",
+        "agent_jobs"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "failure:job_timeout",
+      "runner": "unit",
+      "suites": [
+        "agent_supervisor"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "failure:opencode_restart",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "live:codex_discovery_auth",
+      "runner": "live",
+      "suites": [
+        "codex_live_turn"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "live:codex_image_interrupt",
+      "runner": "live",
+      "suites": [
+        "codex_live_turn"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "live:codex_new_resume",
+      "runner": "live",
+      "suites": [
+        "codex_live_turn"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "live:opencode_image_read",
+      "runner": "live",
+      "suites": [
+        "opencode_live_turn"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "live:opencode_session_stream",
+      "runner": "live",
+      "suites": [
+        "opencode_live_turn"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "live:skill_runtime_parity",
+      "runner": "live",
+      "suites": [
+        "runtime_canary"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "scripts/test-agent-harness.sh:compile_app",
+      "runner": "unit",
+      "suites": [
+        "app"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:capability_scope",
+      "runner": "live",
+      "suites": [
+        "agent_tool_server"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:child_environment",
+      "runner": "unit",
+      "suites": [
+        "codex_runtime",
+        "opencode_http"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:config_isolation",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:log_redaction",
+      "runner": "unit",
+      "suites": [
+        "agent_permissions"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:loopback_bind",
+      "runner": "live",
+      "suites": [
+        "opencode_supervisor"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:mcp_allowlist",
+      "runner": "unit",
+      "suites": [
+        "agent_permissions"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:memory_boundaries",
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:model_catalog_secret",
+      "runner": "unit",
+      "suites": [
+        "openrouter_models"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:path_containment",
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities",
+        "sandbox_containment"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:permission_policy",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:provider_key_canary",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:release_qa_absent",
+      "runner": "unit",
+      "suites": [
+        "app"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:runtime_auth",
+      "runner": "live",
+      "suites": [
+        "opencode_supervisor"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:skill_isolation",
+      "runner": "unit",
+      "suites": [
+        "agent_capabilities"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:tool_session_isolation",
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "security:tool_token_replay",
+      "runner": "live",
+      "suites": [
+        "agent_tool_server"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/agent_permissions/main.swift",
+      "runner": "unit",
+      "suites": [
+        "agent_permissions"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/agents_navigation/main.swift",
+      "runner": "unit",
+      "suites": [
+        "agents_navigation"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/assistant_continuity/main.swift",
+      "runner": "unit",
+      "suites": [
+        "assistant_continuity"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/assistant_history/main.swift",
+      "runner": "unit",
+      "suites": [
+        "assistant_history"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/assistant_wake/main.swift",
+      "runner": "unit",
+      "suites": [
+        "assistant_wake"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/assistants/main.swift",
+      "runner": "unit",
+      "suites": [
+        "assistants"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/audio_recorder/main.swift",
+      "runner": "unit",
+      "suites": [
+        "audio_recorder"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/capture_clipboard/main.swift",
+      "runner": "unit",
+      "suites": [
+        "capture_clipboard"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/capture_routing/main.swift",
+      "runner": "unit",
+      "suites": [
+        "capture_routing"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/codex_runtime/main.swift",
+      "runner": "unit",
+      "suites": [
+        "codex_runtime"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/hotkey_precedence/main.swift",
+      "runner": "unit",
+      "suites": [
+        "hotkey_precedence"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/model_gateway/main.swift",
+      "runner": "live",
+      "suites": [
+        "model_gateway"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/opencode_runtime/main.swift",
+      "runner": "unit",
+      "suites": [
+        "opencode_runtime"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/opencode_supervisor/main.swift",
+      "runner": "live",
+      "suites": [
+        "opencode_supervisor"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/opencode_updater/main.swift",
+      "runner": "unit",
+      "suites": [
+        "opencode_updater"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/openrouter_model_picker/main.swift",
+      "runner": "unit",
+      "suites": [
+        "openrouter_model_picker"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/openrouter_models/main.swift",
+      "runner": "unit",
+      "suites": [
+        "openrouter_models"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/player/main.swift",
+      "runner": "unit",
+      "suites": [
+        "player"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/sandbox_containment/main.swift",
+      "runner": "unit",
+      "suites": [
+        "sandbox_containment"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/speech_sanitizer/main.swift",
+      "runner": "unit",
+      "suites": [
+        "speech_sanitizer"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/speech_speed/main.swift",
+      "runner": "unit",
+      "suites": [
+        "speech_speed"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/system_agents/main.swift",
+      "runner": "unit",
+      "suites": [
+        "system_agents"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/test_backend_protocol.py",
+      "runner": "unit",
+      "suites": [
+        "backend_protocol"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/voice_flow_paths/main.swift",
+      "runner": "unit",
+      "suites": [
+        "voice_flow_paths"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tool:computer_control",
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tool:computer_screenshot",
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tool:context",
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tool:memory",
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tool:overlay",
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tool:user_interaction",
+      "runner": "unit",
+      "suites": [
+        "agent_tools"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "visual:assistant_receipt",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "visual:automation_model_picker",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "visual:job_status",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "visual:overlay_coordinates",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "visual:pill_modes",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "visual:runtime_default",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "visual:runtime_health",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "visual:settings_model_picker",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "visual:watcher_status",
+      "runner": "e2e",
+      "suites": [
+        "signed_e2e"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/data_sources/main.swift",
+      "runner": "unit",
+      "suites": [
+        "data_sources"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/source_review/main.swift",
+      "runner": "unit",
+      "suites": [
+        "source_review"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/data_sources/ui/main.swift",
+      "runner": "unit",
+      "suites": [
+        "data_sources_ui"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/codex_appserver/main.swift",
+      "runner": "unit",
+      "suites": [
+        "codex_appserver"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/claude_code_runtime/main.swift",
+      "runner": "unit",
+      "suites": [
+        "claude_code_runtime"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/test_evidence.py",
+      "runner": "unit",
+      "suites": [
+        "evidence"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/test_harness_cli.py",
+      "runner": "unit",
+      "suites": [
+        "harness_cli"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/test_fake_openai_server.py",
+      "runner": "unit",
+      "suites": [
+        "fake_openai_server"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/workspace_ui/main.swift",
+      "runner": "unit",
+      "suites": [
+        "workspace_ui"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/cloud_sync/main.swift",
+      "runner": "unit",
+      "suites": [
+        "cloud_sync"
+      ],
+      "status": "passed"
+    },
+    {
+      "id": "tests/cloud_sync_bridge/main.swift",
+      "runner": "unit",
+      "suites": [
+        "cloud_sync_bridge"
+      ],
+      "status": "passed"
+    }
+  ]
+}

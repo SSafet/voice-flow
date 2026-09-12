@@ -1,0 +1,33 @@
+{
+  "result": "passed",
+  "verifiedAt": "2026-09-12T17:02:10.645070+00:00",
+  "source": {
+    "revision": "d196e1368952e105d31415b51c6485146fcfbcea",
+    "dirty": false,
+    "fingerprint": "068fb2e58e3545e020327989a4724f81ad645eeb484a747985c7bfc7bda256a0"
+  },
+  "appPath": "/Applications/Voice Flow.app",
+  "appExecutableSHA256": "72f62e69443edb9f7b1e628062883668f4d09c8c2da14c4be960a3b9a4768b4e",
+  "toolSdkArchiveSHA256": "d8e285c51b764e39867c89b9508699e86dacc95e464b767ba233730be2fa4529",
+  "signature": [
+    "Authority=Developer ID Application: Safet Safet (RTKL5BFL9H)",
+    "Authority=Developer ID Certification Authority",
+    "Authority=Apple Root CA",
+    "TeamIdentifier=RTKL5BFL9H"
+  ],
+  "runningProcess": "77770 Sat Sep 12 20:01:29 2026     /Applications/Voice Flow.app/Contents/MacOS/voice-flow",
+  "previousPid": 64874,
+  "previousProcessExited": true,
+  "relaunch": "Quit Voice Flow menu action, then opened installed bundle",
+  "backend": {
+    "ok": true,
+    "phase": "idle",
+    "has_audio": false
+  },
+  "bundledRuntime": {
+    "version": "1.17.11",
+    "architecture": "arm64",
+    "sourceBinarySHA256": "996fea55451be04cfa27c0d9dbbf0468cb611cde43075fe3dac799772d0b710f",
+    "installedBinarySHA256": "7d66d2edc5ea0f33cb0ac3c0a80509de5f77a5ceb2bd9bf72db8379b5f1f6e3c"
+  }
+}

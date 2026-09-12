@@ -1,0 +1,8 @@
+capability catalog: 164 capabilities across 22 areas; MCP 15/15; registry 167/167
+OpenCode manifest: v1.17.11, 2 macOS architectures, digests valid
+RUN: compile opencode_runtime
+PASS: compile opencode_runtime (7s)
+RUN: opencode_runtime
+opencode runtime tests passed
+PASS: opencode_runtime (1s)
+agent harness: selected unit suite 'opencode_runtime' passed; full gate not run

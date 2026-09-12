@@ -1,0 +1,1 @@
+PASS: identity challenge, auth rejection, malformed request, synchronous upsert, concurrent retry dedupe

@@ -1,0 +1,13 @@
+{
+  "result": "passed",
+  "emulator": "atika-test",
+  "serial": "emulator-5554",
+  "android": "14 / API 34",
+  "package": "com.voiceflow.mobile",
+  "apkSHA256": "c5372cca730682c67d75b956c8be04dcdae88950ce23dc30b55cd735a3a286c0",
+  "installedBaseApkSHA256": "c5372cca730682c67d75b956c8be04dcdae88950ce23dc30b55cd735a3a286c0",
+  "qaCleanup": "com.voiceflow.mobile.syncqa data cleared after receipts were saved; only test adb reverse removed",
+  "fixtureCleanup": "All three isolated Atika fixture processes handled SIGTERM and exited 0",
+  "leftRunning": "Regular VoiceFlow application on the existing emulator",
+  "physicalPhoneConnected": false
+}

@@ -1,0 +1,9 @@
+capability catalog: 164 capabilities across 22 areas; MCP 15/15; registry 167/167
+OpenCode manifest: v1.17.11, 2 macOS architectures, digests valid
+RUN: compile cloud_sync_bridge
+PASS: compile cloud_sync_bridge (40s)
+RUN: cloud_sync_bridge
+PASS cloud native adapter: typed canary exclusion, running-turn boundary, ordered recovery intent, corrupt-store preservation, stable-ID backed migration
+PASS cloud native scheduling: unchanged/projected saves stay quiet; a real edit wakes sync once
+PASS: cloud_sync_bridge (1s)
+agent harness: selected unit suite 'cloud_sync_bridge' passed; full gate not run

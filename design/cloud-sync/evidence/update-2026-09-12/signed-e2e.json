@@ -1,0 +1,34 @@
+{
+  "ok": true,
+  "checks": [
+    "signed_bundle_chain_of_custody",
+    "qa_auth_isolation",
+    "signed_qa_physical_input_isolation",
+    "signed_physical_hotkeys_with_audio_fixture",
+    "signed_foreground_text_memory_skill_image",
+    "signed_capture_routes_snapshot_continuous_annotation_fallback",
+    "signed_permission_reject_allow_interrupt_cleanup",
+    "signed_opencode_restart",
+    "signed_runtime_death_note_and_recovery",
+    "signed_inbox_capture_watcher_triggers",
+    "signed_sync_pairing_ingest_dedupe_recovery",
+    "signed_tts_configuration_transport_barge_in",
+    "signed_public_mcp_all_tools_engagement_isolation",
+    "signed_per_job_model_persistence_and_routing",
+    "signed_three_agent_concurrency_and_isolation",
+    "signed_job_budget_and_stop_retrigger",
+    "signed_stale_session_canonical_reseed",
+    "signed_agents_panel_visual",
+    "signed_settings_model_picker_visual",
+    "signed_automation_model_picker_visual",
+    "signed_codex_rollback_canonical_reseed",
+    "signed_secret_canary_containment",
+    "signed_launch_relaunch_persistence_no_orphans"
+  ],
+  "observed_runtime_versions": [
+    "1.18.30"
+  ],
+  "app": "/private/tmp/voice-flow-tests.5gBj8f/Voice Flow QA.app",
+  "root": "/private/tmp/voice-flow-tests.5gBj8f/signed-qa-root",
+  "artifacts": "/private/tmp/voice-flow-tests.5gBj8f/e2e-artifacts"
+}

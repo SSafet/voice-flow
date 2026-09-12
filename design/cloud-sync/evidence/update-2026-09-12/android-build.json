@@ -1,0 +1,13 @@
+{
+  "date": "2026-09-12T16:12:52.067724+00:00",
+  "tests": 21,
+  "failures": 0,
+  "errors": 0,
+  "apkSHA256": "c5372cca730682c67d75b956c8be04dcdae88950ce23dc30b55cd735a3a286c0",
+  "emulator": "atika-test",
+  "serial": "emulator-5554",
+  "api": 34,
+  "androidRelease": "14",
+  "regularPackageUpdated": true,
+  "physicalPhoneConnected": false
+}

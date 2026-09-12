@@ -1,10 +1,10 @@
 # Native Atika cloud sync — implementation and proof
 
-Updated 12 September 2026. This branch adds opt-in cloud metadata sync to the
-existing macOS and Android apps. The signed macOS application was installed
-after the merged verification gate. Its previously running process was left
-open; restarting Voice Flow loads the new build. Android acceptance uses an
-isolated emulator; no physical phone was connected for installation.
+Updated 12 September 2026. Opt-in cloud metadata sync is implemented in the
+macOS and Android apps. The final Developer ID signed macOS application was
+installed and relaunched after the complete verification gate; its backend is
+healthy and dictation is available. The rebuilt Android app is installed on the
+running Android 14 emulator. No physical phone was connected for installation.
 Atika's native auth and metadata sync are deployed at `https://api.atika.ai`.
 Native sign-in is enabled and cloud sync is enabled for Safet's active account.
 Production HTTPS acceptance passed 16 checks covering refresh, two devices,
@@ -94,26 +94,37 @@ or compaction interface is included in this native change.
 
 ## Verification
 
-The complete `./scripts/test-agent-harness.sh --unit` gate passed on merged
-code commit `9f3b151b99090854afa6b87427d2b6c39d281ccd`, including both
-release/QA application builds, the new cloud suites and all existing
-UI/runtime/history regressions. **82 registered checks have execution
-receipts.** The final receipt is `evidence/merged-unit-evidence.json`, generated
-at 2026-09-12 13:51:52 UTC from a clean source tree. Its fingerprint is
-`37a3ea0ed02f1cfb0a9f33699887219a93e78f666225eecd3127c82f421c2073`.
+The complete `./scripts/test-agent-harness.sh --e2e` gate passed on clean
+commit `d196e1368952e105d31415b51c6485146fcfbcea` at 2026-09-12 16:57:40 UTC.
+It records **166 checks**: 82 unit, 12 live-runtime and 72 end-to-end registry
+entries, with the latter backed by **23 signed-app scenarios**. Both release
+and QA application builds passed. The source fingerprint is
+`068fb2e58e3545e020327989a4724f81ad645eeb484a747985c7bfc7bda256a0`.
+The full receipt and individual native evidence are in
+[`evidence/update-2026-09-12/README.md`](evidence/update-2026-09-12/README.md).
 
-Cloud implementation commit `0030d25` includes both native clients and their
-tests/docs. Merge `9f3b151` incorporates main's `01fa66b` FLORA context-size
-routing. The merge required no conflict resolution: `App.swift` and
-`AssistantHistory.swift` changed separate regions. Review verified both cloud
-persistence hooks and FLORA context-usage logic, and all 19 other main-changed
-files remained byte-identical to `01fa66b`. `git diff --check` passed.
+This update fixed two failures discovered during verification: cold OpenCode
+startup depended on downloading its tool SDK from inside the sandbox, and
+unchanged native cloud projections repeatedly scheduled another sync. The SDK
+is now bundled and verified before tools load, including a regression for
+canonical temporary paths. Cloud callbacks now wake sync only for real edits
+or persistence errors. The native form settled normally and produced no HTTP
+requests during a 22.435-second idle observation.
 
-The real HTTP smoke and Swift ↔ Android exchange passed separately. The
-precise Swift client/helper and Android source hashes still match their
-passing cross-device and native receipts after the merge. The earlier
-pre-merge full-gate receipt is retained in `evidence/unit-evidence.json` as
-historical evidence; the merged receipt above is the current release check.
+The pinned OpenCode 1.17.11 cold probe passed with external networking disabled.
+The signed app also exercised its existing verified updater: OpenCode 1.18.30
+ran the end-to-end scenarios after its staged checksum was checked. Actual
+Codex CLI new/resumed/image/interruption and instruction-priority tests passed.
+The signed app covered runtime recovery, permissions, hotkeys/capture, speech,
+all 15 public MCP tools, concurrent jobs, model selection and relaunch recovery.
+No long-duration soak is claimed.
+
+Android verification was repeated on the existing Android 14 emulator: 21 JVM
+tests, 19 native cloud checks and 10 background LAN checks passed. The rebuilt
+regular APK was installed and its installed hash verified; isolated QA data
+was cleared afterward. Swift HTTP/LAN and both directions of Swift ↔ Android
+exchange also passed. The original 82-check merged-unit receipt remains in
+`evidence/merged-unit-evidence.json` as historical evidence.
 
 | Check | Evidence |
 | --- | --- |
@@ -161,13 +172,16 @@ need review; neither truncation nor silent omission is used. There is no
 account storage-quota UI or history compaction in this wave. The Swift store
 currently stores each account state as one JSON value inside SQLite, which
 provides atomicity but needs a normalized-table performance pass for very
-large histories beyond the tested 1,200-record import. Release/live runtime
-soaks and complete macOS cloud-form interaction remain separate gates. An
-isolated signed QA app rendered the Settings workspace and its new Sync tab;
-this is not a claim of clicking through native cloud sign-in.
+large histories beyond the tested 1,200-record import. Long-duration runtime
+soaks and hardware microphone quality remain untested. Native cloud sign-in,
+validation, revocation recovery, export selection, conflict choices and sign-out
+were exercised with the production form/controller hosted in an isolated signed
+normal window. That fixture used real local Atika routers and PostgreSQL, with
+synthetic accounts; it does not establish SMTP delivery or a personal account
+sign-in. The exact wrapper and scope are preserved in the update evidence.
 
 The production Android debug APK is available at
 `android/app/build/outputs/apk/debug/app-debug.apk`, SHA-256
-`6485459354f2ba771b6162c98834f87bc2914e655f031c8729fe002bac0a6633`.
+`c5372cca730682c67d75b956c8be04dcdae88950ce23dc30b55cd735a3a286c0`.
 It includes the exact Android sources covered by the native and cross-device
-receipts. It is ready to install when the phone is connected.
+receipts. It is installed on the running emulator and ready for a connected phone.

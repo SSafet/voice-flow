@@ -1,0 +1,27 @@
+{
+  "result": "passed",
+  "recordedAt": "2026-09-12T16:21:17.104062+00:00",
+  "sourceCommit": "83e668fd958467fa453f95fc70eb9939fa57a4ea",
+  "host": "Developer ID signed disposable NSWindow hosting production CloudSyncSettingsView and CloudSyncController",
+  "transport": "Reserved fixture hostname intercepted only in the test wrapper and forwarded to real Atika auth/sync routers on loopback and isolated PostgreSQL; no production requests or real email delivery",
+  "checks": [
+    "local/cloud choice and export selections persist across mode changes and process restart",
+    "blank email disables code request",
+    "insecure origin rejected before any network request",
+    "challenge locks email/server; cancellation re-enables editing",
+    "invalid code displays recoverable error",
+    "synthetic valid code signs in and syncs",
+    "revoked device automatically returns to sign-in and retains readable history",
+    "after scheduling fix, sync reaches settled state and sign-out stays enabled",
+    "all three conflict choices resolve synthetic conflicts with pending count zero",
+    "settled client emits zero HTTP requests over a 22.435-second observation",
+    "preferences reader displays all three retained records",
+    "sign-out returns to sign-in form while retaining all three records and export selections"
+  ],
+  "limits": [
+    "form hosted in a disposable normal window because the production borderless panel was not exposed fully to accessibility",
+    "early validation, restart and revocation checks ran before scheduling fix; post-fix sign-in, conflict choices, idle observation and sign-out repeated on final sources",
+    "no real cloud account or provider credentials used",
+    "not a TLS, SMTP or physical-device test"
+  ]
+}
