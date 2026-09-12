@@ -47,6 +47,9 @@ struct AgentTurnRequest {
     let extraWritableRoots: [String]
     let trustProfile: AgentTrustProfile
     let model: AgentModelSelection?
+    /// Assistant persona, selected skills, and authored guidance. Kept apart
+    /// from user input at every transport boundary, including retries.
+    var instructions: String = ""
     var sourceContext: String = ""
     var sourceAccessMode: AgentSourceAccessMode = .standard
 
@@ -57,7 +60,7 @@ struct AgentTurnRequest {
             prompt: value, screenshots: screenshots,
             workingDirectory: workingDirectory,
             extraWritableRoots: extraWritableRoots,
-            trustProfile: trustProfile, model: model,
+            trustProfile: trustProfile, model: model, instructions: instructions,
             sourceContext: sourceContext, sourceAccessMode: sourceAccessMode)
     }
 }

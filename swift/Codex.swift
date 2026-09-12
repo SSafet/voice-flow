@@ -93,23 +93,13 @@ final class CodexExecBackend {
     /// Basic TOML strings must preserve the exact filesystem path. Escaping
     /// only quotes lets a literal backslash become an escape (or invalid TOML).
     static func tomlString(_ value: String) -> String {
-        var encoded = "\""
-        for scalar in value.unicodeScalars {
-            switch scalar.value {
-            case 0x22: encoded += "\\\""
-            case 0x5C: encoded += "\\\\"
-            case 0..<0x20, 0x7F:
-                encoded += String(format: "\\u%04X", scalar.value)
-            default: encoded.unicodeScalars.append(scalar)
-            }
-        }
-        return encoded + "\""
+        AgentInstructionEncoding.tomlString(value)
     }
 
     static func executionArguments(
         prompt: String, imagePaths: [String], resumeThread: String?,
         extraWritableRoots: [String], model: String? = nil,
-        reasoningEffort: String? = nil) -> [String] {
+        reasoningEffort: String? = nil, instructions: String = "") -> [String] {
         // `exec` and `exec resume` diverge slightly in supported flags
         // (resume has no --sandbox/-C), so permissions go through -c. The
         // Assistant needs outbound access for user-requested integrations
@@ -137,6 +127,9 @@ final class CodexExecBackend {
         if let effort = reasoningEffort, !effort.isEmpty {
             // Same knob OpenCode calls the model variant, spelled the codex way.
             args.append(contentsOf: ["-c", "model_reasoning_effort=\"\(effort)\""])
+        }
+        if !instructions.isEmpty {
+            args.append(contentsOf: ["-c", "developer_instructions=\(tomlString(instructions))"])
         }
         imagePaths.forEach { args.append(contentsOf: ["-i", $0]) }
         args.append(prompt)
@@ -167,6 +160,7 @@ final class CodexExecBackend {
     /// workspace-write sandbox makes it her writable workplace, with
     /// `extraWritableRoots` for the few shared stores her duties touch.
     func run(prompt: String,
+             instructions: String = "",
              images: [Data],
              resumeThread: String?,
              workingDirectory: URL? = nil,
@@ -190,7 +184,8 @@ final class CodexExecBackend {
 
         let args = Self.executionArguments(
             prompt: prompt, imagePaths: imagePaths, resumeThread: resumeThread,
-            extraWritableRoots: extraWritableRoots, model: model, reasoningEffort: reasoningEffort)
+            extraWritableRoots: extraWritableRoots, model: model, reasoningEffort: reasoningEffort,
+            instructions: instructions)
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
@@ -338,6 +333,7 @@ protocol CodexExecuting: AnyObject {
     /// the per-process exec backend interrupts its only turn.
     func interrupt(threadId: String?)
     func run(prompt: String,
+             instructions: String,
              images: [Data],
              resumeThread: String?,
              workingDirectory: URL?,

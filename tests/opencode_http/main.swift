@@ -192,7 +192,7 @@ let request = AgentTurnRequest(
     turnID: UUID(), conversationID: "conversation-a", assistant: nil,
     priorMessages: [], prompt: "task", screenshots: [],
     workingDirectory: directory, extraWritableRoots: [], trustProfile: .workspace,
-    model: AgentModelSelection(provider: "test", model: "model"))
+    model: AgentModelSelection(provider: "test", model: "model"), instructions: "SYSTEM_PERSONA")
 // Missing sessions are idle, but malformed entries must never authorize a
 // new POST: the previous turn may still be running in the server.
 for malformed in [#"{"session-a":42}"#, #"{"session-a":{}}"#,
@@ -226,6 +226,9 @@ expect(deltas == ["Hi"],
 expect(failures == ["injected SSE failure"],
        "OpenCode SSE session failure was not normalized")
 let plainBody = StubProtocol.sentMessageBody()
+expect(plainBody["system"] as? String == "SYSTEM_PERSONA"
+       && (plainBody["parts"] as? [[String: Any]])?.first?["text"] as? String == "task",
+       "OpenCode must receive authored instructions in system and only task/context in text parts")
 expect((plainBody["model"] as? [String: Any])?["modelID"] as? String == "model",
        "the model selection was not sent to OpenCode")
 expect(plainBody["variant"] == nil,

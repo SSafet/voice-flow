@@ -180,13 +180,10 @@ final class AssistantContinuityClassifier {
         let context = String(("TITLE: \(current.title)\n" + messages).prefix(maxContextCharacters))
         let next = String(incoming.trimmingCharacters(in: .whitespacesAndNewlines)
             .prefix(maxIncomingCharacters))
-        // Only the leading brief is user-editable. The delimited blocks below
-        // are the contract the decoder and the schema depend on, so they are
-        // always appended here rather than living in the editable text.
-        let brief = config.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Only data goes in the user message. The editable brief travels as
+        // developer_instructions; these delimiters and the output schema stay
+        // app-owned so editing the brief cannot remove the data contract.
         return """
-        \(brief)
-
         <CURRENT_CONVERSATION>
         \(context)
         </CURRENT_CONVERSATION>
@@ -284,6 +281,7 @@ final class AssistantContinuityClassifier {
         }
         arguments.append(contentsOf: [
             "-c", "mcp_servers={}",
+            "-c", resolved.codexInstructionOverride,
             "--output-schema", schemaURL.path,
             "-o", outputURL.path,
             prompt,

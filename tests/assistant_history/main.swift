@@ -457,3 +457,44 @@ expect(reopenedAfterDowngrade.conversations().contains {
 }, "inactive Assistant unread disappeared from the all-conversation snapshot")
 
 print("assistant history tests passed")
+
+// Pre-separation bindings decode successfully but cannot resume their polluted
+// external transcript. Starting the replacement stamps the new format once.
+let oldBindingData = Data(#"{"externalSessionID":"old-persona-as-user","generation":0,"state":"clean"}"#.utf8)
+let oldBinding = try JSONDecoder().decode(RuntimeBinding.self, from: oldBindingData)
+expect(oldBinding.instructionVersion == nil && !oldBinding.canResume(through: nil),
+       "legacy instruction transcripts must reseed without losing their external reference")
+let modernBinding = RuntimeBinding(externalSessionID: "separate-instructions", state: .clean)
+let roundTripBinding = try JSONDecoder().decode(RuntimeBinding.self, from: JSONEncoder().encode(modernBinding))
+expect(roundTripBinding.canResume(through: nil), "new instruction format must resume after a restart")
+
+for runtime in AgentRuntimeKind.allCases {
+    let upgradeURL = directory.appendingPathComponent("instruction-upgrade-\(runtime.rawValue).json")
+    let initial = AssistantHistoryStore(url: upgradeURL, legacySessionsRoot: nil)
+    let id = initial.activeConversation().id
+    _ = initial.beginRuntimeTurn(sessionId: id, runtime: runtime, text: "preserved question")
+    initial.recordRuntimeStarted(sessionId: id, runtime: runtime, externalSessionID: "old", fresh: true)
+    initial.completeRuntimeTurn(sessionId: id, runtime: runtime, text: "preserved answer")
+    var document = try JSONSerialization.jsonObject(with: Data(contentsOf: upgradeURL)) as! [String: Any]
+    var sessions = document["sessions"] as! [[String: Any]]
+    for index in sessions.indices {
+        guard var map = sessions[index]["runtimeBindings"] as? [String: [String: Any]] else { continue }
+        for key in Array(map.keys) { map[key]?.removeValue(forKey: "instructionVersion") }
+        sessions[index]["runtimeBindings"] = map
+    }
+    document["sessions"] = sessions
+    try JSONSerialization.data(withJSONObject: document).write(to: upgradeURL, options: .atomic)
+    let upgraded = AssistantHistoryStore(url: upgradeURL, legacySessionsRoot: nil)
+    let prep = upgraded.beginRuntimeTurn(sessionId: id, runtime: runtime, text: "next")!
+    expect(prep.requiresFreshSession && prep.priorMessages.map(\.text) == ["preserved question", "preserved answer"],
+           "instruction migration must rebuild \(runtime) once without dropping canonical messages")
+    let digest = AgentInstructionEncoding.fingerprint("new instructions")
+    upgraded.recordRuntimeStarted(sessionId: id, runtime: runtime, externalSessionID: "new", fresh: true,
+        instructionFingerprint: digest)
+    upgraded.completeRuntimeTurn(sessionId: id, runtime: runtime, text: "new answer")
+    let reopened = AssistantHistoryStore(url: upgradeURL, legacySessionsRoot: nil)
+    expect(reopened.conversation(id)?.runtimeBinding(runtime)?.instructionFingerprint == digest,
+           "instruction fingerprint must persist across restarts")
+    expect(reopened.beginRuntimeTurn(sessionId: id, runtime: runtime, text: "again")?.resumeExternalSessionID == "new",
+           "the instruction migration must not recreate every subsequent session")
+}

@@ -34,6 +34,7 @@ final class FakeOpenCodeClient: OpenCodeClienting {
     var blockUntilAbort = false
     var sessionsExist = true
     var sentPrompt: String?
+    var sentInstructions: String?
     var continuation: CheckedContinuation<OpenCodeMessageResult, Error>?
 
     func createSession(directory: URL, title: String) async throws -> OpenCodeSession {
@@ -51,6 +52,7 @@ final class FakeOpenCodeClient: OpenCodeClienting {
         lock.withLock {
             sentSession = sessionID
             sentPrompt = request.prompt
+            sentInstructions = request.instructions
         }
         onEvent(.activity("Using voiceflow_context"))
         onEvent(.textDelta(partID: "part-a", delta: "Open"))
@@ -90,7 +92,7 @@ func makeRequest(turnID: UUID = UUID()) -> AgentTurnRequest {
         priorMessages: [], prompt: "Task only", screenshots: [],
         workingDirectory: FileManager.default.temporaryDirectory,
         extraWritableRoots: [], trustProfile: .workspace,
-        model: AgentModelSelection(provider: "openrouter", model: "test/model"))
+        model: AgentModelSelection(provider: "openrouter", model: "test/model"), instructions: "OPENCODE_IDENTITY")
 }
 
 // Reducer deduplicates reconnect snapshots and ignores stale/out-of-session data.
@@ -182,7 +184,7 @@ let staleRequest = AgentTurnRequest(
     priorMessages: [staleMessage], prompt: "# Current task\nRecover", screenshots: [],
     workingDirectory: FileManager.default.temporaryDirectory,
     extraWritableRoots: [], trustProfile: .workspace,
-    model: AgentModelSelection(provider: "openrouter", model: "test/model"))
+    model: AgentModelSelection(provider: "openrouter", model: "test/model"), instructions: "OPENCODE_IDENTITY")
 let staleDone = DispatchSemaphore(value: 0)
 Task {
     _ = try? await runtime.run(
@@ -195,6 +197,10 @@ expect(client.created == 2 && client.sentSession == "oc-created",
        "missing external session did not reseed once")
 expect(client.sentPrompt?.contains("Canonical prior answer") == true,
        "reseeded session omitted canonical history")
+expect(client.sentInstructions == "OPENCODE_IDENTITY"
+       && client.sentPrompt?.contains("OPENCODE_IDENTITY") == false
+       && client.sentPrompt?.contains(AgentPromptComposer.systemRole) == false,
+       "OpenCode missing-session recovery must keep both channels separate")
 client.lock.withLock { client.sessionsExist = true }
 
 client.lock.withLock { client.blockUntilAbort = true }

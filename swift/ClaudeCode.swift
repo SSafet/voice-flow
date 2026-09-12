@@ -96,7 +96,8 @@ enum ClaudeCodeProtocol {
 
     static func arguments(resumeSessionID: String?, newSessionID: String,
                           trustProfile: AgentTrustProfile, model: String?,
-                          reasoningEffort: String?, extraDirectories: [String]) -> [String] {
+                          reasoningEffort: String?, extraDirectories: [String],
+                          instructions: String = "") -> [String] {
         var args = [
             "-p",
             "--input-format", "stream-json",
@@ -111,6 +112,9 @@ enum ClaudeCodeProtocol {
             "--strict-mcp-config",
         ]
         if trustProfile == .unattended { args.append("--dangerously-skip-permissions") }
+        if !instructions.isEmpty {
+            args.append(contentsOf: ["--append-system-prompt", instructions])
+        }
         if let resumeSessionID {
             args.append(contentsOf: ["--resume", resumeSessionID])
         } else {
@@ -271,7 +275,8 @@ final class ClaudeCodeAgentRuntime: AgentRuntime {
             trustProfile: request.trustProfile,
             model: request.model?.model,
             reasoningEffort: request.model?.reasoningEffort,
-            extraDirectories: request.extraWritableRoots)
+            extraDirectories: request.extraWritableRoots,
+            instructions: request.instructions)
         proc.environment = Self.sanitizedEnvironment()
         proc.currentDirectoryURL = request.workingDirectory
         let stdin = Pipe()

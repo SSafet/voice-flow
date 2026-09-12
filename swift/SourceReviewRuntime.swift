@@ -58,7 +58,8 @@ final class SourceReviewRuntime {
             "model": model.model,
             "stream": false,
             "messages": [
-                ["role": "system", "content": instructions],
+                ["role": "system", "content": [request.instructions, instructions]
+                    .filter { !$0.isEmpty }.joined(separator: "\n\n")],
                 ["role": "user", "content": userContent],
             ],
         ]

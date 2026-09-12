@@ -45,7 +45,17 @@ final class CodexAgentRuntime: AgentRuntime {
     func run(_ request: AgentTurnRequest,
              binding: RuntimeBinding?,
              emit: @escaping (AgentRuntimeEvent) -> Void) async throws -> AgentTurnResult {
-        var externalSessionID = binding?.externalSessionID
+        // Codex 0.153.2 accepts changed developerInstructions on resume but
+        // keeps the old developer message (also in exec resume). Resume only
+        // with identical instructions; edits reseed from canonical history.
+        let canReuseInstructions = binding?.instructionFingerprint
+            == AgentInstructionEncoding.fingerprint(request.instructions)
+        let resumeThread = canReuseInstructions ? binding?.externalSessionID : nil
+        let prompt = binding?.externalSessionID != nil && !canReuseInstructions
+            ? [AgentPromptComposer.canonicalHandoff(request.priorMessages), request.prompt]
+                .filter { !$0.isEmpty }.joined(separator: "\n\n")
+            : request.prompt
+        var externalSessionID = resumeThread
         do {
             defer {
                 lock.withLock {
@@ -54,7 +64,7 @@ final class CodexAgentRuntime: AgentRuntime {
                 }
             }
             let result = try await runTurn(
-                request, resumeThread: binding?.externalSessionID, prompt: request.prompt,
+                request, resumeThread: resumeThread, prompt: prompt,
                 emit: emit, onThreadStarted: { [weak self] id in
                     externalSessionID = id
                     guard let self else { return }
@@ -107,6 +117,7 @@ final class CodexAgentRuntime: AgentRuntime {
         do {
             return try await backend.run(
                 prompt: prompt,
+                instructions: request.instructions,
                 images: request.screenshots,
                 resumeThread: resumeThread,
                 workingDirectory: request.workingDirectory,
@@ -132,7 +143,7 @@ final class CodexAgentRuntime: AgentRuntime {
             vflog("codex: thread \(id) is gone — starting fresh with the canonical handoff")
             emit(.activity("Resuming from history"))
             let handoff = AgentPromptComposer.canonicalHandoff(request.priorMessages)
-            let fresh = [AgentPromptComposer.systemRole, handoff, request.prompt]
+            let fresh = [handoff, request.prompt]
                 .filter { !$0.isEmpty }
                 .joined(separator: "\n\n")
             return try await runTurn(request, resumeThread: nil, prompt: fresh,

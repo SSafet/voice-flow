@@ -197,8 +197,9 @@ expect(!prompt.contains("message-1") && !prompt.contains("message-2"),
        "classifier context should exclude messages older than the last six")
 expect(prompt.contains("message-3") && prompt.contains("message-8"),
        "classifier context should retain the last six messages")
-expect(prompt.contains("Never choose or mention an older conversation"),
-       "prompt must prohibit historical-session selection")
+expect(!prompt.contains(AssistantContinuityClassifier.config.instructions)
+       && AssistantContinuityClassifier.config.codexInstructionOverride.contains("Never choose or mention an older conversation"),
+       "continuity brief must travel as developer instructions, separately from the conversation")
 
 let localId = LocalAssistantSessionAdapter.id(for: "flora")
 expect(localId == "assistant:flora", "local Assistant id should be stable and namespaced")

@@ -220,6 +220,7 @@ final class OpenCodeHTTPClient: OpenCodeClienting {
             ])
         }
         var body: [String: Any] = ["parts": parts]
+        if !turn.instructions.isEmpty { body["system"] = turn.instructions }
         if let model = turn.model {
             body["model"] = ["providerID": model.provider, "modelID": model.model]
             // OpenCode's name for reasoning effort is the model variant, and

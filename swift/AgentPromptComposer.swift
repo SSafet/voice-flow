@@ -8,6 +8,7 @@ struct AgentPromptLayers: Equatable {
     let handoff: String
     let task: String
     var sources: String = ""
+    var sourceInstructions: String = ""
     var dailyContext: String = ""
 }
 
@@ -25,7 +26,8 @@ enum AgentPromptComposer {
                        task: String,
                        includeHandoff: Bool,
                        includeSkillBodies: Bool,
-                       sourceContext: String = "") -> AgentPromptLayers {
+                       sourceContext: String = "",
+                       sourceInstructions: String = "") -> AgentPromptLayers {
         let persona: String
         let memory: String
         let skills: String
@@ -56,20 +58,27 @@ enum AgentPromptComposer {
             memory: memory,
             skills: skills,
             handoff: includeHandoff ? canonicalHandoff(priorMessages) : "",
-            task: task, sources: sourceContext, dailyContext: DailyFocus.prompt())
+            task: task, sources: sourceContext, sourceInstructions: sourceInstructions,
+            dailyContext: DailyFocus.prompt())
     }
 
-    static func compose(_ layers: AgentPromptLayers, includeIdentity: Bool) -> String {
-        var sections: [String] = []
-        if includeIdentity {
-            sections.append(layers.systemRole)
-            if !layers.persona.isEmpty { sections.append("# Assistant identity\n\(layers.persona)") }
-            if !layers.handoff.isEmpty { sections.append(layers.handoff) }
-        }
-        if !layers.memory.isEmpty { sections.append(layers.memory) }
+    /// Authored behavior goes through the runtime's instruction channel on
+    /// every turn, including resume. Never promote history or imported data.
+    static func instructions(_ layers: AgentPromptLayers, additional: String = "") -> String {
+        var sections = [layers.systemRole]
+        if !layers.persona.isEmpty { sections.append("# Assistant identity\n\(layers.persona)") }
         if !layers.skills.isEmpty { sections.append(layers.skills) }
-        if !layers.sources.isEmpty { sections.append(layers.sources) }
+        if !layers.sourceInstructions.isEmpty { sections.append(layers.sourceInstructions) }
         if !layers.dailyContext.isEmpty { sections.append(layers.dailyContext) }
+        if !additional.isEmpty { sections.append(additional) }
+        return sections.joined(separator: "\n\n")
+    }
+
+    static func userMessage(_ layers: AgentPromptLayers) -> String {
+        var sections: [String] = []
+        if !layers.handoff.isEmpty { sections.append(layers.handoff) }
+        if !layers.memory.isEmpty { sections.append(layers.memory) }
+        if !layers.sources.isEmpty { sections.append(layers.sources) }
         sections.append("# Current task\n\(layers.task)")
         return sections.joined(separator: "\n\n")
     }

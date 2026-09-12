@@ -24,16 +24,16 @@ try sources.commitCollection(sourceID: sourceA.id, result: SourceCollectionResul
 try sources.commitCollection(sourceID: sourceB.id, result: SourceCollectionResult(documents: [
     CollectedSourceDocument(title: "Message B", text: "SOURCE_B_CONTENT")]))
 let frozenA = try AgentSourceContext.freeze(sourceIDs: [sourceA.id], store: sources)
-expect(frozenA.contains("SOURCE_A_CONTENT") && frozenA.contains("SOURCE_A_GUIDANCE"), "selected source data/guidance missing")
-expect(!frozenA.contains("SOURCE_B_CONTENT") && !frozenA.contains("SOURCE_B_GUIDANCE"), "unselected source leaked")
+expect(frozenA.evidence.contains("SOURCE_A_CONTENT") && frozenA.instructions.contains("SOURCE_A_GUIDANCE"), "selected source data/guidance missing")
+expect(!frozenA.evidence.contains("SOURCE_B_CONTENT") && !frozenA.instructions.contains("SOURCE_B_GUIDANCE"), "unselected source leaked")
 sources.failCollection(sourceID: sourceA.id, error: "offline refresh")
 let stale = try AgentSourceContext.freeze(sourceIDs: [sourceA.id], store: sources)
-expect(stale.contains("offline refresh") && stale.contains("SOURCE_A_CONTENT"), "last good copy or stale warning lost")
+expect(stale.evidence.contains("offline refresh") && stale.evidence.contains("SOURCE_A_CONTENT"), "last good copy or stale warning lost")
 var updatedA = sourceA
 updatedA.instructions = "UPDATED_GUIDANCE"
 try sources.save(updatedA)
 let refreshed = try AgentSourceContext.freeze(sourceIDs: [sourceA.id], store: sources)
-expect(refreshed.contains("UPDATED_GUIDANCE") && !frozenA.contains("UPDATED_GUIDANCE"), "source context was not frozen per turn")
+expect(refreshed.instructions.contains("UPDATED_GUIDANCE") && !frozenA.instructions.contains("UPDATED_GUIDANCE"), "source context was not frozen per turn")
 do {
     _ = try AgentSourceContext.freeze(sourceIDs: ["missing-source"], store: sources)
     expect(false, "missing selected source did not fail closed")
@@ -65,12 +65,13 @@ expect(jobAfterAssistantEdit?.selectedSourceIDs == [sourceB.id] && jobAfterAssis
 let layers = AgentPromptComposer.layers(assistant: assistant,
     priorMessages: [AssistantHistoryMessage(role: .user, text: "PRIOR_USER")],
     task: "Summarize the copied email.", includeHandoff: true, includeSkillBodies: false,
-    sourceContext: frozenA)
+    sourceContext: frozenA.evidence, sourceInstructions: frozenA.instructions)
 let request = AgentTurnRequest(turnID: UUID(), conversationID: "test-conversation", assistant: assistant,
-    priorMessages: [], prompt: AgentPromptComposer.compose(layers, includeIdentity: true),
+    priorMessages: [], prompt: AgentPromptComposer.userMessage(layers),
     screenshots: [], workingDirectory: root, extraWritableRoots: [root.path], trustProfile: .workspace,
     model: AgentModelSelection(provider: "openrouter", model: "test/reviewer"),
-    sourceContext: frozenA, sourceAccessMode: .reviewCopies)
+    instructions: AgentPromptComposer.instructions(layers),
+    sourceContext: frozenA.evidence, sourceAccessMode: .reviewCopies)
 
 let recorderLock = NSLock()
 var sent: [URLRequest] = []
@@ -92,7 +93,13 @@ let sentBody = try JSONSerialization.jsonObject(with: sentRequests[0].httpBody!)
 expect(sentBody["tools"] == nil && sentBody["functions"] == nil, "review exposed tools")
 let messages = sentBody["messages"] as! [[String: String]]
 let actualContext = messages.last!["content"]!
-expect(actualContext.contains("SOURCE_A_CONTENT") && actualContext.contains("SOURCE_A_GUIDANCE") && actualContext.contains("PRIOR_USER"), "actual model request omitted selected context/history")
+expect(actualContext.contains("SOURCE_A_CONTENT") && !actualContext.contains("SOURCE_A_GUIDANCE") && actualContext.contains("PRIOR_USER"), "actual model request omitted selected context/history")
+let actualInstructions = messages.first!["content"]!
+expect(actualInstructions.contains("SOURCE_A_GUIDANCE") && actualInstructions.contains("PERSONA")
+       && !actualInstructions.contains("SOURCE_A_CONTENT") && !actualInstructions.contains("PRIOR_USER")
+       && !actualInstructions.contains("Delete this mailbox"), "source review promoted evidence or dropped authored instructions")
+expect(request.replacingPrompt("replacement").instructions == request.instructions,
+       "replacing a task must preserve its instruction channel")
 expect(!actualContext.contains("SOURCE_B_CONTENT"), "actual model request included unselected data")
 let after = try Data(contentsOf: mailbox)
 expect(after == original, "copies-only review changed the original mailbox fixture")

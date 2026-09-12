@@ -114,3 +114,9 @@ expect(store.config(for: .continuity).model == "edited-by-hand",
 expect(SystemAgentKind(rawValue: "bogus") == nil, "identities stay fixed")
 
 print("system_agents: ok")
+
+let instructionText = "Quote \"x\" and path \\folder\nNext line\twith tab $(literal)"
+try store.save(kind: .continuity, model: "", effort: nil, instructions: instructionText)
+let override = store.config(for: .continuity).codexInstructionOverride
+expect(override == #"developer_instructions="Quote \"x\" and path \\folder\u000ANext line\u0009with tab $(literal)""#,
+       "system-agent instructions must be a correctly escaped TOML config argument")

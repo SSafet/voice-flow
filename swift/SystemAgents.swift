@@ -16,7 +16,7 @@ import Foundation
 // with no restart and no wiring.
 //
 // The prompt is split deliberately: the editable instructions are the
-// leading brief only. The delimited data blocks and the JSON output schema
+// developer brief only. The delimited user data and the JSON output schema
 // are appended by the caller and are NOT editable — they are the contract the
 // decoder depends on, and a well-meaning edit that dropped them would turn
 // every turn into a silent fallback.
@@ -99,6 +99,10 @@ struct SystemAgentConfig: Equatable {
     let usesDefaultModel: Bool
     let usesDefaultEffort: Bool
     let usesDefaultInstructions: Bool
+
+    var codexInstructionOverride: String {
+        "developer_instructions=\(AgentInstructionEncoding.tomlString(instructions))"
+    }
 }
 
 final class SystemAgentStore {
@@ -136,7 +140,7 @@ final class SystemAgentStore {
             defaultInstructions: SystemAgentDefaults.speechCleanupInstructions,
             supportsEffort: true,
             instructionsSource: .store,
-            instructionsContract: "The app appends the message to rewrite and a JSON schema. If this is slow or fails, the deterministic sanitizer speaks instead."),
+            instructionsContract: "The model receives the message to rewrite and required JSON schema separately. If this is slow or fails, the deterministic sanitizer speaks instead."),
         SystemAgentSpec(
             kind: .speech,
             name: "Speech",

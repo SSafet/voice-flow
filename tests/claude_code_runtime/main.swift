@@ -77,6 +77,17 @@ expect(!resumed.contains("--model") && !resumed.contains("--effort") && !resumed
        "blank model, unset effort, and no roots must send nothing")
 
 // ── The stdin message ──
+for session in [nil, "existing"] as [String?] {
+    let instructions = "PERSONA\nSKILLS \"quoted\" \\path $(literal)"
+    let args = ClaudeCodeProtocol.arguments(resumeSessionID: session, newSessionID: "fresh",
+        trustProfile: .workspace, model: nil, reasoningEffort: nil, extraDirectories: [],
+        instructions: instructions)
+    expect(args.contains("--append-system-prompt") && args.contains(instructions)
+           && !args.contains("--system-prompt"),
+           "fresh and resumed Claude turns must append exact instructions to its system prompt")
+    let user = String(decoding: ClaudeCodeProtocol.userMessage(text: "TASK", jpegs: []), as: UTF8.self)
+    expect(!user.contains("PERSONA") && user.contains("TASK"), "Claude instructions leaked into stdin")
+}
 
 let message = ClaudeCodeProtocol.userMessage(text: "hi", jpegs: [Data([0xFF, 0xD8])])
 expect(message.last == 0x0A, "the message must be newline-terminated")

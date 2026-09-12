@@ -72,6 +72,13 @@ expect(start["approvalPolicy"] as? String == "never" && start["sandbox"] as? Str
        && start["cwd"] as? String == "/work" && start["threadId"] == nil,
        "thread/start params changed: \(start)")
 let resume = CodexAppServerProtocol.threadParams(cwd: "/work", resumeThread: "thr_9")
+for thread in [nil, "existing"] as [String?] {
+    let params = CodexAppServerProtocol.threadParams(cwd: "/work", resumeThread: thread,
+        instructions: "PERSONA\nSKILLS\nGUIDANCE")
+    expect(params["developerInstructions"] as? String == "PERSONA\nSKILLS\nGUIDANCE"
+           && params["baseInstructions"] == nil,
+           "start and resume must supply developer instructions without replacing Codex defaults")
+}
 expect(resume["threadId"] as? String == "thr_9", "thread/resume must name the thread")
 
 let input = CodexAppServerProtocol.turnInput(prompt: "hello", imagePaths: ["/tmp/shot.jpg"])

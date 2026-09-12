@@ -67,7 +67,7 @@ final class OpenCodeAgentRuntime: AgentRuntime {
                 if binding?.externalSessionID != nil {
                     let handoff = AgentPromptComposer.canonicalHandoff(request.priorMessages)
                     effectiveRequest = request.replacingPrompt(
-                        [AgentPromptComposer.systemRole, handoff, request.prompt]
+                        [handoff, request.prompt]
                             .filter { !$0.isEmpty }
                             .joined(separator: "\n\n"))
                 }

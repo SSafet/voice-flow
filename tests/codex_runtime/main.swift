@@ -47,6 +47,7 @@ expect(CodexModelCatalog.visibleSlugs(from: Data(#"{"models":[{"slug":"gpt-6-ast
 
 final class FakeCodex: CodexExecuting {
     var receivedPrompt = ""
+    var receivedInstructions = ""
     var receivedImages = 0
     var receivedResume: String?
     var receivedEffort: String?
@@ -54,7 +55,7 @@ final class FakeCodex: CodexExecuting {
 
     func interrupt() { interrupted = true }
 
-    func run(prompt: String, images: [Data], resumeThread: String?,
+    func run(prompt: String, instructions: String, images: [Data], resumeThread: String?,
              workingDirectory: URL?, extraWritableRoots: [String],
              model: String?,
              reasoningEffort: String?,
@@ -62,6 +63,7 @@ final class FakeCodex: CodexExecuting {
              onToolActivity: @escaping (String) -> Void,
              onAgentText: @escaping (String) -> Void) async throws -> CodexExecBackend.TurnResult {
         receivedPrompt = prompt
+        receivedInstructions = instructions
         receivedImages = images.count
         receivedResume = resumeThread
         receivedEffort = reasoningEffort
@@ -81,10 +83,11 @@ let request = AgentTurnRequest(
     workingDirectory: FileManager.default.temporaryDirectory,
     extraWritableRoots: ["/tmp/allowed"], trustProfile: .workspace,
     model: AgentModelSelection(
-        provider: "openai", model: "gpt-5.6-luna", reasoningEffort: "low"))
+        provider: "openai", model: "gpt-5.6-luna", reasoningEffort: "low"),
+    instructions: "PERSONA_AND_SKILLS")
 let binding = RuntimeBinding(
     externalSessionID: "codex-old", syncedThroughMessageID: UUID(),
-    state: .clean)
+    state: .clean, instructionFingerprint: AgentInstructionEncoding.fingerprint(request.instructions))
 
 let semaphore = DispatchSemaphore(value: 0)
 var result: AgentTurnResult?
@@ -109,6 +112,7 @@ Task {
 expect(semaphore.wait(timeout: .now() + 3) == .success, "runtime did not finish")
 expect(failure == nil, "runtime unexpectedly failed")
 expect(fake.receivedPrompt == "Do the task", "adapter changed the prepared prompt")
+expect(fake.receivedInstructions == "PERSONA_AND_SKILLS", "adapter dropped instructions on resume")
 expect(fake.receivedImages == 1, "adapter dropped image input")
 expect(fake.receivedResume == "codex-old", "adapter dropped the resume binding")
 expect(fake.receivedEffort == "low",
@@ -136,7 +140,7 @@ final class BlockingCodex: CodexExecuting {
     var announceThread = true
     func interrupt() { interruptedThreads.append(nil) }
     func interrupt(threadId: String?) { interruptedThreads.append(threadId) }
-    func run(prompt: String, images: [Data], resumeThread: String?,
+    func run(prompt: String, instructions: String, images: [Data], resumeThread: String?,
              workingDirectory: URL?, extraWritableRoots: [String],
              model: String?,
              reasoningEffort: String?,
@@ -186,9 +190,10 @@ for lateThread in [false, true] {
 // fresh thread with the canonical handoff instead of failing the turn.
 final class GoneThreadCodex: CodexExecuting {
     var prompts: [String] = []
+    var instructionInputs: [String] = []
     var resumes: [String?] = []
     func interrupt() {}
-    func run(prompt: String, images: [Data], resumeThread: String?,
+    func run(prompt: String, instructions: String, images: [Data], resumeThread: String?,
              workingDirectory: URL?, extraWritableRoots: [String],
              model: String?,
              reasoningEffort: String?,
@@ -196,6 +201,7 @@ final class GoneThreadCodex: CodexExecuting {
              onToolActivity: @escaping (String) -> Void,
              onAgentText: @escaping (String) -> Void) async throws -> CodexExecBackend.TurnResult {
         prompts.append(prompt)
+        instructionInputs.append(instructions)
         resumes.append(resumeThread)
         if let resumeThread { throw CodexBackendError.threadNotFound(resumeThread) }
         onThreadStarted("codex-fresh")
@@ -211,12 +217,14 @@ let goneRequest = AgentTurnRequest(
                     AssistantHistoryMessage(role: .assistant, text: "earlier answer")],
     prompt: "follow-up", screenshots: [],
     workingDirectory: FileManager.default.temporaryDirectory,
-    extraWritableRoots: [], trustProfile: .workspace, model: nil)
+    extraWritableRoots: [], trustProfile: .workspace, model: nil, instructions: "FRESH_IDENTITY")
 let goneSemaphore = DispatchSemaphore(value: 0)
 var goneResult: AgentTurnResult?
 var goneEvents: [String] = []
 Task {
-    goneResult = try? await goneRuntime.run(goneRequest, binding: binding) { event in
+    goneResult = try? await goneRuntime.run(goneRequest, binding: RuntimeBinding(
+        externalSessionID: "codex-old", state: .clean,
+        instructionFingerprint: AgentInstructionEncoding.fingerprint(goneRequest.instructions))) { event in
         if case .started(let id) = event { goneEvents.append("started:\(id)") }
     }
     goneSemaphore.signal()
@@ -225,6 +233,9 @@ expect(goneSemaphore.wait(timeout: .now() + 3) == .success, "fallback runtime di
 expect(gone.resumes == ["codex-old", nil], "the adapter must retry once without the dead thread: \(gone.resumes)")
 expect(gone.prompts.count == 2 && gone.prompts[1].contains("earlier answer") && gone.prompts[1].hasSuffix("follow-up"),
        "the fresh start must carry the canonical handoff before the task: \(gone.prompts)")
+expect(gone.instructionInputs == ["FRESH_IDENTITY", "FRESH_IDENTITY"]
+       && gone.prompts.allSatisfy { !$0.contains("FRESH_IDENTITY") && !$0.contains(AgentPromptComposer.systemRole) },
+       "dead-session recovery must preserve instructions without moving them to the handoff")
 expect(goneResult?.externalSessionID == "codex-fresh" && goneEvents == ["started:codex-fresh"],
        "the fresh thread must become the binding")
 
@@ -232,7 +243,7 @@ expect(goneResult?.externalSessionID == "codex-fresh" && goneEvents == ["started
 final class NoAppServer: CodexExecuting {
     var calls = 0
     func interrupt() {}
-    func run(prompt: String, images: [Data], resumeThread: String?,
+    func run(prompt: String, instructions: String, images: [Data], resumeThread: String?,
              workingDirectory: URL?, extraWritableRoots: [String],
              model: String?,
              reasoningEffort: String?,
@@ -258,6 +269,34 @@ Task {
 }
 expect(fallbackSemaphore.wait(timeout: .now() + 3) == .success, "exec fallback did not finish")
 expect(fallbackResults == ["first second", "first second"], "turns must succeed through the exec fallback")
+expect(execFallback.receivedInstructions == request.instructions && execFallback.receivedPrompt == request.prompt,
+       "exec fallback must preserve both channels")
 expect(broken.calls == 1, "the app-server must be tried once, then left alone: \(broken.calls)")
 
+// Instruction edits (persona, skill, source guidance, or app policy) must not
+// resume Codex's stale developer message, even when the history cursor matches.
+let editedRequest = AgentTurnRequest(
+    turnID: UUID(), conversationID: "conversation-a", assistant: nil,
+    priorMessages: [AssistantHistoryMessage(role: .user, text: "CANONICAL_QUESTION"),
+                    AssistantHistoryMessage(role: .assistant, text: "CANONICAL_ANSWER")],
+    prompt: "NEW_TASK", screenshots: [], workingDirectory: FileManager.default.temporaryDirectory,
+    extraWritableRoots: [], trustProfile: .workspace, model: nil, instructions: "UPDATED_PERSONA")
+let editedDone = DispatchSemaphore(value: 0)
+Task {
+    _ = try? await runtime.run(editedRequest, binding: binding) { _ in }
+    editedDone.signal()
+}
+expect(editedDone.wait(timeout: .now() + 3) == .success, "edited-instructions turn did not finish")
+expect(fake.receivedResume == nil && fake.receivedInstructions == "UPDATED_PERSONA"
+       && fake.receivedPrompt.contains("CANONICAL_ANSWER") && fake.receivedPrompt.hasSuffix("NEW_TASK")
+       && !fake.receivedPrompt.contains("UPDATED_PERSONA"),
+       "instruction changes must reseed with current instructions and canonical context")
+
+for session in [nil, "resume-id"] as [String?] {
+    let instructions = "line one\nline two \"quoted\" \\path $(literal)"
+    let args = CodexExecBackend.executionArguments(prompt: "TASK", imagePaths: [],
+        resumeThread: session, extraWritableRoots: [], instructions: instructions)
+    expect(args.contains("developer_instructions=" + CodexExecBackend.tomlString(instructions))
+           && args.last == "TASK", "exec new/resume must use the config instruction channel")
+}
 print("codex runtime tests passed")

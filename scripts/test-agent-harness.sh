@@ -349,7 +349,10 @@ case "$MODE" in
             swift/AssistantWake.swift swift/Assistants.swift swift/AgentCapabilities.swift \
             swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
             swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift tests/opencode_supervisor/main.swift -framework Security
-        compile_only codex_live_turn swift/Codex.swift tests/codex_live_turn/main.swift
+        compile_only codex_live_turn swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
+            swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
+            swift/Codex.swift swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/CodexAppServer.swift \
+            swift/CodexAgentRuntime.swift tests/codex_live_turn/main.swift
         run_step codex_live_turn env VOICE_FLOW_CONFIG_ROOT="$BUILD_DIR/codex-live-config" \
             VOICE_FLOW_CANARY_CODEX_REPORT="$BUILD_DIR/codex-canary.json" \
             "$BUILD_DIR/codex_live_turn"

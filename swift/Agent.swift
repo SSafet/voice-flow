@@ -79,7 +79,7 @@ final class AgentSession {
     )?
     private var runningRuntimeKind: AgentRuntimeKind?
     private var runningTurnID: UUID?
-    private var pendingSourceContext = ""
+    private var pendingSourceContext = AgentSourceContext.Frozen()
     private var sourceTurnAssistant: AssistantDefinition?
 
     // Screenshot geometry: everything sent to the model uses one fixed size
@@ -162,7 +162,7 @@ final class AgentSession {
 
     // ── Persistent assistant (ticket VF-49) ─────────────
     /// The folder-defined assistant this session embodies: her identity and
-    /// instructions compose into the prompt, her memory rides every turn,
+    /// instructions use the runtime instruction channel, her memory rides every turn,
     /// and her folder is the working directory of shell turns.
     private(set) var activeAssistant: AssistantDefinition?
 #if VOICE_FLOW_QA
@@ -200,25 +200,6 @@ final class AgentSession {
         guard activeAssistant?.slug == assistant.slug else { return }
         activeAssistant = assistant
         notifyHistoryChanged()
-    }
-
-    /// First-turn identity. Tool and file mechanics deliberately live in the
-    /// corresponding tool definitions, not in this persona layer.
-    private var assistantPersonaBlock: String {
-        guard let assistant = activeAssistant else { return "" }
-        return "\n\nYou are \(assistant.name).\n\n\(assistant.instructions)"
-    }
-
-    /// Every-turn block: her memory as it is on disk right now.
-    private var assistantMemoryBlock: String {
-        guard let assistant = activeAssistant else { return "" }
-        let memory = assistant.coreMemory()
-        return "\n\n## Your memory — core.md right now\n" + (memory.isEmpty ? "(empty)" : memory)
-    }
-
-    private var assistantSkillBlock: String {
-        guard let assistant = activeAssistant else { return "" }
-        return (try? AgentSkillStore.promptBlock(for: assistant)) ?? ""
     }
 
     @discardableResult
@@ -529,18 +510,20 @@ final class AgentSession {
         let layers = AgentPromptComposer.layers(
             assistant: reviewAssistant, priorMessages: turn.preparation.priorMessages,
             task: turn.text, includeHandoff: true, includeSkillBodies: false,
-            sourceContext: pendingSourceContext)
+            sourceContext: pendingSourceContext.evidence,
+            sourceInstructions: pendingSourceContext.instructions)
         let request = AgentTurnRequest(
             turnID: turnID, conversationID: sessionId, assistant: reviewAssistant,
             priorMessages: turn.preparation.priorMessages,
-            prompt: AgentPromptComposer.compose(layers, includeIdentity: true),
+            prompt: AgentPromptComposer.userMessage(layers),
             screenshots: turn.images,
             workingDirectory: reviewAssistant?.directory ?? VoiceFlowPaths.shared.configRoot,
             extraWritableRoots: [], trustProfile: .observe,
             model: AgentModelSelection(provider: "openrouter",
                 model: preferredModel(for: .opencode, sessionId: sessionId),
                 reasoningEffort: UserSettings.shared.agentReasoningEffort),
-            sourceContext: pendingSourceContext, sourceAccessMode: .reviewCopies)
+            instructions: AgentPromptComposer.instructions(layers),
+            sourceContext: pendingSourceContext.evidence, sourceAccessMode: .reviewCopies)
         activity = .thinking
         do {
             let result = try await SourceReviewRuntime.shared.run(request) { [weak self] event in
@@ -604,15 +587,10 @@ final class AgentSession {
             priorMessages: turn.preparation.priorMessages,
             task: turn.text,
             includeHandoff: turn.preparation.requiresFreshSession,
-            includeSkillBodies: false, sourceContext: pendingSourceContext)
-        let prompt = AgentPromptComposer.compose(
-            layers, includeIdentity: turn.preparation.requiresFreshSession)
-        let binding = turn.preparation.resumeExternalSessionID.map {
-            RuntimeBinding(
-                externalSessionID: $0,
-                syncedThroughMessageID: turn.preparation.priorContextMessageID,
-                state: .clean)
-        }
+            includeSkillBodies: false, sourceContext: pendingSourceContext.evidence,
+            sourceInstructions: pendingSourceContext.instructions)
+        let prompt = AgentPromptComposer.userMessage(layers)
+        let binding = turn.preparation.resumeExternalSessionID == nil ? nil : turn.preparation.previousBinding
         let request = AgentTurnRequest(
             turnID: turnID, conversationID: sessionId,
             assistant: activeAssistant,
@@ -622,7 +600,8 @@ final class AgentSession {
             extraWritableRoots: [], trustProfile: foregroundTrustProfile,
             model: AgentModelSelection(
                 provider: "openrouter", model: preferredModel(for: .opencode, sessionId: sessionId),
-                reasoningEffort: UserSettings.shared.agentReasoningEffort))
+                reasoningEffort: UserSettings.shared.agentReasoningEffort),
+            instructions: AgentPromptComposer.instructions(layers))
 
         AgentToolSessionRegistry.shared.prepare(
             turnID: turnID,
@@ -644,7 +623,8 @@ final class AgentSession {
                             sessionId: sessionId, runtime: .opencode,
                             externalSessionID: id,
                             runtimeVersion: nil,
-                            fresh: turn.preparation.requiresFreshSession)
+                            fresh: id != turn.preparation.resumeExternalSessionID,
+                            instructionFingerprint: AgentInstructionEncoding.fingerprint(request.instructions))
                         self.notifyHistoryChanged()
                     case .activity(let label):
                         self.activity = .acting
@@ -696,8 +676,7 @@ final class AgentSession {
 
     // ── Codex turn ──────────────────────────────────────
 
-    /// The persona preamble Codex gets on a thread's first turn; later turns
-    /// resume the same thread, so it isn't repeated.
+    /// App communication and data instructions for subscription CLI turns.
     private var codexPreamble: String {
         """
         You are the assistant inside Voice Flow, a macOS companion app for voice dictation, text-to-speech, \
@@ -734,7 +713,7 @@ final class AgentSession {
     }
 
     /// Runs one turn through a CLI runtime — Codex or Claude Code. Both take
-    /// the same composed prompt, resume their own external session per
+    /// separate instructions and task/context, resume their own external session per
     /// conversation, and stream through the shared runtime event vocabulary.
     private func runCLITurn(_ kind: AgentRuntimeKind) async {
         activity = .thinking
@@ -753,11 +732,11 @@ final class AgentSession {
             priorMessages: turn.preparation.priorMessages,
             task: turn.text,
             includeHandoff: turn.preparation.requiresFreshSession,
-            includeSkillBodies: true, sourceContext: pendingSourceContext)
-        let composed = AgentPromptComposer.compose(
-            layers, includeIdentity: turn.preparation.requiresFreshSession)
-        let prompt = (turn.preparation.requiresFreshSession ? codexPreamble + "\n\n" : "")
-            + codexAccessNote + "\n\n" + composed
+            includeSkillBodies: true, sourceContext: pendingSourceContext.evidence,
+            sourceInstructions: pendingSourceContext.instructions)
+        let prompt = AgentPromptComposer.userMessage(layers)
+        let instructions = AgentPromptComposer.instructions(
+            layers, additional: codexPreamble + "\n\n" + codexAccessNote)
         let sessionId = runningSessionId ?? currentSessionId
         let ticketsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/tickets").path
@@ -781,13 +760,9 @@ final class AgentSession {
                     reasoningEffort: UserSettings.shared.agentReasoningEffort)
                 : AgentModelSelection.codex(
                     model: preferredModel(for: .codex, sessionId: sessionId),
-                    reasoningEffort: UserSettings.shared.agentReasoningEffort))
-        let resumeBinding = turn.preparation.resumeExternalSessionID.map {
-            RuntimeBinding(
-                externalSessionID: $0,
-                syncedThroughMessageID: turn.preparation.priorContextMessageID,
-                state: .clean)
-        }
+                    reasoningEffort: UserSettings.shared.agentReasoningEffort),
+            instructions: instructions)
+        let resumeBinding = turn.preparation.resumeExternalSessionID == nil ? nil : turn.preparation.previousBinding
 
         do {
             var started = false
@@ -800,7 +775,9 @@ final class AgentSession {
                         if kind == .codex { self.codexThreadId = id }
                         self.history.recordRuntimeStarted(
                             sessionId: sessionId, runtime: kind,
-                            externalSessionID: id, fresh: turn.preparation.requiresFreshSession)
+                            externalSessionID: id,
+                            fresh: id != turn.preparation.resumeExternalSessionID,
+                            instructionFingerprint: AgentInstructionEncoding.fingerprint(request.instructions))
                         self.notifyHistoryChanged()
                     case .activity(let label):
                         DispatchQueue.main.async { self.onToolActivity?(label) }

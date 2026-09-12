@@ -100,12 +100,13 @@ enum CodexAppServerProtocol {
         return args
     }
 
-    static func threadParams(cwd: String, resumeThread: String?) -> [String: Any] {
+    static func threadParams(cwd: String, resumeThread: String?, instructions: String = "") -> [String: Any] {
         var params: [String: Any] = [
             "cwd": cwd,
             "approvalPolicy": "never",
             "sandbox": "workspace-write",
         ]
+        if !instructions.isEmpty { params["developerInstructions"] = instructions }
         if let resumeThread { params["threadId"] = resumeThread }
         return params
     }
@@ -232,6 +233,7 @@ final class CodexAppServerBackend: CodexExecuting {
     }
 
     func run(prompt: String,
+             instructions: String = "",
              images: [Data],
              resumeThread: String?,
              workingDirectory: URL?,
@@ -261,7 +263,7 @@ final class CodexAppServerBackend: CodexExecuting {
             do {
                 let result = try await request(
                     "thread/resume",
-                    CodexAppServerProtocol.threadParams(cwd: cwd, resumeThread: resumeThread))
+                    CodexAppServerProtocol.threadParams(cwd: cwd, resumeThread: resumeThread, instructions: instructions))
                 threadId = Self.threadId(in: result) ?? resumeThread
             } catch let error as CodexBackendError {
                 if case .turnFailed(let message) = error,
@@ -273,7 +275,7 @@ final class CodexAppServerBackend: CodexExecuting {
         } else {
             let result = try await request(
                 "thread/start",
-                CodexAppServerProtocol.threadParams(cwd: cwd, resumeThread: nil))
+                CodexAppServerProtocol.threadParams(cwd: cwd, resumeThread: nil, instructions: instructions))
             guard let started = Self.threadId(in: result) else {
                 throw CodexBackendError.turnFailed("codex app-server returned no thread id")
             }

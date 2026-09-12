@@ -287,11 +287,9 @@ final class SpeechCleanupLLM {
     }
 
     static func prompt(for text: String) -> String {
-        // Editable brief, fixed data block — the schema decode depends on the
-        // delimiters, so they are appended here and never in the user's text.
+        // The editable brief travels as developer_instructions. Only the
+        // text to rewrite belongs in this app-owned, delimited data block.
         """
-        \(config.instructions.trimmingCharacters(in: .whitespacesAndNewlines))
-
         <MESSAGE>
         \(text)
         </MESSAGE>
@@ -370,6 +368,7 @@ final class SpeechCleanupLLM {
         }
         arguments.append(contentsOf: [
             "-c", "mcp_servers={}",
+            "-c", resolved.codexInstructionOverride,
             "--output-schema", schemaURL.path,
             "-o", outputURL.path,
             prompt,

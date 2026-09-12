@@ -67,12 +67,11 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
             task: job.prompt,
             includeHandoff: copiesOnly || preparation.requiresFreshSession,
             includeSkillBodies: !copiesOnly && job.runtime.usesSubscriptionCLI,
-            sourceContext: sourceContext)
+            sourceContext: sourceContext.evidence, sourceInstructions: sourceContext.instructions)
         let request = AgentTurnRequest(
             turnID: run.turnID, conversationID: job.conversationID,
             assistant: assistant, priorMessages: preparation.priorMessages,
-            prompt: AgentPromptComposer.compose(
-                layers, includeIdentity: copiesOnly || preparation.requiresFreshSession),
+            prompt: AgentPromptComposer.userMessage(layers),
             screenshots: [],
             workingDirectory: assistant.directory,
             extraWritableRoots: [], trustProfile: job.trustProfile,
@@ -86,13 +85,9 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
                         provider: "anthropic", model: UserSettings.shared.claudeCodeModel,
                         reasoningEffort: job.reasoningEffort)
                     : AgentModelSelection.codex(reasoningEffort: job.reasoningEffort),
-            sourceContext: sourceContext, sourceAccessMode: job.sourceAccessMode)
-        let binding = preparation.resumeExternalSessionID.map {
-            RuntimeBinding(
-                externalSessionID: $0,
-                syncedThroughMessageID: preparation.priorContextMessageID,
-                state: .clean)
-        }
+            instructions: AgentPromptComposer.instructions(layers),
+            sourceContext: sourceContext.evidence, sourceAccessMode: job.sourceAccessMode)
+        let binding = preparation.resumeExternalSessionID == nil ? nil : preparation.previousBinding
         if !copiesOnly {
             AgentToolSessionRegistry.shared.prepare(
                 turnID: run.turnID, environment: environmentProvider(job.conversationID))
@@ -113,7 +108,8 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
                     self.history.recordRuntimeStarted(
                         sessionId: job.conversationID, runtime: job.runtime,
                         externalSessionID: externalID,
-                        fresh: preparation.requiresFreshSession)
+                        fresh: externalID != preparation.resumeExternalSessionID,
+                        instructionFingerprint: AgentInstructionEncoding.fingerprint(request.instructions))
                 case .activity(let detail): progress(detail)
                 case .permission(let permission):
                     progress("Blocked for permission: \(permission.title)")

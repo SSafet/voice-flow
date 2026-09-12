@@ -464,13 +464,15 @@ final class AssistantHistoryStore {
 
     func recordRuntimeStarted(sessionId: String, runtime: AgentRuntimeKind,
                               externalSessionID: String, runtimeVersion: String? = nil,
-                              fresh: Bool) {
+                              fresh: Bool, instructionFingerprint: String? = nil) {
         lock.withLock {
             guard let index = envelope.sessions.firstIndex(where: { $0.id == sessionId }) else { return }
             var bindings = envelope.sessions[index].runtimeBindings ?? [:]
             var binding = bindings[runtime.rawValue] ?? RuntimeBinding()
             if fresh { binding.generation += 1 }
             binding.externalSessionID = externalSessionID
+            binding.instructionVersion = RuntimeBinding.currentInstructionVersion
+            binding.instructionFingerprint = instructionFingerprint
             binding.runtimeVersion = runtimeVersion ?? binding.runtimeVersion
             binding.state = .dirty
             binding.lastUsedAt = Date()

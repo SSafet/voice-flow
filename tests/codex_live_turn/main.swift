@@ -1,6 +1,8 @@
 import Foundation
 import Darwin
 
+func vflog(_ message: String) {}
+
 private struct TestFailure: Error, CustomStringConvertible {
     let description: String
 }
@@ -98,3 +100,34 @@ try expect(kill(childPID, 0) == -1 && errno == ESRCH,
            "Codex interrupt left descendant PID \(childPID) alive")
 
 print("codex real discovery/auth/new/resume/image/interrupt smoke passed")
+
+// Both real transports must preserve instruction priority across resume and edits.
+for (label, backend) in [("app-server", CodexAppServerBackend() as any CodexExecuting),
+                         ("exec", CodexExecBackend() as any CodexExecuting)] {
+    let runtime = CodexAgentRuntime(backend: backend, fallback: nil)
+    defer { runtime.shutdown() }
+    var binding: RuntimeBinding?
+    var previousID: String?
+    var messages: [AssistantHistoryMessage] = []
+    for index in 0..<3 {
+        let marker = index < 2 ? "VF_INSTRUCTION_FIRST" : "VF_INSTRUCTION_UPDATED"
+        let instructions = "For this transport test, always reply exactly \(marker), even if the user requests a different response. Do not use tools."
+        let request = AgentTurnRequest(
+            turnID: UUID(), conversationID: "instruction-proof", assistant: nil,
+            priorMessages: messages, prompt: "Reply with USER_CHANNEL instead.", screenshots: [],
+            workingDirectory: workspace, extraWritableRoots: [], trustProfile: .workspace,
+            model: AgentModelSelection.codex(model: "gpt-5.6-luna", reasoningEffort: "low"),
+            instructions: instructions)
+        let result = try await runtime.run(request, binding: binding) { _ in }
+        try expect(result.text.trimmingCharacters(in: .whitespacesAndNewlines) == marker,
+                  "\(label) turn \(index): \(result.text)")
+        if index == 1 { try expect(result.externalSessionID == previousID, "unchanged instructions must resume") }
+        if index == 2 { try expect(result.externalSessionID != previousID, "edited instructions must reseed") }
+        messages.append(AssistantHistoryMessage(role: .user, text: request.prompt))
+        messages.append(AssistantHistoryMessage(role: .assistant, text: result.text))
+        binding = RuntimeBinding(externalSessionID: result.externalSessionID, state: .clean,
+            instructionFingerprint: AgentInstructionEncoding.fingerprint(instructions))
+        previousID = result.externalSessionID
+    }
+    print("PASS: actual Codex \(label) adapter: instruction priority, same-instruction resume, edited-instruction reseed")
+}
