@@ -352,7 +352,7 @@ class BubbleService : Service() {
         if (openAIKey.isNullOrBlank()) {
             main.post {
                 setState(State.IDLE)
-                if (freshId != null) toast("No API key yet — open Voice Flow and sync with the Mac")
+                if (freshId != null) toast("No API key yet — open Voice Flow → Settings & sync to add it")
             }
             return
         }

@@ -219,7 +219,9 @@ class MainActivity : Activity() {
     // ══════════════════════ pairing gate ══════════════════════
 
     private fun applyPairedState() {
-        val isPaired = pairing.paired
+        val cloud = CloudPreferences(this)
+        val isPaired = if (cloud.transport == SyncTransport.LOCAL) pairing.paired else cloud.chosen
+        if (cloud.transport != SyncTransport.LOCAL && cloud.chosen) { pairingLoopRunning = false; pairing.stopDiscovery() }
         pairPage.visibility = if (isPaired) View.GONE else View.VISIBLE
         tabBar.visibility = if (isPaired) View.VISIBLE else View.GONE
         if (!isPaired) {
@@ -279,6 +281,11 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
         }
+        root.addView(TextView(this).apply {
+            text = "Settings & sync"; setTextColor(accent); textSize = 14f; gravity = Gravity.END
+            setPadding(dp(20), dp(12), dp(20), dp(10))
+            setOnClickListener { startActivity(Intent(this@MainActivity, CloudSettingsActivity::class.java)) }
+        })
         pages = FrameLayout(this)
         root.addView(pages, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -334,7 +341,8 @@ class MainActivity : Activity() {
     }
 
     private fun showTab(index: Int) {
-        if (!pairing.paired) return
+        val cloud = CloudPreferences(this)
+        if (cloud.transport == SyncTransport.LOCAL && !pairing.paired || !cloud.chosen) return
         listOf(recordPage, historyPage, chatPage).forEachIndexed { i, page ->
             page.visibility = if (i == index) View.VISIBLE else View.GONE
         }
@@ -392,6 +400,11 @@ class MainActivity : Activity() {
             setLineSpacing(dpf(2), 1f)
         }
         page.addView(pairStatus)
+        page.addView(TextView(this).apply {
+            text = "Use Atika cloud or local only"; setTextColor(accent); textSize = 15f
+            setPadding(0, dp(24), 0, dp(12))
+            setOnClickListener { startActivity(Intent(this@MainActivity, CloudSettingsActivity::class.java)) }
+        })
         return page
     }
 
@@ -1083,6 +1096,13 @@ class MainActivity : Activity() {
     private fun quietSync() {
         val result = runCatching { syncClient.sync() }
         main.post {
+            val cloud = CloudPreferences(this)
+            if (cloud.transport != SyncTransport.LOCAL) {
+                offlineBanner.visibility = View.VISIBLE
+                offlineBanner.text = if (cloud.transport == SyncTransport.OFF) "Local only · Settings to connect" else (result.getOrNull() ?: "Changes saved here · Settings to review")
+                refreshHistory()
+                return@post
+            }
             if (!pairing.paired) return@post
             val last = prefs.getLong("sync_last_success", 0)
             val lastText = if (last == 0L) "Not synced yet" else "Last synced " +

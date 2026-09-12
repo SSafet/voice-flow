@@ -1171,6 +1171,7 @@ private struct WorkspaceSettingsContent: View {
                 Text("Assistant").tag(2)
                 Text("Watcher").tag(3)
                 Text("Shortcuts").tag(4)
+                Text("Sync").tag(5)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -1181,6 +1182,7 @@ private struct WorkspaceSettingsContent: View {
                 case 1: VoiceSettingsView(store: store)
                 case 2: AssistantSettingsView(store: store)
                 case 3: WatcherSettingsView(store: store)
+                case 5: CloudSyncSettingsView()
                 default: ShortcutsSettingsView(store: store)
                 }
             }
@@ -1228,6 +1230,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
                view: WatcherSettingsView(store: store))
         addTab("Shortcuts", symbol: "keyboard.fill", height: 560,
                view: ShortcutsSettingsView(store: store))
+        addTab("Sync", symbol: "arrow.triangle.2.circlepath", height: 620,
+               view: CloudSyncSettingsView())
 
         window.contentViewController = tabController
         window.center()

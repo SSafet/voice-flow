@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "date": "2026-09-12T13:34:42.943736+00:00",
+  "checks": [
+    "Swift SQLite outbox and exact receipt reaches Android SQLite",
+    "Android SQLite outbox and exact receipt reaches Swift SQLite"
+  ],
+  "swiftToAndroid": {
+    "conflicts": 0,
+    "pending": 0,
+    "recordId": "45b69a6e-swift-to-android",
+    "text": "Synthetic message from final Swift SQLite",
+    "version": "1"
+  },
+  "androidToSwift": {
+    "conflicts": 0,
+    "pending": 0,
+    "recordId": "45b69a6e-android-to-swift",
+    "text": "Synthetic message from final Android SQLite",
+    "version": "1"
+  },
+  "providerCalls": 0,
+  "realUserData": false,
+  "swiftSourceSHA256": "332274f5e35f30dbbe4216c57115239fa93a43fba915fc6fd64be4f637c6c158",
+  "androidSourceSHA256": "7a449563d3e8ffe3abda7aeffd7412cddfafcd148f1dc5837a1dfbf7745d5e7a"
+}

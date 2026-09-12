@@ -152,6 +152,8 @@ enum DictationProvider: String, CaseIterable {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class UserSettings {
+    static var onPortableSave: (() -> Void)?
+
     static let shared = UserSettings()
     var dictationProvider: DictationProvider = .openai
     var hotkey = HotkeySpec(keyCode: 63, modifiers: [], label: "Fn")
@@ -353,6 +355,7 @@ class UserSettings {
     }
 
     func save() {
+        Self.onPortableSave?()
         let dict: [String: Any] = [
             "dictation_provider": dictationProvider.rawValue,
             "hotkey": hotkey.toDict(),

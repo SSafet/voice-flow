@@ -72,6 +72,7 @@ class Pairing(private val context: Context, private val keys: Keys) {
     /// pairing isn't open, null if no Mac was reachable at all.
     /// Blocking — background executor only.
     fun tryPair(): String? {
+        if (CloudPreferences(context).let { it.chosen && it.transport != SyncTransport.LOCAL }) return null
         var sawMac = false
         for (host in candidates()) {
             val port = prefs.getString("sync_port", "8793")!!.ifBlank { "8793" }
@@ -89,6 +90,7 @@ class Pairing(private val context: Context, private val keys: Keys) {
             }
             val token = payload.optString("token")
             if (token.isBlank()) continue
+            if (CloudPreferences(context).let { it.chosen && it.transport != SyncTransport.LOCAL }) return null
             keys.save(Keys.SYNC_TOKEN, token)
             val hosts = mutableListOf<String>()
             payload.optJSONArray("hosts")?.let { arr ->

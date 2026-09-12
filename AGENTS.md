@@ -367,6 +367,25 @@ deployed copies are build outputs.
 
 ## Persistent data (`~/.config/voice-flow/`)
 
+Opt-in Atika metadata sync lives in `CloudSync*.swift` and Android's `Cloud*`
+modules. Settings → Sync selects cloud or LAN transport; selecting cloud pauses
+LAN sync. Dedicated typed DTOs carry pasted/kept Inbox text, settled Assistant
+messages with parent links, vocabulary, model ID and cleanup preference. Never
+reuse the LAN/provider-key payload or native runtime encoders for cloud data.
+Cloud arrival does not start an agent. Continuing one selected cloud branch
+creates a fresh local conversation without runtime IDs, grants or jobs.
+
+The macOS `cloud-sync.sqlite` stores partitioned portable records, immutable
+outbox operations, conflicts and a transactional cursor. `cloud-sync-intents/`
+closes the native JSON/SQLite save gap; `cloud-sync-backups/` retains original
+imports and identity maps; `cloud-sync-review/` retains unsupported records.
+Refresh credentials have a separate Keychain service. Preserve source ownership
+across account switches and keep UI eviction separate from explicit tombstones.
+Proof and exact scope: `design/cloud-sync/implementation-and-proof.md`.
+The deterministic checks are `--unit --only cloud_sync` and
+`--unit --only cloud_sync_bridge`; the actual Atika HTTP fixture is a separate
+synthetic integration check documented in that proof file.
+
 - `settings.json` — `UserSettings` (hotkeys, TTS voice/speed/instructions, agent model, …).
 - `annotations.json` — versioned annotation marks and in-flight work for crash recovery.
 - `dictations.json` — dictation history (`[HistoryEntry]`, JSON), written by

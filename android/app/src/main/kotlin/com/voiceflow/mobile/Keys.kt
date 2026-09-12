@@ -45,6 +45,20 @@ class Keys(context: Context) {
         prefs.edit().putString(name, Base64.encodeToString(blob, Base64.NO_WRAP)).apply()
     }
 
+    /** Refresh rotation must reach durable encrypted storage before using the
+     * successor token. Provider/LAN callers keep their existing save API. */
+    fun saveDurable(name: String, value: String?) {
+        val edit = prefs.edit()
+        if (value.isNullOrBlank()) edit.remove(name)
+        else {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey())
+            val blob = cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+            edit.putString(name, Base64.encodeToString(blob, Base64.NO_WRAP))
+        }
+        if (!edit.commit()) throw CloudFailure.Storage()
+    }
+
     fun load(name: String): String? {
         val blob = try {
             Base64.decode(prefs.getString(name, null) ?: return null, Base64.NO_WRAP)

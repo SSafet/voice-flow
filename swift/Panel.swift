@@ -628,6 +628,11 @@ final class ChatPanel {
         dictationsView.setContinuationActive(entryId: entryId)
     }
 
+    func reloadCloudInbox() {
+        dictationsView.reloadSavedEntries()
+        styleTabs()
+    }
+
     /// Sync upsert (ticket #36): add, or update-in-place when the id is known.
     func upsertDictation(id: String?, text: String, time: String, timestamp: String? = nil,
                          destination: CaptureDestination = .kept, seen: Bool? = nil) {

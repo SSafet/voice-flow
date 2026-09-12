@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "date": "2026-09-12T13:31:26.023418+00:00",
+  "checks": [
+    "1200 legacy rows imported beyond UI caps",
+    "large SQLite state reopens across process death",
+    "all imported rows delivered through bounded pagination",
+    "capture transaction persists before delivery",
+    "committed response loss retains exact operation",
+    "idempotent retry clears only acknowledged operation",
+    "peer commits from same base",
+    "concurrent edits preserve device value and conflict",
+    "one conflict does not block another record",
+    "explicit fresh-base resolution clears chosen conflict",
+    "tombstone retains last live payload",
+    "explicit restore works across process restart",
+    "excluded uploads retain immutable queue",
+    "re-enabled uploads deliver retained edits",
+    "HTTP redirects are not followed and edits remain queued",
+    "sign-out removes credentials while retaining data",
+    "account B cannot see or republish account A",
+    "account A queue and settings survive account switching",
+    "device revocation requests sign-in without losing records"
+  ],
+  "platform": "Android API 34 arm64 emulator",
+  "application": "com.voiceflow.mobile.syncqa",
+  "database": "real Android SQLite",
+  "credentials": "real Android Keystore encryption",
+  "server": "real Atika native-auth and sync routers on isolated synthetic PostgreSQL fixture",
+  "realUserData": false,
+  "providerCalls": 0,
+  "androidSourceSHA256": "7a449563d3e8ffe3abda7aeffd7412cddfafcd148f1dc5837a1dfbf7745d5e7a"
+}

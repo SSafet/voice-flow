@@ -987,7 +987,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     seen: e.destination == CaptureDestination.kept.rawValue ? false : nil)
             }
         }
-        syncServer.start()
+        if CloudSyncBridge.shared.currentSelection().transport != "cloud" { syncServer.start() }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let cloud = CloudSyncController.shared
+            cloud.onInboxChanged = { [weak self] in self?.chatPanel.reloadCloudInbox() }
+            cloud.onTransportChanged = { [weak self] useCloud in
+                if useCloud { self?.syncServer.stop() }
+                else { self?.syncServer.start() }
+            }
+            cloud.onContinueConversation = { [weak self] id in self?.chatPanel.openAssistantConversation(id) }
+            cloud.start()
+        }
     }
 
     private func setupAgent() {

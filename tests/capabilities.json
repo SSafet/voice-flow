@@ -1654,6 +1654,26 @@
       "tests": [
         "tests/workspace_ui/main.swift"
       ]
+    },
+    {
+      "id": "SYNC-01",
+      "area": "sync",
+      "name": "Retain cloud metadata, immutable pending operations and account ownership through restart and conflict",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/cloud_sync/main.swift"
+      ]
+    },
+    {
+      "id": "SYNC-02",
+      "area": "sync",
+      "name": "Convert only portable native fields, preserve corrupt stores and replay durable migration intent in order",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/cloud_sync_bridge/main.swift"
+      ]
     }
   ]
 }

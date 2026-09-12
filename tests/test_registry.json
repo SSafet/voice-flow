@@ -24,6 +24,8 @@
         "capture_routing",
         "capture_store",
         "claude_code_runtime",
+        "cloud_sync",
+        "cloud_sync_bridge",
         "codex_appserver",
         "codex_runtime",
         "daily_focus",
@@ -1241,6 +1243,20 @@
       "runner": "unit",
       "suites": [
         "workspace_ui"
+      ]
+    },
+    {
+      "id": "tests/cloud_sync/main.swift",
+      "runner": "unit",
+      "suites": [
+        "cloud_sync"
+      ]
+    },
+    {
+      "id": "tests/cloud_sync_bridge/main.swift",
+      "runner": "unit",
+      "suites": [
+        "cloud_sync_bridge"
       ]
     }
   ]

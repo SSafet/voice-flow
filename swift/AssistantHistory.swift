@@ -171,6 +171,9 @@ final class AssistantHistoryStore {
     static let shared = AssistantHistoryStore()
     static let maxSessions = 100
     static let maxMessagesPerSession = 200
+    /// Portable snapshots only; the hook never owns runtime state.
+    var onPersist: (([AssistantConversation]) -> Void)?
+    var onDelete: ((String) -> Void)?
 
     private let url: URL
     private let metadataStore: AssistantThreadMetadataStore
@@ -293,6 +296,21 @@ final class AssistantHistoryStore {
         }
     }
 
+    /// Explicitly continuing selected cloud history creates a fresh runtime
+    /// conversation. No external session IDs, grants or job state are adopted.
+    @discardableResult
+    func continuePortableBranch(title: String, messages: [AssistantHistoryMessage]) -> AssistantConversation {
+        lock.withLock {
+            let conversation = AssistantConversation(title: title, messages: messages)
+            envelope.sessions.append(conversation)
+            envelope.activeSessionId = conversation.id
+            pruneLocked()
+            writeMetadataLocked(for: conversation)
+            persistLocked()
+            return conversation
+        }
+    }
+
     @discardableResult
     func activate(_ id: String) -> AssistantConversation? {
         lock.withLock {
@@ -312,6 +330,7 @@ final class AssistantHistoryStore {
             guard let target = conversationLocked(id),
                   target.turnState != .running,
                   target.automationReferenceIDs.isEmpty else { return nil }
+            onDelete?(id)
             envelope.sessions.removeAll { $0.id == id }
             if envelope.sessions.isEmpty {
                 let fresh = AssistantConversation(
@@ -845,6 +864,7 @@ final class AssistantHistoryStore {
     }
 
     private func persistLocked() {
+        onPersist?(envelope.sessions)
         do {
             let directory = url.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -16,9 +16,16 @@ class SyncClient(private val context: Context, private val store: Store, private
         private set
 
     fun configured(): Boolean =
-        prefs.getBoolean("paired", false) && !keys.load(Keys.SYNC_TOKEN).isNullOrBlank()
+        when (CloudPreferences(context).transport) {
+            SyncTransport.CLOUD -> CloudSync(context).configured()
+            SyncTransport.LOCAL -> prefs.getBoolean("paired", false) && !keys.load(Keys.SYNC_TOKEN).isNullOrBlank()
+            SyncTransport.OFF -> false
+        }
 
-    fun macName(): String = prefs.getString("mac_name", "Mac") ?: "Mac"
+    fun hasPendingDelivery(): Boolean = if (CloudPreferences(context).transport == SyncTransport.CLOUD) CloudSync(context).hasDelivery() else store.pendingSyncCount() > 0
+    fun retryable(): Boolean = configured() && (lastError != null || hasPendingDelivery())
+
+    fun macName(): String = if (CloudPreferences(context).transport == SyncTransport.CLOUD) "Atika" else prefs.getString("mac_name", "Mac") ?: "Mac"
 
     private fun hosts(): List<String> {
         val arr = try { org.json.JSONArray(prefs.getString("sync_hosts", "[]")) } catch (_: Exception) { org.json.JSONArray() }
@@ -36,6 +43,16 @@ class SyncClient(private val context: Context, private val store: Store, private
     /// One sync round trip. Returns a human status line; null on "nothing to do
     /// and not configured". Blocking — background executor only.
     fun sync(trigger: String = "activity"): String? = synchronized(syncLock) {
+        when (CloudPreferences(context).transport) {
+            SyncTransport.OFF -> { lastError = null; return@synchronized "Local only" }
+            SyncTransport.CLOUD -> {
+                val cloud = CloudSync(context)
+                val status = cloud.sync(trigger)
+                lastError = cloud.lastError
+                return@synchronized status
+            }
+            SyncTransport.LOCAL -> Unit
+        }
         val started = System.currentTimeMillis()
         prefs.edit().putLong("sync_last_attempt", started).putString("sync_last_trigger", trigger).apply()
         android.util.Log.i("VoiceFlowSync", "start trigger=$trigger pending=${store.pendingSyncCount()}")
@@ -131,5 +148,5 @@ class SyncClient(private val context: Context, private val store: Store, private
         }
     }
 
-    companion object { private val syncLock = Any() }
+    companion object { val syncLock = Any() }
 }

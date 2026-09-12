@@ -29,10 +29,10 @@ class SyncJob : JobService() {
             val client = SyncClient(applicationContext, store, Keys(applicationContext))
             val retry = runCatching {
                 if (!client.configured()) false
-                else if (params.jobId == DELIVERY_ID && store.pendingSyncCount() == 0) false
+                else if (params.jobId == DELIVERY_ID && !client.hasPendingDelivery()) false
                 else {
                     client.sync(if (params.jobId == DELIVERY_ID) "delivery-job" else "periodic-job")
-                    client.lastError != null || store.pendingSyncCount() > 0
+                    client.retryable()
                 }
             }.getOrDefault(true)
             main.post {
@@ -83,7 +83,10 @@ class SyncJob : JobService() {
          * intentional: a capture racing an upload must get its own attempt,
          * even if that upload was just about to finish. SyncMerge preserves it. */
         fun request(context: Context) {
-            if (!context.getSharedPreferences("app", Context.MODE_PRIVATE).getBoolean("paired", false)) return
+            val cloud = CloudPreferences(context)
+            if (cloud.transport == SyncTransport.OFF) return
+            if (cloud.transport == SyncTransport.LOCAL && !cloud.prefs.getBoolean("paired", false)) return
+            if (cloud.transport == SyncTransport.CLOUD && cloud.partition == null) return
             val scheduler = context.getSystemService(JobScheduler::class.java)
             val job = builder(context, DELIVERY_ID)
             var result = if (Build.VERSION.SDK_INT >= 31)

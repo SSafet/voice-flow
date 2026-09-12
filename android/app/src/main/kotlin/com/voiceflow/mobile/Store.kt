@@ -1,6 +1,7 @@
 package com.voiceflow.mobile
 
 import android.content.Context
+import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -101,15 +102,64 @@ class Store(private val context: Context) {
         else JSONArray()
 
     private fun writeArray(f: File, arr: JSONArray) {
-        val tmp = File(f.parentFile, f.name + ".tmp")
-        tmp.writeText(arr.toString())
-        tmp.renameTo(f)
+        val atomic = AtomicFile(f)
+        val out = atomic.startWrite()
+        try { out.write(arr.toString().toByteArray(Charsets.UTF_8)); atomic.finishWrite(out) }
+        catch (error: Throwable) { atomic.failWrite(out); throw error }
+    }
+
+    /** Strict one-time cloud import, including all retained rows before UI
+     * caps. Original bytes stay backed up; generated IDs commit before queueing. */
+    private fun legacyForCloud(file: File): JSONArray = synchronized(lock) {
+        if (!file.exists()) return@synchronized JSONArray()
+        val bytes = file.readBytes()
+        val array = try { JSONArray(String(bytes, Charsets.UTF_8)) } catch (_: Exception) { throw CloudFailure.Storage() }
+        val backup = File(context.filesDir, "cloud-import-backup/${file.name}")
+        if (!backup.exists()) {
+            backup.parentFile!!.mkdirs()
+            val atomic = AtomicFile(backup); val out = atomic.startWrite()
+            try { out.write(bytes); atomic.finishWrite(out) } catch (error: Throwable) { atomic.failWrite(out); throw error }
+        }
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        var changed = false
+        for (index in 0 until array.length()) {
+            val row = array.getJSONObject(index)
+            if (!row.has("id") || row.optString("id").isBlank()) {
+                row.put("id", CloudDatabase.get(context).importedId("${file.name}:$hash:$index")); changed = true
+            }
+            CloudWire.id(row.getString("id"))
+        }
+        if (changed) writeArray(file, array)
+        array
+    }
+    fun legacyDictationsForCloud(): List<DictationEntry> = synchronized(lock) {
+        val values = legacyForCloud(dictationsFile); List(values.length()) { DictationEntry.fromJson(values.getJSONObject(it)) }
+    }
+    fun legacyChatForCloud(): List<ChatMessage> = synchronized(lock) {
+        val values = legacyForCloud(chatFile); List(values.length()) { ChatMessage.fromJson(values.getJSONObject(it)) }
     }
 
     // ── dictations ──
     fun dictations(): MutableList<DictationEntry> = synchronized(lock) {
         val arr = readArray(dictationsFile)
-        return@synchronized MutableList(arr.length()) { DictationEntry.fromJson(arr.getJSONObject(it)) }
+        val local = MutableList(arr.length()) { DictationEntry.fromJson(arr.getJSONObject(it)) }
+        val cloud = CloudSync(context)
+        val partition = cloud.preferences.partition
+        if (cloud.preferences.transport != SyncTransport.CLOUD || partition == null) return@synchronized local
+        val state = cloud.engine.state(partition)
+        val rows = state.records.values.filter { it.collection == CloudCollection.DICTATIONS }.mapNotNull { row ->
+            val payload = row.payload as? CloudPayload.Dictation ?: return@mapNotNull null
+            val date = runCatching { java.time.OffsetDateTime.parse(payload.modifiedAt ?: payload.createdAt).atZoneSameInstant(java.time.ZoneId.systemDefault()).toLocalDateTime() }.getOrNull()
+            val legacy = payload.legacyTimestamp?.split("T")
+            DictationEntry(row.recordId, date?.toLocalTime()?.withNano(0)?.toString() ?: legacy?.getOrNull(1) ?: "",
+                date?.toLocalDate()?.toString() ?: legacy?.firstOrNull() ?: "", payload.text, payload.destination, row.pending.isEmpty() && row.conflicts.isEmpty())
+        }.associateBy { it.id }.toMutableMap()
+        state.reviewCopies.filter { !it.corrected && it.collection == CloudCollection.DICTATIONS }.forEach { review ->
+            val value = JSONObject(review.portableJSON)
+            rows[review.recordId] = DictationEntry(review.recordId, "", "", value.optString("text"), value.optString("destination", "pasted"), false)
+        }
+        if (!state.imported) local.filter { cloud.engine.sourceOwner(CloudCollection.DICTATIONS, it.id).let { owner -> owner == null || owner == partition } }.forEach { rows[it.id] = it }
+        rows.values.sortedWith(compareByDescending<DictationEntry> { it.date }.thenByDescending { it.time }).take(500).toMutableList()
     }
 
     fun saveDictations(list: List<DictationEntry>) = synchronized(lock) {
@@ -119,8 +169,9 @@ class Store(private val context: Context) {
     }
 
     fun addDictation(entry: DictationEntry) = synchronized(lock) {
+        CloudSync(context).let { it.capture(listOf(it.dictation(entry))) }
         val list = dictations()
-        list.add(0, entry)
+        list.removeAll { it.id == entry.id }; list.add(0, entry)
         saveDictations(list)
         if (!entry.synced) SyncJob.request(context)
     }
@@ -135,12 +186,14 @@ class Store(private val context: Context) {
         if (idx < 0) return@synchronized false
         val d = Date()
         val entry = list.removeAt(idx)
-        list.add(0, entry.copy(
+        val updated = entry.copy(
             text = entry.text + "\n\n" + text,
             time = SimpleDateFormat("HH:mm:ss", Locale.US).format(d),
             date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(d),
             synced = false,
-        ))
+        )
+        CloudSync(context).let { it.capture(listOf(it.dictation(updated))) }
+        list.add(0, updated)
         saveDictations(list)
         SyncJob.request(context)
         return@synchronized true
@@ -149,7 +202,12 @@ class Store(private val context: Context) {
     // ── assistant chat ──
     fun chat(): MutableList<ChatMessage> = synchronized(lock) {
         val arr = readArray(chatFile)
-        return@synchronized MutableList(arr.length()) { ChatMessage.fromJson(arr.getJSONObject(it)) }
+        val local = MutableList(arr.length()) { ChatMessage.fromJson(arr.getJSONObject(it)) }
+        val cloud = CloudSync(context); val partition = cloud.preferences.partition
+        if (cloud.preferences.transport != SyncTransport.CLOUD || partition == null) return@synchronized local
+        // Synced remote branches are read in Cloud threads. They never become
+        // this installation's live assistant context implicitly.
+        local.filter { cloud.engine.sourceOwner(CloudCollection.MESSAGES, it.id).let { owner -> owner == null || owner == partition } }.toMutableList()
     }
 
     fun saveChat(list: List<ChatMessage>) = synchronized(lock) {
@@ -160,6 +218,7 @@ class Store(private val context: Context) {
 
     fun addChat(msg: ChatMessage) = synchronized(lock) {
         val list = chat()
+        CloudSync(context).let { it.capture(it.chat(msg, list.lastOrNull()?.id)) }
         list.add(msg)
         saveChat(list)
         if (!msg.synced) SyncJob.request(context)

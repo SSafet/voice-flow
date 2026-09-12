@@ -2280,6 +2280,8 @@ class FloatingTranscriptPanel {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 final class DictationsView: NSView, NSGestureRecognizerDelegate {
+    /// Synchronous portable persistence hook, installed by the cloud adapter.
+    static var onPersist: (([HistoryEntry]) -> Void)?
     /// The Inbox filters — views over HistoryEntry.destination.
     private enum InboxFilter: Int, CaseIterable {
         case all, kept, pasted, assistant
@@ -2672,6 +2674,17 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
 
     /// Newest-first dictations straight from the store (used by the MCP
     /// get_recent_dictations tool — no UI involved).
+    func reloadSavedEntries() {
+        entries = Self.loadEntries()
+        styleChips()
+        rebuildContent()
+        onUnreadChanged?(unrevisitedCount)
+    }
+
+    static func projectPortableEntries(_ entries: [HistoryEntry]) {
+        saveEntries(entries)
+    }
+
     static func recentEntries(limit: Int) -> [HistoryEntry] {
         Array(loadEntries().prefix(max(0, limit)))
     }
@@ -2692,6 +2705,7 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
     }
 
     private static func saveEntries(_ entries: [HistoryEntry]) {
+        onPersist?(entries)
         let dir = storeURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         if let data = try? JSONEncoder().encode(entries) {

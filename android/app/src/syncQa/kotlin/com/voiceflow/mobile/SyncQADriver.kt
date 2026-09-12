@@ -18,6 +18,11 @@ class SyncQADriver : Instrumentation() {
         try {
             val context = targetContext
             check(context.packageName == "com.voiceflow.mobile.syncqa")
+            if (args.getString("action")?.startsWith("cloud-") == true) {
+                val result = CloudQAActions.run(context, args)
+                finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "PASS\nCLOUD_JSON:" + result.toString()) })
+                return
+            }
             val store = Store(context)
             when (args.getString("action")) {
                 "configure" -> {
