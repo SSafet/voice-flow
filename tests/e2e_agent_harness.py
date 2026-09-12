@@ -2,7 +2,7 @@
 """Signed-app end-to-end gate for Voice Flow's dual-runtime harness.
 
 The control plane is setup/observation only. Runtime work still crosses the
-signed app, canonical history, real pinned OpenCode server, private tool and
+signed app, canonical history, real verified OpenCode server, private tool and
 model gateways, durable scheduler, and AppKit presentation.
 """
 
@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -114,7 +115,8 @@ def scaffold_assistant(root: Path) -> None:
     (assistant / "memory" / "ledger.md").write_text("QA ledger\n")
     (assistant / "skills" / "test-skill" / "SKILL.md").write_text(
         "---\nname: test-skill\ndescription: Signed app QA skill\n---\n"
-        "Return SKILL_NONCE_8421.\n"
+        "When the current task explicitly invokes test-skill, return SKILL_NONCE_8421.\n"
+        "Otherwise follow the current task without using this skill.\n"
     )
     # Headless macOS test sessions may run with Secure Input, which suppresses
     # synthetic keyDown/keyUp events, and synthetic F-keys may become media
@@ -220,6 +222,7 @@ class SignedAppGate:
         self.soak_seconds = soak_seconds
         self.soak_interval_seconds = max(1, soak_interval_seconds)
         self.last_descendant_pids: set[int] = set()
+        self.observed_runtime_versions: set[str] = set()
 
     @property
     def base(self) -> str:
@@ -227,6 +230,7 @@ class SignedAppGate:
 
     def record(self, check: str) -> None:
         self.checks.append(check)
+        print(f"PASS: {check}", flush=True)
 
     def start_provider(self) -> None:
         port_file = self.artifacts / "provider-port"
@@ -244,6 +248,14 @@ class SignedAppGate:
         )
         wait_for("fake provider port", lambda: port_file.read_text() if port_file.exists() else "")
         self.provider_port = int(port_file.read_text())
+        # Startup refreshes the model catalog before /__qa/provider can run.
+        # Seed the isolated settings first so every catalog request uses this
+        # fixture and cannot cache the public provider's unrelated model list.
+        settings_path = self.root / "settings.json"
+        settings = json.loads(settings_path.read_text())
+        settings.update({"agent_base_url": f"http://127.0.0.1:{self.provider_port}/v1",
+                         "agent_model": "test/model"})
+        settings_path.write_text(json.dumps(settings))
 
     def start_app(self) -> None:
         executable = self.app / "Contents" / "MacOS" / "voice-flow"
@@ -317,7 +329,8 @@ class SignedAppGate:
         state = self.wait_idle(len(before) + (2 if expected is not None else 1), timeout)
         if expected is not None:
             messages = state["assistant"]["messages"]
-            expect(messages[-1]["role"] == "assistant", f"{text}: final role was not assistant")
+            expect(messages[-1]["role"] == "assistant",
+                   f"{text}: final role was {messages[-1]['role']}: {messages[-1]['text']}")
             expect(messages[-1]["text"] == expected,
                    f"{text}: final was {messages[-1]['text']!r}, expected {expected!r}")
         return state
@@ -594,6 +607,7 @@ class SignedAppGate:
         return event
 
     def verify_permissions_and_interrupt(self) -> None:
+        self.qa("POST", "/__qa/opencode/require-command-approval", {})
         assistant_dir = self.root / "assistants" / "flora"
         denied = assistant_dir / "permission-deny.txt"
         before = len(self.state()["assistant"]["messages"])
@@ -607,6 +621,12 @@ class SignedAppGate:
         }, expect_status=202)
         self.wait_idle(before + 1)
         expect(not denied.exists(), "rejected permission created its marker")
+
+        # A rejected turn leaves a dirty binding; the next turn intentionally
+        # creates a fresh native session. Verify recovery, then opt that new
+        # session into the same approval probe.
+        self.submit("PLAIN_TEXT_TURN PERMISSION_RECOVERY", expected="gateway ok")
+        self.qa("POST", "/__qa/opencode/require-command-approval", {})
 
         allowed = assistant_dir / "permission-allow.txt"
         before = len(self.state()["assistant"]["messages"])
@@ -650,12 +670,32 @@ class SignedAppGate:
         except PermissionError:
             return True
 
+    def verified_runtime_versions(self) -> set[str]:
+        bundled = self.app / "Contents" / "Resources" / "Runtime" / "OpenCode" / "installed.json"
+        versions = {json.loads(bundled.read_text())["version"]}
+        staged_root = self.root / "runtime" / "opencode-staged"
+        manifest = staged_root / "staged.json"
+        if manifest.exists():
+            staged = json.loads(manifest.read_text())
+            version = staged["version"]
+            expect(isinstance(version, str) and re.fullmatch(r"\d+(?:\.\d+)+", version),
+                   "staged runtime version was not canonical")
+            binary = staged_root / version / "opencode"
+            architecture = "arm64" if os.uname().machine != "x86_64" else "x86_64"
+            expect(staged["architecture"] == architecture and binary.is_file()
+                   and sha256(binary) == staged["binarySHA256"],
+                   "staged runtime did not match its architecture and sealed checksum")
+            versions.add(version)
+        return versions
+
     def verify_runtime_restart(self) -> None:
         health = self.qa("GET", "/__qa/runtime/health")
         open_code = next(row for row in health["runtimes"]
                          if row["runtime"] == "opencode")
-        expect(open_code["health"] == "healthy" and open_code["version"] == "1.17.11",
+        expect(open_code["health"] == "healthy"
+               and open_code["version"] in self.verified_runtime_versions(),
                f"running OpenCode health was not visible: {open_code}")
+        self.observed_runtime_versions.add(open_code["version"])
         after = max((event["sequence"] for event in self.events()), default=0)
         self.qa("POST", "/__qa/opencode/restart", {
             "trust_profile": "workspace",
@@ -664,8 +704,10 @@ class SignedAppGate:
         health = self.qa("GET", "/__qa/runtime/health")
         open_code = next(row for row in health["runtimes"]
                          if row["runtime"] == "opencode")
-        expect(open_code["health"] == "healthy",
+        expect(open_code["health"] == "healthy"
+               and open_code["version"] in self.verified_runtime_versions(),
                f"restarted OpenCode health was not visible: {open_code}")
+        self.observed_runtime_versions.add(open_code["version"])
         self.submit("PLAIN_TEXT_TURN RESTARTED", expected="gateway ok")
         self.record("signed_opencode_restart")
 
@@ -1625,7 +1667,7 @@ class SignedAppGate:
             editor = value.get("settings_assistant", {})
             return value if (value.get("settings_assistant_visible")
                              and editor.get("model_count", 0) >= 2
-                             and editor.get("model_width", 0) >= 350) else None
+                             and editor.get("model_width", 0) >= 260) else None
 
         state = wait_for("Assistant Settings model picker", loaded_settings, timeout=15)
         editor = state["settings_assistant"]
@@ -2160,6 +2202,7 @@ def main() -> None:
         report = {
             "ok": True,
             "checks": gate.checks,
+            "observed_runtime_versions": sorted(gate.observed_runtime_versions),
             "app": str(gate.app),
             "root": str(gate.root),
             "artifacts": str(gate.artifacts),

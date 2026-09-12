@@ -262,6 +262,46 @@ extension AppDelegate {
             }
             Task { await AgentPermissionBroker.shared.resolve(id: id, response: response) }
             return .accepted(["permission_id": id, "response": raw])
+        case ("POST", "/__qa/opencode/require-command-approval"):
+            // The production dial allows native commands. This isolated QA
+            // session opts into prompts so reject/allow-once can be exercised
+            // without changing the user's dial or the process-wide policy.
+            var target: (String, URL)?
+            DispatchQueue.main.sync {
+                if !self.agent.isRunning,
+                   let session = self.agent.currentConversation.runtimeBinding(.opencode)?.externalSessionID {
+                    target = (session, self.agent.activeAssistant?.directory
+                        ?? VoiceFlowPaths.shared.directory("assistants/default"))
+                }
+            }
+            guard let (session, directory) = target else {
+                return .error(409, "An idle OpenCode session is required.")
+            }
+            let semaphore = DispatchSemaphore(value: 0)
+            var result = LocalAPIResponse.error(502, "Could not configure test session approvals.")
+            Task {
+                defer { semaphore.signal() }
+                do {
+                    let connection = try await OpenCodeSupervisor.shared.connection(for: .workspace)
+                    var request = URLRequest(url: connection.baseURL.appendingPathComponent("session/\(session)"))
+                    request.httpMethod = "PATCH"
+                    request.timeoutInterval = 8
+                    request.setValue(connection.authorizationHeader, forHTTPHeaderField: "Authorization")
+                    request.setValue(directory.path, forHTTPHeaderField: "x-opencode-directory")
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.httpBody = try JSONSerialization.data(withJSONObject: [
+                        "permission": [["permission": "bash", "pattern": "*", "action": "ask"]],
+                    ])
+                    let (_, response) = try await URLSession.shared.data(for: request)
+                    if (response as? HTTPURLResponse)?.statusCode == 200 {
+                        result = .ok(["command_approval": "ask"])
+                    }
+                } catch { result = .error(502, error.localizedDescription) }
+            }
+            guard semaphore.wait(timeout: .now() + 10) == .success else {
+                return .error(504, "Test session approval setup timed out.")
+            }
+            return result
         case ("POST", "/__qa/opencode/stop"):
             let profile = (payload["trust_profile"] as? String)
                 .flatMap(AgentTrustProfile.init(rawValue:))

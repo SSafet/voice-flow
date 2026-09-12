@@ -58,9 +58,14 @@ enum OpenCodeToolDependencies {
         return destination
     }
 
-    static func install(from source: URL, into directory: URL) throws {
+    static func install(from source: URL, into requestedDirectory: URL) throws {
         lock.lock(); defer { lock.unlock() }
         let manager = FileManager.default
+        try manager.createDirectory(at: requestedDirectory, withIntermediateDirectories: true)
+        // Resolve the existing root before deriving missing children. Foundation
+        // can normalize /private/tmp to /tmp only for paths that already exist;
+        // comparing that root with an unresolved child rejects a valid cold tree.
+        let directory = requestedDirectory.resolvingSymlinksInPath()
         let package = source.appendingPathComponent("node_modules/@opencode-ai/plugin")
             .resolvingSymlinksInPath()
         guard manager.fileExists(atPath: package.appendingPathComponent("dist/tool.js").path) else {

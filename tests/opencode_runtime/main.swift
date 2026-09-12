@@ -12,6 +12,11 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
 // Cold tool setup uses the verified local SDK and preserves unrelated npm
 // state. This runs from an empty isolated root, before any native process.
 let dependencySource = try OpenCodeToolDependencies.source()
+let coldFixture = VoiceFlowPaths.shared.directory("cold-dependency-fixture/.opencode")
+let coldPath = coldFixture.path.hasPrefix("/tmp/") ? "/private" + coldFixture.path : coldFixture.path
+try OpenCodeToolDependencies.install(from: dependencySource, into: URL(fileURLWithPath: coldPath))
+expect(FileManager.default.fileExists(atPath: coldFixture.appendingPathComponent("node_modules/@opencode-ai/plugin/dist/tool.js").path),
+       "a canonical temporary path rejected a missing dependency tree")
 let dependencyFixture = VoiceFlowPaths.shared.directory("tool-dependency-fixture/.opencode")
 try Data(#"{"name":"existing","dependencies":{"other-package":"1.0.0"}}"#.utf8)
     .write(to: dependencyFixture.appendingPathComponent("package.json"))
