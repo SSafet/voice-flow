@@ -12,6 +12,9 @@ Atika's existing email-code account, an HTTPS server origin, a server-created
 device, and a refresh credential held in a separate Keychain item. Cloud mode
 pauses the legacy LAN server. The account retains its local cloud history and
 outbox after sign-out; switching back to Local network resumes LAN transport.
+A pending code challenge can be cancelled to correct the email or server.
+A rejected device session returns to the sign-in form with its saved account
+details while retaining its local history and pending edits.
 
 Each account has three independent export selections. Disabling one stops its
 queued operations from being sent, keeps those operations locally, and leaves
@@ -83,14 +86,26 @@ or compaction interface is included in this native change.
 
 ## Verification
 
-The complete `./scripts/test-agent-harness.sh --unit` gate passed before the
-latest-main integration and final sign-in recovery UI adjustment, including
-both release/QA application builds, the new cloud suites and existing
-UI/runtime regressions. **82 registered checks have execution receipts.**
-That baseline receipt is `evidence/unit-evidence.json`; its source fingerprint is
-`9e20acce7d603a0de9fca6dab320b9894c7545f78a85661cb5400a141bc0e2ee`.
-The real HTTP smoke and Swift ↔ Android exchange passed separately. A fresh
-merged-source gate will replace the release evidence after integration.
+The complete `./scripts/test-agent-harness.sh --unit` gate passed on merged
+code commit `9f3b151b99090854afa6b87427d2b6c39d281ccd`, including both
+release/QA application builds, the new cloud suites and all existing
+UI/runtime/history regressions. **82 registered checks have execution
+receipts.** The final receipt is `evidence/merged-unit-evidence.json`, generated
+at 2026-09-12 13:51:52 UTC from a clean source tree. Its fingerprint is
+`37a3ea0ed02f1cfb0a9f33699887219a93e78f666225eecd3127c82f421c2073`.
+
+Cloud implementation commit `0030d25` includes both native clients and their
+tests/docs. Merge `9f3b151` incorporates main's `01fa66b` FLORA context-size
+routing. The merge required no conflict resolution: `App.swift` and
+`AssistantHistory.swift` changed separate regions. Review verified both cloud
+persistence hooks and FLORA context-usage logic, and all 19 other main-changed
+files remained byte-identical to `01fa66b`. `git diff --check` passed.
+
+The real HTTP smoke and Swift ↔ Android exchange passed separately. The
+precise Swift client/helper and Android source hashes still match their
+passing cross-device and native receipts after the merge. The earlier
+pre-merge full-gate receipt is retained in `evidence/unit-evidence.json` as
+historical evidence; the merged receipt above is the current release check.
 
 | Check | Evidence |
 | --- | --- |
