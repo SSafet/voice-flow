@@ -5,7 +5,13 @@ existing macOS and Android apps. The signed macOS application was installed
 after the merged verification gate. Its previously running process was left
 open; restarting Voice Flow loads the new build. Android acceptance uses an
 isolated emulator; no physical phone was connected for installation.
-Atika deployment is tracked separately. The evidence below names the exact scope.
+Atika's native auth and metadata sync are deployed at `https://api.atika.ai`.
+Native sign-in is enabled and cloud sync is enabled for Safet's active account.
+Production HTTPS acceptance passed 16 checks covering refresh, two devices,
+idempotency, conflicts, deletion/restore, owner isolation and revocation; its
+OTP delivery was stubbed and sent no email. No personal data was uploaded.
+Atika's `docs/architecture/runtime-proof/native-cloud-receipt.json` records
+that server proof. The evidence below names the exact client scope.
 
 ## What a person can sync
 
