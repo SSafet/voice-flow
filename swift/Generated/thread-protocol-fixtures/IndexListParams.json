@@ -1,0 +1,10 @@
+{
+  "type": "IndexListParams",
+  "examples": [
+    {},
+    {
+      "includeArchived": true,
+      "triggerId": "trg_01J8ZK3F9A"
+    }
+  ]
+}

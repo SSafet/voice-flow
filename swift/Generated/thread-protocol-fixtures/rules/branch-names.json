@@ -1,0 +1,90 @@
+{
+  "rule": "threadBranchName",
+  "cases": [
+    {
+      "title": "Fix cart",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/fix-cart-3f9a2c"
+    },
+    {
+      "title": "Fix cart",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "expected": "atika/fix-cart-3f9a2c"
+    },
+    {
+      "title": "  Fix   the  cart!!  ",
+      "threadId": "abcdef123456",
+      "expected": "atika/fix-the-cart-123456"
+    },
+    {
+      "title": "Поправи количката",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/thread-3f9a2c"
+    },
+    {
+      "title": "Поправи cart 2",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/cart-2-3f9a2c"
+    },
+    {
+      "title": "",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/thread-3f9a2c"
+    },
+    {
+      "title": "---",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/thread-3f9a2c"
+    },
+    {
+      "title": "İstanbul trip",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/stanbul-trip-3f9a2c"
+    },
+    {
+      "title": "Straße café",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/stra-e-caf-3f9a2c"
+    },
+    {
+      "title": "Release v2.0.1 (hotfix)",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/release-v2-0-1-hotfix-3f9a2c"
+    },
+    {
+      "title": "feature/login_page",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/feature-login-page-3f9a2c"
+    },
+    {
+      "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3f9a2c"
+    },
+    {
+      "title": "abcdefghijklmnopqrstuvwxyz0123456789abc and more words",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/abcdefghijklmnopqrstuvwxyz0123456789abc-3f9a2c"
+    },
+    {
+      "title": "🛒 cart emoji",
+      "threadId": "01J8ZK3F9A2C",
+      "expected": "atika/cart-emoji-3f9a2c"
+    },
+    {
+      "title": "Fix cart",
+      "threadId": "abc",
+      "expected": "atika/fix-cart-abc"
+    },
+    {
+      "title": "Fix cart",
+      "threadId": "id_with-MIXED_Ab",
+      "expected": "atika/fix-cart-xed_ab"
+    },
+    {
+      "title": "UPPER lower 123",
+      "threadId": "ZZZZZZ",
+      "expected": "atika/upper-lower-123-zzzzzz"
+    }
+  ]
+}

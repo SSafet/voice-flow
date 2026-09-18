@@ -1,0 +1,65 @@
+{
+  "type": "ThreadEventDown",
+  "examples": [
+    {
+      "origin": "atika",
+      "originSeq": 3,
+      "at": "2026-09-18T09:01:30.000Z",
+      "event": {
+        "type": "thread.updated",
+        "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "thread": {
+          "id": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "projectId": "01J8ZK3F9APROJECT0000000001",
+          "homeId": "mac-mini-7f3a",
+          "title": "Fix cart",
+          "titleSource": "auto",
+          "personaId": "flora",
+          "personaName": "FLORA",
+          "runtime": "claude",
+          "model": "claude-sonnet-4-5",
+          "reasoningEffort": "medium",
+          "trustProfile": "workspace",
+          "supports": [
+            "stop",
+            "model",
+            "reasoning_effort",
+            "runtime",
+            "persona",
+            "trust_profile"
+          ],
+          "workspaceRoot": {
+            "rootId": "project:01J8ZK3F9APROJECT0000000001",
+            "kind": "project",
+            "path": "/Users/safet/repos/pantria"
+          },
+          "activity": "idle",
+          "lastTurn": {
+            "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+            "status": "completed",
+            "ranOn": {
+              "homeId": "atika",
+              "kind": "atika",
+              "label": "Atika"
+            },
+            "endedAt": "2026-09-18T09:01:30.000Z"
+          },
+          "pinnedSlot": 2,
+          "pinnedAt": "2026-09-18T09:00:00.000Z",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "lastActivityAt": "2026-09-18T09:01:30.000Z",
+          "lastReadAt": "2026-09-18T09:01:30.000Z",
+          "version": 9,
+          "branch": "atika/fix-cart-3f9a2c",
+          "cloud": {
+            "baseRef": "origin/main",
+            "baseCommit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+            "headCommit": "0f9e8d7c6b5a49382716f5e4d3c2b1a098765432",
+            "pushed": true,
+            "model": "anthropic/claude-sonnet-4.5"
+          }
+        }
+      }
+    }
+  ]
+}

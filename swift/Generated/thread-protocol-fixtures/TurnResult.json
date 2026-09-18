@@ -1,0 +1,22 @@
+{
+  "type": "TurnResult",
+  "examples": [
+    {
+      "turn": {
+        "id": "turn-queued-0001",
+        "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "createdAt": "2026-09-18T09:01:30.000Z",
+        "status": "queued",
+        "ranOn": {
+          "homeId": "mac-mini-7f3a",
+          "kind": "mac",
+          "label": "Mac mini"
+        },
+        "runtime": "claude",
+        "startedBy": {
+          "kind": "user"
+        }
+      }
+    }
+  ]
+}

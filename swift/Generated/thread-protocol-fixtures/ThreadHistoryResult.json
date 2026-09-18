@@ -1,0 +1,322 @@
+{
+  "type": "ThreadHistoryResult",
+  "examples": [
+    {
+      "turns": [
+        {
+          "id": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "status": "completed",
+          "ranOn": {
+            "homeId": "mac-mini-7f3a",
+            "kind": "mac",
+            "label": "Mac mini"
+          },
+          "runtime": "claude",
+          "model": "claude-sonnet-4-5",
+          "persona": {
+            "id": "flora",
+            "name": "FLORA"
+          },
+          "startedBy": {
+            "kind": "user"
+          },
+          "startedAt": "2026-09-18T09:00:00.000Z",
+          "endedAt": "2026-09-18T09:01:30.000Z",
+          "stopReason": "end_turn",
+          "usage": {
+            "inputTokens": 18234,
+            "outputTokens": 912,
+            "costMicros": 68400,
+            "costSettled": true,
+            "contextTokens": 19146,
+            "contextWindow": 200000
+          },
+          "git": {
+            "branch": "main",
+            "headCommit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+            "dirty": true,
+            "upstreamRef": "origin/main",
+            "unpushedCount": 2,
+            "pushed": false
+          },
+          "checkpoints": {
+            "before": "refs/atika/checkpoints/9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A/before",
+            "after": "refs/atika/checkpoints/9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A/after"
+          },
+          "changedFiles": [
+            {
+              "path": "src/cart.ts",
+              "added": 14,
+              "removed": 3
+            }
+          ],
+          "changedFilesTotal": 1
+        }
+      ],
+      "items": [
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-user-1",
+          "completedAt": "2026-09-18T09:00:00.000Z",
+          "kind": "user_message",
+          "status": "completed",
+          "text": "also fix the empty-cart case",
+          "attachments": [
+            {
+              "id": "att-shot-0001",
+              "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+              "createdAt": "2026-09-18T09:00:00.000Z",
+              "kind": "annotated_screenshot",
+              "name": "shot-090000.jpg",
+              "mime": "image/jpeg",
+              "sizeBytes": 402113,
+              "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+              "width": 3456,
+              "height": 2234,
+              "captureId": "shot:2026-09-18/shot-090000.jpg",
+              "marks": [
+                {
+                  "n": 1,
+                  "kind": "pen",
+                  "color": "red",
+                  "box": [
+                    10,
+                    10,
+                    40,
+                    30
+                  ],
+                  "points": [
+                    [
+                      10,
+                      10
+                    ],
+                    [
+                      30,
+                      25
+                    ],
+                    [
+                      50,
+                      40
+                    ]
+                  ],
+                  "stroke": 4
+                },
+                {
+                  "n": 2,
+                  "kind": "highlight",
+                  "color": "amber",
+                  "box": [
+                    60,
+                    10,
+                    200,
+                    24
+                  ],
+                  "points": [
+                    [
+                      60,
+                      22
+                    ],
+                    [
+                      260,
+                      22
+                    ]
+                  ],
+                  "stroke": 18,
+                  "underText": "Your cart is empty"
+                },
+                {
+                  "n": 3,
+                  "kind": "line",
+                  "color": "green",
+                  "box": [
+                    10,
+                    60,
+                    100,
+                    1
+                  ],
+                  "from": [
+                    10,
+                    60
+                  ],
+                  "to": [
+                    110,
+                    60
+                  ],
+                  "stroke": 3
+                },
+                {
+                  "n": 4,
+                  "kind": "arrow",
+                  "color": "blue",
+                  "box": [
+                    10,
+                    80,
+                    120,
+                    60
+                  ],
+                  "from": [
+                    10,
+                    80
+                  ],
+                  "to": [
+                    130,
+                    140
+                  ],
+                  "stroke": 4,
+                  "note": "this button does nothing"
+                },
+                {
+                  "n": 5,
+                  "kind": "rect",
+                  "color": "magenta",
+                  "box": [
+                    200,
+                    200,
+                    320,
+                    90
+                  ],
+                  "stroke": 4
+                },
+                {
+                  "n": 6,
+                  "kind": "ellipse",
+                  "color": "white",
+                  "box": [
+                    600,
+                    200,
+                    120,
+                    120
+                  ],
+                  "stroke": 4,
+                  "note": "an agent may put a note on any mark"
+                },
+                {
+                  "n": 7,
+                  "kind": "badge",
+                  "color": "red",
+                  "box": [
+                    800,
+                    100,
+                    36,
+                    36
+                  ],
+                  "center": [
+                    818,
+                    118
+                  ],
+                  "label": 1,
+                  "stroke": 2
+                },
+                {
+                  "n": 8,
+                  "kind": "text",
+                  "color": "amber",
+                  "box": [
+                    900,
+                    300,
+                    260,
+                    48
+                  ],
+                  "origin": [
+                    900,
+                    300
+                  ],
+                  "note": "Total is wrong here",
+                  "stroke": 2
+                },
+                {
+                  "n": 9,
+                  "kind": "rect",
+                  "color": "red",
+                  "box": [
+                    -20,
+                    -10,
+                    50,
+                    50
+                  ],
+                  "stroke": 1
+                }
+              ],
+              "context": {
+                "app": "Safari",
+                "bundleId": "com.apple.Safari",
+                "windowTitle": "Cart — Pantrella",
+                "url": "pantrella.com/cart",
+                "display": {
+                  "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+                  "index": 1,
+                  "widthPt": 1728,
+                  "heightPt": 1117,
+                  "scale": 2
+                },
+                "windowBox": [
+                  0,
+                  50,
+                  3456,
+                  2184
+                ],
+                "pointer": [
+                  1200,
+                  640
+                ],
+                "private": false
+              },
+              "modelText": "Mark 4 (arrow) points at \"Checkout\": this button does nothing.",
+              "bytes": {
+                "state": "uploaded",
+                "artifactId": "art_01J8ZK3F9B"
+              }
+            }
+          ],
+          "context": {
+            "app": "Safari",
+            "bundleId": "com.apple.Safari",
+            "windowTitle": "Cart — Pantrella",
+            "url": "pantrella.com/cart",
+            "display": {
+              "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+              "index": 1,
+              "widthPt": 1728,
+              "heightPt": 1117,
+              "scale": 2
+            },
+            "windowBox": [
+              0,
+              50,
+              3456,
+              2184
+            ],
+            "pointer": [
+              1200,
+              640
+            ],
+            "private": false
+          },
+          "commandId": "cmd-0001",
+          "sentFrom": {
+            "clientId": "pixel-9-22c1",
+            "clientKind": "android",
+            "label": "Pixel 9"
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-assistant-1",
+          "completedAt": "2026-09-18T09:01:30.000Z",
+          "kind": "assistant_message",
+          "status": "completed",
+          "text": "The empty-cart case now shows the placeholder.",
+          "truncated": true,
+          "fullTextAttachmentId": "att-file-0001"
+        }
+      ],
+      "hasOlder": true
+    }
+  ]
+}

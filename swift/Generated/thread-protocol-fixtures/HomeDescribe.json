@@ -1,0 +1,25 @@
+{
+  "type": "HomeDescribe",
+  "examples": [
+    {
+      "label": "Mac mini",
+      "runtimes": [
+        {
+          "kind": "opencode",
+          "available": true,
+          "version": "1.4.2"
+        },
+        {
+          "kind": "codex",
+          "available": true,
+          "version": "0.58.0"
+        },
+        {
+          "kind": "claude",
+          "available": false,
+          "detail": "claude was not found on PATH"
+        }
+      ]
+    }
+  ]
+}

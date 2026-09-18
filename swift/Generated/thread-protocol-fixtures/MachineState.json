@@ -1,0 +1,36 @@
+{
+  "type": "MachineState",
+  "examples": [
+    {
+      "state": "awake",
+      "since": "2026-09-18T09:00:00.000Z",
+      "reason": "thread",
+      "unclean": false,
+      "sleepDeferred": "the gateway did not confirm sleep",
+      "lastSnapshot": {
+        "id": "snap_01J8ZK3F9A",
+        "time": "2026-09-18T09:00:00.000Z",
+        "ok": true,
+        "consecutiveFailures": 0
+      },
+      "disk": {
+        "usedBytes": 2147483648,
+        "sizeBytes": 10737418240,
+        "limitBytes": 9663676416
+      },
+      "image": "atika-machine:2026-09-18",
+      "notices": [
+        {
+          "code": "unclean_restart",
+          "message": "The machine restarted unexpectedly.",
+          "at": "2026-09-18T09:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "state": "asleep",
+      "since": "2026-09-18T09:00:00.000Z",
+      "notices": []
+    }
+  ]
+}

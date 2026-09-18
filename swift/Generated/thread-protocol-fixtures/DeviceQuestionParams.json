@@ -1,0 +1,14 @@
+{
+  "type": "DeviceQuestionParams",
+  "examples": [
+    {
+      "question": {
+        "deviceId": "dev-8c21f4e0",
+        "clientDeviceId": "pixel-9-22c1",
+        "clientKind": "android",
+        "clientLabel": "Pixel 9",
+        "askedAt": "2026-09-18T09:00:00.000Z"
+      }
+    }
+  ]
+}

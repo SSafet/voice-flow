@@ -1,0 +1,20 @@
+{
+  "type": "ProjectUpdatedParams",
+  "examples": [
+    {
+      "project": {
+        "id": "01J8ZK3F9APROJECT0000000001",
+        "homeId": "mac-mini-7f3a",
+        "name": "pantria",
+        "path": "/Users/safet/repos/pantria",
+        "gitRemote": "https://github.com/safet/pantria.git",
+        "gitDefaultBranch": "main",
+        "available": true,
+        "remoteAccess": "read_write",
+        "isGeneral": false,
+        "createdAt": "2026-09-18T09:00:00.000Z",
+        "version": 2
+      }
+    }
+  ]
+}

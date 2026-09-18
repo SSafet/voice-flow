@@ -1,0 +1,8 @@
+{
+  "type": "ImportStatusParams",
+  "examples": [
+    {
+      "sourceDeviceId": "pixel-9-22c1"
+    }
+  ]
+}

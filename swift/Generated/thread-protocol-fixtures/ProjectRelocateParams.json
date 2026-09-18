@@ -1,0 +1,10 @@
+{
+  "type": "ProjectRelocateParams",
+  "examples": [
+    {
+      "commandId": "cmd-0021",
+      "projectId": "01J8ZK3F9APROJECT0000000001",
+      "path": "/Volumes/work/repos/pantria"
+    }
+  ]
+}

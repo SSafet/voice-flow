@@ -1,0 +1,11 @@
+{
+  "type": "DeviceAnswerQuestionParams",
+  "examples": [
+    {
+      "commandId": "cmd-0020",
+      "deviceId": "dev-8c21f4e0",
+      "clientDeviceId": "pixel-9-22c1",
+      "decision": "allow"
+    }
+  ]
+}

@@ -1,0 +1,252 @@
+{
+  "type": "IndexListResult",
+  "examples": [
+    {
+      "homes": [
+        {
+          "id": "atika",
+          "kind": "atika",
+          "label": "Atika",
+          "online": true,
+          "runtimes": [
+            {
+              "kind": "opencode",
+              "available": true,
+              "version": "1.4.2"
+            }
+          ],
+          "version": 1
+        },
+        {
+          "id": "mac-mini-7f3a",
+          "deviceId": "dev-8c21f4e0",
+          "kind": "mac",
+          "label": "Mac mini",
+          "online": false,
+          "lastSeenAt": "2026-09-18T09:00:00.000Z",
+          "runtimes": [
+            {
+              "kind": "opencode",
+              "available": true,
+              "version": "1.4.2"
+            },
+            {
+              "kind": "codex",
+              "available": true,
+              "version": "0.58.0"
+            },
+            {
+              "kind": "claude",
+              "available": false,
+              "detail": "claude was not found on PATH"
+            }
+          ],
+          "version": 4
+        }
+      ],
+      "personas": [
+        {
+          "id": "flora",
+          "homeId": "mac-mini-7f3a",
+          "name": "FLORA",
+          "description": "Keeps the pantry project moving",
+          "instructions": "You are careful with migrations and you explain what you changed.",
+          "coreMemory": "- Safet prefers small commits.\n- The staging database is on kuro.",
+          "model": "anthropic/claude-sonnet-4.5",
+          "reasoningEffort": "medium",
+          "voice": "alloy",
+          "skills": [
+            {
+              "name": "release-notes",
+              "description": "Writes release notes from a commit range"
+            }
+          ],
+          "delegates": [
+            {
+              "id": "scout",
+              "name": "Scout",
+              "description": "Reads code and reports",
+              "private": true
+            },
+            {
+              "id": "atlas",
+              "name": "Atlas",
+              "private": false
+            }
+          ],
+          "isDefault": true,
+          "usable": true,
+          "issues": [],
+          "revision": "b1946ac92492d2347c6235b4d2611184",
+          "version": 3
+        }
+      ],
+      "projects": [
+        {
+          "id": "01J8ZK3F9APROJECT0000000001",
+          "homeId": "mac-mini-7f3a",
+          "name": "pantria",
+          "path": "/Users/safet/repos/pantria",
+          "gitRemote": "https://github.com/safet/pantria.git",
+          "gitDefaultBranch": "main",
+          "available": true,
+          "remoteAccess": "read_write",
+          "isGeneral": false,
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "version": 2
+        },
+        {
+          "id": "01J8ZK3F9AGENERAL000000001",
+          "homeId": "atika",
+          "name": "General",
+          "path": "/home/atika/general",
+          "available": true,
+          "remoteAccess": "read_write",
+          "isGeneral": true,
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "version": 1
+        }
+      ],
+      "threads": [
+        {
+          "id": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "projectId": "01J8ZK3F9APROJECT0000000001",
+          "homeId": "mac-mini-7f3a",
+          "title": "Fix cart",
+          "titleSource": "auto",
+          "personaId": "flora",
+          "personaName": "FLORA",
+          "runtime": "claude",
+          "model": "claude-sonnet-4-5",
+          "reasoningEffort": "medium",
+          "trustProfile": "workspace",
+          "supports": [
+            "stop",
+            "model",
+            "reasoning_effort",
+            "runtime",
+            "persona",
+            "trust_profile"
+          ],
+          "workspaceRoot": {
+            "rootId": "project:01J8ZK3F9APROJECT0000000001",
+            "kind": "project",
+            "path": "/Users/safet/repos/pantria"
+          },
+          "activity": "idle",
+          "lastTurn": {
+            "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+            "status": "completed",
+            "ranOn": {
+              "homeId": "mac-mini-7f3a",
+              "kind": "mac",
+              "label": "Mac mini"
+            },
+            "endedAt": "2026-09-18T09:01:30.000Z"
+          },
+          "pinnedSlot": 2,
+          "pinnedAt": "2026-09-18T09:00:00.000Z",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "lastActivityAt": "2026-09-18T09:01:30.000Z",
+          "lastReadAt": "2026-09-18T09:01:30.000Z",
+          "version": 7
+        },
+        {
+          "id": "ext-thread-0001",
+          "projectId": "01J8ZK3F9APROJECT0000000001",
+          "homeId": "mac-mini-7f3a",
+          "title": "claude-code in pantria",
+          "titleSource": "auto",
+          "runtime": "external",
+          "externalClient": "claude-code",
+          "supports": [],
+          "workspaceRoot": {
+            "rootId": "project:01J8ZK3F9APROJECT0000000001",
+            "kind": "project",
+            "path": "/Users/safet/repos/pantria"
+          },
+          "activity": "idle",
+          "startedBy": {
+            "kind": "external"
+          },
+          "mirrorBlocked": {
+            "code": "origin_conflict",
+            "message": "This Mac's copy differs from Atika's."
+          },
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "lastActivityAt": "2026-09-18T09:00:00.000Z",
+          "archivedAt": "2026-09-18T09:01:30.000Z",
+          "version": 2
+        }
+      ],
+      "machine": {
+        "state": "awake",
+        "since": "2026-09-18T09:00:00.000Z",
+        "reason": "thread",
+        "unclean": false,
+        "sleepDeferred": "the gateway did not confirm sleep",
+        "lastSnapshot": {
+          "id": "snap_01J8ZK3F9A",
+          "time": "2026-09-18T09:00:00.000Z",
+          "ok": true,
+          "consecutiveFailures": 0
+        },
+        "disk": {
+          "usedBytes": 2147483648,
+          "sizeBytes": 10737418240,
+          "limitBytes": 9663676416
+        },
+        "image": "atika-machine:2026-09-18",
+        "notices": [
+          {
+            "code": "unclean_restart",
+            "message": "The machine restarted unexpectedly.",
+            "at": "2026-09-18T09:00:00.000Z"
+          }
+        ]
+      },
+      "deviceQuestions": [
+        {
+          "deviceId": "dev-8c21f4e0",
+          "clientDeviceId": "pixel-9-22c1",
+          "clientKind": "android",
+          "clientLabel": "Pixel 9",
+          "askedAt": "2026-09-18T09:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "homes": [
+        {
+          "id": "mac-mini-7f3a",
+          "deviceId": "dev-8c21f4e0",
+          "kind": "mac",
+          "label": "Mac mini",
+          "online": false,
+          "lastSeenAt": "2026-09-18T09:00:00.000Z",
+          "runtimes": [
+            {
+              "kind": "opencode",
+              "available": true,
+              "version": "1.4.2"
+            },
+            {
+              "kind": "codex",
+              "available": true,
+              "version": "0.58.0"
+            },
+            {
+              "kind": "claude",
+              "available": false,
+              "detail": "claude was not found on PATH"
+            }
+          ],
+          "version": 4
+        }
+      ],
+      "personas": [],
+      "projects": [],
+      "threads": []
+    }
+  ]
+}

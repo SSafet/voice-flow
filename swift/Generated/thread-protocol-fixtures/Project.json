@@ -1,0 +1,44 @@
+{
+  "type": "Project",
+  "examples": [
+    {
+      "id": "01J8ZK3F9APROJECT0000000001",
+      "homeId": "mac-mini-7f3a",
+      "name": "pantria",
+      "path": "/Users/safet/repos/pantria",
+      "gitRemote": "https://github.com/safet/pantria.git",
+      "gitDefaultBranch": "main",
+      "available": true,
+      "remoteAccess": "read_write",
+      "isGeneral": false,
+      "createdAt": "2026-09-18T09:00:00.000Z",
+      "version": 2
+    },
+    {
+      "id": "01J8ZK3F9AGENERAL000000001",
+      "homeId": "atika",
+      "name": "General",
+      "path": "/home/atika/general",
+      "available": true,
+      "remoteAccess": "read_write",
+      "isGeneral": true,
+      "createdAt": "2026-09-18T09:00:00.000Z",
+      "version": 1
+    },
+    {
+      "id": "01J8ZK3F9APROJECT0000000001",
+      "homeId": "mac-mini-7f3a",
+      "name": "pantria",
+      "path": "/Users/safet/repos/pantria",
+      "gitRemote": "https://github.com/safet/pantria.git",
+      "gitDefaultBranch": "main",
+      "available": false,
+      "remoteAccess": "read_only",
+      "isGeneral": false,
+      "createdAt": "2026-09-18T09:00:00.000Z",
+      "version": 3,
+      "archivedAt": "2026-09-18T09:01:30.000Z",
+      "deletedAt": "2026-09-18T09:01:30.000Z"
+    }
+  ]
+}

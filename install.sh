@@ -32,6 +32,15 @@ if ! command -v swiftc &>/dev/null; then
     exit 1
 fi
 
+# Generated thread-protocol files must match thread-protocol.lock (protocol
+# version, schema hash, Atika commit). A mismatch stops the build. The check
+# reads only files in this directory: no Atika clone and no network.
+# VF_PROJECT_DIR is passed explicitly because an inherited one points at the
+# real repository while this build runs from a throwaway snapshot (see the
+# project_dir.txt note below); the files being installed are the ones here,
+# so those are the files that must agree with the lock.
+VF_PROJECT_DIR="$PROJECT_DIR" "$PROJECT_DIR/scripts/sync-thread-protocol.sh" --check
+
 echo "  Preparing pinned OpenCode runtime..."
 "$PROJECT_DIR/scripts/prepare-opencode-runtime.sh" "$RUNTIME_STAGE/OpenCode"
 

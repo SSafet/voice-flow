@@ -1,0 +1,31 @@
+{
+  "type": "CloudContinuationOffer",
+  "examples": [
+    {
+      "eligible": true,
+      "branch": "atika/fix-cart-3f9a2c",
+      "baseRef": "origin/main",
+      "baseCommit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+      "model": {
+        "id": "anthropic/claude-sonnet-4.5",
+        "label": "Claude Sonnet 4.5"
+      },
+      "macRuntime": "claude",
+      "macModel": "claude-sonnet-4-5",
+      "willNotSee": {
+        "dirty": true,
+        "unpushedCount": 2,
+        "branchOnlyOnMac": false,
+        "macTurnInProgress": false,
+        "personaSkillsAndNotes": true,
+        "personaMemoryReadOnly": true
+      }
+    },
+    {
+      "eligible": false,
+      "reason": "github_app_not_installed",
+      "installUrl": "https://github.com/apps/atika-ai/installations/new",
+      "repository": "safet/pantria"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "type": "InitializeParams",
+  "examples": [
+    {
+      "protocolVersion": 2,
+      "client": {
+        "kind": "android",
+        "label": "Pixel 9",
+        "version": "3.0.0"
+      }
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "rule": "firstLineTitle",
+  "cases": [
+    {
+      "text": "Fix cart",
+      "expected": "Fix cart"
+    },
+    {
+      "text": "\n\n  also fix the empty-cart case  \nsecond line",
+      "expected": "also fix the empty-cart case"
+    },
+    {
+      "text": "first\r\nsecond",
+      "expected": "first"
+    },
+    {
+      "text": "\t tabbed \t",
+      "expected": "tabbed"
+    },
+    {
+      "text": "",
+      "expected": "New thread"
+    },
+    {
+      "text": " \n\t\n",
+      "expected": "New thread"
+    },
+    {
+      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expected": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expected": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+    },
+    {
+      "text": "The quick brown fox jumps over the lazy dog and keeps running",
+      "expected": "The quick brown fox jumps over the lazy dog…"
+    },
+    {
+      "text": "Supercalifragilisticexpialidocious-and-even-more-letters-without-a-space",
+      "expected": "Supercalifragilisticexpialidocious-and-even-mor…"
+    },
+    {
+      "text": "Поправи количката, когато е празна, и покажи съобщение на потребителя",
+      "expected": "Поправи количката, когато е празна, и покажи…"
+    },
+    {
+      "text": "🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒",
+      "expected": "🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒…"
+    },
+    {
+      "text": "🛒🛒🛒 fix the empty cart placeholder fix fix on and more words here",
+      "expected": "🛒🛒🛒 fix the empty cart placeholder fix fix on…"
+    },
+    {
+      "text": "forty-seven characters then a space right here ok and more",
+      "expected": "forty-seven characters then a space right here…"
+    },
+    {
+      "text": "# Heading with **markdown** stays as typed",
+      "expected": "# Heading with **markdown** stays as typed"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "type": "ImportStatusResult",
+  "examples": [
+    {
+      "conversationsReceived": 12,
+      "threadsImported": 12,
+      "contentVerified": true,
+      "completedAt": "2026-09-18T09:01:30.000Z"
+    },
+    {
+      "conversationsReceived": 12,
+      "threadsImported": 0,
+      "contentVerified": false
+    }
+  ]
+}

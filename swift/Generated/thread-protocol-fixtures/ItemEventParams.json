@@ -1,0 +1,65 @@
+{
+  "type": "ItemEventParams",
+  "examples": [
+    {
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "seq": 60,
+      "item": {
+        "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+        "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "createdAt": "2026-09-18T09:00:00.000Z",
+        "id": "item-tool-1",
+        "completedAt": "2026-09-18T09:00:05.250Z",
+        "kind": "tool_call",
+        "status": "completed",
+        "toolCall": {
+          "name": "edit",
+          "title": "Edit src/cart.ts",
+          "kind": "edit",
+          "inputJson": "{\"path\":\"src/cart.ts\"}",
+          "output": [
+            {
+              "type": "diff",
+              "path": "src/cart.ts",
+              "oldText": "return null;",
+              "newText": "return <EmptyCart />;"
+            },
+            {
+              "type": "terminal",
+              "text": "$ pnpm test\n3 passed"
+            },
+            {
+              "type": "text",
+              "text": "done"
+            }
+          ],
+          "locations": [
+            {
+              "path": "src/cart.ts",
+              "line": 42
+            }
+          ]
+        },
+        "attachments": [
+          {
+            "id": "att-image-0001",
+            "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+            "createdAt": "2026-09-18T09:00:00.000Z",
+            "kind": "image",
+            "name": "frame-003.jpg",
+            "mime": "image/jpeg",
+            "sizeBytes": 182044,
+            "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "width": 3456,
+            "height": 2234,
+            "captureId": "frame:2026-09-18/capture-090000/frame-003.jpg",
+            "forModel": false,
+            "bytes": {
+              "state": "on_home"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

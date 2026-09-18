@@ -1,0 +1,4 @@
+# Written by scripts/sync-thread-protocol.sh --update. Do not edit by hand.
+atika_commit=e7ceb91a132da6cb42e12fdd111b78fad95c88f4
+protocol_version=2
+schema_sha256=4028b0e2ecdc75daff39a2899834b5e8cce24106bb2e056daf9c55ee09b48677

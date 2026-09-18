@@ -1,0 +1,206 @@
+{
+  "type": "ErrorData",
+  "examples": [
+    {
+      "code": "unsupported_version",
+      "message": "This client speaks protocol 1; the server speaks 2.",
+      "retryable": false,
+      "clientVersion": 1,
+      "serverVersion": 2,
+      "minSupported": 2
+    },
+    {
+      "code": "invalid_params",
+      "message": "threadId is required",
+      "retryable": false
+    },
+    {
+      "code": "not_found",
+      "message": "No such thread",
+      "retryable": false
+    },
+    {
+      "code": "not_supported",
+      "message": "This thread does not support stop",
+      "retryable": false
+    },
+    {
+      "code": "home_unreachable",
+      "message": "Mac mini is not connected.",
+      "retryable": false,
+      "cloudContinuation": {
+        "eligible": true,
+        "branch": "atika/fix-cart-3f9a2c",
+        "baseRef": "origin/main",
+        "baseCommit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+        "model": {
+          "id": "anthropic/claude-sonnet-4.5",
+          "label": "Claude Sonnet 4.5"
+        },
+        "macRuntime": "claude",
+        "macModel": "claude-sonnet-4-5",
+        "willNotSee": {
+          "dirty": true,
+          "unpushedCount": 2,
+          "branchOnlyOnMac": false,
+          "macTurnInProgress": false,
+          "personaSkillsAndNotes": true,
+          "personaMemoryReadOnly": true
+        }
+      }
+    },
+    {
+      "code": "home_unreachable",
+      "message": "Mac mini is not connected.",
+      "retryable": false,
+      "cloudContinuation": {
+        "eligible": false,
+        "reason": "github_app_not_installed",
+        "installUrl": "https://github.com/apps/atika-ai/installations/new",
+        "repository": "safet/pantria"
+      }
+    },
+    {
+      "code": "home_unreachable",
+      "message": "Mac mini is not connected. This thread runs in a folder that exists only on that Mac.",
+      "retryable": false,
+      "cloudContinuation": {
+        "eligible": false,
+        "reason": "no_git_remote"
+      }
+    },
+    {
+      "code": "relay_timeout",
+      "message": "No answer from Mac mini.",
+      "retryable": true
+    },
+    {
+      "code": "client_not_allowed",
+      "message": "This phone is not yet allowed to send to Mac mini.",
+      "retryable": false
+    },
+    {
+      "code": "disabled_on_device",
+      "message": "Remote threads are switched off on Mac mini.",
+      "retryable": false
+    },
+    {
+      "code": "kill_switch",
+      "message": "Cloud continuation is switched off",
+      "retryable": false,
+      "switchName": "kill_cloud_continuation"
+    },
+    {
+      "code": "cloud_continuation_unavailable",
+      "message": "Cloud continuation is not available for this thread.",
+      "retryable": false,
+      "cloudContinuation": {
+        "eligible": false,
+        "reason": "external_thread"
+      }
+    },
+    {
+      "code": "request_already_resolved",
+      "message": "Already answered from Pixel 9",
+      "retryable": false,
+      "resolution": {
+        "outcome": "allowed",
+        "optionId": "allow",
+        "answeredBy": {
+          "clientId": "pixel-9-22c1",
+          "clientKind": "android",
+          "label": "Pixel 9"
+        },
+        "at": "2026-09-18T09:00:05.250Z"
+      }
+    },
+    {
+      "code": "request_already_resolved",
+      "message": "Already answered from Pixel 9",
+      "retryable": false,
+      "questionResolution": {
+        "outcome": "answered",
+        "answers": [
+          {
+            "questionId": "q1",
+            "choiceIds": [
+              "stg"
+            ]
+          },
+          {
+            "questionId": "q2"
+          }
+        ],
+        "answeredBy": {
+          "clientId": "pixel-9-22c1",
+          "clientKind": "android",
+          "label": "Pixel 9"
+        },
+        "at": "2026-09-18T09:00:05.250Z"
+      }
+    },
+    {
+      "code": "request_expired",
+      "message": "This request expired when the turn stopped",
+      "retryable": false
+    },
+    {
+      "code": "runtime_unavailable",
+      "message": "Codex is not installed on Mac mini",
+      "retryable": true
+    },
+    {
+      "code": "quota_exceeded",
+      "message": "The monthly budget is used up",
+      "retryable": false
+    },
+    {
+      "code": "snapshot_required",
+      "message": "Open the thread again without sinceSeq",
+      "retryable": false
+    },
+    {
+      "code": "persona_gone",
+      "message": "FLORA no longer exists on Mac mini.",
+      "retryable": false
+    },
+    {
+      "code": "persona_unusable",
+      "message": "FLORA cannot be used: name used twice",
+      "retryable": false
+    },
+    {
+      "code": "persona_is_default",
+      "message": "The default persona cannot be deleted",
+      "retryable": false
+    },
+    {
+      "code": "persona_in_use",
+      "message": "Used by: Morning briefing",
+      "retryable": false,
+      "triggerNames": [
+        "Morning briefing"
+      ]
+    },
+    {
+      "code": "name_taken",
+      "message": "A persona named FLORA already exists",
+      "retryable": false
+    },
+    {
+      "code": "invalid_persona",
+      "message": "The name is empty",
+      "retryable": false
+    },
+    {
+      "code": "template_unknown",
+      "message": "No such template",
+      "retryable": false
+    },
+    {
+      "code": "files.conflict",
+      "message": "The file changed since it was read",
+      "retryable": false
+    }
+  ]
+}

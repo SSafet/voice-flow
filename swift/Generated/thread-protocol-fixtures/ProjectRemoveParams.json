@@ -1,0 +1,9 @@
+{
+  "type": "ProjectRemoveParams",
+  "examples": [
+    {
+      "commandId": "cmd-0005",
+      "projectId": "01J8ZK3F9APROJECT0000000001"
+    }
+  ]
+}

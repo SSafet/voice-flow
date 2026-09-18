@@ -1,0 +1,12 @@
+{
+  "type": "ProjectUpdateParams",
+  "examples": [
+    {
+      "commandId": "cmd-0004",
+      "projectId": "01J8ZK3F9APROJECT0000000001",
+      "name": "pantrella",
+      "archived": false,
+      "remoteAccess": "read_only"
+    }
+  ]
+}

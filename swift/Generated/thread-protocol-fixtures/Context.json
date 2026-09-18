@@ -1,0 +1,41 @@
+{
+  "type": "Context",
+  "examples": [
+    {
+      "app": "Safari",
+      "bundleId": "com.apple.Safari",
+      "windowTitle": "Cart — Pantrella",
+      "url": "pantrella.com/cart",
+      "display": {
+        "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+        "index": 1,
+        "widthPt": 1728,
+        "heightPt": 1117,
+        "scale": 2
+      },
+      "windowBox": [
+        0,
+        50,
+        3456,
+        2184
+      ],
+      "pointer": [
+        1200,
+        640
+      ],
+      "private": false
+    },
+    {
+      "app": "Safari",
+      "bundleId": "com.apple.Safari",
+      "display": {
+        "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+        "index": 1,
+        "widthPt": 1728,
+        "heightPt": 1117,
+        "scale": 2
+      },
+      "private": true
+    }
+  ]
+}

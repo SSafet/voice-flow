@@ -1,0 +1,42 @@
+{
+  "type": "PersonaUpdatedParams",
+  "examples": [
+    {
+      "persona": {
+        "id": "flora",
+        "homeId": "mac-mini-7f3a",
+        "name": "FLORA",
+        "description": "Keeps the pantry project moving",
+        "instructions": "You are careful with migrations and you explain what you changed.",
+        "coreMemory": "- Safet prefers small commits.\n- The staging database is on kuro.",
+        "model": "anthropic/claude-sonnet-4.5",
+        "reasoningEffort": "medium",
+        "voice": "alloy",
+        "skills": [
+          {
+            "name": "release-notes",
+            "description": "Writes release notes from a commit range"
+          }
+        ],
+        "delegates": [
+          {
+            "id": "scout",
+            "name": "Scout",
+            "description": "Reads code and reports",
+            "private": true
+          },
+          {
+            "id": "atlas",
+            "name": "Atlas",
+            "private": false
+          }
+        ],
+        "isDefault": true,
+        "usable": true,
+        "issues": [],
+        "revision": "b1946ac92492d2347c6235b4d2611184",
+        "version": 3
+      }
+    }
+  ]
+}

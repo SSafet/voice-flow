@@ -1,0 +1,10 @@
+{
+  "type": "ThreadRenameParams",
+  "examples": [
+    {
+      "commandId": "cmd-0013",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "title": "Cart fixes"
+    }
+  ]
+}

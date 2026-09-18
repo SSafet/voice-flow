@@ -1,0 +1,250 @@
+{
+  "type": "ThreadSendParams",
+  "examples": [
+    {
+      "commandId": "cmd-0001",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "text": "also fix the empty-cart case",
+      "attachments": [
+        {
+          "artifactId": "art_01J8ZK3F9B",
+          "captureId": "shot:2026-09-18/shot-090000.jpg",
+          "kind": "annotated_screenshot",
+          "name": "shot-090000.jpg",
+          "marks": [
+            {
+              "n": 1,
+              "kind": "pen",
+              "color": "red",
+              "box": [
+                10,
+                10,
+                40,
+                30
+              ],
+              "points": [
+                [
+                  10,
+                  10
+                ],
+                [
+                  30,
+                  25
+                ],
+                [
+                  50,
+                  40
+                ]
+              ],
+              "stroke": 4
+            },
+            {
+              "n": 2,
+              "kind": "highlight",
+              "color": "amber",
+              "box": [
+                60,
+                10,
+                200,
+                24
+              ],
+              "points": [
+                [
+                  60,
+                  22
+                ],
+                [
+                  260,
+                  22
+                ]
+              ],
+              "stroke": 18,
+              "underText": "Your cart is empty"
+            },
+            {
+              "n": 3,
+              "kind": "line",
+              "color": "green",
+              "box": [
+                10,
+                60,
+                100,
+                1
+              ],
+              "from": [
+                10,
+                60
+              ],
+              "to": [
+                110,
+                60
+              ],
+              "stroke": 3
+            },
+            {
+              "n": 4,
+              "kind": "arrow",
+              "color": "blue",
+              "box": [
+                10,
+                80,
+                120,
+                60
+              ],
+              "from": [
+                10,
+                80
+              ],
+              "to": [
+                130,
+                140
+              ],
+              "stroke": 4,
+              "note": "this button does nothing"
+            },
+            {
+              "n": 5,
+              "kind": "rect",
+              "color": "magenta",
+              "box": [
+                200,
+                200,
+                320,
+                90
+              ],
+              "stroke": 4
+            },
+            {
+              "n": 6,
+              "kind": "ellipse",
+              "color": "white",
+              "box": [
+                600,
+                200,
+                120,
+                120
+              ],
+              "stroke": 4,
+              "note": "an agent may put a note on any mark"
+            },
+            {
+              "n": 7,
+              "kind": "badge",
+              "color": "red",
+              "box": [
+                800,
+                100,
+                36,
+                36
+              ],
+              "center": [
+                818,
+                118
+              ],
+              "label": 1,
+              "stroke": 2
+            },
+            {
+              "n": 8,
+              "kind": "text",
+              "color": "amber",
+              "box": [
+                900,
+                300,
+                260,
+                48
+              ],
+              "origin": [
+                900,
+                300
+              ],
+              "note": "Total is wrong here",
+              "stroke": 2
+            },
+            {
+              "n": 9,
+              "kind": "rect",
+              "color": "red",
+              "box": [
+                -20,
+                -10,
+                50,
+                50
+              ],
+              "stroke": 1
+            }
+          ],
+          "context": {
+            "app": "Safari",
+            "bundleId": "com.apple.Safari",
+            "windowTitle": "Cart — Pantrella",
+            "url": "pantrella.com/cart",
+            "display": {
+              "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+              "index": 1,
+              "widthPt": 1728,
+              "heightPt": 1117,
+              "scale": 2
+            },
+            "windowBox": [
+              0,
+              50,
+              3456,
+              2184
+            ],
+            "pointer": [
+              1200,
+              640
+            ],
+            "private": false
+          },
+          "modelText": "Mark 4 (arrow) points at \"Checkout\".",
+          "forModel": true
+        },
+        {
+          "localPath": "/Users/safet/Desktop/cart-spec.pdf",
+          "kind": "file",
+          "name": "cart-spec.pdf"
+        },
+        {
+          "captureId": "capture:2026-09-18/capture-090000"
+        }
+      ],
+      "context": {
+        "app": "Safari",
+        "bundleId": "com.apple.Safari",
+        "windowTitle": "Cart — Pantrella",
+        "url": "pantrella.com/cart",
+        "display": {
+          "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+          "index": 1,
+          "widthPt": 1728,
+          "heightPt": 1117,
+          "scale": 2
+        },
+        "windowBox": [
+          0,
+          50,
+          3456,
+          2184
+        ],
+        "pointer": [
+          1200,
+          640
+        ],
+        "private": false
+      },
+      "runOn": "auto"
+    },
+    {
+      "commandId": "cmd-0008",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "text": "",
+      "runOn": "cloud",
+      "retryOfTurnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+      "runtime": "opencode",
+      "model": "anthropic/claude-sonnet-4.5",
+      "reasoningEffort": "high"
+    }
+  ]
+}

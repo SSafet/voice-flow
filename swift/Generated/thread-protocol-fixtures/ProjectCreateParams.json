@@ -1,0 +1,17 @@
+{
+  "type": "ProjectCreateParams",
+  "examples": [
+    {
+      "commandId": "cmd-0002",
+      "homeId": "mac-mini-7f3a",
+      "name": "pantria",
+      "path": "/Users/safet/repos/pantria",
+      "gitRemote": "https://github.com/safet/pantria.git"
+    },
+    {
+      "commandId": "cmd-0003",
+      "homeId": "atika",
+      "name": "notes"
+    }
+  ]
+}

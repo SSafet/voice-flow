@@ -1,0 +1,14 @@
+{
+  "type": "ThreadStopParams",
+  "examples": [
+    {
+      "commandId": "cmd-0009",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C"
+    },
+    {
+      "commandId": "cmd-0010",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A"
+    }
+  ]
+}

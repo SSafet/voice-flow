@@ -1,0 +1,10 @@
+{
+  "type": "ThreadMarkReadParams",
+  "examples": [
+    {
+      "commandId": "cmd-0019",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "readAt": "2026-09-18T09:01:30.000Z"
+    }
+  ]
+}

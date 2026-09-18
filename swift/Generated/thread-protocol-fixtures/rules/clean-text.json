@@ -1,0 +1,17 @@
+{
+  "rule": "cleanText",
+  "cases": [
+    { "text": "", "expected": "" },
+    { "text": "$ pnpm test\n3 passed", "expected": "$ pnpm test\n3 passed" },
+    { "text": "\u0000", "expected": "\ufffd" },
+    { "text": "a\u0000b", "expected": "a\ufffdb" },
+    { "text": "\u0000start and end\u0000", "expected": "\ufffdstart and end\ufffd" },
+    { "text": "three\u0000\u0000\u0000in a row", "expected": "three\ufffd\ufffd\ufffdin a row" },
+    { "text": "find . -print0: a.txt\u0000b.txt\u0000", "expected": "find . -print0: a.txt\ufffdb.txt\ufffd" },
+    { "text": "other control characters stay: \u0001 \u0007 \t \r\n \u001b[31m \u007f", "expected": "other control characters stay: \u0001 \u0007 \t \r\n \u001b[31m \u007f" },
+    { "text": "a replacement character that is already there stays: \ufffd", "expected": "a replacement character that is already there stays: \ufffd" },
+    { "text": "outside the basic plane: \ud83d\uded2\u0000\ud83e\uddfa and \u041a\u0438\u0440\u0438\u043b\u0438\u0446\u0430\u0000", "expected": "outside the basic plane: \ud83d\uded2\ufffd\ud83e\uddfa and \u041a\u0438\u0440\u0438\u043b\u0438\u0446\u0430\ufffd" },
+    { "text": "the six characters \\u0000 are not U+0000", "expected": "the six characters \\u0000 are not U+0000" },
+    { "text": "0 and \\0 and %00 are not U+0000 either", "expected": "0 and \\0 and %00 are not U+0000 either" }
+  ]
+}

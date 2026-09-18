@@ -1,0 +1,15 @@
+{
+  "type": "ThreadPinParams",
+  "examples": [
+    {
+      "commandId": "cmd-0015",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "slot": 2
+    },
+    {
+      "commandId": "cmd-0016",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "slot": null
+    }
+  ]
+}

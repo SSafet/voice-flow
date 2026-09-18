@@ -1,0 +1,14 @@
+{
+  "type": "JsonRpcError",
+  "examples": [
+    {
+      "code": -32000,
+      "message": "No such thread",
+      "data": {
+        "code": "not_found",
+        "message": "No such thread",
+        "retryable": false
+      }
+    }
+  ]
+}

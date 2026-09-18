@@ -1,0 +1,766 @@
+{
+  "type": "ThreadOpenResult",
+  "examples": [
+    {
+      "thread": {
+        "id": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "projectId": "01J8ZK3F9APROJECT0000000001",
+        "homeId": "mac-mini-7f3a",
+        "title": "Fix cart",
+        "titleSource": "auto",
+        "personaId": "flora",
+        "personaName": "FLORA",
+        "runtime": "claude",
+        "model": "claude-sonnet-4-5",
+        "reasoningEffort": "medium",
+        "trustProfile": "workspace",
+        "supports": [
+          "stop",
+          "model",
+          "reasoning_effort",
+          "runtime",
+          "persona",
+          "trust_profile"
+        ],
+        "workspaceRoot": {
+          "rootId": "project:01J8ZK3F9APROJECT0000000001",
+          "kind": "project",
+          "path": "/Users/safet/repos/pantria"
+        },
+        "activity": "idle",
+        "lastTurn": {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "status": "completed",
+          "ranOn": {
+            "homeId": "mac-mini-7f3a",
+            "kind": "mac",
+            "label": "Mac mini"
+          },
+          "endedAt": "2026-09-18T09:01:30.000Z"
+        },
+        "pinnedSlot": 2,
+        "pinnedAt": "2026-09-18T09:00:00.000Z",
+        "createdAt": "2026-09-18T09:00:00.000Z",
+        "lastActivityAt": "2026-09-18T09:01:30.000Z",
+        "lastReadAt": "2026-09-18T09:01:30.000Z",
+        "version": 7
+      },
+      "turns": [
+        {
+          "id": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "status": "completed",
+          "ranOn": {
+            "homeId": "mac-mini-7f3a",
+            "kind": "mac",
+            "label": "Mac mini"
+          },
+          "runtime": "claude",
+          "model": "claude-sonnet-4-5",
+          "persona": {
+            "id": "flora",
+            "name": "FLORA"
+          },
+          "startedBy": {
+            "kind": "user"
+          },
+          "startedAt": "2026-09-18T09:00:00.000Z",
+          "endedAt": "2026-09-18T09:01:30.000Z",
+          "stopReason": "end_turn",
+          "usage": {
+            "inputTokens": 18234,
+            "outputTokens": 912,
+            "costMicros": 68400,
+            "costSettled": true,
+            "contextTokens": 19146,
+            "contextWindow": 200000
+          },
+          "git": {
+            "branch": "main",
+            "headCommit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+            "dirty": true,
+            "upstreamRef": "origin/main",
+            "unpushedCount": 2,
+            "pushed": false
+          },
+          "checkpoints": {
+            "before": "refs/atika/checkpoints/9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A/before",
+            "after": "refs/atika/checkpoints/9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A/after"
+          },
+          "changedFiles": [
+            {
+              "path": "src/cart.ts",
+              "added": 14,
+              "removed": 3
+            }
+          ],
+          "changedFilesTotal": 1
+        }
+      ],
+      "items": [
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-user-1",
+          "completedAt": "2026-09-18T09:00:00.000Z",
+          "kind": "user_message",
+          "status": "completed",
+          "text": "also fix the empty-cart case",
+          "attachments": [
+            {
+              "id": "att-shot-0001",
+              "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+              "createdAt": "2026-09-18T09:00:00.000Z",
+              "kind": "annotated_screenshot",
+              "name": "shot-090000.jpg",
+              "mime": "image/jpeg",
+              "sizeBytes": 402113,
+              "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+              "width": 3456,
+              "height": 2234,
+              "captureId": "shot:2026-09-18/shot-090000.jpg",
+              "marks": [
+                {
+                  "n": 1,
+                  "kind": "pen",
+                  "color": "red",
+                  "box": [
+                    10,
+                    10,
+                    40,
+                    30
+                  ],
+                  "points": [
+                    [
+                      10,
+                      10
+                    ],
+                    [
+                      30,
+                      25
+                    ],
+                    [
+                      50,
+                      40
+                    ]
+                  ],
+                  "stroke": 4
+                },
+                {
+                  "n": 2,
+                  "kind": "highlight",
+                  "color": "amber",
+                  "box": [
+                    60,
+                    10,
+                    200,
+                    24
+                  ],
+                  "points": [
+                    [
+                      60,
+                      22
+                    ],
+                    [
+                      260,
+                      22
+                    ]
+                  ],
+                  "stroke": 18,
+                  "underText": "Your cart is empty"
+                },
+                {
+                  "n": 3,
+                  "kind": "line",
+                  "color": "green",
+                  "box": [
+                    10,
+                    60,
+                    100,
+                    1
+                  ],
+                  "from": [
+                    10,
+                    60
+                  ],
+                  "to": [
+                    110,
+                    60
+                  ],
+                  "stroke": 3
+                },
+                {
+                  "n": 4,
+                  "kind": "arrow",
+                  "color": "blue",
+                  "box": [
+                    10,
+                    80,
+                    120,
+                    60
+                  ],
+                  "from": [
+                    10,
+                    80
+                  ],
+                  "to": [
+                    130,
+                    140
+                  ],
+                  "stroke": 4,
+                  "note": "this button does nothing"
+                },
+                {
+                  "n": 5,
+                  "kind": "rect",
+                  "color": "magenta",
+                  "box": [
+                    200,
+                    200,
+                    320,
+                    90
+                  ],
+                  "stroke": 4
+                },
+                {
+                  "n": 6,
+                  "kind": "ellipse",
+                  "color": "white",
+                  "box": [
+                    600,
+                    200,
+                    120,
+                    120
+                  ],
+                  "stroke": 4,
+                  "note": "an agent may put a note on any mark"
+                },
+                {
+                  "n": 7,
+                  "kind": "badge",
+                  "color": "red",
+                  "box": [
+                    800,
+                    100,
+                    36,
+                    36
+                  ],
+                  "center": [
+                    818,
+                    118
+                  ],
+                  "label": 1,
+                  "stroke": 2
+                },
+                {
+                  "n": 8,
+                  "kind": "text",
+                  "color": "amber",
+                  "box": [
+                    900,
+                    300,
+                    260,
+                    48
+                  ],
+                  "origin": [
+                    900,
+                    300
+                  ],
+                  "note": "Total is wrong here",
+                  "stroke": 2
+                },
+                {
+                  "n": 9,
+                  "kind": "rect",
+                  "color": "red",
+                  "box": [
+                    -20,
+                    -10,
+                    50,
+                    50
+                  ],
+                  "stroke": 1
+                }
+              ],
+              "context": {
+                "app": "Safari",
+                "bundleId": "com.apple.Safari",
+                "windowTitle": "Cart — Pantrella",
+                "url": "pantrella.com/cart",
+                "display": {
+                  "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+                  "index": 1,
+                  "widthPt": 1728,
+                  "heightPt": 1117,
+                  "scale": 2
+                },
+                "windowBox": [
+                  0,
+                  50,
+                  3456,
+                  2184
+                ],
+                "pointer": [
+                  1200,
+                  640
+                ],
+                "private": false
+              },
+              "modelText": "Mark 4 (arrow) points at \"Checkout\": this button does nothing.",
+              "bytes": {
+                "state": "uploaded",
+                "artifactId": "art_01J8ZK3F9B"
+              }
+            }
+          ],
+          "context": {
+            "app": "Safari",
+            "bundleId": "com.apple.Safari",
+            "windowTitle": "Cart — Pantrella",
+            "url": "pantrella.com/cart",
+            "display": {
+              "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+              "index": 1,
+              "widthPt": 1728,
+              "heightPt": 1117,
+              "scale": 2
+            },
+            "windowBox": [
+              0,
+              50,
+              3456,
+              2184
+            ],
+            "pointer": [
+              1200,
+              640
+            ],
+            "private": false
+          },
+          "commandId": "cmd-0001",
+          "sentFrom": {
+            "clientId": "pixel-9-22c1",
+            "clientKind": "android",
+            "label": "Pixel 9"
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-assistant-1",
+          "completedAt": "2026-09-18T09:01:30.000Z",
+          "kind": "assistant_message",
+          "status": "completed",
+          "text": "The empty-cart case now shows the placeholder.",
+          "truncated": true,
+          "fullTextAttachmentId": "att-file-0001"
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-reasoning-1",
+          "kind": "reasoning",
+          "status": "in_progress",
+          "agentName": "Scout",
+          "parentItemId": "item-tool-1"
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-tool-1",
+          "completedAt": "2026-09-18T09:00:05.250Z",
+          "kind": "tool_call",
+          "status": "completed",
+          "toolCall": {
+            "name": "edit",
+            "title": "Edit src/cart.ts",
+            "kind": "edit",
+            "inputJson": "{\"path\":\"src/cart.ts\"}",
+            "output": [
+              {
+                "type": "diff",
+                "path": "src/cart.ts",
+                "oldText": "return null;",
+                "newText": "return <EmptyCart />;"
+              },
+              {
+                "type": "terminal",
+                "text": "$ pnpm test\n3 passed"
+              },
+              {
+                "type": "text",
+                "text": "done"
+              }
+            ],
+            "locations": [
+              {
+                "path": "src/cart.ts",
+                "line": 42
+              }
+            ]
+          },
+          "attachments": [
+            {
+              "id": "att-image-0001",
+              "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+              "createdAt": "2026-09-18T09:00:00.000Z",
+              "kind": "image",
+              "name": "frame-003.jpg",
+              "mime": "image/jpeg",
+              "sizeBytes": 182044,
+              "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+              "width": 3456,
+              "height": 2234,
+              "captureId": "frame:2026-09-18/capture-090000/frame-003.jpg",
+              "forModel": false,
+              "bytes": {
+                "state": "on_home"
+              }
+            }
+          ]
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-tool-2",
+          "completedAt": "2026-09-18T09:00:05.250Z",
+          "kind": "tool_call",
+          "status": "failed",
+          "toolCall": {
+            "name": "bash",
+            "title": "pnpm install",
+            "kind": "execute",
+            "errorMessage": "exit code 1"
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-plan-1",
+          "kind": "plan",
+          "status": "in_progress",
+          "plan": {
+            "entries": [
+              {
+                "content": "Reproduce the empty cart",
+                "priority": "high",
+                "status": "completed"
+              },
+              {
+                "content": "Render the placeholder",
+                "priority": "medium",
+                "status": "in_progress"
+              },
+              {
+                "content": "Add a test",
+                "priority": "low",
+                "status": "pending"
+              }
+            ]
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-approval-1",
+          "completedAt": "2026-09-18T09:00:05.250Z",
+          "kind": "approval",
+          "status": "completed",
+          "approval": {
+            "requestId": "req-approval-1",
+            "kind": "tool",
+            "summary": "Run pnpm install",
+            "detail": "pnpm install --frozen-lockfile",
+            "risk": "Runs a program on this Mac",
+            "toolItemId": "item-tool-2",
+            "options": [
+              {
+                "optionId": "allow",
+                "label": "Allow",
+                "kind": "allow_once"
+              },
+              {
+                "optionId": "always",
+                "label": "Always allow",
+                "kind": "allow_always"
+              },
+              {
+                "optionId": "reject",
+                "label": "Reject",
+                "kind": "reject_once"
+              },
+              {
+                "optionId": "never",
+                "label": "Never allow",
+                "kind": "reject_always"
+              }
+            ],
+            "resolution": {
+              "outcome": "allowed",
+              "optionId": "allow",
+              "answeredBy": {
+                "clientId": "pixel-9-22c1",
+                "clientKind": "android",
+                "label": "Pixel 9"
+              },
+              "at": "2026-09-18T09:00:05.250Z"
+            }
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-approval-2",
+          "kind": "approval",
+          "status": "in_progress",
+          "approval": {
+            "requestId": "req-approval-2",
+            "kind": "device_grant",
+            "summary": "Let this thread see the screen of Mac mini",
+            "payloadJson": "{\"deviceId\":\"dev-8c21f4e0\",\"class\":\"observe\"}",
+            "options": [
+              {
+                "optionId": "allow",
+                "label": "Allow",
+                "kind": "allow_once"
+              },
+              {
+                "optionId": "reject",
+                "label": "Reject",
+                "kind": "reject_once"
+              }
+            ],
+            "expiresAt": "2026-09-18T09:01:30.000Z"
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-question-1",
+          "completedAt": "2026-09-18T09:00:05.250Z",
+          "kind": "question",
+          "status": "completed",
+          "question": {
+            "requestId": "req-question-1",
+            "questions": [
+              {
+                "questionId": "q1",
+                "prompt": "Which database?",
+                "choices": [
+                  {
+                    "choiceId": "stg",
+                    "label": "Staging",
+                    "description": "kuro"
+                  },
+                  {
+                    "choiceId": "prod",
+                    "label": "Production"
+                  }
+                ],
+                "multiSelect": false,
+                "allowFreeText": true,
+                "inputType": "text"
+              },
+              {
+                "questionId": "q2",
+                "prompt": "Its password",
+                "multiSelect": false,
+                "allowFreeText": true,
+                "inputType": "secret"
+              }
+            ],
+            "danger": true,
+            "expiresAt": "2026-09-18T09:01:30.000Z",
+            "resolution": {
+              "outcome": "answered",
+              "answers": [
+                {
+                  "questionId": "q1",
+                  "choiceIds": [
+                    "stg"
+                  ]
+                },
+                {
+                  "questionId": "q2"
+                }
+              ],
+              "answeredBy": {
+                "clientId": "pixel-9-22c1",
+                "clientKind": "android",
+                "label": "Pixel 9"
+              },
+              "at": "2026-09-18T09:00:05.250Z"
+            }
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-notice-1",
+          "kind": "notice",
+          "status": "completed",
+          "notice": {
+            "code": "compaction",
+            "message": "Earlier messages were summarised."
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-notice-2",
+          "kind": "notice",
+          "status": "completed",
+          "notice": {
+            "code": "continued_in_cloud",
+            "message": "Continued in the cloud.",
+            "git": {
+              "branch": "atika/fix-cart-3f9a2c"
+            }
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-notice-3",
+          "kind": "notice",
+          "status": "completed",
+          "notice": {
+            "code": "returned_to_mac",
+            "message": "3 cloud turns adopted. Branch atika/fix-cart-3f9a2c fetched, not merged.",
+            "git": {
+              "branch": "atika/fix-cart-3f9a2c",
+              "headCommit": "0f9e8d7c6b5a49382716f5e4d3c2b1a098765432",
+              "fetched": true
+            }
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-notice-4",
+          "kind": "notice",
+          "status": "failed",
+          "notice": {
+            "code": "push_failed",
+            "message": "The branch could not be pushed.",
+            "git": {
+              "branch": "atika/fix-cart-3f9a2c",
+              "detail": "remote: Permission to safet/pantria.git denied"
+            }
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-notice-5",
+          "kind": "notice",
+          "status": "completed",
+          "notice": {
+            "code": "interrupted_by_restart",
+            "message": "VoiceFlow restarted during this turn."
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-notice-6",
+          "kind": "notice",
+          "status": "completed",
+          "notice": {
+            "code": "runtime_switched",
+            "message": "Now running on Codex."
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-notice-7",
+          "kind": "notice",
+          "status": "completed",
+          "text": "Imported from assistant-sessions.json",
+          "notice": {
+            "code": "note",
+            "message": "Imported note"
+          }
+        },
+        {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "createdAt": "2026-09-18T09:00:00.000Z",
+          "id": "item-notice-8",
+          "kind": "notice",
+          "status": "completed",
+          "notice": {
+            "code": "warning",
+            "message": "The cloud branch and the Mac have diverged."
+          }
+        }
+      ],
+      "hasOlder": false,
+      "lastSeq": 57
+    },
+    {
+      "thread": {
+        "id": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "projectId": "01J8ZK3F9APROJECT0000000001",
+        "homeId": "mac-mini-7f3a",
+        "title": "Fix cart",
+        "titleSource": "auto",
+        "personaId": "flora",
+        "personaName": "FLORA",
+        "runtime": "claude",
+        "model": "claude-sonnet-4-5",
+        "reasoningEffort": "medium",
+        "trustProfile": "workspace",
+        "supports": [
+          "stop",
+          "model",
+          "reasoning_effort",
+          "runtime",
+          "persona",
+          "trust_profile"
+        ],
+        "workspaceRoot": {
+          "rootId": "project:01J8ZK3F9APROJECT0000000001",
+          "kind": "project",
+          "path": "/Users/safet/repos/pantria"
+        },
+        "activity": "idle",
+        "lastTurn": {
+          "turnId": "9D2A6A3E-0C1B-4E2F-8A77-5F0E6C1D2B3A",
+          "status": "completed",
+          "ranOn": {
+            "homeId": "mac-mini-7f3a",
+            "kind": "mac",
+            "label": "Mac mini"
+          },
+          "endedAt": "2026-09-18T09:01:30.000Z"
+        },
+        "pinnedSlot": 2,
+        "pinnedAt": "2026-09-18T09:00:00.000Z",
+        "createdAt": "2026-09-18T09:00:00.000Z",
+        "lastActivityAt": "2026-09-18T09:01:30.000Z",
+        "lastReadAt": "2026-09-18T09:01:30.000Z",
+        "version": 7
+      },
+      "lastSeq": 57
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "rule": "Mark",
+  "valid": [
+    { "n": 1, "kind": "pen", "color": "red", "box": [10, 10, 40, 30], "points": [[10, 10], [30, 25], [50, 40]], "stroke": 4 },
+    { "n": 2, "kind": "highlight", "color": "amber", "box": [60, 10, 200, 24], "points": [[60, 22], [260, 22]], "stroke": 18, "underText": "Your cart is empty" },
+    { "n": 3, "kind": "line", "color": "green", "box": [10, 60, 100, 1], "from": [10, 60], "to": [110, 60], "stroke": 3 },
+    { "n": 4, "kind": "arrow", "color": "blue", "box": [10, 80, 120, 60], "from": [10, 80], "to": [130, 140], "stroke": 4, "note": "this button does nothing" },
+    { "n": 5, "kind": "rect", "color": "magenta", "box": [200, 200, 320, 90], "stroke": 4 },
+    { "n": 6, "kind": "ellipse", "color": "white", "box": [600, 200, 120, 120], "stroke": 4, "note": "an agent may put a note on any mark" },
+    { "n": 7, "kind": "badge", "color": "red", "box": [800, 100, 36, 36], "center": [818, 118], "label": 1, "stroke": 2 },
+    { "n": 8, "kind": "text", "color": "amber", "box": [900, 300, 260, 48], "origin": [900, 300], "note": "Total is wrong here", "stroke": 2 },
+    { "n": 9, "kind": "rect", "color": "red", "box": [-20, -10, 50, 50], "stroke": 1 }
+  ],
+  "invalid": [
+    { "reason": "an arrow requires from", "mark": { "n": 1, "kind": "arrow", "color": "red", "box": [0, 0, 10, 10], "to": [10, 10], "stroke": 4 } },
+    { "reason": "an arrow requires to", "mark": { "n": 1, "kind": "arrow", "color": "red", "box": [0, 0, 10, 10], "from": [0, 0], "stroke": 4 } },
+    { "reason": "a line requires from and to", "mark": { "n": 1, "kind": "line", "color": "red", "box": [0, 0, 10, 10], "stroke": 4 } },
+    { "reason": "a pen stroke requires points", "mark": { "n": 1, "kind": "pen", "color": "red", "box": [0, 0, 10, 10], "stroke": 4 } },
+    { "reason": "a highlight requires points", "mark": { "n": 1, "kind": "highlight", "color": "amber", "box": [0, 0, 10, 10], "stroke": 18 } },
+    { "reason": "a badge requires center", "mark": { "n": 1, "kind": "badge", "color": "red", "box": [0, 0, 36, 36], "label": 1, "stroke": 2 } },
+    { "reason": "a badge requires label", "mark": { "n": 1, "kind": "badge", "color": "red", "box": [0, 0, 36, 36], "center": [18, 18], "stroke": 2 } },
+    { "reason": "a text mark requires origin", "mark": { "n": 1, "kind": "text", "color": "red", "box": [0, 0, 100, 20], "note": "hello", "stroke": 2 } },
+    { "reason": "box is present on every mark", "mark": { "n": 1, "kind": "rect", "color": "red", "stroke": 4 } },
+    { "reason": "box has four numbers", "mark": { "n": 1, "kind": "rect", "color": "red", "box": [0, 0, 10], "stroke": 4 } },
+    { "reason": "geometry is whole numbers", "mark": { "n": 1, "kind": "rect", "color": "red", "box": [0.5, 0, 10, 10], "stroke": 4 } },
+    { "reason": "a point has two numbers", "mark": { "n": 1, "kind": "pen", "color": "red", "box": [0, 0, 10, 10], "points": [[1, 2, 3]], "stroke": 4 } },
+    { "reason": "n starts at 1", "mark": { "n": 0, "kind": "rect", "color": "red", "box": [0, 0, 10, 10], "stroke": 4 } },
+    { "reason": "circle is not a kind; the agent's circle is an ellipse", "mark": { "n": 1, "kind": "circle", "color": "red", "box": [0, 0, 10, 10], "stroke": 4 } },
+    { "reason": "purple is not a colour", "mark": { "n": 1, "kind": "rect", "color": "purple", "box": [0, 0, 10, 10], "stroke": 4 } },
+    { "reason": "stroke is required", "mark": { "n": 1, "kind": "rect", "color": "red", "box": [0, 0, 10, 10] } }
+  ]
+}

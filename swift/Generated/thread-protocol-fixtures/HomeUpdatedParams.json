@@ -1,0 +1,33 @@
+{
+  "type": "HomeUpdatedParams",
+  "examples": [
+    {
+      "home": {
+        "id": "mac-mini-7f3a",
+        "deviceId": "dev-8c21f4e0",
+        "kind": "mac",
+        "label": "Mac mini",
+        "online": false,
+        "lastSeenAt": "2026-09-18T09:00:00.000Z",
+        "runtimes": [
+          {
+            "kind": "opencode",
+            "available": true,
+            "version": "1.4.2"
+          },
+          {
+            "kind": "codex",
+            "available": true,
+            "version": "0.58.0"
+          },
+          {
+            "kind": "claude",
+            "available": false,
+            "detail": "claude was not found on PATH"
+          }
+        ],
+        "version": 4
+      }
+    }
+  ]
+}

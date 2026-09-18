@@ -1,0 +1,166 @@
+{
+  "type": "Mark",
+  "examples": [
+    {
+      "n": 1,
+      "kind": "pen",
+      "color": "red",
+      "box": [
+        10,
+        10,
+        40,
+        30
+      ],
+      "points": [
+        [
+          10,
+          10
+        ],
+        [
+          30,
+          25
+        ],
+        [
+          50,
+          40
+        ]
+      ],
+      "stroke": 4
+    },
+    {
+      "n": 2,
+      "kind": "highlight",
+      "color": "amber",
+      "box": [
+        60,
+        10,
+        200,
+        24
+      ],
+      "points": [
+        [
+          60,
+          22
+        ],
+        [
+          260,
+          22
+        ]
+      ],
+      "stroke": 18,
+      "underText": "Your cart is empty"
+    },
+    {
+      "n": 3,
+      "kind": "line",
+      "color": "green",
+      "box": [
+        10,
+        60,
+        100,
+        1
+      ],
+      "from": [
+        10,
+        60
+      ],
+      "to": [
+        110,
+        60
+      ],
+      "stroke": 3
+    },
+    {
+      "n": 4,
+      "kind": "arrow",
+      "color": "blue",
+      "box": [
+        10,
+        80,
+        120,
+        60
+      ],
+      "from": [
+        10,
+        80
+      ],
+      "to": [
+        130,
+        140
+      ],
+      "stroke": 4,
+      "note": "this button does nothing"
+    },
+    {
+      "n": 5,
+      "kind": "rect",
+      "color": "magenta",
+      "box": [
+        200,
+        200,
+        320,
+        90
+      ],
+      "stroke": 4
+    },
+    {
+      "n": 6,
+      "kind": "ellipse",
+      "color": "white",
+      "box": [
+        600,
+        200,
+        120,
+        120
+      ],
+      "stroke": 4,
+      "note": "an agent may put a note on any mark"
+    },
+    {
+      "n": 7,
+      "kind": "badge",
+      "color": "red",
+      "box": [
+        800,
+        100,
+        36,
+        36
+      ],
+      "center": [
+        818,
+        118
+      ],
+      "label": 1,
+      "stroke": 2
+    },
+    {
+      "n": 8,
+      "kind": "text",
+      "color": "amber",
+      "box": [
+        900,
+        300,
+        260,
+        48
+      ],
+      "origin": [
+        900,
+        300
+      ],
+      "note": "Total is wrong here",
+      "stroke": 2
+    },
+    {
+      "n": 9,
+      "kind": "rect",
+      "color": "red",
+      "box": [
+        -20,
+        -10,
+        50,
+        50
+      ],
+      "stroke": 1
+    }
+  ]
+}

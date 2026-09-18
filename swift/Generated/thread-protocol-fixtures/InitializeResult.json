@@ -1,0 +1,19 @@
+{
+  "type": "InitializeResult",
+  "examples": [
+    {
+      "protocolVersion": 2,
+      "server": {
+        "kind": "atika",
+        "homeId": "atika"
+      }
+    },
+    {
+      "protocolVersion": 2,
+      "server": {
+        "kind": "mac",
+        "homeId": "mac-mini-7f3a"
+      }
+    }
+  ]
+}
