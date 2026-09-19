@@ -68,7 +68,7 @@ public struct ProofServer: Sendable {
             Response(
                 status: .ok,
                 headers: [.contentType: "text/html; charset=utf-8"],
-                body: .init(byteBuffer: ByteBuffer(string: "<!doctype html><title>loopback proof</title><p>the proof server answers"))
+                body: .init(byteBuffer: ByteBuffer(string: probePageHTML))
             )
         }
 
@@ -76,6 +76,22 @@ public struct ProofServer: Sendable {
 
         guarded.get("/probe/guarded") { _, _ -> Response in
             jsonResponse(#"{"ok":true}"#)
+        }
+
+        guarded.get("/probe/guarded.js") { _, _ -> Response in
+            Response(
+                status: .ok,
+                headers: [.contentType: "text/javascript; charset=utf-8"],
+                body: .init(byteBuffer: ByteBuffer(string: "window.__guardedScriptLoaded = true;"))
+            )
+        }
+        guarded.post("/probe/report") { request, context -> Response in
+            let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
+            let data = Data(buffer.readableBytesView)
+            let rows = try JSONDecoder().decode([ProofRow].self, from: data)
+            await state.receivePageReport(rows)
+            _ = context
+            return jsonResponse(#"{"ok":true}"#)
         }
 
         let wsRouter = Router(context: BasicWebSocketRequestContext.self)

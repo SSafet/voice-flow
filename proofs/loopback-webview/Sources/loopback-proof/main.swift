@@ -63,7 +63,16 @@ final class ProofDelegate: NSObject, NSApplicationDelegate {
         }
 
         let secret = state.secret
-        let rows = await Task.detached { nativeChecks(port: port, secret: secret) }.value
+        var rows = await Task.detached { nativeChecks(port: port, secret: secret) }.value
+
+        let probe = WebViewProbe(port: port, state: state)
+        let ruleListStore = outDirectory.appendingPathComponent("rule-list-store", isDirectory: true)
+        try? FileManager.default.createDirectory(at: ruleListStore, withIntermediateDirectories: true)
+        rows += await probe.run(
+            storeDirectory: ruleListStore,
+            snapshotPath: outDirectory.appendingPathComponent("page.png")
+        )
+
         await state.addAll(rows)
         finish(await state.allRows())
     }
