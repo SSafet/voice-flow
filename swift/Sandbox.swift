@@ -25,6 +25,17 @@ struct AgentSandboxPolicy: Equatable {
     /// Egress always leaves through the loopback proxy; this only decides
     /// whether the proxy is wired up at all (see `OpenCodeSupervisor`).
     var allowNetwork: Bool
+    /// Paths inside a writable root that still stay read-only, rendered as
+    /// `(subpath …)` after the writable block so SBPL's last-match honours them.
+    var protectedWriteSubpaths: [String] = []
+    /// The same protection for a family of paths, rendered as `(regex #"…")`.
+    var protectedWriteExpressions: [String] = []
+    /// Paths re-allowed for reading after the secret denial, for a runtime
+    /// whose own sign-in collides with a secret shape.
+    var readableExceptions: [String] = []
+    /// When true the loopback-only network section is left out entirely: the
+    /// runtime reaches its own vendor directly through `(allow default)`.
+    var allowDirectNetwork: Bool = false
 
     /// Path fragments that stay unreadable even inside a granted workspace, so
     /// granting a repo never grants its credentials. Matched as SBPL regexes
@@ -42,6 +53,7 @@ struct AgentSandboxPolicy: Equatable {
         #"\.keychain(-db)?$"#,
         #"/credentials(\.json)?$"#,
         #"/\.git-credentials"#,
+        #"/\.config/gh/"#,
     ]
 
     /// Public certificate authorities, re-allowed after the secret denial.
@@ -83,6 +95,27 @@ struct AgentSandboxPolicy: Equatable {
         // without them and nothing is at risk.
         lines.append(#"(allow file-write* (regex #"^/dev/"))"#)
 
+        // SBPL resolves to the LAST matching rule, so a protected path written
+        // before its allow line would do nothing. This denial sits after the
+        // writable block on purpose: it is what keeps the persona store and a
+        // runtime's own instruction files read-only even inside a granted root.
+        if !protectedWriteSubpaths.isEmpty || !protectedWriteExpressions.isEmpty {
+            lines.append(contentsOf: [
+                "",
+                "; ---- protected: inside a writable root, these stay read-only",
+                "(deny file-write*",
+            ])
+            for path in Set(protectedWriteSubpaths.flatMap {
+                Self.matchablePaths(for: URL(fileURLWithPath: $0))
+            }).sorted() {
+                lines.append("  (subpath \(Self.quote(path)))")
+            }
+            for expression in protectedWriteExpressions {
+                lines.append("  (regex #\"\(expression)\")")
+            }
+            lines.append(")")
+        }
+
         lines.append(contentsOf: [
             "",
             "; ---- secrets: unreadable even inside a granted workspace",
@@ -102,23 +135,43 @@ struct AgentSandboxPolicy: Equatable {
             "(allow file-read*",
         ] + Self.trustStoreRoots.map { "  (subpath \(Self.quote($0)))" } + [")"])
 
-        lines.append(contentsOf: [
-            "",
-            "; ---- network: loopback only.",
-            "; Real egress leaves through Voice Flow's proxy on 127.0.0.1, so a",
-            "; direct connection is always something trying to avoid the log.",
-            "; `(local ip)` would match outbound too and silently reopen this —",
-            "; the outbound/bind split is deliberate.",
-            "(deny network*)",
-            #"(allow network-outbound (remote ip "localhost:*"))"#,
-            #"(allow network-bind (local ip "localhost:*"))"#,
-            // The runtime is itself an HTTP server that Voice Flow drives, so
-            // it must ACCEPT on loopback as well as bind. Without this it
-            // starts, binds, and then dies with a bare "ServeError" — every
-            // agent turn fails and the message names nothing useful.
-            #"(allow network-inbound (local ip "localhost:*"))"#,
-            "(allow network-outbound (remote unix-socket))",
-        ])
+        // A runtime whose own sign-in lives under a secret shape gets that one
+        // read back, after the denial that would otherwise hide it.
+        if !readableExceptions.isEmpty {
+            lines.append(contentsOf: [
+                "",
+                "; ---- readable exceptions: what the secret shapes would hide",
+                "(allow file-read*",
+            ])
+            for path in Set(readableExceptions.flatMap {
+                Self.matchablePaths(for: URL(fileURLWithPath: $0))
+            }).sorted() {
+                lines.append("  (subpath \(Self.quote(path)))")
+            }
+            lines.append(")")
+        }
+
+        // With direct network access the section is left out and the runtime
+        // inherits `(allow default)`; only OpenCode keeps the loopback rules.
+        if !allowDirectNetwork {
+            lines.append(contentsOf: [
+                "",
+                "; ---- network: loopback only.",
+                "; Real egress leaves through Voice Flow's proxy on 127.0.0.1, so a",
+                "; direct connection is always something trying to avoid the log.",
+                "; `(local ip)` would match outbound too and silently reopen this —",
+                "; the outbound/bind split is deliberate.",
+                "(deny network*)",
+                #"(allow network-outbound (remote ip "localhost:*"))"#,
+                #"(allow network-bind (local ip "localhost:*"))"#,
+                // The runtime is itself an HTTP server that Voice Flow drives, so
+                // it must ACCEPT on loopback as well as bind. Without this it
+                // starts, binds, and then dies with a bare "ServeError" — every
+                // agent turn fails and the message names nothing useful.
+                #"(allow network-inbound (local ip "localhost:*"))"#,
+                "(allow network-outbound (remote unix-socket))",
+            ])
+        }
 
         if !allowShell {
             lines.append(contentsOf: [
