@@ -99,16 +99,50 @@ public func nativeChecks(port: Int, secret: String) -> [ProofRow] {
     row("foreign_preflight_refused", preflightRefused,
         "OPTIONS /probe/guarded from http://evil.example: \(preflightDetail)")
 
-    /// Only meaningful next to `socket_opens_with_ticket`: on its own this row
-    /// would pass against a server with no such route at all, and
-    /// `socket_opens_with_ticket` is what proves the route exists.
-    let (socketNoTicket, socketNoTicketDetail) = status(
-        address: "127.0.0.1",
-        request: "GET /api/v1/threads/socket HTTP/1.1\r\n\(goodHost)Upgrade: websocket\r\nConnection: Upgrade\r\n"
-            + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nOrigin: http://localhost:\(port)\r\n\r\n"
-    )
-    row("socket_without_ticket_refused_natively", (socketNoTicket ?? 0) >= 400,
-        "WebSocket handshake with no ticket: \(socketNoTicketDetail)")
+    func socketHandshake(query: String) -> (Int?, String) {
+        status(
+            address: "127.0.0.1",
+            request: "GET /api/v1/threads/socket\(query) HTTP/1.1\r\n\(goodHost)Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nOrigin: http://localhost:\(port)\r\n\r\n"
+        )
+    }
+
+    /// Not a status code on its own, for the same reason as the preflight row
+    /// above. Measured on this Mac: an upgrade request to a path that has no
+    /// socket route at all is answered `400 Bad Request` with an empty body —
+    /// byte for byte the same answer a ticketless upgrade to the real route
+    /// gets. So no status alone can tell a refusal from an absent route, and a
+    /// row written on the status alone passes when the thing it tests is
+    /// absent, which the Global Constraints forbid. This row therefore carries
+    /// its own proof that the route is there: a handshake with a ticket minted
+    /// over the guarded route must be answered `101 Switching Protocols`, and
+    /// the same handshake without a ticket must be refused with `400`. The
+    /// refusal is `400` and not `401` because Hummingbird answers a thrown
+    /// upgrade decision as an ordinary HTTP request. A connection failure
+    /// yields `nil` on either half, which is not an answer and so fails.
+    var nativeTicket = ""
+    var mintDetail = ""
+    do {
+        let minted = try RawHTTP.send(
+            address: "127.0.0.1",
+            port: port,
+            request: "POST /api/v1/threads/ticket HTTP/1.1\r\n\(goodHost)x-loopback-secret: \(secret)\r\n"
+                + "Content-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+        mintDetail = "\(minted.status)"
+        let body = minted.raw.components(separatedBy: "\r\n\r\n").dropFirst().joined(separator: "\r\n\r\n")
+        nativeTicket = body.split(separator: "\"")
+            .first { $0.count == 32 && $0.allSatisfy(\.isHexDigit) }
+            .map(String.init) ?? ""
+    } catch {
+        mintDetail = "\(error)"
+    }
+
+    let (socketWithTicket, socketWithTicketDetail) = socketHandshake(query: "?ticket=\(nativeTicket)")
+    let (socketNoTicket, socketNoTicketDetail) = socketHandshake(query: "")
+    row("socket_without_ticket_refused_natively", socketWithTicket == 101 && socketNoTicket == 400,
+        "ticket minted natively: \(mintDetail); handshake with it: \(socketWithTicketDetail); "
+            + "handshake with no ticket: \(socketNoTicketDetail)")
 
     return rows
 }
