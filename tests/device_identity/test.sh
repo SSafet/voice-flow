@@ -43,7 +43,24 @@ ensure_app_build() {
 # different toolchain; fall back to the bin path itself, as K8's thread-store
 # runner says to do.
 compile_identity_suite() {
-    local main="$1" output="$2" log="$3" include
+    local main="$1" output="$2" log="$3" include grdb_object grdb_modulemap
+    # First the recipe K8 measured on this Mac (tests/thread_store/test.sh explains it): with
+    # the products under .build/out there is no Modules folder and no libGRDB.a; GRDB is one
+    # object file, and its system-library target GRDBSQLite needs its module map named.
+    grdb_object="$(/usr/bin/find "$BIN" -maxdepth 1 -name 'GRDB.o' -print -quit)"
+    grdb_modulemap="$(/usr/bin/find "$REPO_ROOT/.build" -path '*GRDBSQLite*' -name 'module.modulemap' -print -quit)"
+    if [ -n "$grdb_object" ] && [ -n "$grdb_modulemap" ]; then
+        if swiftc -o "$output" -I "$BIN" -Xcc -fmodule-map-file="$grdb_modulemap" "$grdb_object" \
+            swift/VoiceFlowPaths.swift swift/Store/Migrations.swift swift/Store/Database.swift \
+            swift/Device/KeyStore.swift swift/Device/DeviceIdentity.swift \
+            tests/device_identity/Harness.swift tests/device_identity/TestKeys.swift \
+            tests/device_identity/TestDatabase.swift tests/device_identity/FakeGateway.swift \
+            "$main" \
+            -framework Security -sdk "$XCODE_SDK" -suppress-warnings 2>"$log"; then
+            return 0
+        fi
+    fi
+    # Otherwise the older products layout (.build/<triple>/debug with a Modules folder).
     for include in "$BIN/Modules" "$BIN"; do
         if swiftc -o "$output" -I "$include" -L "$BIN" \
             swift/VoiceFlowPaths.swift swift/Store/Migrations.swift swift/Store/Database.swift \

@@ -161,7 +161,7 @@ struct DeviceIdentityTests {
         let outProvider = MemoryKeyProvider()
         let (outPool, outRoot) = try openTempDatabase()
         defer { try? FileManager.default.removeItem(at: outRoot) }
-        try outPool.write { db in
+        try await outPool.write { db in
             try db.execute(sql: "INSERT INTO store_meta (key, value) VALUES ('sentinel', 'keep')")
         }
         let signOut = makeIdentity(outGateway, outProvider, outPool)
@@ -257,7 +257,7 @@ struct DeviceIdentityTests {
         checks.equal(await secondRun.deviceId, restartGateway.deviceIdValue, "the device id survives a restart")
         state = await secondRun.state
         checks.equal(state, .ready, "a restored identity is ready")
-        let dumped = try restartPool.read { db in
+        let dumped = try await restartPool.read { db in
             try String.fetchAll(db, sql: """
                 SELECT quote(origin) || quote(user_id) || quote(email) || quote(device_id) || quote(label)
                     || coalesce(quote(home_id), '')
@@ -266,7 +266,7 @@ struct DeviceIdentityTests {
         }
         checks.check(!dumped.contains(restartGateway.accessTokenValue), "the access token is never written to the database")
         checks.check(!dumped.contains(storedKey.base64EncodedString()), "the private key is never written to the database")
-        let applied = try restartPool.read { db in try StoreMigrations.migrator().appliedIdentifiers(db) }
+        let applied = try await restartPool.read { db in try StoreMigrations.migrator().appliedIdentifiers(db) }
         checks.check(applied.contains("0001 store meta"), "K8's first step is still registered first")
         checks.check(applied.contains("0002 device identity"),
                      "the identity table arrives with the one step named 0002 device identity")
