@@ -513,3 +513,31 @@ actor DeviceIdentity {
         return formatter.string(from: Date())
     }
 }
+
+// The home takeover of decision 23 as the Mac sees it: sign-in offered the
+// homes it may continue, the fresh email code is asked for at that moment, the
+// confirmation yields the home id the Mac now serves, and that id survives a
+// restart. A device with no identity asks nothing; a refused code changes
+// nothing; a revocation ends the identity as it does on every other path.
+extension DeviceIdentity {
+    func requestTakeoverCode(homeId: String) async throws {
+        guard row != nil else { throw DeviceIdentityError.notSignedIn }
+        let token = try await accessToken()
+        try await gatewayCall {
+            try await gateway.startTakeover(homeId: homeId, accessToken: token)
+        }
+    }
+
+    func confirmTakeover(homeId: String, code: String) async throws -> HomeTakeover {
+        guard var stored = row else { throw DeviceIdentityError.notSignedIn }
+        let token = try await accessToken()
+        let takeover = try await gatewayCall {
+            try await gateway.confirmTakeover(homeId: homeId, code: code, accessToken: token)
+        }
+        stored.homeId = takeover.homeId
+        try withStorage { try writeRow(stored) }
+        row = stored
+        currentState = .ready
+        return takeover
+    }
+}
