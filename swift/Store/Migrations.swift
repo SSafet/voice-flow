@@ -17,6 +17,7 @@ enum StoreMigrations {
         var migrator = DatabaseMigrator()
         registerStoreMeta(&migrator)
         // Later Mac packages add their own registrations here, one line each.
+        ThreadStoreSchema.register(&migrator)
         return migrator
     }
 
