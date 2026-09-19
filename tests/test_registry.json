@@ -49,6 +49,10 @@
         "qa_control",
         "queue_editor",
         "ripgrep_runtime",
+        "runtime_launcher",
+        "runtime_normaliser",
+        "runtime_rule_file",
+        "runtime_subtraction",
         "sandbox_containment",
         "source_review",
         "source_review_transport",
@@ -1269,6 +1273,34 @@
       "runner": "unit",
       "suites": [
         "cloud_sync_bridge"
+      ]
+    },
+    {
+      "id": "tests/runtime_launcher/main.swift",
+      "runner": "unit",
+      "suites": [
+        "runtime_launcher"
+      ]
+    },
+    {
+      "id": "tests/runtime_normaliser/main.swift",
+      "runner": "unit",
+      "suites": [
+        "runtime_normaliser"
+      ]
+    },
+    {
+      "id": "tests/runtime_rule_file/main.swift",
+      "runner": "unit",
+      "suites": [
+        "runtime_rule_file"
+      ]
+    },
+    {
+      "id": "tests/runtime_subtraction/main.swift",
+      "runner": "unit",
+      "suites": [
+        "runtime_subtraction"
       ]
     }
   ]

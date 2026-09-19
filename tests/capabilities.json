@@ -1716,6 +1716,46 @@
       "tests": [
         "tests/cloud_sync_bridge/main.swift"
       ]
+    },
+    {
+      "id": "RUN-15",
+      "area": "runtime",
+      "name": "One kernel rule file confines all three runtimes, and the personas folder is never writable",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/runtime_rule_file/main.swift"
+      ]
+    },
+    {
+      "id": "RUN-16",
+      "area": "runtime",
+      "name": "A turn carries three folders, refusals happen before a process starts, and one Codex process serves one thread",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/runtime_launcher/main.swift"
+      ]
+    },
+    {
+      "id": "RUN-17",
+      "area": "runtime",
+      "name": "Every runtime's stream becomes the thread protocol's items, including child runs and vendor helpers",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/runtime_normaliser/main.swift"
+      ]
+    },
+    {
+      "id": "RUN-18",
+      "area": "runtime",
+      "name": "The codex exec turn path, the shared process and the tool and skill projections are gone",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/runtime_subtraction/main.swift"
+      ]
     }
   ]
 }

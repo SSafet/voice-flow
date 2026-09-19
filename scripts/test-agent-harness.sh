@@ -315,6 +315,29 @@ compile_and_run opencode_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.
     swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
     swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
     tests/opencode_runtime/main.swift -framework Security
+# ── Work package V3: the runtime launcher, the three adapters, the normaliser
+compile_and_run runtime_rule_file swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
+    swift/AgentRuntimeTypes.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
+    swift/Sandbox.swift swift/Generated/PlatformContracts.swift \
+    swift/Runtimes/RuntimeFolders.swift swift/Runtimes/RuntimeGrants.swift \
+    swift/Runtimes/RuntimeLaunchError.swift swift/Runtimes/RuntimeRuleFile.swift \
+    tests/runtime_rule_file/main.swift
+compile_and_run runtime_launcher swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
+    swift/AgentRuntimeTypes.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
+    swift/AgentTools.swift swift/Sandbox.swift swift/Generated/PlatformContracts.swift \
+    swift/Runtimes/RuntimeFolders.swift swift/Runtimes/RuntimeGrants.swift \
+    swift/Runtimes/RuntimeLaunchError.swift swift/Runtimes/RuntimeRuleFile.swift \
+    swift/Runtimes/RuntimeVersion.swift swift/Runtimes/RuntimeHealth.swift \
+    swift/Runtimes/RuntimeLauncher.swift swift/Runtimes/RuntimeSkills.swift \
+    swift/Runtimes/CodexLaunch.swift swift/Runtimes/CodexProcessPool.swift \
+    swift/Runtimes/ClaudeCodeLaunch.swift swift/Runtimes/OpenCodeLaunch.swift \
+    tests/runtime_launcher/main.swift
+compile_and_run runtime_normaliser swift/Generated/PlatformContracts.swift swift/AgentRuntimeTypes.swift \
+    swift/Contract/CleanText.swift \
+    swift/Runtimes/Normaliser/RuntimeEvent.swift swift/Runtimes/Normaliser/CodexNormaliser.swift \
+    swift/Runtimes/Normaliser/ClaudeCodeNormaliser.swift swift/Runtimes/Normaliser/OpenCodeNormaliser.swift \
+    tests/runtime_normaliser/main.swift
+compile_and_run runtime_subtraction tests/runtime_subtraction/main.swift
 compile_and_run opencode_http swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
     swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift \
