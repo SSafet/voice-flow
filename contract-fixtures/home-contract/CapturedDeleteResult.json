@@ -1,0 +1,23 @@
+{
+  "type": "CapturedDeleteResult",
+  "examples": [
+    {
+      "deleted": [
+        "frame:2026-08-18T00-00-06"
+      ],
+      "refused": [
+        {
+          "id": "shot:2026-09-12_14-03-22-118",
+          "reason": "linked",
+          "threadIds": [
+            "thr_fix_cart_3f9a2c"
+          ]
+        },
+        {
+          "id": "shot:2020-01-01_00-00-00-000",
+          "reason": "not_found"
+        }
+      ]
+    }
+  ]
+}

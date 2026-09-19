@@ -1,0 +1,8 @@
+{
+  "type": "SpeakStopParams",
+  "examples": [
+    {
+      "playbackId": "play-0003"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "type": "FilesDeleteParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "paths": [
+        "notes/archive/ideas.md",
+        "tmp"
+      ]
+    }
+  ]
+}

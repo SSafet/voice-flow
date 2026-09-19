@@ -1,0 +1,25 @@
+{
+  "type": "FilesSearchResult",
+  "examples": [
+    {
+      "matches": [
+        {
+          "path": "src/cart.ts",
+          "line": 42,
+          "column": 9,
+          "preview": "const cartTotal = sum(items);"
+        }
+      ],
+      "truncated": false
+    },
+    {
+      "matches": [
+        {
+          "rootId": "prj_voiceflow_01",
+          "path": "README.md"
+        }
+      ],
+      "truncated": true
+    }
+  ]
+}

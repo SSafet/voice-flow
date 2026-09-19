@@ -1,0 +1,11 @@
+{
+  "type": "SettingsChangedParams",
+  "examples": [
+    {
+      "section": "thread_defaults",
+      "fields": [
+        "persona"
+      ]
+    }
+  ]
+}

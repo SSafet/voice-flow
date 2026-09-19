@@ -1,0 +1,16 @@
+{
+  "type": "CapturedDeleteParams",
+  "examples": [
+    {
+      "ids": [
+        "shot:2026-09-12_14-03-22-118"
+      ]
+    },
+    {
+      "ids": [
+        "shot:2026-09-12_14-03-22-118"
+      ],
+      "evenIfLinked": true
+    }
+  ]
+}

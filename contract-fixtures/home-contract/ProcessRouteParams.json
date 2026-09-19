@@ -1,0 +1,11 @@
+{
+  "type": "ProcessRouteParams",
+  "examples": [
+    {
+      "name": "web"
+    },
+    {
+      "name": "import-recipes"
+    }
+  ]
+}

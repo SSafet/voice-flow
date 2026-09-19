@@ -1,0 +1,83 @@
+{
+  "type": "HomeError",
+  "examples": [
+    {
+      "code": "files.not_found",
+      "message": "example of files.not_found"
+    },
+    {
+      "code": "files.exists",
+      "message": "example of files.exists"
+    },
+    {
+      "code": "files.not_a_directory",
+      "message": "example of files.not_a_directory"
+    },
+    {
+      "code": "files.is_a_directory",
+      "message": "example of files.is_a_directory"
+    },
+    {
+      "code": "files.outside_root",
+      "message": "example of files.outside_root"
+    },
+    {
+      "code": "files.permission_denied",
+      "message": "example of files.permission_denied"
+    },
+    {
+      "code": "files.blocked",
+      "message": "example of files.blocked"
+    },
+    {
+      "code": "files.read_only",
+      "message": "example of files.read_only"
+    },
+    {
+      "code": "files.no_space",
+      "message": "example of files.no_space"
+    },
+    {
+      "code": "files.too_large",
+      "message": "example of files.too_large"
+    },
+    {
+      "code": "files.root_missing",
+      "message": "example of files.root_missing"
+    },
+    {
+      "code": "files.no_history",
+      "message": "example of files.no_history"
+    },
+    {
+      "code": "machine.wake_timeout",
+      "message": "example of machine.wake_timeout"
+    },
+    {
+      "code": "machine.migrating",
+      "message": "example of machine.migrating"
+    },
+    {
+      "code": "capability.killed",
+      "message": "example of capability.killed"
+    },
+    {
+      "code": "files.conflict",
+      "message": "The file changed since it was read.",
+      "details": {
+        "etag": "\"9f31c0a4\""
+      }
+    },
+    {
+      "code": "machine.wake_failed",
+      "message": "Could not start your machine.",
+      "details": {
+        "reason": "no capacity in fra"
+      }
+    },
+    {
+      "code": "project_read_only",
+      "message": "This project is read-only for other clients."
+    }
+  ]
+}

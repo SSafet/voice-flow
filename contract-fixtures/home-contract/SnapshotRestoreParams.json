@@ -1,0 +1,20 @@
+{
+  "type": "SnapshotRestoreParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "paths": [
+        "notes/ideas.md"
+      ],
+      "mode": "beside"
+    },
+    {
+      "rootId": "prj_pantria_01",
+      "paths": [
+        "notes",
+        "README.md"
+      ],
+      "mode": "in_place"
+    }
+  ]
+}

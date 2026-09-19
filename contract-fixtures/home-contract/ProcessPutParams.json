@@ -1,0 +1,23 @@
+{
+  "type": "ProcessPutParams",
+  "examples": [
+    {
+      "command": "pnpm dev",
+      "cwd": "projects/pantria",
+      "env": [
+        {
+          "name": "PORT",
+          "value": "3000"
+        }
+      ],
+      "kind": "service",
+      "port": 3000,
+      "readyPath": "/"
+    },
+    {
+      "command": "node scripts/import.mjs",
+      "cwd": "projects/pantria",
+      "kind": "job"
+    }
+  ]
+}

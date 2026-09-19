@@ -1,0 +1,11 @@
+{
+  "type": "LifecycleData",
+  "examples": [
+    {
+      "state": "foreground"
+    },
+    {
+      "state": "background"
+    }
+  ]
+}

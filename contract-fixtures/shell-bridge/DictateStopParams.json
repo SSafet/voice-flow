@@ -1,0 +1,8 @@
+{
+  "type": "DictateStopParams",
+  "examples": [
+    {
+      "captureId": "dict-0007"
+    }
+  ]
+}

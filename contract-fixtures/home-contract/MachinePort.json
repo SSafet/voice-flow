@@ -1,0 +1,17 @@
+{
+  "type": "MachinePort",
+  "examples": [
+    {
+      "port": 3000,
+      "pid": 4312,
+      "command": "node",
+      "processName": "web",
+      "previewUrl": "https://3000-abcdefghijklmnopqrstuvwxyz.preview.example"
+    },
+    {
+      "port": 5173,
+      "pid": 5120,
+      "command": "vite"
+    }
+  ]
+}

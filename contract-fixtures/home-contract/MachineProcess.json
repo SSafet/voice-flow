@@ -1,0 +1,27 @@
+{
+  "type": "MachineProcess",
+  "examples": [
+    {
+      "name": "web",
+      "command": "pnpm dev",
+      "cwd": "projects/pantria",
+      "kind": "service",
+      "status": "running",
+      "pid": 4312,
+      "restarts": 0,
+      "startedAt": "2026-09-18T10:00:00.000Z",
+      "port": 3000,
+      "restartedAfterSleep": true
+    },
+    {
+      "name": "import-recipes",
+      "command": "node scripts/import.mjs",
+      "cwd": "projects/pantria",
+      "kind": "job",
+      "status": "interrupted",
+      "restarts": 0,
+      "exitCode": 137,
+      "restartedAfterSleep": false
+    }
+  ]
+}

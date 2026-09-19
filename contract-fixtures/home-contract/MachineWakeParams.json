@@ -1,0 +1,9 @@
+{
+  "type": "MachineWakeParams",
+  "examples": [
+    {},
+    {
+      "threadId": "thr_fix_cart_3f9a2c"
+    }
+  ]
+}

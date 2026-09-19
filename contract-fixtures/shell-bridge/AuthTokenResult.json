@@ -1,0 +1,9 @@
+{
+  "type": "AuthTokenResult",
+  "examples": [
+    {
+      "accessToken": "eyJhbGciOiJFUzI1NiJ9.e30.c2lnbmF0dXJl",
+      "expiresAt": "2026-09-18T09:15:00.000Z"
+    }
+  ]
+}

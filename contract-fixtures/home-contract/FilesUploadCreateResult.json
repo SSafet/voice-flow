@@ -1,0 +1,8 @@
+{
+  "type": "FilesUploadCreateResult",
+  "examples": [
+    {
+      "uploadId": "upl_01"
+    }
+  ]
+}

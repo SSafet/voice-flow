@@ -1,0 +1,9 @@
+{
+  "type": "SnapshotRestoreResult",
+  "examples": [
+    {
+      "restored": 2,
+      "preRestoreSnapshotId": "snap_9d03"
+    }
+  ]
+}

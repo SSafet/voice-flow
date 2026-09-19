@@ -1,0 +1,15 @@
+{
+  "type": "WatchRequest",
+  "examples": [
+    {
+      "op": "watch",
+      "rootId": "prj_pantria_01",
+      "dir": "src"
+    },
+    {
+      "op": "unwatch",
+      "rootId": "prj_pantria_01",
+      "dir": "src"
+    }
+  ]
+}

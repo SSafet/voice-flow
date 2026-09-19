@@ -72,10 +72,11 @@ SWIFT="$VF/swift/Generated/PlatformContracts.swift"
 grep -q "body of generated/swift/PlatformContracts.swift" "$SWIFT" || die "the body is copied"
 [ -f "$VF/swift/Generated/PlatformContractsFixtures.swift" ] || die "the fixture table is copied"
 [ -f "$VF/android/app/src/main/kotlin/com/voiceflow/mobile/generated/PlatformContracts.kt" ] || die "Kotlin is copied"
-[ -f "$VF/swift/Generated/thread-protocol-fixtures/Thread.json" ] || die "fixtures are copied"
-[ -f "$VF/swift/Generated/thread-protocol-fixtures/rules/branch-names.json" ] || die "rule fixtures are copied"
-[ -f "$VF/swift/Generated/home-contract-fixtures/FileEntry.json" ] || die "the fixtures of every contract set named in the fixture table are copied"
-ok "files land in swift/Generated, the Android source tree and the fixtures folder"
+[ -f "$VF/contract-fixtures/thread-protocol/Thread.json" ] || die "fixtures are copied"
+[ -f "$VF/contract-fixtures/thread-protocol/rules/branch-names.json" ] || die "rule fixtures are copied"
+[ -f "$VF/contract-fixtures/home-contract/FileEntry.json" ] || die "the fixtures of every contract set named in the fixture table are copied"
+[ -z "$(find "$VF/swift/Generated" -type f ! -name '*.swift' -print -quit)" ] || die "swift/Generated holds nothing but Swift files, because it is inside the build target"
+ok "Swift lands in swift/Generated, Kotlin in the Android source tree, fixtures in contract-fixtures"
 
 run --check >/dev/null || die "--check passes after a sync"
 ok "--check passes after a sync"
@@ -88,13 +89,13 @@ run >/dev/null
 run --check >/dev/null || die "a plain run restores the pinned files"
 ok "a plain run copies again from the pinned commit"
 
-touch "$VF/swift/Generated/thread-protocol-fixtures/Stale.json"
-mkdir -p "$VF/swift/Generated/retired-contract-fixtures" && touch "$VF/swift/Generated/retired-contract-fixtures/Old.json"
+touch "$VF/contract-fixtures/thread-protocol/Stale.json"
+mkdir -p "$VF/contract-fixtures/retired-contract" && touch "$VF/contract-fixtures/retired-contract/Old.json"
 touch "$VF/swift/Generated/ThreadProtocol.swift"
 run --update "$SECOND" >/dev/null
 grep -q "^schema_sha256=bbbb2222$" "$VF/thread-protocol.lock" || die "lock moves to the new hash"
-[ ! -f "$VF/swift/Generated/thread-protocol-fixtures/Stale.json" ] || die "stale fixtures are removed"
-[ ! -d "$VF/swift/Generated/retired-contract-fixtures" ] || die "the fixtures folder of a contract set that is gone is removed"
+[ ! -f "$VF/contract-fixtures/thread-protocol/Stale.json" ] || die "stale fixtures are removed"
+[ ! -d "$VF/contract-fixtures/retired-contract" ] || die "the fixtures of a contract set that is gone are removed"
 [ ! -f "$VF/swift/Generated/ThreadProtocol.swift" ] || die "a generated file from before the combined output is removed"
 ok "--update moves to a new commit and removes stale fixtures"
 
@@ -104,5 +105,33 @@ ok "a plain run refuses a lock that disagrees with its commit"
 
 run --update not-a-commit >/dev/null 2>&1 && die "--update must refuse an unknown commit"
 ok "--update refuses an unknown commit"
+
+# Ruling 4, first half: --check verifies every copied file, not only the three
+# headers. The lock carries one sha256 line per copied file.
+run --update "$SECOND" >/dev/null
+grep -q '^sha256 [0-9a-f]\{64\} contract-fixtures/thread-protocol/Thread.json$' "$VF/thread-protocol.lock" ||
+    die "the lock records one sha256 line per copied file"
+printf 'x' >> "$VF/contract-fixtures/thread-protocol/Thread.json"
+MESSAGE="$(run --check 2>&1)" && die "--check must fail when a copied file changed"
+case "$MESSAGE" in
+    *"contract-fixtures/thread-protocol/Thread.json"*) ;;
+    *) die "--check names the file that differs; it said: $MESSAGE" ;;
+esac
+ok "--check recomputes every copied file and names the one that differs"
+
+# Ruling 4, second half: the lock is written last, so a run that dies during the
+# copy leaves the lock that was there before. A third commit whose fixture table
+# names a contract set that has no folder in that commit makes `git archive`
+# fail in the middle of the copy, with no test-only hook in the script.
+write_generated cccc3333
+printf '    (contractSet: "vanished-contract", folder: "packages/vanished-contract/fixtures"),\n' \
+    >> "$SRC/generated/swift/PlatformContractsFixtures.swift"
+THIRD="$(commit_atika third)"
+LOCK_BEFORE="$(cat "$VF/thread-protocol.lock")"
+run --update "$THIRD" >/dev/null 2>&1 && die "--update must fail when a named fixtures folder is not in the commit"
+[ "$(cat "$VF/thread-protocol.lock")" = "$LOCK_BEFORE" ] ||
+    die "an interrupted run leaves the lock that was there before, not one describing files that are not there"
+run --check >/dev/null 2>&1 && die "--check must report the half-copied tree the interrupted run left"
+ok "the lock is written last, and --check reports the tree an interrupted run left"
 
 echo "all $PASS checks passed"

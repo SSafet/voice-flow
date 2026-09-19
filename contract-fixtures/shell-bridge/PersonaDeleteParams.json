@@ -1,0 +1,10 @@
+{
+  "type": "PersonaDeleteParams",
+  "examples": [
+    {
+      "commandId": "cmd-01J8ZK3F9A0003",
+      "homeId": "atika",
+      "personaId": "release-notes"
+    }
+  ]
+}

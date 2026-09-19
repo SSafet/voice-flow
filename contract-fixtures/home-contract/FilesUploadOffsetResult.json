@@ -1,0 +1,19 @@
+{
+  "type": "FilesUploadOffsetResult",
+  "examples": [
+    {
+      "offset": 2097152
+    },
+    {
+      "offset": 314572800,
+      "entry": {
+        "name": "import.csv",
+        "path": "data/import.csv",
+        "kind": "file",
+        "size": 314572800,
+        "mtimeMs": 1789725600000,
+        "mode": 33188
+      }
+    }
+  ]
+}

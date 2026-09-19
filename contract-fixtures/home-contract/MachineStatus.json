@@ -1,0 +1,57 @@
+{
+  "type": "MachineStatus",
+  "examples": [
+    {
+      "state": "awake",
+      "since": "2026-09-18T10:00:00.000Z",
+      "lastSnapshot": {
+        "id": "snap_9d02",
+        "time": "2026-09-18T10:00:00.000Z",
+        "ok": true,
+        "consecutiveFailures": 0
+      },
+      "disk": {
+        "usedBytes": 8400000000,
+        "sizeBytes": 21474836480,
+        "limitBytes": 19327352832
+      },
+      "image": "registry.fly.io/atika-user-vms:deployment-01K5",
+      "notices": [],
+      "awakeSecondsThisMonth": 86400,
+      "runtimes": [
+        "thr_fix_cart_3f9a2c"
+      ],
+      "terminals": 2,
+      "processes": 1
+    },
+    {
+      "state": "awake",
+      "since": "2026-09-18T10:00:00.000Z",
+      "unclean": true,
+      "sleepDeferred": "gateway did not answer",
+      "notices": [
+        {
+          "code": "unclean_restart",
+          "message": "Machine restarted unexpectedly at 09:12. Files are as last written.",
+          "at": "2026-09-18T10:00:00.000Z"
+        }
+      ],
+      "awakeSecondsThisMonth": 3600,
+      "runtimes": [
+        "thr_fix_cart_3f9a2c"
+      ],
+      "terminals": 1,
+      "processes": 1
+    },
+    {
+      "state": "asleep",
+      "since": "2026-09-18T10:00:00.000Z",
+      "reason": "idle",
+      "notices": [],
+      "awakeSecondsThisMonth": 86400,
+      "runtimes": [],
+      "terminals": 0,
+      "processes": 0
+    }
+  ]
+}

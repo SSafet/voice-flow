@@ -1,0 +1,11 @@
+{
+  "type": "ConnectivityData",
+  "examples": [
+    {
+      "online": true
+    },
+    {
+      "online": false
+    }
+  ]
+}

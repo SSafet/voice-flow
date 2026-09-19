@@ -1,0 +1,10 @@
+{
+  "type": "ProcessLogsParams",
+  "examples": [
+    {
+      "tail": 200,
+      "follow": true
+    },
+    {}
+  ]
+}

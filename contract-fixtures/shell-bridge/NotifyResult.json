@@ -1,0 +1,11 @@
+{
+  "type": "NotifyResult",
+  "examples": [
+    {
+      "shown": true
+    },
+    {
+      "shown": false
+    }
+  ]
+}

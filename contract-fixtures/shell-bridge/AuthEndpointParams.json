@@ -1,0 +1,11 @@
+{
+  "type": "AuthEndpointParams",
+  "examples": [
+    {
+      "endpointId": "cloud"
+    },
+    {
+      "endpointId": "local"
+    }
+  ]
+}

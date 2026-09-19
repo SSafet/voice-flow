@@ -1,0 +1,10 @@
+{
+  "type": "FilesMkdirParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "path": "notes/2026",
+      "parents": true
+    }
+  ]
+}

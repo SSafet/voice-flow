@@ -1,0 +1,21 @@
+{
+  "type": "PersonaCreateParams",
+  "examples": [
+    {
+      "commandId": "cmd-01J8ZK3F9A0001",
+      "homeId": "atika",
+      "name": "Release notes",
+      "description": "Writes release notes from merged pull requests.",
+      "instructions": "You write release notes. Keep them short.",
+      "voice": "alloy",
+      "model": "anthropic/claude-sonnet-4.5",
+      "reasoningEffort": "medium"
+    },
+    {
+      "commandId": "cmd-01J8ZK3F9A0002",
+      "homeId": "mac-mini-7f3a",
+      "name": "Builder",
+      "fromTemplate": "build-software"
+    }
+  ]
+}
