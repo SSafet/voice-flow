@@ -83,6 +83,7 @@ sealed class CloudPayload {
             CloudCollection.MESSAGES -> Message(value.getString("text"), value.getString("threadId"), value.getString("role"), CloudWire.optional(value, "createdAt"), CloudWire.optional(value, "parentMessageId"), CloudWire.optional(value, "turnId"))
             CloudCollection.PREFERENCES -> when (id) {
                 "agent_model" -> Model(value.getString("value"))
+                "dictation_cleanup_model" -> Model(value.getString("value"))
                 "cleanup_enabled" -> Cleanup(value.getBoolean("value"))
                 "vocabulary" -> value.getJSONArray("value").let { words -> Vocabulary(List(words.length()) { words.getString(it) }) }
                 else -> throw CloudFailure.InvalidRecord()
@@ -116,6 +117,7 @@ sealed class CloudPayload {
                     CloudWire.fields(value, setOf("value"))
                     when (id) {
                         "agent_model" -> Model(CloudWire.text(value.getString("value"), 200).also { if (!Regex("^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$").matches(it)) throw CloudFailure.InvalidRecord() })
+                        "dictation_cleanup_model" -> Model(CloudWire.text(value.getString("value"), 200).also { if (!Regex("^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$").matches(it)) throw CloudFailure.InvalidRecord() })
                         "cleanup_enabled" -> Cleanup((value.get("value") as? Boolean) ?: throw CloudFailure.InvalidRecord())
                         "vocabulary" -> {
                             val words = value.getJSONArray("value")

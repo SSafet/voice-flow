@@ -110,8 +110,14 @@ tasks.named("preBuild") { dependsOn(checkThreadProtocolLock) }
 val p1NotDue: List<String> = (project.findProperty("p1.notDue") as String?).orEmpty()
     .split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
+val p4NotDue: List<String> = (project.findProperty("p4.notDue") as String?).orEmpty()
+    .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+
 tasks.withType<KotlinCompile>().configureEach {
-    if (name.endsWith("UnitTestKotlin")) exclude(p1NotDue.map { "**/p1/$it.kt" })
+    if (name.endsWith("UnitTestKotlin")) {
+        exclude(p1NotDue.map { "**/p1/$it.kt" })
+        exclude(p4NotDue.map { "**/p4/$it.kt" })
+    }
 }
 
 androidComponents {
