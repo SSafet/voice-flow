@@ -16,8 +16,28 @@ enum StoreMigrations {
     static func migrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
         registerStoreMeta(&migrator)
+        registerDeviceIdentity(&migrator)
         // Later Mac packages add their own registrations here, one line each.
         return migrator
+    }
+
+    /// The one device identity row (05 §3.2, L1M): one row, `id = 1`, no token
+    /// and no private key — only the small non-secret facts the app needs to
+    /// resume being a signed-in device.
+    private static func registerDeviceIdentity(_ migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("0002 device identity") { db in
+            try db.create(table: "device_identity") { table in
+                table.column("id", .integer).primaryKey().check { $0 == 1 }
+                table.column("origin", .text).notNull()
+                table.column("user_id", .text).notNull()
+                table.column("email", .text).notNull()
+                table.column("device_id", .text).notNull()
+                table.column("label", .text).notNull()
+                table.column("home_id", .text)
+                table.column("signed_in_at", .text).notNull()
+                table.column("refresh_material_removed", .integer).notNull().defaults(to: 0)
+            }
+        }
     }
 
     /// The store's key-and-value table (06 §3.2): the outcome of the legacy
