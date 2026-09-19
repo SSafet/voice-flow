@@ -41,7 +41,7 @@ class CloudPreferences(private val context: Context) {
  * Only portable edits enter this directory; account identity is frozen. */
 class CloudCaptureJournal(private val context: Context, private val engine: CloudEngine) {
     private val root get() = File(context.filesDir, "cloud-edit-intents").apply { mkdirs() }
-    fun save(edits: List<CloudEdit>, partition: String) = synchronized(Store.lock) {
+    fun save(edits: List<CloudEdit>, partition: String) = synchronized(RecordStore.lock) {
         replay()
         val counter = AtomicFile(File(root, "sequence"))
         val old = runCatching { String(counter.readFully()).toLong() }.getOrDefault(0)
@@ -54,7 +54,7 @@ class CloudCaptureJournal(private val context: Context, private val engine: Clou
         })).toString())
         replay()
     }
-    fun replay() = synchronized(Store.lock) {
+    fun replay() = synchronized(RecordStore.lock) {
         root.listFiles().orEmpty().filter { it.name.matches(Regex("[0-9]{20}\\.json")) }.sortedBy { it.name }.forEach { file ->
             val intent = JSONObject(String(AtomicFile(file).readFully(), Charsets.UTF_8))
             val edits = intent.getJSONArray("edits")
@@ -121,13 +121,12 @@ class CloudSync(private val context: Context) {
 
     /** Merge first. Read every retained legacy entry, with stable imported IDs,
      * before any old UI cap can trim its compatibility file. */
-    fun importLegacy(refresh: Boolean = false) = synchronized(Store.lock) {
+    fun importLegacy(refresh: Boolean = false) = synchronized(RecordStore.lock) {
         val partition = preferences.partition ?: return@synchronized
         journal.replay()
         if (engine.state(partition).imported && !refresh) return@synchronized
-        val store = Store(context)
-        val dictations = store.legacyDictationsForCloud()
-        val messages = store.legacyChatForCloud()
+        val dictations = RecordStore.legacyDictationsForCloud(context)
+        val messages = RecordStore.legacyChatForCloud(context)
         val edits = mutableListOf<CloudEdit>()
         dictations.filter { engine.sourceOwner(CloudCollection.DICTATIONS, it.id).let { owner -> owner == null || owner == partition } }.forEach { edits.add(dictation(it)) }
         var previous: String? = null

@@ -52,7 +52,7 @@ object Transcriber {
         return text
     }
 
-    fun clean(raw: String, openRouterKey: String, vocabulary: List<String>): String {
+    fun clean(raw: String, openRouterKey: String, vocabulary: List<String>, model: String): String {
         if (raw.isBlank()) return ""
         // Very short inputs — just capitalize, skip the LLM (cleaner.py parity).
         val words = raw.trim().split(Regex("\\s+"))
@@ -69,7 +69,7 @@ object Transcriber {
                 "(fix any phonetic misspellings): ${vocabulary.joinToString(", ")}"
         }
         val body = JSONObject()
-            .put("model", CLEANUP_MODEL)
+            .put("model", model)
             .put("temperature", 0.1)
             .put("messages", JSONArray()
                 .put(JSONObject().put("role", "system").put("content", system))

@@ -11,7 +11,7 @@ import org.json.JSONObject
 class CloudDatabase private constructor(context: Context) : SQLiteOpenHelper(context, "cloud-sync.sqlite", null, 1), CloudPersistence {
     companion object {
         @Volatile private var instance: CloudDatabase? = null
-        fun get(context: Context): CloudDatabase = instance ?: synchronized(Store.lock) {
+        fun get(context: Context): CloudDatabase = instance ?: synchronized(RecordStore.lock) {
             instance ?: CloudDatabase(context.applicationContext).also { instance = it }
         }
     }
@@ -24,7 +24,7 @@ class CloudDatabase private constructor(context: Context) : SQLiteOpenHelper(con
         db.execSQL("CREATE TABLE cloud_import_ids (source_key TEXT PRIMARY KEY, record_id TEXT NOT NULL)")
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) { throw CloudFailure.UpdateRequired() }
-    override fun <T> transaction(body: (CloudTransaction) -> T): T = synchronized(Store.lock) {
+    override fun <T> transaction(body: (CloudTransaction) -> T): T = synchronized(RecordStore.lock) {
         val db = writableDatabase
         db.beginTransaction()
         val snapshots = mutableMapOf<String, CloudAccountState>()
@@ -66,7 +66,7 @@ class CloudDatabase private constructor(context: Context) : SQLiteOpenHelper(con
         }
     }
     /** Mapping commits before a legacy import can enter the outbox. */
-    fun importedId(sourceKey: String): String = synchronized(Store.lock) {
+    fun importedId(sourceKey: String): String = synchronized(RecordStore.lock) {
         val db = writableDatabase
         db.beginTransaction()
         try {

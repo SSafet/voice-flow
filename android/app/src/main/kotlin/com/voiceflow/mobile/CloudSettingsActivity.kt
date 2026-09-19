@@ -89,7 +89,7 @@ class CloudSettingsActivity : Activity() {
         if (cloud.preferences.transport == SyncTransport.CLOUD) buildCloud()
         else if (cloud.preferences.transport == SyncTransport.LOCAL) {
             root.addView(label("Your existing pairing stays saved. Only the selected transport delivers changes."))
-            action("Sync with paired Mac") { work("Connecting to Mac…") { SyncClient(this, Store(this), Keys(this)).sync("settings") } }
+            action("Sync with paired Mac") { work("Connecting to Mac…") { SyncClient(this).sync("settings") } }
         }
         buildLocalSettings()
     }

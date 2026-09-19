@@ -25,8 +25,7 @@ class SyncJob : JobService() {
         val run = Run(params)
         runs.put(params.jobId, run)?.future?.cancel(true)
         run.future = executor.submit {
-            val store = Store(applicationContext)
-            val client = SyncClient(applicationContext, store, Keys(applicationContext))
+            val client = SyncClient(applicationContext)
             val retry = runCatching {
                 if (!client.configured()) false
                 else if (params.jobId == DELIVERY_ID && !client.hasPendingDelivery()) false

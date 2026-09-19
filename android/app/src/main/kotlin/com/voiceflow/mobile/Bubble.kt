@@ -30,7 +30,6 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
-import java.io.File
 import java.util.concurrent.Executors
 
 /// The floating dictation bubble (ticket VF-51): a small dot drawn over
@@ -43,13 +42,19 @@ import java.util.concurrent.Executors
 /// Transcriber pipeline as in-app takes ("bubble" mode), so offline
 /// recordings survive and everything syncs.
 class BubbleService : Service() {
-    private lateinit var store: Store
-    private lateinit var keys: Keys
+    private lateinit var queue: AudioQueue
     private lateinit var syncClient: SyncClient
+    private lateinit var dictation: DictationService
     private val recorder = Recorder()
     private val executor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("app", Context.MODE_PRIVATE) }
+
+    /// A finished take enters through the one pipeline; the dot's sink only
+    /// decides how the text becomes visible.
+    private val delivered = DeliverySink { text, delivery ->
+        main.post { deliver(text, insert = delivery != Delivery.CLIPBOARD) }
+    }
 
     private var wm: WindowManager? = null
     private var bubble: FrameLayout? = null
@@ -69,9 +74,9 @@ class BubbleService : Service() {
     override fun onCreate() {
         super.onCreate()
         running = true
-        store = Store(this)
-        keys = Keys(this)
-        syncClient = SyncClient(this, store, keys)
+        queue = AudioQueue(filesDir)
+        syncClient = SyncClient(this)
+        dictation = DictationService(this, delivered)
         startInForeground(recording = false)
         SyncJob.schedule(this)
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -319,7 +324,7 @@ class BubbleService : Service() {
         }
         startInForeground(recording = true)
         try {
-            recorder.start(store.audioDir)
+            recorder.start(queue.audioDir)
             setState(DotState.RECORDING)
         } catch (e: Exception) {
             toast(getString(R.string.bubble_mic_unavailable, e.message?.take(80)))
@@ -336,7 +341,7 @@ class BubbleService : Service() {
             toast(getString(R.string.bubble_too_short))
             return
         }
-        store.enqueue(QueueItem(file.name, file.absolutePath, "bubble",
+        queue.enqueue(QueueItem(file.name, file.absolutePath, DictationMode.INSERT.wire,
             System.currentTimeMillis()))
         setState(DotState.TRANSCRIBING)
         val freshId = file.name
@@ -350,54 +355,35 @@ class BubbleService : Service() {
         finally { runCatching { syncClient.sync("bubble") } }
     }
 
-    /// Drain "bubble" items from the shared queue (MainActivity's drain skips
-    /// them while this service runs). Only the take the user just finished —
-    /// freshId — goes through field insertion; older items recovered after an
-    /// offline stretch land on the clipboard silently, because the field they
-    /// were meant for is long gone.
+    /// The shared queue drains through the one pipeline. Only the take the
+    /// user just finished — freshId — may be typed into the field; older items
+    /// recovered after an offline stretch land on the clipboard silently,
+    /// because the field they were meant for is long gone.
     private fun drain(freshId: String?) {
-        val pending = store.queue().filter { it.mode == "bubble" }
-        if (pending.isEmpty()) { main.post { if (state == DotState.TRANSCRIBING) setState(DotState.IDLE) }; return }
-        val openAIKey = keys.load(Keys.OPENAI)
-        if (openAIKey.isNullOrBlank()) {
+        if (queue.count() == 0) {
+            main.post { if (state == DotState.TRANSCRIBING) setState(DotState.IDLE) }
+            return
+        }
+        val report = try {
+            dictation.drain(freshId)
+        } catch (error: Exception) {
             main.post {
                 setState(DotState.IDLE)
-                if (freshId != null) toast(getString(R.string.bubble_no_api_key))
+                if (freshId != null) toast(getString(R.string.bubble_transcription_failed, error.message?.take(80)))
             }
             return
         }
-        for (item in pending) {
-            val file = File(item.file)
-            if (!file.exists()) { store.dequeue(item.id); continue }
-            val raw = try {
-                Transcriber.transcribe(file, openAIKey, syncClient.vocabulary())
-            } catch (e: Net.HttpError) {
-                main.post {
-                    setState(DotState.IDLE)
-                    if (freshId != null) toast(getString(R.string.bubble_transcription_failed, e.message?.take(80)))
-                }
-                if (e.code == 401 || e.code == 429) return
-                store.dequeue(item.id); continue
-            } catch (_: Exception) {
-                main.post {
-                    setState(DotState.IDLE)
-                    if (freshId != null) toast(getString(R.string.bubble_offline_queued))
-                }
-                return
+        main.post {
+            when (report.refusal) {
+                Refusal.NO_KEY -> if (freshId != null) toast(getString(R.string.bubble_no_api_key))
+                Refusal.OFFLINE -> if (freshId != null) toast(getString(R.string.bubble_offline_queued))
+                Refusal.TRANSCRIPTION_FAILED ->
+                    if (freshId != null) toast(getString(R.string.bubble_transcription_failed, "transcription_failed"))
+                Refusal.NOTHING_HEARD -> if (freshId != null) toast(getString(R.string.bubble_nothing_heard))
+                null -> {}
             }
-            val agentKey = keys.load(Keys.AGENT)
-            val cleaned = if (prefs.getBoolean("cleanup_enabled", true) && !agentKey.isNullOrBlank())
-                Transcriber.clean(raw, agentKey, syncClient.vocabulary()) else raw
-            store.dequeue(item.id)
-            if (cleaned.isBlank()) {
-                main.post { setState(DotState.IDLE); if (freshId != null) toast(getString(R.string.bubble_nothing_heard)) }
-                continue
-            }
-            store.addDictation(DictationEntry.now(cleaned, "pasted"))
-            val insert = item.id == freshId
-            main.post { deliver(cleaned, insert) }
+            if (state == DotState.TRANSCRIBING) setState(DotState.IDLE)
         }
-        main.post { if (state == DotState.TRANSCRIBING) setState(DotState.IDLE) }
     }
 
     private fun deliver(text: String, insert: Boolean) {

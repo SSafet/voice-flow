@@ -1,6 +1,30 @@
 package com.voiceflow.mobile
 
 import org.json.JSONObject
+import java.util.UUID
+
+data class ChatMessage(
+    val id: String,
+    val role: String,      // "user" | "assistant"
+    val text: String,
+    val ts: Long,
+    var synced: Boolean,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("id", id).put("role", role).put("text", text)
+        .put("ts", ts).put("synced", synced)
+
+    companion object {
+        fun fromJson(o: JSONObject) = ChatMessage(
+            o.optString("id", UUID.randomUUID().toString()),
+            o.optString("role"), o.optString("text"),
+            o.optLong("ts"), o.optBoolean("synced", false),
+        )
+
+        fun now(role: String, text: String) =
+            ChatMessage(UUID.randomUUID().toString(), role, text, System.currentTimeMillis(), false)
+    }
+}
 
 /** Merge only the acknowledged versions; captures made during the request stay pending. */
 object SyncMerge {

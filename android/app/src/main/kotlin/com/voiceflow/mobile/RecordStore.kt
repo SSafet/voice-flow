@@ -1,7 +1,10 @@
 package com.voiceflow.mobile
 
+import android.content.Context
+import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -78,6 +81,10 @@ class RecordStore(private val engine: RecordEngine) {
     }
 
     companion object {
+        /// One transaction lock shared by the store, the cloud database and the
+        /// sync client, as the old `Store.lock` was.
+        val lock = Any()
+
         const val DICTATION_CLEANUP_MODEL = "dictation_cleanup_model"
         const val CLEANUP_ENABLED = "cleanup_enabled"
         const val VOCABULARY = "vocabulary"
@@ -102,6 +109,54 @@ class RecordStore(private val engine: RecordEngine) {
                     captureKind = "dictate",
                 ),
             )
+        }
+
+        /// The strict one-time cloud import reads the files the shipped build
+        /// wrote. The bytes are backed up, generated ids commit before any
+        /// edit is queued, and the files themselves stay on disk for P6.
+        fun legacyDictationsForCloud(context: Context): List<DictationEntry> = synchronized(lock) {
+            val values = legacyForCloud(context, File(context.filesDir, "dictations.json"))
+            List(values.length()) { DictationEntry.fromJson(values.getJSONObject(it)) }
+        }
+
+        fun legacyChatForCloud(context: Context): List<ChatMessage> = synchronized(lock) {
+            val values = legacyForCloud(context, File(context.filesDir, "chat.json"))
+            List(values.length()) { ChatMessage.fromJson(values.getJSONObject(it)) }
+        }
+
+        private fun legacyForCloud(context: Context, file: File): JSONArray = synchronized(lock) {
+            if (!file.exists()) return@synchronized JSONArray()
+            val bytes = file.readBytes()
+            val array = try {
+                JSONArray(String(bytes, Charsets.UTF_8))
+            } catch (_: Exception) { throw CloudFailure.Storage() }
+            val backup = File(context.filesDir, "cloud-import-backup/${file.name}")
+            if (!backup.exists()) {
+                backup.parentFile!!.mkdirs()
+                val atomic = AtomicFile(backup)
+                val out = atomic.startWrite()
+                try { out.write(bytes); atomic.finishWrite(out) }
+                catch (error: Throwable) { atomic.failWrite(out); throw error }
+            }
+            val hash = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(bytes).joinToString("") { "%02x".format(it) }
+            var changed = false
+            for (index in 0 until array.length()) {
+                val row = array.getJSONObject(index)
+                if (!row.has("id") || row.optString("id").isBlank()) {
+                    row.put("id", CloudDatabase.get(context).importedId("${file.name}:$hash:$index"))
+                    changed = true
+                }
+                CloudWire.id(row.getString("id"))
+            }
+            if (changed) {
+                val atomic = AtomicFile(file)
+                val out = atomic.startWrite()
+                try {
+                    out.write(array.toString().toByteArray(Charsets.UTF_8)); atomic.finishWrite(out)
+                } catch (error: Throwable) { atomic.failWrite(out); throw error }
+            }
+            array
         }
     }
 }

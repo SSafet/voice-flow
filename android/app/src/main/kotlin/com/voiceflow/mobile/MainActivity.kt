@@ -50,10 +50,13 @@ class MainActivity : Activity() {
     private val textDim = Color.parseColor("#8E8E96")
     private val red = Color.parseColor("#E25B55")
 
-    private lateinit var store: Store
+    private lateinit var queue: AudioQueue
+    private lateinit var notes: RecordStore
+    private lateinit var dictation: DictationService
     private lateinit var keys: Keys
     private lateinit var syncClient: SyncClient
     private lateinit var pairing: Pairing
+    private val chat = mutableListOf<ChatMessage>()
     private val recorder = Recorder()
     private val executor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
@@ -149,9 +152,11 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        store = Store(this)
+        queue = AudioQueue(filesDir)
+        notes = RecordStore(CloudRecordEngine(this))
+        dictation = DictationService(this, DeliverySink { text, delivery -> main.post { onDelivered(text, delivery) } })
         keys = Keys(this)
-        syncClient = SyncClient(this, store, keys)
+        syncClient = SyncClient(this)
         pairing = Pairing(this, keys)
         buildUI()
         applyPairedState()
@@ -658,7 +663,7 @@ class MainActivity : Activity() {
             return
         }
         try {
-            recorder.start(store.audioDir)
+            recorder.start(queue.audioDir)
             recordDot.background = roundBg(red, 66)
             recordRing.background = roundBg(Color.parseColor("#33E25B55"), 82)
             micIcon.visibility = View.INVISIBLE
@@ -699,15 +704,16 @@ class MainActivity : Activity() {
         continueTargetId = null
         if (file == null) { recordStatus.text = "too short — nothing captured"; return }
         val mode = when {
-            forChat -> "assistant"
+            forChat -> DictationMode.COMPOSER.wire
             continueId != null -> "continue:$continueId"
-            quick -> "quick"
-            ideaMode -> "kept"
-            else -> "pasted"
+            quick -> DictationMode.KEEP.wire
+            ideaMode -> DictationMode.KEEP.wire
+            else -> DictationMode.INSERT.wire
         }
-        store.enqueue(QueueItem(file.name, file.absolutePath, mode, System.currentTimeMillis()))
+        queue.enqueue(QueueItem(file.name, file.absolutePath, mode, System.currentTimeMillis()))
         recordStatus.text = "transcribing…"
-        executor.execute { processQueue(); quietSync() }
+        val freshId = file.name
+        executor.execute { processQueue(freshId); quietSync() }
     }
 
     private fun chatMicTapped(mic: ImageView) {
@@ -721,90 +727,100 @@ class MainActivity : Activity() {
         if (recorder.isRecording) mic.imageTintList = ColorStateList.valueOf(red)
     }
 
-    /// Drains the pending-audio queue: transcribe → clean → route. Network
-    /// failure leaves the item queued (store-and-forward); empty transcripts
-    /// are dropped. Runs on the background executor.
-    private fun processQueue() {
-        if (store.queue().isEmpty()) return
-        val openAIKey = keys.load(Keys.OPENAI)
-        if (openAIKey.isNullOrBlank()) {
-            main.post { recordStatus.text = "waiting for keys from the Mac (sync)" }
+    /// Drains the pending-audio queue through the one pipeline. `continue:<id>`
+    /// rows are not the pipeline's: this screen keeps handling them until P6
+    /// deletes the assistant. Runs on the background executor.
+    private fun processQueue(freshId: String? = null) {
+        processContinueRows()
+        if (BubbleService.running) return
+        if (queue.count() == 0) return
+        val report = try {
+            dictation.drain(freshId)
+        } catch (error: Exception) {
+            main.post { recordStatus.text = "drain failed: ${error.message?.take(120)}" }
             return
         }
-        for (item in store.queue()) {
-            // Bubble takes belong to BubbleService's drain while it runs;
-            // with the bubble off they fall through below as plain
-            // dictations (clipboard).
-            if (item.mode == "bubble" && BubbleService.running) continue
+        main.post { applyReport(report) }
+    }
+
+    private fun applyReport(report: DrainReport) {
+        if (report.completed.isNotEmpty()) {
+            val last = report.completed.last()
+            if (last.delivery == Delivery.COMPOSER) recordStatus.text = "in the composer"
+            else recordStatus.text = "on your clipboard"
+        }
+        when (report.refusal) {
+            Refusal.NOTHING_HEARD -> recordStatus.text = "nothing heard"
+            Refusal.OFFLINE -> {
+                showOffline(true)
+                recordStatus.text = "offline — ${report.pending} recording(s) queued"
+            }
+            Refusal.NO_KEY -> recordStatus.text = "waiting for keys from the Mac (sync)"
+            Refusal.TRANSCRIPTION_FAILED -> recordStatus.text = "transcription failed"
+            null -> if (report.completed.isEmpty() && report.pending > 0) {
+                recordStatus.text = "${report.pending} recording(s) queued"
+            }
+        }
+    }
+
+    /// The pipeline's delivery landed: the note is already durable, so this is
+    /// only the visible half. A composer take fills the assistant input.
+    private fun onDelivered(text: String, delivery: Delivery) {
+        if (delivery == Delivery.COMPOSER) {
+            chatInput.setText(text)
+            showTab(2)
+        } else {
+            copyToClipboard(text)
+        }
+        lastLabel.text = if (delivery == Delivery.COMPOSER) "COMPOSER" else "ON YOUR CLIPBOARD"
+        lastTranscript.text = text
+        lastCard.visibility = View.VISIBLE
+        refreshHistory()
+    }
+
+    /// Continue-append (ticket #36): join the target entry, which refreshes its
+    /// time and marks it unsynced so the next sync updates the Mac's copy in
+    /// place. Target gone → a plain idea. Untouched by the pipeline.
+    private fun processContinueRows() {
+        val continues = queue.items().filter { it.mode.startsWith("continue:") }
+        if (continues.isEmpty()) return
+        val openAIKey = keys.load(Keys.OPENAI)?.takeIf { it.isNotBlank() } ?: return
+        val vocabulary = notes.vocabulary()
+        for (item in continues) {
             val file = java.io.File(item.file)
-            if (!file.exists()) { store.dequeue(item.id); continue }
+            if (!file.exists()) { queue.discard(item.id); continue }
             val raw = try {
-                Transcriber.transcribe(file, openAIKey, syncClient.vocabulary())
-            } catch (e: Net.HttpError) {
-                main.post { recordStatus.text = "transcription failed: ${e.message}" }
-                if (e.code == 401 || e.code == 429) return
-                store.dequeue(item.id); continue
-            } catch (e: Exception) {
-                main.post { showOffline(true); recordStatus.text = "offline — ${store.queue().size} recording(s) queued" }
+                Transcriber.transcribe(file, openAIKey, vocabulary)
+            } catch (_: Exception) {
                 return
             }
-            val cleaned = if (prefs.getBoolean("cleanup_enabled", true) &&
-                !keys.load(Keys.AGENT).isNullOrBlank() && item.mode != "assistant")
-                Transcriber.clean(raw, keys.load(Keys.AGENT)!!, syncClient.vocabulary())
-            else raw
-            store.dequeue(item.id)
-            if (cleaned.isBlank()) {
-                main.post { recordStatus.text = "nothing heard" }
-                continue
+            if (raw.isBlank()) { queue.complete(item.id); continue }
+            val agentKey = keys.load(Keys.AGENT)
+            val cleaned = if (notes.cleanupEnabled() && !agentKey.isNullOrBlank())
+                Transcriber.clean(raw, agentKey, vocabulary, notes.cleanupModel()) else raw
+            val target = item.mode.removePrefix("continue:")
+            val existing = notes.dictations().firstOrNull { it.id == target }
+            if (existing != null) {
+                val now = java.util.Date()
+                notes.saveNote(
+                    existing.copy(
+                        text = existing.text + "\n\n" + cleaned,
+                        time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(now),
+                        date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(now),
+                        synced = false,
+                    ),
+                )
+            } else {
+                notes.saveNote(DictationEntry.now(cleaned, "kept"))
             }
-            when {
-                item.mode == "assistant" -> main.post {
-                    chatInput.setText(cleaned)
-                    showTab(2)
-                }
-                // Continue-append (ticket #36): join the target entry, which
-                // refreshes its time and marks it unsynced so the next sync
-                // updates the Mac's copy in place. Target gone → plain idea.
-                item.mode.startsWith("continue:") -> {
-                    val target = item.mode.removePrefix("continue:")
-                    val appended = store.appendToDictation(target, cleaned)
-                    if (!appended) store.addDictation(DictationEntry.now(cleaned, "kept"))
-                    main.post {
-                        recordStatus.text = if (appended) "continuation added" else
-                            "original entry gone — captured as a new idea"
-                        lastLabel.text = if (appended) "CONTINUED" else "IDEA"
-                        lastTranscript.text = cleaned
-                        lastCard.visibility = View.VISIBLE
-                        refreshHistory()
-                    }
-                }
-                else -> {
-                    // quick-action captures land in the inbox (kept) AND on
-                    // the clipboard; in-app Dictate = clipboard, Idea = inbox.
-                    val kind = when (item.mode) {
-                        "quick" -> "kept"
-                        "bubble" -> "pasted"
-                        else -> item.mode
-                    }
-                    val toClipboard = item.mode != "kept"
-                    store.addDictation(DictationEntry.now(cleaned, kind))
-                    main.post {
-                        if (toClipboard) copyToClipboard(cleaned)
-                        recordStatus.text = when (item.mode) {
-                            "quick" -> "in your inbox + on the clipboard"
-                            "kept" -> "idea captured"
-                            else -> "on your clipboard"
-                        }
-                        lastLabel.text = when (item.mode) {
-                            "quick" -> "INBOX + CLIPBOARD"
-                            "kept" -> "IDEA"
-                            else -> "ON YOUR CLIPBOARD"
-                        }
-                        lastTranscript.text = cleaned
-                        lastCard.visibility = View.VISIBLE
-                        refreshHistory()
-                    }
-                }
+            queue.complete(item.id)
+            main.post {
+                recordStatus.text = if (existing != null) "continuation added"
+                    else "original entry gone — captured as a new idea"
+                lastLabel.text = if (existing != null) "CONTINUED" else "IDEA"
+                lastTranscript.text = cleaned
+                lastCard.visibility = View.VISIBLE
+                refreshHistory()
             }
         }
     }
@@ -910,7 +926,7 @@ class MainActivity : Activity() {
     private fun refreshHistory() {
         if (!::historyList.isInitialized) return
         historyList.removeAllViews()
-        val entries = store.dictations().take(100)
+        val entries = notes.dictations().take(100)
         if (entries.isEmpty()) {
             historyList.addView(TextView(this).apply {
                 text = "No dictations yet"
@@ -995,7 +1011,7 @@ class MainActivity : Activity() {
     private fun refreshChat() {
         if (!::chatList.isInitialized) return
         chatList.removeAllViews()
-        val messages = store.chat()
+        val messages = synchronized(chat) { chat.toList() }
         if (messages.isEmpty()) {
             chatList.addView(TextView(this).apply {
                 text = "Ask by text, voice, or share a photo into Voice Flow."
@@ -1041,7 +1057,7 @@ class MainActivity : Activity() {
         pendingImageBase64 = null
         attachLabel.visibility = View.GONE
         chatInput.setText("")
-        store.addChat(ChatMessage.now("user", userText))
+        addChat(ChatMessage.now("user", userText))
         refreshChat()
         val thinking = TextView(this).apply {
             this.text = "…"
@@ -1051,16 +1067,27 @@ class MainActivity : Activity() {
         chatList.addView(thinking)
 
         executor.execute {
-            val history = store.chat().dropLast(1)
+            val history = synchronized(chat) { chat.dropLast(1).toList() }
             val result = try {
                 Assistant.reply(history, userText, image, apiKey, syncClient.agentModel())
             } catch (e: Exception) {
                 "⚠ ${e.message?.take(200)}"
             }
-            store.addChat(ChatMessage.now("assistant", result))
+            addChat(ChatMessage.now("assistant", result))
             main.post { refreshChat() }
             quietSync()
         }
+    }
+
+    /// The assistant conversation is a view over the platform's records, not a
+    /// second local copy: it lives in memory and, when signed in, the two
+    /// edits are captured for the cloud. P6 owns deleting this screen.
+    private fun addChat(msg: ChatMessage) {
+        val previous = synchronized(chat) { chat.lastOrNull()?.id }
+        synchronized(chat) { chat.add(msg) }
+        val cloud = CloudSync(this)
+        if (cloud.preferences.partition == null) return
+        runCatching { cloud.capture(cloud.chat(msg, previous)) }
     }
 
     @Deprecated("Deprecated in Java")
