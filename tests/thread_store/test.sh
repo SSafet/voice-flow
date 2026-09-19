@@ -31,4 +31,10 @@ swiftc -o /tmp/vf-thread-store \
     swift/VoiceFlowPaths.swift swift/Store/Migrations.swift swift/Store/Database.swift \
     tests/thread_store/main.swift \
     -suppress-warnings
-/tmp/vf-thread-store
+
+# The check exercises ThreadDatabase.shared(), which opens the file in
+# VoiceFlowPaths' configuration root. That root is a throwaway directory under
+# /tmp, never ~/.config/voice-flow, and the check refuses to run without it.
+CONFIG_ROOT="$(mktemp -d /tmp/vf-thread-store-config.XXXXXX)"
+trap 'rm -rf "$CONFIG_ROOT"' EXIT
+VOICE_FLOW_CONFIG_ROOT="$CONFIG_ROOT" /tmp/vf-thread-store
