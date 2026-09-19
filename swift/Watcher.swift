@@ -253,14 +253,10 @@ final class DesktopSource: WatcherSource {
         resume(bus: bus)
         generation &+= 1
         let gen = generation
-
-        let front = NSWorkspace.shared.frontmostApplication
-        let app = front?.localizedName ?? "?"
-        let bundle = front?.bundleIdentifier ?? ""
-        let window = Self.frontmostWindow(pid: front?.processIdentifier)
-        let display = DisplayTopology.underMouse ?? DisplayTopology.primary
+        guard let display = DisplayTopology.underMouse ?? DisplayTopology.primary else {
+            return done("capture failed")
+        }
         let deltas = drainCounters()
-        let secure = IsSecureEventInputEnabled()
 
         if camera.runningDeviceId != nil {
             camera.requestFrame { [weak self] jpeg in
@@ -271,8 +267,8 @@ final class DesktopSource: WatcherSource {
 
         Task.detached { [weak self] in
             guard let self else { return await MainActor.run { done(nil) } }
-            let url = Self.browserURL(app: app)
-            let focus = Self.focusedElement()
+            let observation = ContextProbe.observe(display: display)
+            let focus = ContextProbe.focusedElement()
             let image = try? await self.screenCapture.captureImage(on: display,
                                                                    excludeOwnWindows: true)
             let plane = image.flatMap { LumaPlane.make(from: $0) }
@@ -281,8 +277,8 @@ final class DesktopSource: WatcherSource {
                 // watchdog while this was in flight — drop it.
                 guard self.generation == gen else { return done(nil) }
                 self.record(image: image, plane: plane, display: display,
-                            app: app, bundle: bundle, window: window, url: url,
-                            focus: focus, secure: secure, deltas: deltas, bus: bus)
+                            observation: observation, focus: focus,
+                            deltas: deltas, bus: bus)
                 done(image == nil ? "capture failed" : nil)
             }
         }
@@ -290,23 +286,28 @@ final class DesktopSource: WatcherSource {
 
     // ── writing the line ───────────────────────────────────────────────
 
-    private func record(image: CGImage?, plane: LumaPlane?, display: DisplayContext?,
-                        app: String, bundle: String, window: (title: String?, bounds: [String: Int]?),
-                        url: String?, focus: (role: String, chars: Int?)?, secure: Bool,
+    private func record(image: CGImage?, plane: LumaPlane?, display: DisplayContext,
+                        observation: ContextObservation,
+                        focus: (role: String, chars: Int?)?,
                         deltas: [String: Int], bus: DayBus) {
         let now = Date()
-        var line: [String: Any] = ["app": app]
-        if let title = window.title, !title.isEmpty { line["title"] = title }
-        if let url, !url.isEmpty { line["url"] = url }
-        if let bounds = window.bounds { line["win"] = bounds }
-        if secure { line["secure"] = true }
+        var line = observation.activityFields()
+        // CoreGraphics window bounds as the line has always stored them.
+        if let rect = observation.windowRect {
+            let primaryHeight = DisplayTopology.primary?.frame.height ?? 0
+            line["win"] = ["x": Int(rect.minX),
+                           "y": Int(primaryHeight - rect.maxY),
+                           "w": Int(rect.width),
+                           "h": Int(rect.height)]
+        }
+        if observation.secureInput { line["secure"] = true }
         if let focus {
             line["focus"] = focus.role
             if let chars = focus.chars { line["focus_chars"] = chars }
         }
         if !deltas.isEmpty { line["input"] = deltas }
 
-        if let image, let display {
+        if let image {
             line["display"] = Int(display.id)
             // The geometry of the frame AS STORED, not as captured — that is
             // the file a consumer actually opens. Capture is at the display's
@@ -338,7 +339,7 @@ final class DesktopSource: WatcherSource {
             let naturallyChanged = changedBlocks.map { $0 >= diffBlocks } ?? true
             let save = WatcherPolicy.shouldSaveScreen(
                 previousChangedBlocks: changedBlocks, threshold: diffBlocks,
-                denseApp: isDense(bundle: bundle),
+                denseApp: isDense(bundle: observation.bundleID ?? ""),
                 secondsSinceLastFrame: lastFrameAt.map { now.timeIntervalSince($0) },
                 denseFloor: denseSeconds)
             if save && !naturallyChanged { line["forced"] = true }
@@ -446,100 +447,6 @@ final class DesktopSource: WatcherSource {
     }
 
     // ── environment probes ─────────────────────────────────────────────
-
-    /// Title and bounds of the frontmost app's front window, from one pass of
-    /// the window list (the bounds come free with the title).
-    private static func frontmostWindow(pid: pid_t?) -> (title: String?, bounds: [String: Int]?) {
-        guard let pid else { return (nil, nil) }
-        guard let windows = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
-        else { return (nil, nil) }
-        // An app's first layer-0 window is often an untitled helper (Electron
-        // shells in particular), so keep looking for a titled one and only fall
-        // back to the first geometry we saw.
-        var fallback: (title: String?, bounds: [String: Int]?)?
-        for window in windows {
-            guard window[kCGWindowOwnerPID as String] as? Int == Int(pid),
-                  window[kCGWindowLayer as String] as? Int == 0 else { continue }
-            let name = window[kCGWindowName as String] as? String
-            var bounds: [String: Int]?
-            if let raw = window[kCGWindowBounds as String] as? [String: Any],
-               let rect = CGRect(dictionaryRepresentation: raw as CFDictionary) {
-                bounds = ["x": Int(rect.minX), "y": Int(rect.minY),
-                          "w": Int(rect.width), "h": Int(rect.height)]
-            }
-            if name?.isEmpty == false { return (name, bounds) }
-            if fallback == nil, bounds != nil { fallback = (nil, bounds) }
-        }
-        return fallback ?? (nil, nil)
-    }
-
-    /// What has keyboard focus, as a shape only — the role and how much text
-    /// is in it, never the text. Inside a window whose title never changes,
-    /// a rising character count is composing and a non-text role with scroll
-    /// activity is reading.
-    ///
-    /// The messaging timeout is set on the focused element only. Setting it on
-    /// the system-wide element is documented to apply to the whole process,
-    /// which would shorten every other accessibility call the app makes —
-    /// including dictation's text-field streaming.
-    private static func focusedElement() -> (role: String, chars: Int?)? {
-        let system = AXUIElementCreateSystemWide()
-        var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let value = focused, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-        let element = value as! AXUIElement
-        AXUIElementSetMessagingTimeout(element, 0.3)
-
-        var roleRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef) == .success,
-              let role = roleRef as? String else { return nil }
-        var countRef: CFTypeRef?
-        var chars: Int?
-        if AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &countRef) == .success {
-            chars = countRef as? Int
-        }
-        return (role, chars)
-    }
-
-    /// Front-tab URL when a known browser is frontmost. One AppleScript per
-    /// browser, referenced only when that browser is active — AppleScript
-    /// resolves app dictionaries at compile time, so a single script naming
-    /// an uninstalled browser would fail outright. First use prompts the
-    /// user to allow Voice Flow to control the browser (Automation TCC).
-    private static func browserURL(app: String) -> String? {
-        let script: String
-        switch app {
-        case "Google Chrome", "Brave Browser", "Arc", "Microsoft Edge", "Vivaldi":
-            script = "tell application \"\(app)\" to get URL of active tab of front window"
-        case "Safari":
-            script = "tell application \"Safari\" to get URL of front document"
-        default:
-            return nil
-        }
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        proc.arguments = ["-e", script]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-        guard (try? proc.run()) != nil else { return nil }
-        // SIGTERM is ignorable; escalate so a wedged osascript cannot hold the
-        // tick open until the scheduler's stall guard has to step in.
-        let killer = DispatchWorkItem {
-            if proc.isRunning { proc.terminate() }
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) {
-                if proc.isRunning { kill(proc.processIdentifier, SIGKILL) }
-            }
-        }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2, execute: killer)
-        proc.waitUntilExit()
-        killer.cancel()
-        guard proc.terminationStatus == 0 else { return nil }
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (out?.isEmpty == false) ? out : nil
-    }
 
     private static func screenIsLocked() -> Bool {
         guard let dict = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
