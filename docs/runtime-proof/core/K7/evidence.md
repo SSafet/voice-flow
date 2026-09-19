@@ -30,9 +30,14 @@ One line in the run's output is not from the proof and is not a failure:
 comes from `codesign` ad-hoc signing a bundle under `/tmp`. Signing succeeded and both bundles
 ran; no check is affected and the exit status is 0.
 
-`page.png` is 2200 by 1648 pixels: the view is 1100 points wide and is resized to the page's
-own height plus 24 points before the snapshot is taken, and this display draws two pixels to
-the point. It shows the checks the page itself made, from `secure_context` to
+`page.png` is 2200 by 1648 pixels, which is 1100 by 824 points on this display, where two
+pixels are drawn to the point. The view starts at 1100 by 800 points, and before the snapshot
+it is resized to what `document.documentElement.scrollHeight` reports plus 24 points. The page
+is shorter than the 800-point view, and the root element's height is floored at the height of
+the viewport, so that call returned 800 and the picture came out 824 points tall: the height
+follows the view's own size here, not the page's. The blank band below the table is that
+difference — the framed page ends about 590 points down and the rest of the picture is empty.
+It shows the checks the page itself made, from `secure_context` to
 `iframe_to_another_localhost_port_loads`, the page's own observations under them, and the
 framed page from the other `localhost` port below the table.
 The rows the native side made — `listens_on_*`, the four refusal checks,

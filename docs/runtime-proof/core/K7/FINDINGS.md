@@ -109,11 +109,13 @@ ticket check throws `HTTPError(.unauthorized)`. The 400 is Hummingbird's doing: 
 If branch 06 wants the socket path to answer 401, the ticket has to be checked before the
 upgrade decision rather than inside it.
 
-A second consequence of that 400, for whoever writes the tests: an upgrade request to a path
-with no socket route at all is answered `400` with an empty body too, byte for byte the same
-answer. A test that reads the status alone cannot tell a refusal from a route that is not
-mounted. This proof's native row pairs the refusal with a handshake that must be answered
-`101` using a ticket minted over the guarded route, which is what makes it evidence.
+A second consequence of that 400, for whoever writes the tests — measured while this proof was
+being built rather than by the run recorded in the two tables, and written down at
+`proofs/loopback-webview/Sources/LoopbackProofCore/NativeChecks.swift:120-132`: an upgrade
+request to a path with no socket route at all is answered `400` with an empty body too, byte
+for byte the same answer. A test that reads the status alone cannot tell a refusal from a route
+that is not mounted. This proof's native row pairs the refusal with a handshake that must be
+answered `101` using a ticket minted over the guarded route, which is what makes it evidence.
 
 ## 8. `window.Notification` exists in a `WKWebView`; nothing has to be explained away
 
