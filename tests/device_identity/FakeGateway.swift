@@ -33,7 +33,9 @@ final class FakeGateway: DeviceGateway {
     var deviceLabel = "Synthetic Mac"
     var accessTokenValue = "access-token-1"
     var accessExpiresIn = 3600
-    var challengeNonce = "challenge-nonce-1"
+    /// Every challenge issues a nonce of its own, as the gateway does: a nonce
+    /// is single use, so a second token can never be minted from the first one.
+    var challengeNoncePrefix = "challenge-nonce"
     var challengeSentAt = "2026-09-19T10:00:00.000Z"
     var challengeExpiresInSec = 60
     var continuableHomes: [ContinuableHome] = []
@@ -55,7 +57,8 @@ final class FakeGateway: DeviceGateway {
     private(set) var takeoverStarts: [TakeoverCodeCall] = []
     private(set) var takeoverConfirms: [TakeoverConfirmCall] = []
     private(set) var enrolledPublicKey: String?
-    private var issuedNonces: Set<String> = []
+    private var nonceCount = 0
+    private var issuedNonces: [String: String] = [:]   // nonce -> the sentAt it was issued with
     private var usedNonces: Set<String> = []
 
     private func offlineOrRevoked() throws {
@@ -104,20 +107,22 @@ final class FakeGateway: DeviceGateway {
     func challenge(deviceId: String) async throws -> DeviceChallenge {
         if let challengeError { throw challengeError }
         try offlineOrRevoked()
-        challengeCalls.append(ChallengeCall(deviceId: deviceId, nonce: challengeNonce, sentAt: challengeSentAt))
-        issuedNonces.insert(challengeNonce)
-        return DeviceChallenge(nonce: challengeNonce, sentAt: challengeSentAt, expiresInSec: challengeExpiresInSec)
+        nonceCount += 1
+        let nonce = "\(challengeNoncePrefix)-\(nonceCount)"
+        challengeCalls.append(ChallengeCall(deviceId: deviceId, nonce: nonce, sentAt: challengeSentAt))
+        issuedNonces[nonce] = challengeSentAt
+        return DeviceChallenge(nonce: nonce, sentAt: challengeSentAt, expiresInSec: challengeExpiresInSec)
     }
 
     func token(deviceId: String, nonce: String, signatureBase64: String) async throws -> DeviceToken {
         if let tokenError { throw tokenError }
         try offlineOrRevoked()
         tokenCalls.append(TokenCall(deviceId: deviceId, nonce: nonce, signatureBase64: signatureBase64))
-        guard issuedNonces.contains(nonce), !usedNonces.contains(nonce) else {
+        guard let sentAt = issuedNonces[nonce], !usedNonces.contains(nonce) else {
             throw DeviceIdentityError.server(code: "nonce_not_usable", message: "the nonce was never issued or was already used")
         }
         usedNonces.insert(nonce)
-        let proofText = DeviceKeyStore.deviceProofText(nonce: nonce, deviceId: deviceId, sentAt: challengeSentAt)
+        let proofText = DeviceKeyStore.deviceProofText(nonce: nonce, deviceId: deviceId, sentAt: sentAt)
         guard P256Check.verify(publicKeyBase64: lastEnrolledPublicKey(), signatureBase64: signatureBase64, message: proofText) else {
             throw DeviceIdentityError.server(code: "invalid_signature", message: "the challenge signature does not verify")
         }
@@ -153,4 +158,124 @@ final class FakeGateway: DeviceGateway {
         }
         return HomeTakeover(homeId: homeId)
     }
+}
+
+/// The transport the app's own `HTTPDeviceGateway` is held against: a
+/// `URLProtocol` inside one throwaway `URLSession`, so the routes, the methods,
+/// the headers and the request bodies of 05 §3.2 are observed exactly as the
+/// gateway would see them, with no port bound and nothing left running. It
+/// answers only what a test registered; an unregistered path answers 404 with
+/// `no_stub`, so a wrong route is a named failure and never a silent success.
+final class StubTransport: URLProtocol {
+    struct Call: Equatable {
+        var method: String
+        var absoluteURL: String
+        var path: String
+        var authorization: String?
+        var contentType: String?
+        var accept: String?
+        var bodyText: String
+    }
+
+    private struct Answer {
+        var status: Int
+        var json: String
+        var transportFailure: Bool
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var answers: [String: Answer] = [:]
+    nonisolated(unsafe) private static var calls: [Call] = []
+
+    /// One session whose only transport is this stub. Nothing else on the
+    /// machine is affected, and no other session can reach it.
+    static func session() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubTransport.self]
+        return URLSession(configuration: configuration)
+    }
+
+    static func reset() {
+        lock.lock(); defer { lock.unlock() }
+        answers = [:]
+        calls = []
+    }
+
+    static func answer(_ path: String, status: Int = 200, json: String) {
+        lock.lock(); defer { lock.unlock() }
+        answers[path] = Answer(status: status, json: json, transportFailure: false)
+    }
+
+    /// The network is simply not there: the request fails before any answer.
+    static func failTransport(_ path: String) {
+        lock.lock(); defer { lock.unlock() }
+        answers[path] = Answer(status: 0, json: "", transportFailure: true)
+    }
+
+    static func recorded(_ path: String) -> [Call] {
+        lock.lock(); defer { lock.unlock() }
+        return calls.filter { $0.path == path }
+    }
+
+    static func lastCall(_ path: String) -> Call? { recorded(path).last }
+
+    static var callCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return calls.count
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    private static func bodyData(_ request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: buffer.count)
+            if read <= 0 { break }
+            data.append(buffer, count: read)
+        }
+        return data
+    }
+
+    override func startLoading() {
+        let path = request.url?.path ?? ""
+        let call = Call(
+            method: request.httpMethod ?? "",
+            absoluteURL: request.url?.absoluteString ?? "",
+            path: path,
+            authorization: request.value(forHTTPHeaderField: "Authorization"),
+            contentType: request.value(forHTTPHeaderField: "Content-Type"),
+            accept: request.value(forHTTPHeaderField: "Accept"),
+            bodyText: String(decoding: Self.bodyData(request), as: UTF8.self))
+
+        Self.lock.lock()
+        Self.calls.append(call)
+        let answer = Self.answers[path]
+        Self.lock.unlock()
+
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        if answer?.transportFailure == true {
+            client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+            return
+        }
+        let resolved = answer ?? Answer(
+            status: 404,
+            json: #"{"error":{"code":"no_stub","message":"no answer was registered for this path"}}"#,
+            transportFailure: false)
+        let response = HTTPURLResponse(url: url, statusCode: resolved.status, httpVersion: "HTTP/1.1",
+                                       headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(resolved.json.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

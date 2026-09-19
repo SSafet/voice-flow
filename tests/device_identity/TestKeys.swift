@@ -14,7 +14,9 @@ final class MemoryKeyProvider: DeviceKeyProvider {
     private var key: TestSigningKey?
     private(set) var deleteCount = 0
 
-    init(key: TestSigningKey = TestSigningKey(key: P256.Signing.PrivateKey())) {
+    /// `MemoryKeyProvider(key: nil)` starts with no key at all, so a test can
+    /// show that a call which must not make one (`load()`) makes none.
+    init(key: TestSigningKey? = TestSigningKey(key: P256.Signing.PrivateKey())) {
         self.key = key
     }
 

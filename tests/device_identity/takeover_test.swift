@@ -50,6 +50,21 @@ struct HomeTakeoverTests {
         let emptyHomes = await empty.continuableHomes
         checks.check(emptyHomes.isEmpty, "the identity invents no home")
 
+        // ---- A device that is not signed in cannot take a home over ----------
+        let strangerGateway = FakeGateway()
+        let (strangerPool, strangerRoot) = try openTempDatabase()
+        defer { try? FileManager.default.removeItem(at: strangerRoot) }
+        let stranger = makeIdentity(strangerGateway, MemoryKeyProvider(key: nil), strangerPool)
+        try await stranger.load()
+        do {
+            try await stranger.requestTakeoverCode(homeId: "home-1")
+            checks.check(false, "a device with no identity must not ask for a takeover code")
+        } catch {
+            checks.check((error as? DeviceIdentityError) == .notSignedIn,
+                         "asking for a code with no identity is notSignedIn")
+        }
+        checks.equal(strangerGateway.takeoverStarts.count, 0, "nothing is asked of the gateway without an identity")
+
         // ---- A wrong code is refused by name and changes nothing -------------
         gateway.takeoverCodes["home-1"] = "654321"
         try await identity.requestTakeoverCode(homeId: "home-1")
@@ -71,6 +86,10 @@ struct HomeTakeoverTests {
         // ---- The right code yields the home id, and it survives a restart ----
         let takeover = try await identity.confirmTakeover(homeId: "home-1", code: "654321")
         checks.equal(takeover.homeId, "home-1", "the confirmation yields the home id")
+        checks.equal(gateway.takeoverConfirms.last?.code, "654321", "the confirmation carries the code the person typed")
+        checks.equal(gateway.takeoverConfirms.last?.accessToken, gateway.accessTokenValue,
+                     "the confirmation carries a bearer token")
+        checks.equal(gateway.takeoverConfirms.count, 2, "the refused code and the right one are two calls")
         checks.equal(await identity.homeId, "home-1", "the identity remembers the home")
         var state = await identity.state
         checks.equal(state, .ready, "a completed takeover leaves the device ready")

@@ -53,17 +53,54 @@ struct DeviceKeyStoreTests {
         checks.equal(DeviceKeyStore.keychainAccessibility, "when-unlocked-this-device-only",
                      "the Keychain accessibility")
 
-        // The provider protocol: one key, made once; delete makes a new one next time.
-        let provider = MemoryKeyProvider()
-        let first = try provider.loadOrCreateKey()
-        let second = try provider.loadOrCreateKey()
-        checks.equal(first.publicKeyDER, second.publicKeyDER, "loadOrCreateKey returns the same key twice")
-        let before = provider.deleteCount
-        try provider.deleteKey()
-        checks.check(!provider.hasKey, "deleteKey removes the key")
-        checks.equal(provider.deleteCount, before + 1, "deleteKey is recorded")
-        let third = try provider.loadOrCreateKey()
-        checks.check(third.publicKeyDER != first.publicKeyDER, "a deleted key is replaced by a fresh key")
+        // The real Keychain provider, against a service name of this run's own,
+        // so the owner's item (com.voiceflow.device-identity) is never read,
+        // written or deleted. The item is removed again before the suite ends.
+        let testService = "com.voiceflow.device-identity.test-\(UUID().uuidString)"
+        let provider = KeychainDeviceKeyProvider(service: testService,
+                                                 account: DeviceKeyStore.keychainAccount)
+        defer { try? provider.deleteKey() }
+        do {
+            checks.check(!provider.hasKey, "a Keychain service with no item holds no key")
+            let created = try provider.loadOrCreateKey()
+            checks.check(provider.hasKey, "loadOrCreateKey puts the key in the Keychain")
+            let reloaded = try provider.loadOrCreateKey()
+            checks.equal(reloaded.publicKeyDER, created.publicKeyDER,
+                         "the Keychain returns the one key again and does not make a second")
+            let keychainSignature = try DeviceKeyStore.signatureBase64(created, over: message)
+            checks.check(
+                P256Check.verify(publicKeyBase64: DeviceKeyStore.publicKeyBase64(created),
+                                 signatureBase64: keychainSignature, message: message),
+                "the key kept in the Keychain signs and its signature verifies")
+            try provider.deleteKey()
+            checks.check(!provider.hasKey, "deleteKey removes the Keychain item")
+            try provider.deleteKey()
+            checks.check(true, "deleting an item that is not there is not an error")
+            let fresh = try provider.loadOrCreateKey()
+            checks.check(fresh.publicKeyDER != created.publicKeyDER,
+                         "a deleted key is replaced by a fresh key")
+            try provider.deleteKey()
+        } catch {
+            checks.check(false, "the Keychain provider threw \(error) — run this suite in a logged-in session with the login keychain unlocked")
+        }
+
+        // What the Keychain item must be, read from the source: the design
+        // chose the file-based Keychain with this-device-only accessibility and
+        // decided against the Secure Enclave (05 §3.2, D1). A generic-password
+        // item in the data-protection Keychain would need an entitlement
+        // VoiceFlow's Developer ID signature cannot carry.
+        let source = (try? String(contentsOfFile: "swift/Device/KeyStore.swift", encoding: .utf8)) ?? ""
+        checks.check(!source.isEmpty, "swift/Device/KeyStore.swift is read from the repository root")
+        checks.check(source.contains("kSecClassGenericPassword"),
+                     "the key is a generic-password Keychain item")
+        checks.check(source.contains("kSecAttrAccessibleWhenUnlockedThisDeviceOnly"),
+                     "the item is reachable only on this device while unlocked")
+        checks.check(!source.contains("kSecUseDataProtectionKeychain"),
+                     "the data-protection Keychain is not used")
+        checks.check(!source.contains("SecureEnclave"),
+                     "the Secure Enclave is not used")
+        checks.check(source.contains("errSecItemNotFound"),
+                     "a missing item is told apart from a Keychain failure")
 
         checks.finish("device key store")
     }

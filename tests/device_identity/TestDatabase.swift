@@ -27,6 +27,37 @@ func serverCode(_ error: Error) -> String? {
     return code
 }
 
+func serverMessage(_ error: Error) -> String? {
+    guard case let DeviceIdentityError.server(_, message) = error else { return nil }
+    return message
+}
+
+/// Runs a call that must succeed. A throw is one named failed check instead of
+/// an abandoned suite, so one broken call cannot hide every check after it.
+func attempt<T>(_ checks: Checks, _ what: String, _ body: () async throws -> T) async -> T? {
+    do {
+        return try await body()
+    } catch {
+        checks.check(false, "\(what): threw \(error)")
+        return nil
+    }
+}
+
+/// A field of a recorded JSON request body, addressed as `device.publicKey`.
+func bodyField(_ bodyText: String, _ path: String) -> String? {
+    guard let data = bodyText.data(using: .utf8),
+          var node = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    let parts = path.split(separator: ".").map(String.init)
+    for part in parts.dropLast() {
+        guard let next = node[part] as? [String: Any] else { return nil }
+        node = next
+    }
+    guard let last = parts.last, let value = node[last] else { return nil }
+    if let text = value as? String { return text }
+    if let number = value as? NSNumber { return number.stringValue }
+    return String(describing: value)
+}
+
 /// The old refresh-token vault of an install that signed in before the key
 /// existed. It records what the identity asked it to do.
 final class RecordingLegacyStore: LegacyRefreshTokenStore {
