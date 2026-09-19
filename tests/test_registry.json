@@ -38,6 +38,7 @@
         "fake_openai_server",
         "git_checkpoints",
         "git_runner",
+        "git_worktrees",
         "harness_cli",
         "hotkey_precedence",
         "inbox",

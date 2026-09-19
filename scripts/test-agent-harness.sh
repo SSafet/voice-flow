@@ -215,6 +215,9 @@ compile_and_run git_runner swift/Git/GitProgram.swift swift/Git/GitRunner.swift 
 compile_and_run git_checkpoints swift/Generated/PlatformContracts.swift \
     swift/Git/GitProgram.swift swift/Git/GitRunner.swift swift/Git/GitRevision.swift \
     swift/Git/GitCheckpoints.swift tests/git_checkpoints/main.swift
+compile_and_run git_worktrees swift/Contract/CleanText.swift swift/Contract/ThreadBranchName.swift \
+    swift/Git/GitProgram.swift swift/Git/GitRunner.swift swift/Git/GitRevision.swift \
+    swift/Git/GitWorktrees.swift tests/git_worktrees/main.swift
 compile_and_run cloud_sync swift/CloudSyncModels.swift swift/CloudSyncStore.swift tests/cloud_sync/main.swift
 compile_and_run cloud_sync_bridge -D VOICE_FLOW_QA "${APP_SUPPORT_SOURCES[@]}" tests/cloud_sync_bridge/main.swift \
     -framework Cocoa -framework AVFoundation -framework CoreGraphics -framework ApplicationServices \
