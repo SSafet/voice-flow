@@ -23,6 +23,7 @@
         "capture_clipboard",
         "capture_routing",
         "capture_store",
+        "captured_store",
         "claude_code_runtime",
         "cloud_sync",
         "cloud_sync_bridge",
@@ -1073,6 +1074,7 @@
     { "id": "tests/ripgrep_runtime/test.sh", "runner": "unit", "suites": ["ripgrep_runtime"] },
     { "id": "tests/thread_protocol_sync/test.sh", "runner": "unit", "suites": ["thread_protocol_sync"] },
     { "id": "tests/thread_store/main.swift", "runner": "unit", "suites": ["thread_store"] },
+    { "id": "tests/captured_store/main.swift", "runner": "unit", "suites": ["captured_store"] },
     { "id": "tests/contract_rules/main.swift", "runner": "unit", "suites": ["contract_rules"] },
     { "id": "tests/contract_self_check/main.swift", "runner": "unit", "suites": ["contract_self_check"] },
     {
