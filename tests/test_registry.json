@@ -33,6 +33,7 @@
         "daily_focus",
         "data_sources",
         "data_sources_ui",
+        "device_identity",
         "display_context",
         "evidence",
         "fake_openai_server",
@@ -1270,6 +1271,7 @@
       "suites": [
         "cloud_sync_bridge"
       ]
-    }
+    },
+    { "id": "tests/device_identity/test.sh", "runner": "unit", "suites": ["device_identity"] }
   ]
 }
