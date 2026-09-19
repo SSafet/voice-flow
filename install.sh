@@ -58,6 +58,10 @@ rm -f "$BUILD_DEST/Contents/MacOS/voice-flow"
 cp "$PROJECT_DIR/assets/StatusBarIconTemplate@2x.png" "$BUILD_DEST/Contents/Resources/" 2>/dev/null || true
 cp "$PROJECT_DIR/assets/StatusBarIconTemplate.png"     "$BUILD_DEST/Contents/Resources/" 2>/dev/null || true
 cp "$PROJECT_DIR/assets/icon.icns"                     "$BUILD_DEST/Contents/Resources/" 2>/dev/null || true
+# The Workflow review persona is data, not a Swift string: edit the repository
+# file, not the bundle copy.
+mkdir -p "$BUILD_DEST/Contents/Resources/personas"
+cp "$PROJECT_DIR/assets/personas/workflow-review.md"   "$BUILD_DEST/Contents/Resources/personas/"
 mkdir -p "$BUILD_DEST/Contents/Resources/Runtime/OpenCode"
 cp "$RUNTIME_STAGE/OpenCode/opencode" "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/opencode"
 cp "$RUNTIME_STAGE/OpenCode/versions.json" "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/versions.json"

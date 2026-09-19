@@ -191,6 +191,7 @@ run_unit_command thread_store bash tests/thread_store/test.sh
 run_unit_command captured_context bash tests/captured_context/test.sh
 run_unit_command captured_store bash tests/captured_store/test.sh
 run_unit_command captured_ingest bash tests/captured_ingest/test.sh
+run_unit_command captured_index_build bash tests/captured_index_build/test.sh
 run_unit_command dictation_store bash tests/dictation_store/test.sh
 if should_run app; then
     SELECTED_SUITES=$((SELECTED_SUITES + 1))

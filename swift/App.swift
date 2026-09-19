@@ -309,6 +309,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupMainMenu()
         setupCore()
         setupAgent()
+
+        // The captured index is derived from the files already on disk. The
+        // one-time recovery folds older dictations into the archive first, so
+        // the index then reads them with everything else; the service builds it
+        // in the background and keeps it live.
+        LegacyDictationRecovery.run(root: VoiceFlowPaths.shared.configRoot)
+        CapturedService.shared.start()
+
         setupHotkeys()
 
         requestInitialPermissionsIfNeeded()
@@ -1254,6 +1262,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 trigger: .capture, source: "capture", eventID: summary.id)
         }
         workflowWatcher.onEvent = { [weak self] stream, fields, date in
+            CapturedService.shared.observe(stream: stream, fields: fields, at: date)
             guard stream == "actions" else { return }
             var event = fields
             event["stream"] = stream
