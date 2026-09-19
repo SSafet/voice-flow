@@ -162,7 +162,7 @@ class MainActivity : Activity() {
         applyPairedState()
         if (savedInstanceState == null) handleIntent(intent)
         watchConnectivity()
-        SyncJob.schedule(this)
+        CatchUp.schedule(this, CatchUpReason.PERIODIC)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -1147,6 +1147,7 @@ class MainActivity : Activity() {
         cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 prefs.edit().remove("sync_last_scan").apply()
+                CatchUp.schedule(this@MainActivity, CatchUpReason.NETWORK_RETURNED)
                 executor.execute { processQueue(); quietSync() }
             }
         })

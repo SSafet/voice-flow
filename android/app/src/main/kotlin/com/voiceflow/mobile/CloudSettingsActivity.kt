@@ -82,7 +82,7 @@ class CloudSettingsActivity : Activity() {
                     cloud.preferences.transport = mode
                     if (mode == SyncTransport.CLOUD && cloud.credentials() != null) cloud.importLegacy(refresh = true)
                 }
-                SyncJob.schedule(this); if (mode == SyncTransport.CLOUD) SyncJob.request(this)
+                CatchUp.schedule(this, CatchUpReason.PERIODIC); if (mode == SyncTransport.CLOUD) CatchUp.schedule(this, CatchUpReason.LOCAL_CHANGE)
                 if (mode == SyncTransport.LOCAL && !cloud.preferences.prefs.getBoolean("paired", false)) "Return to Voice Flow to pair this phone with your Mac." else null
             }
         }
@@ -108,7 +108,7 @@ class CloudSettingsActivity : Activity() {
                         if (checked) selected.addAll(collections) else selected.removeAll(collections)
                         cloud.preferences.setIncluded(selected, selectionPartition)
                     }
-                    if (selectionPartition != null) SyncJob.request(this@CloudSettingsActivity)
+                    if (selectionPartition != null) CatchUp.schedule(this@CloudSettingsActivity, CatchUpReason.LOCAL_CHANGE)
                     "Upload selection saved."
                 } }
             })
@@ -116,7 +116,7 @@ class CloudSettingsActivity : Activity() {
         if (credentials != null && cloud.configured()) {
             root.addView(label(credentials.email, 16f, true))
             root.addView(label("${credentials.origin}\nThis Android device: ${credentials.deviceId}"))
-            action("Sync now") { work("Syncing…") { val result = cloud.sync("settings"); if (cloud.hasDelivery()) SyncJob.request(this); result } }
+            action("Sync now") { work("Syncing…") { val result = cloud.sync("settings"); if (cloud.hasDelivery()) CatchUp.schedule(this, CatchUpReason.LOCAL_CHANGE); result } }
             action("Sign out · keep local data") { work("Signing out…") {
                 synchronized(SyncClient.syncLock) { cloud.client().logout() }
                 cloud.preferences.prefs.edit().putBoolean(cloud.preferences.statusKey("auth_required"), true).commit()
@@ -142,7 +142,7 @@ class CloudSettingsActivity : Activity() {
                     work("Signing in…") {
                         val next = (loginClient ?: throw CloudFailure.SignIn()).complete(pending, value, "${Build.MANUFACTURER} ${Build.MODEL}")
                         synchronized(SyncClient.syncLock) { cloud.preferences.use(next); cloud.importLegacy() }
-                        challenge = null; loginClient = null; SyncJob.schedule(this); SyncJob.request(this)
+                        challenge = null; loginClient = null; CatchUp.schedule(this, CatchUpReason.PERIODIC); CatchUp.schedule(this, CatchUpReason.LOCAL_CHANGE)
                         "Signed in. Local edits are saved and queued for cloud sync."
                     }
                 }
@@ -164,7 +164,7 @@ class CloudSettingsActivity : Activity() {
                         work("Saving corrected copy…") {
                             value.put("text", corrected)
                             cloud.capture(listOf(CloudEdit(review.collection, review.recordId, CloudPayload.local(review.collection, review.recordId, value))))
-                            SyncJob.request(this); "Saved. The original copy is retained."
+                            CatchUp.schedule(this, CatchUpReason.LOCAL_CHANGE); "Saved. The original copy is retained."
                         }
                     }.show()
                 }
@@ -176,7 +176,7 @@ class CloudSettingsActivity : Activity() {
             action("Review and reload cloud baseline") {
                 AlertDialog.Builder(this).setTitle("Reload cloud baseline?").setMessage("Your local changes remain saved. Conflicting cloud revisions will need review.")
                     .setNegativeButton("Cancel", null).setPositiveButton("Reload") { _, _ -> work("Reloading cloud history…") {
-                        cloud.engine.resetBaseline(cloud.preferences.partition!!); SyncJob.request(this); null
+                        cloud.engine.resetBaseline(cloud.preferences.partition!!); CatchUp.schedule(this, CatchUpReason.LOCAL_CHANGE); null
                     } }.show()
             }
         }
@@ -190,7 +190,7 @@ class CloudSettingsActivity : Activity() {
             action("Restore ${row.collection.wire} · ${row.recordId.take(18)}") {
                 AlertDialog.Builder(this).setTitle("Restore this cloud record?").setMessage(preview(row.lastLivePayload))
                     .setNegativeButton("Cancel", null).setPositiveButton("Restore") { _, _ -> work("Saving restore…") {
-                        cloud.capture(listOf(CloudEdit(row.collection, row.recordId, row.lastLivePayload, restore = true))); SyncJob.request(this); "Restore queued."
+                        cloud.capture(listOf(CloudEdit(row.collection, row.recordId, row.lastLivePayload, restore = true))); CatchUp.schedule(this, CatchUpReason.LOCAL_CHANGE); "Restore queued."
                     } }.show()
             }
         }
@@ -216,7 +216,7 @@ class CloudSettingsActivity : Activity() {
         }
     }
     private fun resolve(conflict: CloudConflict, remote: CloudRecord, choice: CloudResolution) = work("Saving conflict resolution…") {
-        cloud.engine.resolve(conflict, remote, choice, cloud.preferences.partition!!); SyncJob.request(this); "Resolution queued. Concurrent changes remain protected."
+        cloud.engine.resolve(conflict, remote, choice, cloud.preferences.partition!!); CatchUp.schedule(this, CatchUpReason.LOCAL_CHANGE); "Resolution queued. Concurrent changes remain protected."
     }
     private fun preview(payload: CloudPayload?): String = when (payload) {
         null -> "Deleted"
@@ -249,7 +249,7 @@ class CloudSettingsActivity : Activity() {
                 val edits = listOf(CloudEdit(CloudCollection.PREFERENCES, "agent_model", CloudPayload.Model(modelValue)), CloudEdit(CloudCollection.PREFERENCES, "vocabulary", CloudPayload.Vocabulary(words)), CloudEdit(CloudCollection.PREFERENCES, "cleanup_enabled", CloudPayload.Cleanup(enabled)))
                 edits.forEach { it.payload!!.validate(it.collection, it.recordId) }; cloud.capture(edits)
                 if (!prefs.edit().putString("agent_model", modelValue).putString("vocabulary", JSONArray(words).toString()).putBoolean("cleanup_enabled", enabled).commit()) throw CloudFailure.Storage()
-                SyncJob.request(this); "Preferences saved."
+                CatchUp.schedule(this, CatchUpReason.LOCAL_CHANGE); "Preferences saved."
             }
         }
         section("Provider keys on this phone")

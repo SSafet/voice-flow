@@ -108,11 +108,12 @@ class BubbleService : Service() {
             },
         )
         startInForeground(recording = false)
-        SyncJob.schedule(this)
+        CatchUp.schedule(this, CatchUpReason.PERIODIC)
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 prefs.edit().remove("sync_last_scan").apply()
+                CatchUp.schedule(this@BubbleService, CatchUpReason.NETWORK_RETURNED)
                 executor.execute { drainAndSync(null) }
             }
         }

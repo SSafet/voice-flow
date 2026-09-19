@@ -90,6 +90,19 @@ class CloudSync(private val context: Context) {
         val partition = preferences.partition ?: return
         if (!engine.state(partition).imported) importLegacy()
         journal.save(edits, partition)
+        // A local change asks for a catch-up of its own (08 §3.9 step 2): the
+        // note is durable here, and this is what carries it to Atika next time
+        // the network is up.
+        CatchUp.schedule(context, CatchUpReason.LOCAL_CHANGE)
+    }
+
+    /// The periodic catch-up path: any queued dictation finishes through the
+    /// one pipeline before the record store syncs, so its note reaches Atika
+    /// in the same run. True while work remains for another attempt.
+    fun catchUp(): Boolean {
+        val report = DictationService(context).drain()
+        sync("catch-up")
+        return report.pending > 0 || lastError != null || hasDelivery()
     }
     fun dictation(entry: DictationEntry): CloudEdit {
         val stamp = runCatching { LocalDateTime.parse("${entry.date}T${entry.time}").atZone(ZoneId.systemDefault()).toInstant().toString() }.getOrNull()
