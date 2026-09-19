@@ -1232,6 +1232,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
                view: ShortcutsSettingsView(store: store))
         addTab("Sync", symbol: "arrow.triangle.2.circlepath", height: 620,
                view: CloudSyncSettingsView())
+        addTab("About", symbol: "info.circle", height: 260,
+               view: AboutSettingsView(outcome: ContractSelfCheck.lastOutcome))
 
         window.contentViewController = tabController
         window.center()

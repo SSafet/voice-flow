@@ -159,7 +159,8 @@
       "kind": "new",
       "risk": "high",
       "tests": [
-        "tests/contract_rules/main.swift"
+        "tests/contract_rules/main.swift",
+        "tests/contract_self_check/main.swift"
       ]
     },
     {

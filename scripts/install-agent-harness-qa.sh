@@ -51,6 +51,12 @@ cp -R "$PROJECT_DIR/voice_flow" "$STAGED_APP/Contents/Resources/voice_flow"
 find "$STAGED_APP/Contents/Resources/voice_flow" -type d -name __pycache__ \
     -prune -exec rm -rf {} +
 
+# The launch-time contract self-check reads these (K8). They are data, not
+# code, and they are what the About window reports on.
+rm -rf "$STAGED_APP/Contents/Resources/ContractFixtures"
+cp -R "$PROJECT_DIR/contract-fixtures" "$STAGED_APP/Contents/Resources/ContractFixtures"
+cp "$PROJECT_DIR/thread-protocol.lock" "$STAGED_APP/Contents/Resources/thread-protocol.lock"
+
 # Swift Package Manager, from a snapshot of the package, so that another
 # session editing Swift files during this build cannot make an incoherent
 # binary. The snapshot needs the manifest and its resolution beside the

@@ -78,6 +78,12 @@ rm -rf "$BUILD_DEST/Contents/Resources/voice_flow"
 cp -R "$PROJECT_DIR/voice_flow" "$BUILD_DEST/Contents/Resources/voice_flow"
 find "$BUILD_DEST/Contents/Resources/voice_flow" -type d -name __pycache__ -prune -exec rm -rf {} +
 
+# The launch-time contract self-check reads these (K8). They are data, not
+# code, and they are what the About window reports on.
+rm -rf "$BUILD_DEST/Contents/Resources/ContractFixtures"
+cp -R "$PROJECT_DIR/contract-fixtures" "$BUILD_DEST/Contents/Resources/ContractFixtures"
+cp "$PROJECT_DIR/thread-protocol.lock" "$BUILD_DEST/Contents/Resources/thread-protocol.lock"
+
 # ── build Swift ────────────────────────────────────────
 # Swift Package Manager, so the app can link GRDB, Hummingbird, hummingbird-
 # websocket and Yams (06 §3.1). It replaces the one-command swiftc build of the

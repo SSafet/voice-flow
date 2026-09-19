@@ -122,6 +122,10 @@ compile_only() {
     if [[ " $* " == *"swift/AgentPromptComposer.swift "* && " $* " != *"swift/DailyFocus.swift "* ]]; then
         set -- "$@" "$PROJECT_DIR/swift/DailyFocus.swift"
     fi
+    if [[ " $* " == *"/swift/Store/"* ]]; then
+        grdb_flags
+        set -- "$@" ${GRDB_FLAGS[@]+"${GRDB_FLAGS[@]}"}
+    fi
     if [[ " $* " != *"swift/AgentSourceConfiguration.swift "* ]]; then
         run_step "compile $name" swiftc "$@" "$PROJECT_DIR/swift/AgentSourceConfiguration.swift" -sdk "$XCODE_SDK" -suppress-warnings -o "$BUILD_DIR/$name"
     else
@@ -144,11 +148,27 @@ compile_qa_app() {
 }
 
 APP_SUPPORT_SOURCES=()
-for source in "$PROJECT_DIR"/swift/*.swift; do
-    if [ "$(basename "$source")" != "main.swift" ]; then
-        APP_SUPPORT_SOURCES+=("$source")
+while IFS= read -r source; do
+    [ "$(basename "$source")" = "main.swift" ] || APP_SUPPORT_SOURCES+=("$source")
+done < <(/usr/bin/find "$PROJECT_DIR/swift" -name '*.swift' | LC_ALL=C sort)
+
+# A suite that compiles swift/Store needs GRDB. It comes from the package's own
+# debug build; the searches are the ones tests/thread_store/test.sh explains.
+GRDB_FLAGS=()
+grdb_flags() {
+    [ "${#GRDB_FLAGS[@]}" -eq 0 ] || return 0
+    swift build --package-path "$PROJECT_DIR" -c debug -Xswiftc -suppress-warnings >/dev/null
+    local bin object modulemap
+    bin="$(swift build --package-path "$PROJECT_DIR" -c debug --show-bin-path)"
+    object="$(/usr/bin/find "$bin" -maxdepth 1 -name 'GRDB.o' -print -quit)"
+    modulemap="$(/usr/bin/find "$PROJECT_DIR/.build" -path '*GRDBSQLite*' -name 'module.modulemap' -print -quit)"
+    if [ -z "$object" ] || [ -z "$modulemap" ]; then
+        echo "GRDB's object file or GRDBSQLite's module map is not in $bin" >&2
+        /bin/ls "$bin" >&2
+        exit 1
     fi
-done
+    GRDB_FLAGS=(-I "$bin" -Xcc "-fmodule-map-file=$modulemap" "$object")
+}
 
 cd "$PROJECT_DIR"
 if [ "$MODE" = "--release" ]; then
@@ -186,6 +206,10 @@ fi
 compile_and_run voice_flow_paths swift/VoiceFlowPaths.swift tests/voice_flow_paths/main.swift
 compile_and_run contract_rules swift/Contract/CleanText.swift swift/Contract/FirstLineTitle.swift \
     swift/Contract/ThreadBranchName.swift tests/contract_rules/main.swift
+compile_and_run contract_self_check swift/Generated/PlatformContracts.swift \
+    swift/Generated/PlatformContractsFixtures.swift swift/Contract/CleanText.swift \
+    swift/Contract/FirstLineTitle.swift swift/Contract/ThreadBranchName.swift \
+    swift/Contract/ContractSelfCheck.swift tests/contract_self_check/main.swift
 compile_and_run cloud_sync swift/CloudSyncModels.swift swift/CloudSyncStore.swift tests/cloud_sync/main.swift
 compile_and_run cloud_sync_bridge -D VOICE_FLOW_QA "${APP_SUPPORT_SOURCES[@]}" tests/cloud_sync_bridge/main.swift \
     -framework Cocoa -framework AVFoundation -framework CoreGraphics -framework ApplicationServices \
