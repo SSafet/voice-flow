@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import GRDB
 
@@ -64,6 +65,23 @@ struct ThreadOpenPage {
     let hasOlder: Bool
 }
 
+/// One command's answer: the bytes the work produced, and whether this call was
+/// the repeat that was answered from the ledger instead of running again.
+struct CommandSettlement: Equatable {
+    let result: Data
+    let repeated: Bool
+}
+
+/// What deleting a thread removed: the thread, the folder whose files belonged
+/// to it and had to go after the commit, and how many events and items the
+/// transaction erased.
+struct ThreadDeletion: Equatable {
+    let threadID: String
+    let attachmentFolder: URL
+    let erasedEvents: Int
+    let erasedItems: Int
+}
+
 /// The single writer of the thread store and every read over it (06 §3.2).
 ///
 /// Every write that belongs together is one GRDB transaction: the row, the
@@ -126,6 +144,8 @@ final class ThreadStore {
             }
         }
 
+        let write = try fittingText(of: write, in: db)
+
         var lastSeq = 0
         var lastOriginSeq = 0
         if let counter = try Row.fetchOne(
@@ -155,6 +175,80 @@ final class ThreadStore {
         return StoredEvent(threadID: threadID, seq: seq, origin: StoreHome.marker,
                            originSeq: originSeq, type: write.eventType, turnID: write.turnID,
                            itemID: write.itemID, at: at, payload: payload)
+    }
+
+    /// Applies the contract's text limits to an item write before the row and
+    /// the event are written. The stored item carries the cut text; when
+    /// something was cut the whole original is kept as a file attachment of the
+    /// item's own thread and the item points at it, so nothing is discarded.
+    private func fittingText(of write: ThreadWrite, in db: Database) throws -> ThreadWrite {
+        switch write {
+        case .thread, .turn:
+            return write
+        case .itemStarted(let item):
+            return .itemStarted(try fitted(item, in: db))
+        case .itemUpdated(let item):
+            return .itemUpdated(try fitted(item, in: db))
+        case .itemCompleted(let item):
+            return .itemCompleted(try fitted(item, in: db))
+        }
+    }
+
+    private func fitted(_ item: TPItem, in db: Database) throws -> TPItem {
+        guard let text = item.text else { return item }
+        let budget = item.kind == .toolCall ? ItemText.toolOutputMaxBytes : ItemText.messageMaxBytes
+        let (kept, cut) = ItemText.fit(text, budgetBytes: budget)
+        guard cut else {
+            return kept == text ? item : copy(item, text: kept)
+        }
+        let attachment = try keepWholeText(text, for: item, in: db)
+        return copy(item, text: kept, truncated: true, fullTextAttachmentID: attachment.id)
+    }
+
+    /// Writes the whole original text under `thread-attachments/<thread>/` and
+    /// inserts its row in the same transaction, then answers the attachment.
+    private func keepWholeText(_ text: String, for item: TPItem,
+                               in db: Database) throws -> TPAttachment {
+        let data = Data(text.utf8)
+        let attachmentID = "\(item.id)-full"
+        let folder = paths.configRoot
+            .appendingPathComponent("thread-attachments", isDirectory: true)
+            .appendingPathComponent(item.threadID, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let fileURL = folder.appendingPathComponent("\(attachmentID).txt", isDirectory: false)
+        try data.write(to: fileURL)
+        let attachment = TPAttachment(
+            bytes: TPAttachmentBytes(artifactID: nil, state: .onHome), captureID: nil,
+            context: nil, createdAt: timestamp(), forModel: nil, height: nil,
+            id: attachmentID, kind: .file, marks: nil, mime: "text/plain; charset=utf-8",
+            modelText: nil, name: "\(item.id)-full.txt", sha256: sha256Hex(data),
+            sizeBytes: data.count, threadID: item.threadID, width: nil)
+        try insertAttachmentRow(attachment, itemID: item.id, localPath: fileURL.path, in: db)
+        return attachment
+    }
+
+    private func insertAttachmentRow(_ attachment: TPAttachment, itemID: String?,
+                                     localPath: String?, in db: Database) throws {
+        let record = try ThreadRecords.encode(attachment)
+        try db.execute(sql: """
+            INSERT INTO attachments
+                (id, thread_id, item_id, kind, name, mime, size_bytes, sha256,
+                 capture_id, local_path, created_at, record)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                thread_id = excluded.thread_id, item_id = excluded.item_id,
+                kind = excluded.kind, name = excluded.name, mime = excluded.mime,
+                size_bytes = excluded.size_bytes, sha256 = excluded.sha256,
+                capture_id = excluded.capture_id, local_path = excluded.local_path,
+                created_at = excluded.created_at, record = excluded.record
+            """, arguments: [attachment.id, attachment.threadID, itemID,
+                             attachment.kind.rawValue, attachment.name, attachment.mime,
+                             attachment.sizeBytes, attachment.sha256, attachment.captureID,
+                             localPath, attachment.createdAt, record])
+    }
+
+    private func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private func writeRecordRow(_ write: ThreadWrite, in db: Database) throws {
@@ -472,6 +566,215 @@ final class ThreadStore {
         }
     }
 
+    // MARK: - adoption
+
+    /// Stores one event that Atika produced. It keeps the `origin`, `originSeq`
+    /// and `at` it arrived with and takes the next local `seq`; it is never
+    /// handed to the outbox sink, because it did not happen here. A second
+    /// arrival of the same `(thread, origin, origin_seq)` writes nothing and
+    /// answers `nil`; a thread that is not here is refused with `not_found`.
+    @discardableResult
+    func adopt(_ down: TPThreadEventDown) throws -> StoredEvent? {
+        try pool.write { db in
+            let threadID = down.event.threadID
+            let exists = try Bool.fetchOne(
+                db, sql: "SELECT 1 FROM threads WHERE id = ?", arguments: [threadID]) ?? false
+            if !exists {
+                throw ThreadStoreError(code: .notFound,
+                                       message: "no thread \(threadID) to adopt an event for")
+            }
+            let already = try Bool.fetchOne(db, sql: """
+                SELECT 1 FROM thread_events WHERE thread_id = ? AND origin = ? AND origin_seq = ?
+                """, arguments: [threadID, down.origin, down.originSeq]) ?? false
+            if already { return nil }
+
+            let lastSeq = try Int.fetchOne(
+                db, sql: "SELECT last_seq FROM threads WHERE id = ?",
+                arguments: [threadID]) ?? 0
+            let seq = lastSeq + 1
+            let payloadJSON = try ThreadRecords.encode(down.event)
+            try db.execute(sql: """
+                INSERT INTO thread_events
+                    (thread_id, seq, origin, origin_seq, type, turn_id, item_id, payload, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [threadID, seq, down.origin, down.originSeq,
+                                 down.event.type.rawValue, down.event.turn?.id, down.event.item?.id,
+                                 payloadJSON, down.at])
+            try db.execute(sql: "UPDATE threads SET last_seq = ? WHERE id = ?",
+                           arguments: [seq, threadID])
+            return StoredEvent(threadID: threadID, seq: seq, origin: down.origin,
+                               originSeq: down.originSeq, type: down.event.type,
+                               turnID: down.event.turn?.id, itemID: down.event.item?.id,
+                               at: down.at, payload: down.event)
+        }
+    }
+
+    /// Only the rows this Mac produced, in `origin_seq` order and with the
+    /// origin resolved on the way out. These are what may be offered for
+    /// sending up.
+    func ownEvents(threadID: String, afterOriginSeq: Int) throws -> [StoredEvent] {
+        try pool.read { db in
+            try storedEvents(in: db, threadID: threadID, afterOriginSeq: afterOriginSeq)
+        }
+    }
+
+    private func storedEvents(in db: Database, threadID: String,
+                              afterOriginSeq: Int) throws -> [StoredEvent] {
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT seq, origin, origin_seq, type, turn_id, item_id, payload, created_at
+            FROM thread_events
+            WHERE thread_id = ? AND origin = ? AND origin_seq > ?
+            ORDER BY origin_seq ASC
+            """, arguments: [threadID, StoreHome.marker, afterOriginSeq])
+        return try rows.map { row in
+            let rawType: String = row["type"]
+            guard let type = TPEventType(rawValue: rawType) else {
+                throw ThreadStoreError(code: .invalidParams,
+                                       message: "unknown stored event type \(rawType)")
+            }
+            let payloadJSON: String = row["payload"]
+            let payload = try JSONDecoder().decode(TPDurableEvent.self,
+                                                   from: Data(payloadJSON.utf8))
+            return StoredEvent(threadID: threadID, seq: row["seq"],
+                               origin: StoreHome.resolve(row["origin"], homeID: self.homeID),
+                               originSeq: row["origin_seq"], type: type,
+                               turnID: row["turn_id"], itemID: row["item_id"],
+                               at: row["created_at"], payload: try self.resolve(payload))
+        }
+    }
+
+    /// The highest `origin_seq` this Mac has written in the thread, 0 when it
+    /// has written none.
+    func lastOwnOriginSeq(threadID: String) throws -> Int {
+        try pool.read { db in
+            try Int.fetchOne(db, sql: """
+                SELECT MAX(origin_seq) FROM thread_events WHERE thread_id = ? AND origin = ?
+                """, arguments: [threadID, StoreHome.marker]) ?? 0
+        }
+    }
+
+    // MARK: - search
+
+    /// The full-text index over item text, joined to the thread and leaving out
+    /// deleted threads. A word that is not there returns an empty list, not a
+    /// refusal.
+    func search(_ query: String, threadID: String?, limit: Int) throws -> [TPSearchHit] {
+        try pool.read { db in
+            var sql = """
+                SELECT items.id AS item_id, items.thread_id AS thread_id,
+                       snippet(items_fts, 0, '', '', '…', 8) AS snippet
+                FROM items_fts
+                JOIN items ON items.rowid = items_fts.rowid
+                JOIN threads ON threads.id = items.thread_id
+                WHERE items_fts MATCH ? AND threads.deleted_at IS NULL
+                """
+            var arguments: [DatabaseValueConvertible] = [query]
+            if let threadID {
+                sql += " AND items.thread_id = ?"
+                arguments.append(threadID)
+            }
+            sql += " LIMIT ?"
+            arguments.append(limit)
+            return try Row.fetchAll(db, sql: sql,
+                                    arguments: StatementArguments(arguments)).map { row in
+                TPSearchHit(itemID: row["item_id"], snippet: row["snippet"],
+                            threadID: row["thread_id"])
+            }
+        }
+    }
+
+    // MARK: - the command ledger
+
+    /// One command takes effect once per `commandId`. A repeat with the same
+    /// parameter hash answers the first result; the same id with a different
+    /// hash is a mistake, refused with `invalid_params`. Work that throws is
+    /// not remembered, so it can be sent again.
+    func settle(commandID: String, threadID: String?, method: String, params: Data,
+                run: () throws -> Data) throws -> CommandSettlement {
+        let hash = sha256Hex(params)
+        if let stored = try pool.read({ db in
+            try Row.fetchOne(db, sql: """
+                SELECT params_hash, result FROM thread_commands WHERE command_id = ?
+                """, arguments: [commandID])
+        }) {
+            let storedHash: String = stored["params_hash"]
+            if storedHash != hash {
+                throw ThreadStoreError(
+                    code: .invalidParams,
+                    message: "commandId \(commandID) already ran with different parameters")
+            }
+            let result: String = stored["result"]
+            return CommandSettlement(result: Data(result.utf8), repeated: true)
+        }
+
+        let result = try run()
+        try pool.write { db in
+            try db.execute(sql: """
+                INSERT INTO thread_commands
+                    (command_id, thread_id, method, params_hash, result, received_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, arguments: [commandID, threadID, method, hash,
+                                 String(decoding: result, as: UTF8.self), timestamp()])
+        }
+        return CommandSettlement(result: result, repeated: false)
+    }
+
+    // MARK: - deletion
+
+    /// Deletes a thread: its record keeps the deletion in `deletedAt` and a
+    /// raised version, its rows in `thread_events`, `items`, `turns` and
+    /// `native_consumption` are erased, all in one transaction. The files go
+    /// after the commit; the launch sweep catches a crash in between.
+    func deleteThread(_ id: String) throws -> ThreadDeletion {
+        let folder = paths.configRoot
+            .appendingPathComponent("thread-attachments", isDirectory: true)
+            .appendingPathComponent(id, isDirectory: true)
+        let erased = try pool.write { db -> (events: Int, items: Int) in
+            guard let recordJSON = try String.fetchOne(
+                db, sql: "SELECT record FROM threads WHERE id = ?", arguments: [id]) else {
+                throw ThreadStoreError(code: .notFound, message: "no thread \(id) to delete")
+            }
+            let thread = try ThreadRecords.decodeThread(recordJSON, homeID: self.homeID)
+            try upsertThreadRow(markedDeleted(thread, at: timestamp()), in: db)
+
+            try db.execute(sql: "DELETE FROM thread_events WHERE thread_id = ?", arguments: [id])
+            let events = db.changesCount
+            try db.execute(sql: "DELETE FROM items WHERE thread_id = ?", arguments: [id])
+            let items = db.changesCount
+            try db.execute(sql: "DELETE FROM turns WHERE thread_id = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM native_consumption WHERE thread_id = ?",
+                           arguments: [id])
+            return (events, items)
+        }
+        try? FileManager.default.removeItem(at: folder)
+        return ThreadDeletion(threadID: id, attachmentFolder: folder,
+                              erasedEvents: erased.events, erasedItems: erased.items)
+    }
+
+    /// Removes every folder under `thread-attachments/` whose name is not a
+    /// live thread's id, and answers the folders it removed. A folder that
+    /// cannot be removed is left for the caller to report.
+    @discardableResult
+    func sweepAttachmentFolders() throws -> [URL] {
+        let root = paths.configRoot.appendingPathComponent("thread-attachments", isDirectory: true)
+        let manager = FileManager.default
+        guard let names = try? manager.contentsOfDirectory(atPath: root.path) else { return [] }
+        let live = try pool.read { db in
+            try Set(String.fetchAll(db, sql: "SELECT id FROM threads WHERE deleted_at IS NULL"))
+        }
+        var removed: [URL] = []
+        for name in names where !live.contains(name) {
+            let url = root.appendingPathComponent(name, isDirectory: true)
+            do {
+                try manager.removeItem(at: url)
+                removed.append(url)
+            } catch {
+                continue
+            }
+        }
+        return removed
+    }
+
     // MARK: - observation
 
     /// GRDB's value observation: once with what is there, and again after every
@@ -499,6 +802,43 @@ final class ThreadStore {
         }
         guard let lastReadAt = thread.lastReadAt else { return true }
         return thread.lastActivityAt > lastReadAt
+    }
+
+    private func copy(_ item: TPItem, text: String) -> TPItem {
+        TPItem(agentName: item.agentName, approval: item.approval, attachments: item.attachments,
+               commandID: item.commandID, completedAt: item.completedAt, context: item.context,
+               createdAt: item.createdAt, fullTextAttachmentID: item.fullTextAttachmentID,
+               id: item.id, kind: item.kind, notice: item.notice, parentItemID: item.parentItemID,
+               plan: item.plan, question: item.question, sentFrom: item.sentFrom,
+               status: item.status, text: text, threadID: item.threadID, toolCall: item.toolCall,
+               truncated: item.truncated, turnID: item.turnID)
+    }
+
+    private func copy(_ item: TPItem, text: String, truncated: Bool,
+                      fullTextAttachmentID: String?) -> TPItem {
+        TPItem(agentName: item.agentName, approval: item.approval, attachments: item.attachments,
+               commandID: item.commandID, completedAt: item.completedAt, context: item.context,
+               createdAt: item.createdAt, fullTextAttachmentID: fullTextAttachmentID,
+               id: item.id, kind: item.kind, notice: item.notice, parentItemID: item.parentItemID,
+               plan: item.plan, question: item.question, sentFrom: item.sentFrom,
+               status: item.status, text: text, threadID: item.threadID, toolCall: item.toolCall,
+               truncated: truncated, turnID: item.turnID)
+    }
+
+    private func markedDeleted(_ thread: TPThread, at: String) -> TPThread {
+        TPThread(activity: thread.activity, archivedAt: thread.archivedAt,
+                 attention: thread.attention, branch: thread.branch, cloud: thread.cloud,
+                 createdAt: thread.createdAt, deletedAt: at, externalClient: thread.externalClient,
+                 homeID: thread.homeID, id: thread.id, lastActivityAt: thread.lastActivityAt,
+                 lastReadAt: thread.lastReadAt, lastTurn: thread.lastTurn,
+                 mirrorBlocked: thread.mirrorBlocked, model: thread.model,
+                 personaID: thread.personaID, personaName: thread.personaName,
+                 pinnedAt: thread.pinnedAt, pinnedSlot: thread.pinnedSlot,
+                 projectID: thread.projectID, reasoningEffort: thread.reasoningEffort,
+                 runtime: thread.runtime, startedBy: thread.startedBy, supports: thread.supports,
+                 title: thread.title, titleSource: thread.titleSource,
+                 trustProfile: thread.trustProfile, version: thread.version + 1,
+                 workspaceRoot: thread.workspaceRoot)
     }
 
     private func timestamp() -> String {

@@ -58,6 +58,7 @@
         "system_agents",
         "thread_protocol_sync",
         "thread_store",
+        "thread_store_events",
         "thread_store_records",
         "voice_flow_paths",
         "watcher_bus",
@@ -1075,6 +1076,7 @@
     { "id": "tests/thread_protocol_sync/test.sh", "runner": "unit", "suites": ["thread_protocol_sync"] },
     { "id": "tests/thread_store/main.swift", "runner": "unit", "suites": ["thread_store"] },
     { "id": "tests/thread_store_records/test.sh", "runner": "unit", "suites": ["thread_store_records"] },
+    { "id": "tests/thread_store_events/test.sh", "runner": "unit", "suites": ["thread_store_events"] },
     { "id": "tests/contract_rules/main.swift", "runner": "unit", "suites": ["contract_rules"] },
     { "id": "tests/contract_self_check/main.swift", "runner": "unit", "suites": ["contract_self_check"] },
     {
