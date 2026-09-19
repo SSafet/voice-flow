@@ -46,6 +46,7 @@
         "player",
         "qa_control",
         "queue_editor",
+        "ripgrep_runtime",
         "sandbox_containment",
         "source_review",
         "source_review_transport",
@@ -1066,6 +1067,7 @@
       ]
     },
     { "id": "tests/spm_build/test.sh", "runner": "unit", "suites": ["spm_build"] },
+    { "id": "tests/ripgrep_runtime/test.sh", "runner": "unit", "suites": ["ripgrep_runtime"] },
     { "id": "tests/thread_protocol_sync/test.sh", "runner": "unit", "suites": ["thread_protocol_sync"] },
     {
       "id": "tests/test_backend_protocol.py",

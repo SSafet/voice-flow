@@ -21,6 +21,7 @@ trap cleanup EXIT
 }
 
 "$PROJECT_DIR/scripts/prepare-opencode-runtime.sh" "$RUNTIME_STAGE/OpenCode"
+"$PROJECT_DIR/scripts/prepare-ripgrep-runtime.sh" "$RUNTIME_STAGE/ripgrep"
 cp -R "$PROJECT_DIR/Voice Flow.app" "$STAGED_APP"
 rm -f "$STAGED_APP/Contents/MacOS/voice-flow"
 
@@ -39,6 +40,11 @@ cp "$RUNTIME_STAGE/OpenCode/tool-sdk.json" "$RUNTIME_STAGE/OpenCode/tool-sdk.tar
 cp "$PROJECT_DIR/tests/capabilities.json" \
     "$STAGED_APP/Contents/Resources/QA/capabilities.json"
 chmod 755 "$STAGED_APP/Contents/Resources/Runtime/OpenCode/opencode"
+mkdir -p "$STAGED_APP/Contents/Resources/Runtime/ripgrep"
+cp "$RUNTIME_STAGE/ripgrep/rg" "$STAGED_APP/Contents/Resources/Runtime/ripgrep/rg"
+cp "$RUNTIME_STAGE/ripgrep/versions.json" \
+    "$STAGED_APP/Contents/Resources/Runtime/ripgrep/versions.json"
+chmod 755 "$STAGED_APP/Contents/Resources/Runtime/ripgrep/rg"
 printf '%s' "$PROJECT_DIR" > "$STAGED_APP/Contents/Resources/project_dir.txt"
 rm -rf "$STAGED_APP/Contents/Resources/voice_flow"
 cp -R "$PROJECT_DIR/voice_flow" "$STAGED_APP/Contents/Resources/voice_flow"
@@ -74,11 +80,14 @@ if [ -z "$SIGN_ID" ]; then
 fi
 if [ "$SIGN_ID" = "-" ]; then
     codesign --force --sign - "$STAGED_APP/Contents/Resources/Runtime/OpenCode/opencode"
+    codesign --force --sign - "$STAGED_APP/Contents/Resources/Runtime/ripgrep/rg"
     codesign --force --sign - --identifier "com.voiceflow.app.qa" \
         "$STAGED_APP/Contents/MacOS/voice-flow"
 else
     codesign --force --timestamp=none --sign "$SIGN_ID" \
         "$STAGED_APP/Contents/Resources/Runtime/OpenCode/opencode"
+    codesign --force --timestamp=none --sign "$SIGN_ID" \
+        "$STAGED_APP/Contents/Resources/Runtime/ripgrep/rg"
     codesign --force --timestamp=none --sign "$SIGN_ID" \
         --identifier "com.voiceflow.app.qa" "$STAGED_APP/Contents/MacOS/voice-flow"
 fi

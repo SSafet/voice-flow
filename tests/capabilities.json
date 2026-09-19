@@ -143,6 +143,16 @@
       ]
     },
     {
+      "id": "BLD-06",
+      "area": "build",
+      "name": "Bundle the pinned ripgrep, verified by checksum and version and signed with the bundle",
+      "kind": "new",
+      "risk": "medium",
+      "tests": [
+        "tests/ripgrep_runtime/test.sh"
+      ]
+    },
+    {
       "id": "CAP-01",
       "area": "capture_store",
       "name": "Write capture transcript, metadata, and ordered frames",
