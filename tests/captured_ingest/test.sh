@@ -20,8 +20,10 @@ export VOICE_FLOW_CONFIG_ROOT="$WORK/config"
 mkdir -p "$VOICE_FLOW_CONFIG_ROOT"
 swift build -c debug -Xswiftc -suppress-warnings >/dev/null
 BIN="$(swift build -c debug --show-bin-path)"
+# The flags that link a suite against the package's GRDB, for either products layout.
+. tests/grdb_flags.sh
 swiftc -o "$WORK/captured_ingest" -sdk "$SDK" -suppress-warnings \
-    -I "$BIN/Modules" -L "$BIN" -lGRDB \
+    "${GRDB_LINK[@]}" \
     swift/VoiceFlowPaths.swift \
     swift/DisplayContext.swift \
     swift/CaptureRouting.swift \
