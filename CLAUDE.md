@@ -38,25 +38,24 @@ Design and proof map: `design/vf64/implementation-and-proof.md`.
 
 ```bash
 uv sync                 # once — creates .venv with the Python backend deps
-./install.sh            # compiles swift/*.swift → "/Applications/Voice Flow.app", codesigns
+./install.sh            # builds swift/ with Swift Package Manager → "/Applications/Voice Flow.app", codesigns
 ./install.sh --relaunch # same, then restarts a running Voice Flow on the new build
 open "/Applications/Voice Flow.app"
 ./uninstall.sh          # remove
 ```
 
-`install.sh` compiles every file in `swift/` into one binary and prefers a stable
-**Developer ID** signing identity so macOS keeps TCC / Keychain grants across
-rebuilds (falls back to ad-hoc, which resets permissions each build). It
-builds and signs a staging bundle next to the destination and swaps it in
-with two renames, so a running app is never killed (it keeps the previous
-build until relaunched) and a failed build leaves the installed app intact.
+`install.sh` builds the package in `swift/` with Swift Package Manager into one
+binary and prefers a stable **Developer ID** signing identity so macOS keeps TCC
+/ Keychain grants across rebuilds (falls back to ad-hoc, which resets
+permissions each build). It builds and signs a staging bundle next to the
+destination and swaps it in with two renames, so a running app is never killed
+(it keeps the previous build until relaunched) and a failed build leaves the
+installed app intact.
 
-Quick type-check without installing:
+Quick build without installing:
 
 ```bash
-swiftc swift/*.swift -framework Cocoa -framework AVFoundation -framework CoreGraphics \
-  -framework ApplicationServices -framework Accelerate -framework Security \
-  -framework ScreenCaptureKit -sdk "$(xcrun --show-sdk-path)" -O -suppress-warnings -o /tmp/vf
+swift build -c release -Xswiftc -suppress-warnings
 ```
 
 ## Primary surface: the ChatPanel

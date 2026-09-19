@@ -94,11 +94,12 @@
     {
       "id": "BLD-01",
       "area": "build",
-      "name": "Compile every Swift source with the selected Xcode SDK",
+      "name": "Compile every Swift source with Swift Package Manager",
       "kind": "existing",
       "risk": "high",
       "tests": [
-        "scripts/test-agent-harness.sh:compile_app"
+        "scripts/test-agent-harness.sh:compile_app",
+        "tests/spm_build/test.sh"
       ]
     },
     {
@@ -129,6 +130,16 @@
       "risk": "critical",
       "tests": [
         "tests/voice_flow_paths/main.swift"
+      ]
+    },
+    {
+      "id": "BLD-05",
+      "area": "build",
+      "name": "Copy the thread-protocol contract from the pinned Atika commit and verify every copied file",
+      "kind": "existing",
+      "risk": "high",
+      "tests": [
+        "tests/thread_protocol_sync/test.sh"
       ]
     },
     {

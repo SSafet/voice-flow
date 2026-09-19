@@ -26,8 +26,8 @@ if [ ! -d "$VENV" ]; then
     exit 1
 fi
 
-if ! command -v swiftc &>/dev/null; then
-    echo "Error: swiftc not found. Install Xcode Command Line Tools:"
+if ! command -v swift &>/dev/null; then
+    echo "Error: swift not found. Install Xcode Command Line Tools:"
     echo "  xcode-select --install"
     exit 1
 fi
@@ -71,31 +71,20 @@ rm -rf "$BUILD_DEST/Contents/Resources/voice_flow"
 cp -R "$PROJECT_DIR/voice_flow" "$BUILD_DEST/Contents/Resources/voice_flow"
 find "$BUILD_DEST/Contents/Resources/voice_flow" -type d -name __pycache__ -prune -exec rm -rf {} +
 
-# ── compile Swift ──────────────────────────────────────
-echo "  Compiling Swift..."
-XCODE_SDK="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
-if [ -d "$XCODE_SDK" ]; then
-    SDK="$XCODE_SDK"
-else
-    SDK="$(xcrun --show-sdk-path)"
-fi
-
-swiftc -o "$BUILD_DEST/Contents/MacOS/voice-flow" \
-    "$PROJECT_DIR"/swift/*.swift \
-    -framework Cocoa \
-    -framework AVFoundation \
-    -framework CoreGraphics \
-    -framework ApplicationServices \
-    -framework Accelerate \
-    -framework Security \
-    -framework ScreenCaptureKit \
-    -lsqlite3 \
-    -sdk "$SDK" \
-    -O \
-    -suppress-warnings
-
+# ── build Swift ────────────────────────────────────────
+# Swift Package Manager, so the app can link GRDB, Hummingbird, hummingbird-
+# websocket and Yams (06 §3.1). It replaces the one-command swiftc build of the
+# app and nothing else: the staging bundle, the signature, the swap and the bundled
+# runtimes below are untouched. -suppress-warnings keeps the output as quiet as
+# that call was; it suppresses warnings only, and an error still stops the build.
+echo "  Building Swift..."
+QA_FLAGS=()
+[ -n "${VOICE_FLOW_QA_BUILD:-}" ] && QA_FLAGS=(-Xswiftc -DVOICE_FLOW_QA)
+swift build -c release --package-path "$PROJECT_DIR" -Xswiftc -suppress-warnings "${QA_FLAGS[@]}"
+BIN_PATH="$(swift build --package-path "$PROJECT_DIR" -c release --show-bin-path)"
+cp "$BIN_PATH/voice-flow" "$BUILD_DEST/Contents/MacOS/voice-flow"
 chmod +x "$BUILD_DEST/Contents/MacOS/voice-flow"
-echo "  ✓ Swift binary compiled"
+echo "  ✓ Swift binary built"
 
 # ── codesign ───────────────────────────────────────────
 # Use a stable signing identity when available so macOS keeps TCC

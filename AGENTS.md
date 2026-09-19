@@ -9,7 +9,7 @@ subprocess pipe.
 
 ```bash
 uv sync                 # once — creates .venv with the Python backend deps
-./install.sh            # compiles swift/*.swift → "/Applications/Voice Flow.app", codesigns
+./install.sh            # builds swift/ with Swift Package Manager → "/Applications/Voice Flow.app", codesigns
 open "/Applications/Voice Flow.app"
 ./uninstall.sh          # remove
 ./scripts/test-agent-harness.sh --unit     # deterministic compile + unit/contracts
@@ -18,9 +18,13 @@ open "/Applications/Voice Flow.app"
 ./scripts/test-agent-harness.sh --e2e      # plus isolated signed-app computer QA
 ```
 
-`install.sh` compiles every file in `swift/` into one binary and prefers a stable
-**Developer ID** signing identity so macOS keeps TCC / Keychain grants across
-rebuilds (falls back to ad-hoc, which resets permissions each build).
+`install.sh` builds the package in `swift/` with Swift Package Manager into one
+binary and prefers a stable **Developer ID** signing identity so macOS keeps TCC
+/ Keychain grants across rebuilds (falls back to ad-hoc, which resets
+permissions each build). It builds and signs a staging bundle next to the
+destination and swaps it in with two renames, so a running app is never killed
+(it keeps the previous build until relaunched) and a failed build leaves the
+installed app intact.
 
 `--nightly` adds a two-hour three-agent soak. `--release` runs the complete
 gate plus the four-hour soak and emits audited evidence for every ID in
@@ -66,12 +70,10 @@ OpenRouter model catalog. The user chooses a model and budget; Voice Flow reads
 that model's context/output limits from the provider catalog and writes them
 into OpenCode's private custom-provider config automatically.
 
-Quick type-check without installing:
+Quick build without installing:
 
 ```bash
-swiftc swift/*.swift -framework Cocoa -framework AVFoundation -framework CoreGraphics \
-  -framework ApplicationServices -framework Accelerate -framework Security \
-  -framework ScreenCaptureKit -sdk "$(xcrun --show-sdk-path)" -O -suppress-warnings -o /tmp/vf
+swift build -c release -Xswiftc -suppress-warnings
 ```
 
 ## Data workspace (VF-64)
