@@ -85,6 +85,11 @@ public struct ProofServer: Sendable {
                 body: .init(byteBuffer: ByteBuffer(string: "window.__guardedScriptLoaded = true;"))
             )
         }
+        guarded.post("/api/v1/threads/ticket") { _, _ -> Response in
+            let ticket = await state.mintTicket()
+            return jsonResponse(#"{"ticket":"\#(ticket)"}"#)
+        }
+
         guarded.post("/probe/report") { request, context -> Response in
             let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
             let data = Data(buffer.readableBytesView)
@@ -96,6 +101,25 @@ public struct ProofServer: Sendable {
 
         let wsRouter = Router(context: BasicWebSocketRequestContext.self)
         wsRouter.add(middleware: HostOriginGuard(hosts: allowedHosts, origin: pageOrigin))
+
+        wsRouter.ws(
+            "/api/v1/threads/socket",
+            shouldUpgrade: { request, _ in
+                let ticket = request.uri.queryParameters["ticket"].map(String.init) ?? ""
+                guard await state.consumeTicket(ticket) else {
+                    throw HTTPError(.unauthorized, message: "ticket missing, wrong or already used")
+                }
+                await state.recordUpgradeHeader(
+                    path: "/api/v1/threads/socket",
+                    value: request.headers[secretHeaderName]
+                )
+                return .upgrade([:])
+            },
+            onUpgrade: { _, outbound, _ in
+                try await outbound.write(.text("hello"))
+            }
+        )
+
         return (router, wsRouter)
     }
 

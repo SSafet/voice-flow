@@ -99,5 +99,16 @@ public func nativeChecks(port: Int, secret: String) -> [ProofRow] {
     row("foreign_preflight_refused", preflightRefused,
         "OPTIONS /probe/guarded from http://evil.example: \(preflightDetail)")
 
+    /// Only meaningful next to `socket_opens_with_ticket`: on its own this row
+    /// would pass against a server with no such route at all, and
+    /// `socket_opens_with_ticket` is what proves the route exists.
+    let (socketNoTicket, socketNoTicketDetail) = status(
+        address: "127.0.0.1",
+        request: "GET /api/v1/threads/socket HTTP/1.1\r\n\(goodHost)Upgrade: websocket\r\nConnection: Upgrade\r\n"
+            + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nOrigin: http://localhost:\(port)\r\n\r\n"
+    )
+    row("socket_without_ticket_refused_natively", (socketNoTicket ?? 0) >= 400,
+        "WebSocket handshake with no ticket: \(socketNoTicketDetail)")
+
     return rows
 }

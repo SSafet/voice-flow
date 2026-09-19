@@ -44,6 +44,20 @@ function loadScript(src) {
   });
 }
 
+function openSocket(path, expectText) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = v => { if (!settled) { settled = true; resolve(v); } };
+    let ws;
+    try { ws = new WebSocket(location.origin.replace(/^http/, "ws") + path); }
+    catch (e) { return finish("threw: " + e); }
+    ws.onmessage = ev => { finish(ev.data === expectText ? "message:" + ev.data : "unexpected:" + ev.data); ws.close(); };
+    ws.onerror = () => finish("error");
+    ws.onclose = () => finish("closed-without-message");
+    setTimeout(() => finish("timeout"), 5000);
+  });
+}
+
 async function run() {
   check("secure_context", window.isSecureContext === true, "window.isSecureContext = " + window.isSecureContext);
 
@@ -83,6 +97,26 @@ async function run() {
   check("subresource_without_secret_refused",
         sub === "refused" && window.__guardedScriptLoaded === undefined && guardedJs === 200,
         "<script src=/probe/guarded.js> " + sub + "; GET /probe/guarded.js with the header: " + guardedJs);
+
+  let ticket = "";
+  let ticketStatus = "not requested";
+  try {
+    const r = await fetch("/api/v1/threads/ticket", {method:"POST", headers:{"x-loopback-secret": secret}});
+    ticketStatus = r.status;
+    if (r.status === 200) ticket = (await r.json()).ticket;
+  } catch (e) { ticketStatus = "network-error: " + e; }
+  check("ticket_minted_with_secret", ticketStatus === 200 && ticket.length > 0, "POST /api/v1/threads/ticket: " + ticketStatus);
+
+  const first = await openSocket("/api/v1/threads/socket?ticket=" + ticket, "hello");
+  check("socket_opens_with_ticket", first === "message:hello", "first socket: " + first);
+
+  const second = await openSocket("/api/v1/threads/socket?ticket=" + ticket, "hello");
+  check("ticket_is_single_use", second !== "message:hello", "second socket with the same ticket: " + second);
+
+  const none = await openSocket("/api/v1/threads/socket", "hello");
+  check("socket_without_ticket_refused", none !== "message:hello", "socket with no ticket: " + none);
+
+  check("no_cookie_is_set", document.cookie === "", "document.cookie = '" + document.cookie + "'");
 
   // Built with textContent, never innerHTML: a detail such as
   // "<script src=/probe/guarded.js> refused" is text, and pasting it into the
