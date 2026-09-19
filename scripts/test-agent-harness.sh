@@ -167,6 +167,7 @@ run_unit_command evidence python3 tests/test_evidence.py -q
 run_unit_command thread_protocol_sync bash tests/thread_protocol_sync/test.sh
 run_unit_command spm_build bash tests/spm_build/test.sh
 run_unit_command ripgrep_runtime bash tests/ripgrep_runtime/test.sh
+run_unit_command thread_store bash tests/thread_store/test.sh
 if should_run app; then
     SELECTED_SUITES=$((SELECTED_SUITES + 1))
     run_step "compile release app" compile_app

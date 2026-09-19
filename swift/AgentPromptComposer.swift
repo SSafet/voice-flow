@@ -86,7 +86,7 @@ enum AgentPromptComposer {
     static func canonicalHandoff(_ messages: [AssistantHistoryMessage],
                                  maxMessages: Int = 24,
                                  maxCharacters: Int = 16_000) -> String {
-        let context = messages
+        let context: String = messages
             .filter { $0.role == .user || $0.role == .assistant }
             .suffix(maxMessages)
             .map { message in

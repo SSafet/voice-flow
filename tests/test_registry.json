@@ -56,6 +56,7 @@
         "spm_build",
         "system_agents",
         "thread_protocol_sync",
+        "thread_store",
         "voice_flow_paths",
         "watcher_bus",
         "window_placement",
@@ -1070,6 +1071,7 @@
     { "id": "tests/spm_build/test.sh", "runner": "unit", "suites": ["spm_build"] },
     { "id": "tests/ripgrep_runtime/test.sh", "runner": "unit", "suites": ["ripgrep_runtime"] },
     { "id": "tests/thread_protocol_sync/test.sh", "runner": "unit", "suites": ["thread_protocol_sync"] },
+    { "id": "tests/thread_store/main.swift", "runner": "unit", "suites": ["thread_store"] },
     { "id": "tests/contract_rules/main.swift", "runner": "unit", "suites": ["contract_rules"] },
     {
       "id": "tests/test_backend_protocol.py",

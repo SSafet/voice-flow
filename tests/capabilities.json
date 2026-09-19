@@ -163,6 +163,16 @@
       ]
     },
     {
+      "id": "BLD-08",
+      "area": "build",
+      "name": "Open the one threads.sqlite through GRDB with a shared migrator every later store registers into",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/thread_store/main.swift"
+      ]
+    },
+    {
       "id": "CAP-01",
       "area": "capture_store",
       "name": "Write capture transcript, metadata, and ordered frames",
