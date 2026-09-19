@@ -60,7 +60,10 @@ struct VoiceFlowPaths: Equatable {
             .standardizedFileURL
         if let raw = environment[Self.configRootEnvironmentKey], !raw.isEmpty,
            NSString(string: raw).isAbsolutePath {
-            configRoot = URL(fileURLWithPath: raw, isDirectory: true).standardizedFileURL
+            let requested = URL(fileURLWithPath: raw, isDirectory: true).standardizedFileURL
+            try? FileManager.default.createDirectory(
+                at: requested, withIntermediateDirectories: true)
+            configRoot = Self.canonical(requested)
             // QA authority must describe the resolved storage location, not
             // merely the presence of an environment variable. An explicit
             // production path (including a symlink) is still production.
@@ -68,9 +71,20 @@ struct VoiceFlowPaths: Equatable {
         } else {
             configRoot = productionRoot
             isIsolated = false
+            try? FileManager.default.createDirectory(
+                at: configRoot, withIntermediateDirectories: true)
         }
-        try? FileManager.default.createDirectory(
-            at: configRoot, withIntermediateDirectories: true)
+    }
+
+    /// The data folder is identified by its real location, not by the spelling
+    /// it was reached with. `FileManager` walks `/tmp` as `/private/tmp` and so
+    /// returns paths under the real location; a root that kept the `/tmp`
+    /// spelling would not be a prefix of them, and every reader that turns a
+    /// walked URL back into a path relative to the root would be wrong.
+    private static func canonical(_ url: URL) -> URL {
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard realpath(url.path, &buffer) != nil else { return url }
+        return URL(fileURLWithPath: String(cString: buffer), isDirectory: true)
     }
 
     func file(_ name: String) -> URL {
