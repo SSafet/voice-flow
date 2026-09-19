@@ -30,11 +30,11 @@ One line in the run's output is not from the proof and is not a failure:
 comes from `codesign` ad-hoc signing a bundle under `/tmp`. Signing succeeded and both bundles
 ran; no check is affected and the exit status is 0.
 
-`page.png` is 2200 by 1648 pixels — the view is 1100 points wide and is resized to the page's
-own height plus 24 points before the snapshot is taken, and this display draws at twice that
-in pixels. It shows the checks the page
-itself made, from `secure_context` to `iframe_to_another_localhost_port_loads`, the page's own
-observations under them, and the framed page from the other `localhost` port below the table.
+`page.png` is 2200 by 1648 pixels: the view is 1100 points wide and is resized to the page's
+own height plus 24 points before the snapshot is taken, and this display draws two pixels to
+the point. It shows the checks the page itself made, from `secure_context` to
+`iframe_to_another_localhost_port_loads`, the page's own observations under them, and the
+framed page from the other `localhost` port below the table.
 The rows the native side made — `listens_on_*`, the four refusal checks,
 `socket_without_ticket_refused_natively`, `page_loads`, `page_reported`, `rule_list_compiled`,
 `upgrade_header_*` and `page_snapshot` — are in `result-table.txt`, because the page never saw
