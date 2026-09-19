@@ -1,0 +1,11 @@
+{
+  "type": "PersonaMemoryReadResult",
+  "examples": [
+    {
+      "kind": "core",
+      "content": "- Safet prefers small commits.\n",
+      "revision": "5f0c1d0e6a3b7f1e0c8f4f0e2a1d9b7c6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b",
+      "clipped": false
+    }
+  ]
+}

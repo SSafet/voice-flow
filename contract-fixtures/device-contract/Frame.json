@@ -1,0 +1,334 @@
+{
+  "type": "Frame",
+  "examples": [
+    {
+      "type": "auth.challenge",
+      "authChallenge": {
+        "nonce": "n_4f7c1e0a9b2d",
+        "sentAt": "2026-09-18T09:00:00.000Z"
+      }
+    },
+    {
+      "type": "auth.response",
+      "authResponse": {
+        "signature": "MEQCIF0p7n5wq0o1m3Yk2c9xv8b7a6Z5y4X3w2V1u0TsRqPoAiB9n8m7l6k5j4i3h2g1f0e9d8c7b6a5Z4y3x2w1v0=="
+      }
+    },
+    {
+      "type": "hello",
+      "hello": {
+        "protocolVersion": 4,
+        "manifest": {
+          "appVersion": "3.0.0",
+          "features": [
+            "commands",
+            "items_up",
+            "items_down",
+            "live",
+            "requests",
+            "streams",
+            "mcp"
+          ],
+          "switches": {
+            "threads": true,
+            "files": true,
+            "terminal": false,
+            "observe": true,
+            "present": true,
+            "control": false
+          },
+          "allowedClients": [
+            "dev-41aa90c7",
+            "dev-web-5d02"
+          ],
+          "tools": [
+            {
+              "name": "screen_capture",
+              "description": "Capture the screen and return it as a picture.",
+              "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"display\":{\"type\":\"integer\"}}}",
+              "class": "observe"
+            },
+            {
+              "name": "speak",
+              "description": "Say one sentence through the Mac speakers.",
+              "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}",
+              "class": "present"
+            }
+          ],
+          "catalogHash": "c5a1e0b7"
+        }
+      }
+    },
+    {
+      "type": "welcome",
+      "welcome": {
+        "features": [
+          "commands",
+          "items_up",
+          "items_down",
+          "live",
+          "requests",
+          "streams",
+          "mcp"
+        ],
+        "serverTime": "2026-09-18T09:00:00.000Z",
+        "providerKeyGeneration": 7,
+        "killedClusters": [
+          "terminal"
+        ],
+        "homeId": "mac-mini-7f3a"
+      }
+    },
+    {
+      "type": "welcome",
+      "welcome": {
+        "features": [
+          "commands",
+          "items_up",
+          "items_down",
+          "live",
+          "requests",
+          "streams",
+          "mcp"
+        ],
+        "serverTime": "2026-09-18T09:00:00.000Z",
+        "providerKeyGeneration": 7,
+        "killedClusters": [],
+        "homeId": "mac-mini-7f3a",
+        "allowedClients": [
+          {
+            "clientDeviceId": "dev-41aa90c7",
+            "clientKind": "android",
+            "clientLabel": "Pixel 8"
+          },
+          {
+            "clientDeviceId": "dev-web-5d02",
+            "clientKind": "browser",
+            "clientLabel": "Safari on MacBook Air"
+          }
+        ]
+      }
+    },
+    {
+      "type": "heartbeat",
+      "liveness": {
+        "sentAt": "2026-09-18T09:00:05.250Z"
+      }
+    },
+    {
+      "type": "ping",
+      "liveness": {
+        "sentAt": "2026-09-18T09:00:20.250Z"
+      }
+    },
+    {
+      "type": "protocol.error",
+      "protocolError": {
+        "code": "unsupported_version",
+        "message": "Update VoiceFlow on MacBook (it speaks version 4, Atika needs 5).",
+        "clientVersion": 4,
+        "serverVersion": 5,
+        "minSupported": 5
+      }
+    },
+    {
+      "type": "command",
+      "command": {
+        "id": "cmd-0001",
+        "seq": 12,
+        "kind": "thread.command",
+        "delivery": "connected",
+        "orderKey": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "payloadJson": "{\"commandId\":\"cmd-0001\",\"method\":\"thread/send\",\"paramsJson\":\"{\\\"commandId\\\":\\\"cmd-0001\\\",\\\"threadId\\\":\\\"6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C\\\",\\\"text\\\":\\\"also fix the empty-cart case\\\",\\\"runOn\\\":\\\"auto\\\"}\"}",
+        "createdAt": "2026-09-18T09:00:00.000Z",
+        "expiresAt": "2026-09-18T09:00:15.000Z",
+        "origin": {
+          "clientDeviceId": "dev-41aa90c7",
+          "clientKind": "android",
+          "clientLabel": "Pixel 8"
+        }
+      }
+    },
+    {
+      "type": "command",
+      "command": {
+        "id": "sys-0001",
+        "seq": 13,
+        "kind": "thread.system",
+        "delivery": "stored",
+        "orderKey": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "collapseKey": "title:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "payloadJson": "{\"commandId\":\"sys-0001\",\"method\":\"thread/setAutoTitle\",\"paramsJson\":\"{\\\"threadId\\\":\\\"6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C\\\",\\\"title\\\":\\\"Empty cart placeholder\\\"}\"}",
+        "createdAt": "2026-09-18T09:00:00.000Z",
+        "expiresAt": "2026-09-25T09:00:00.000Z"
+      }
+    },
+    {
+      "type": "command.ack",
+      "commandAck": {
+        "id": "cmd-0001",
+        "outcome": "accepted",
+        "resultJson": "{\"turn\":{\"id\":\"turn-0009\"}}"
+      }
+    },
+    {
+      "type": "command.cancel",
+      "commandCancel": {
+        "id": "sys-0001"
+      }
+    },
+    {
+      "type": "up.state",
+      "state": {
+        "streams": [
+          {
+            "stream": "thread:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+            "throughSeq": 41,
+            "throughSum": "0e1d2c3b4a596877"
+          },
+          {
+            "stream": "records",
+            "throughSeq": 0
+          }
+        ],
+        "last": true
+      }
+    },
+    {
+      "type": "up",
+      "batch": {
+        "stream": "thread:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "items": [
+          {
+            "seq": 42,
+            "kind": "thread.restore_request",
+            "bodyJson": "{\"threadId\":\"6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C\",\"have\":[{\"origin\":\"mac-mini-7f3a\",\"lastOriginSeq\":41}]}",
+            "sum": "3f9a2c51d0e4b7a6"
+          }
+        ],
+        "hintsJson": "{\"watchedLocally\":true}"
+      }
+    },
+    {
+      "type": "up.ack",
+      "ack": {
+        "stream": "thread:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "throughSeq": 42
+      }
+    },
+    {
+      "type": "up.rewind",
+      "rewind": {
+        "stream": "thread:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "haveThroughSeq": 30
+      }
+    },
+    {
+      "type": "up.reject",
+      "reject": {
+        "stream": "thread:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "seq": 42,
+        "code": "invalid",
+        "message": "the turn names a thread that does not exist"
+      }
+    },
+    {
+      "type": "down.state",
+      "state": {
+        "streams": [],
+        "last": true
+      }
+    },
+    {
+      "type": "down",
+      "batch": {
+        "stream": "thread:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C/atika",
+        "items": [
+          {
+            "seq": 1,
+            "kind": "thread.event",
+            "bodyJson": "{\"origin\":\"atika\",\"originSeq\":1,\"at\":\"2026-09-18T09:00:05.250Z\",\"event\":{\"type\":\"turn.updated\",\"threadId\":\"6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C\",\"turn\":{\"id\":\"turn-cloud-0001\",\"threadId\":\"6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C\",\"createdAt\":\"2026-09-18T09:00:05.250Z\",\"status\":\"queued\",\"ranOn\":{\"homeId\":\"atika\",\"kind\":\"atika\",\"label\":\"Atika\"},\"runtime\":\"opencode\",\"startedBy\":{\"kind\":\"user\"}}}}",
+            "sum": "77aa10c2f4e5d6b8"
+          }
+        ]
+      }
+    },
+    {
+      "type": "down.ack",
+      "ack": {
+        "stream": "thread:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C/atika",
+        "throughSeq": 1
+      }
+    },
+    {
+      "type": "down.rewind",
+      "rewind": {
+        "stream": "thread:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C/atika",
+        "haveThroughSeq": 0
+      }
+    },
+    {
+      "type": "down.reject",
+      "reject": {
+        "stream": "thread:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C/atika",
+        "seq": 1,
+        "code": "invalid",
+        "message": "this Mac has no such thread"
+      }
+    },
+    {
+      "type": "live",
+      "live": {
+        "stream": "thread:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+        "kind": "thread.delta",
+        "bodyJson": "{\"threadId\":\"6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C\",\"itemId\":\"item-0007\",\"stream\":\"text\",\"offset\":0,\"delta\":\"Looking at \"}"
+      }
+    },
+    {
+      "type": "request",
+      "request": {
+        "id": "req-0001",
+        "service": "files",
+        "method": "files.read",
+        "paramsJson": "{\"root\":\"01J8ZK3F9APROJECT0000000001\",\"path\":\"src/cart.ts\"}",
+        "deadlineMs": 30000,
+        "origin": {
+          "clientDeviceId": "dev-41aa90c7",
+          "clientKind": "android",
+          "clientLabel": "Pixel 8"
+        },
+        "stream": {
+          "id": "str-0001",
+          "ticket": "tkt_5f0e6c1d2b3a",
+          "url": "wss://api.atika.ai/api/v1/device/stream"
+        }
+      }
+    },
+    {
+      "type": "response",
+      "response": {
+        "id": "req-0001",
+        "ok": true,
+        "resultJson": "{\"etag\":\"a1b2\",\"contentBase64\":\"ZXhwb3J0IHt9Cg==\"}"
+      }
+    },
+    {
+      "type": "request.cancel",
+      "requestCancel": {
+        "id": "req-0002"
+      }
+    },
+    {
+      "type": "mcp",
+      "mcp": {
+        "messageJson": "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"screen_capture\",\"arguments\":{},\"_meta\":{\"ai.atika/threadId\":\"6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C\",\"ai.atika/threadTitle\":\"Trip planning\",\"ai.atika/agent\":\"Flora\",\"ai.atika/class\":\"observe\",\"ai.atika/approvedBy\":\"dev-41aa90c7\"}}}"
+      }
+    },
+    {
+      "type": "mcp",
+      "mcp": {
+        "messageJson": "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"captured\"}],\"_meta\":{\"captureId\":\"shot:2026-09-18/shot-090000.jpg\"}}}"
+      }
+    }
+  ]
+}

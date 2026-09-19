@@ -1,0 +1,78 @@
+{
+  "type": "ChannelError",
+  "examples": [
+    {
+      "code": "device_not_found",
+      "message": "example of device_not_found"
+    },
+    {
+      "code": "device_offline",
+      "message": "example of device_offline"
+    },
+    {
+      "code": "device_disconnected",
+      "message": "example of device_disconnected"
+    },
+    {
+      "code": "device_timeout",
+      "message": "example of device_timeout"
+    },
+    {
+      "code": "client_not_allowed",
+      "message": "example of client_not_allowed"
+    },
+    {
+      "code": "disabled_on_device",
+      "message": "example of disabled_on_device"
+    },
+    {
+      "code": "project_read_only",
+      "message": "example of project_read_only"
+    },
+    {
+      "code": "gate_unreadable",
+      "message": "example of gate_unreadable"
+    },
+    {
+      "code": "cluster_disabled",
+      "message": "example of cluster_disabled"
+    },
+    {
+      "code": "grant_not_answered",
+      "message": "example of grant_not_answered"
+    },
+    {
+      "code": "result_too_large",
+      "message": "example of result_too_large"
+    },
+    {
+      "code": "store_diverged",
+      "message": "example of store_diverged"
+    },
+    {
+      "code": "not_channel_owner",
+      "message": "example of not_channel_owner"
+    },
+    {
+      "code": "update_required",
+      "message": "example of update_required"
+    },
+    {
+      "code": "takeover_not_confirmed",
+      "message": "example of takeover_not_confirmed"
+    },
+    {
+      "code": "device_key_ceiling_reached",
+      "message": "example of device_key_ceiling_reached"
+    },
+    {
+      "code": "provider_admin_key_missing",
+      "message": "example of provider_admin_key_missing"
+    },
+    {
+      "code": "files.conflict",
+      "message": "the file changed",
+      "detailsJson": "{\"etag\":\"a1b2\"}"
+    }
+  ]
+}

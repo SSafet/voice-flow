@@ -1,0 +1,27 @@
+{
+  "type": "CommandAck",
+  "examples": [
+    {
+      "id": "cmd-0001",
+      "outcome": "accepted",
+      "resultJson": "{\"turn\":{\"id\":\"turn-0009\"}}"
+    },
+    {
+      "id": "cmd-0001",
+      "outcome": "rejected",
+      "error": {
+        "code": "client_not_allowed",
+        "message": "This Mac has not allowed Pixel 8 yet."
+      }
+    },
+    {
+      "id": "cmd-0001",
+      "outcome": "duplicate",
+      "resultJson": "{\"turn\":{\"id\":\"turn-0009\"}}"
+    },
+    {
+      "id": "sys-0001",
+      "outcome": "cancelled"
+    }
+  ]
+}

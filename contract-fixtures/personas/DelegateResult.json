@@ -1,0 +1,22 @@
+{
+  "type": "DelegateResult",
+  "examples": [
+    {
+      "results": [
+        {
+          "persona": "reviewer",
+          "status": "completed",
+          "text": "No findings."
+        },
+        {
+          "persona": "qa",
+          "status": "refused",
+          "error": {
+            "code": "delegate_limit",
+            "message": "This turn has already started 12 delegated tasks."
+          }
+        }
+      ]
+    }
+  ]
+}

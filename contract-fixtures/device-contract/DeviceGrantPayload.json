@@ -1,0 +1,12 @@
+{
+  "type": "DeviceGrantPayload",
+  "examples": [
+    {
+      "deviceId": "dev-8c21f4e0",
+      "deviceLabel": "Safet's MacBook Pro",
+      "class": "observe",
+      "toolName": "screen_capture",
+      "argsPreview": "{}"
+    }
+  ]
+}

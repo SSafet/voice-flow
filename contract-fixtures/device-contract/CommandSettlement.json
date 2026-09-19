@@ -1,0 +1,34 @@
+{
+  "type": "CommandSettlement",
+  "examples": [
+    {
+      "commandId": "cmd-0001",
+      "outcome": "accepted",
+      "resultJson": "{\"turn\":{\"id\":\"turn-0009\"}}"
+    },
+    {
+      "commandId": "cmd-0001",
+      "outcome": "rejected",
+      "error": {
+        "code": "client_not_allowed",
+        "message": "This Mac has not allowed Pixel 8 yet."
+      }
+    },
+    {
+      "commandId": "cmd-0001",
+      "outcome": "duplicate"
+    },
+    {
+      "commandId": "cmd-0003",
+      "outcome": "expired"
+    },
+    {
+      "commandId": "cmd-0004",
+      "outcome": "unanswered"
+    },
+    {
+      "commandId": "sys-0001",
+      "outcome": "cancelled"
+    }
+  ]
+}

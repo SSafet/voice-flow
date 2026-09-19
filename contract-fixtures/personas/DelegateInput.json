@@ -1,0 +1,17 @@
+{
+  "type": "DelegateInput",
+  "examples": [
+    {
+      "tasks": [
+        {
+          "persona": "reviewer",
+          "task": "Review the diff of src/cart.ts against main and list correctness problems."
+        },
+        {
+          "persona": "QA",
+          "task": "Open the cart page on the dev server and try to add three items."
+        }
+      ]
+    }
+  ]
+}

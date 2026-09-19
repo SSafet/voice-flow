@@ -1,0 +1,30 @@
+{
+  "type": "DelegateTaskResult",
+  "examples": [
+    {
+      "persona": "reviewer",
+      "status": "completed",
+      "text": "Two findings, both in the quantity check."
+    },
+    {
+      "persona": "scout",
+      "status": "failed",
+      "error": {
+        "code": "runtime_unavailable",
+        "message": "The model did not answer."
+      }
+    },
+    {
+      "persona": "writer",
+      "status": "stopped"
+    },
+    {
+      "persona": "qa",
+      "status": "refused",
+      "error": {
+        "code": "delegate_limit",
+        "message": "This turn has already started 12 delegated tasks."
+      }
+    }
+  ]
+}

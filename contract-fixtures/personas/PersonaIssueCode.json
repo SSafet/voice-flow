@@ -1,0 +1,15 @@
+{
+  "type": "PersonaIssueCode",
+  "examples": [
+    "frontmatter_invalid",
+    "name_missing",
+    "name_duplicate",
+    "instructions_too_long",
+    "symlink_escape",
+    "skill_invalid",
+    "skill_listed_missing",
+    "delegate_unresolved",
+    "delegate_nested",
+    "core_over_cap"
+  ]
+}

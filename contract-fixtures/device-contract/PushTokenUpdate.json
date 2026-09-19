@@ -1,0 +1,9 @@
+{
+  "type": "PushTokenUpdate",
+  "examples": [
+    {
+      "platform": "fcm",
+      "token": "fGx3kQ9vT0a:APA91bH-example-registration-token"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "type": "Origin",
+  "examples": [
+    {
+      "clientDeviceId": "dev-41aa90c7",
+      "clientKind": "android",
+      "clientLabel": "Pixel 8"
+    }
+  ]
+}

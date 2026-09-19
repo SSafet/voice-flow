@@ -1,0 +1,23 @@
+{
+  "type": "StreamState",
+  "examples": [
+    {
+      "streams": [
+        {
+          "stream": "thread:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+          "throughSeq": 41,
+          "throughSum": "0e1d2c3b4a596877"
+        },
+        {
+          "stream": "records",
+          "throughSeq": 0
+        }
+      ],
+      "last": true
+    },
+    {
+      "streams": [],
+      "last": false
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "type": "PersonaMemoryKind",
+  "examples": [
+    "core",
+    "ledger"
+  ]
+}

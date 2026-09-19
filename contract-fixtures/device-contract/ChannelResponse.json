@@ -1,0 +1,27 @@
+{
+  "type": "ChannelResponse",
+  "examples": [
+    {
+      "id": "req-0001",
+      "ok": true,
+      "resultJson": "{\"etag\":\"a1b2\",\"contentBase64\":\"ZXhwb3J0IHt9Cg==\"}"
+    },
+    {
+      "id": "req-0002",
+      "ok": false,
+      "error": {
+        "code": "disabled_on_device",
+        "message": "Switched off on the MacBook",
+        "detailsJson": "{\"switch\":\"observe\"}"
+      }
+    },
+    {
+      "id": "req-0001",
+      "ok": false,
+      "error": {
+        "code": "result_too_large",
+        "message": "the result was 11 MiB; the limit is 8 MiB"
+      }
+    }
+  ]
+}

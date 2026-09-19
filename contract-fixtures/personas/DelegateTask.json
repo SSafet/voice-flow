@@ -1,0 +1,9 @@
+{
+  "type": "DelegateTask",
+  "examples": [
+    {
+      "persona": "reviewer",
+      "task": "Review the diff of src/cart.ts against main and list correctness problems."
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "type": "Command",
+  "examples": [
+    {
+      "id": "cmd-0001",
+      "seq": 12,
+      "kind": "thread.command",
+      "delivery": "connected",
+      "orderKey": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "payloadJson": "{\"commandId\":\"cmd-0001\",\"method\":\"thread/send\",\"paramsJson\":\"{\\\"commandId\\\":\\\"cmd-0001\\\",\\\"threadId\\\":\\\"6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C\\\",\\\"text\\\":\\\"also fix the empty-cart case\\\",\\\"runOn\\\":\\\"auto\\\"}\"}",
+      "createdAt": "2026-09-18T09:00:00.000Z",
+      "expiresAt": "2026-09-18T09:00:15.000Z",
+      "origin": {
+        "clientDeviceId": "dev-41aa90c7",
+        "clientKind": "android",
+        "clientLabel": "Pixel 8"
+      }
+    },
+    {
+      "id": "sys-0001",
+      "seq": 13,
+      "kind": "thread.system",
+      "delivery": "stored",
+      "orderKey": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "collapseKey": "title:6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "payloadJson": "{\"commandId\":\"sys-0001\",\"method\":\"thread/setAutoTitle\",\"paramsJson\":\"{\\\"threadId\\\":\\\"6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C\\\",\\\"title\\\":\\\"Empty cart placeholder\\\"}\"}",
+      "createdAt": "2026-09-18T09:00:00.000Z",
+      "expiresAt": "2026-09-25T09:00:00.000Z"
+    },
+    {
+      "id": "cmd-0002",
+      "seq": 14,
+      "kind": "device.client_decision",
+      "delivery": "stored",
+      "payloadJson": "{\"clientDeviceId\":\"dev-web-77b1\",\"decision\":\"allow\"}",
+      "createdAt": "2026-09-18T09:00:00.000Z",
+      "expiresAt": "2026-09-25T09:00:00.000Z",
+      "origin": {
+        "clientDeviceId": "dev-41aa90c7",
+        "clientKind": "android",
+        "clientLabel": "Pixel 8"
+      }
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "type": "Hello",
+  "examples": [
+    {
+      "protocolVersion": 4,
+      "manifest": {
+        "appVersion": "3.0.0",
+        "features": [
+          "commands",
+          "items_up",
+          "items_down",
+          "live",
+          "requests",
+          "streams",
+          "mcp"
+        ],
+        "switches": {
+          "threads": true,
+          "files": true,
+          "terminal": false,
+          "observe": true,
+          "present": true,
+          "control": false
+        },
+        "allowedClients": [
+          "dev-41aa90c7",
+          "dev-web-5d02"
+        ],
+        "tools": [
+          {
+            "name": "screen_capture",
+            "description": "Capture the screen and return it as a picture.",
+            "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"display\":{\"type\":\"integer\"}}}",
+            "class": "observe"
+          },
+          {
+            "name": "speak",
+            "description": "Say one sentence through the Mac speakers.",
+            "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}",
+            "class": "present"
+          }
+        ],
+        "catalogHash": "c5a1e0b7"
+      }
+    }
+  ]
+}

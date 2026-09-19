@@ -1,0 +1,26 @@
+{
+  "type": "PersonaHeader",
+  "examples": [
+    {
+      "name": "FLORA",
+      "description": "Organizes thoughts, files work, recalls decisions.",
+      "voice": "nova",
+      "model": "anthropic/claude-sonnet-4.6",
+      "effort": "high",
+      "skills": [
+        "tickets"
+      ],
+      "delegates": [
+        "reviewer",
+        "scout"
+      ]
+    },
+    {
+      "name": "Assistant"
+    },
+    {
+      "name": "Quiet",
+      "skills": []
+    }
+  ]
+}

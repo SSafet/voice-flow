@@ -1,0 +1,57 @@
+{
+  "type": "Welcome",
+  "examples": [
+    {
+      "features": [
+        "commands",
+        "items_up",
+        "items_down",
+        "live",
+        "requests",
+        "streams",
+        "mcp"
+      ],
+      "serverTime": "2026-09-18T09:00:00.000Z",
+      "providerKeyGeneration": 7,
+      "killedClusters": [
+        "terminal"
+      ],
+      "homeId": "mac-mini-7f3a"
+    },
+    {
+      "features": [
+        "commands",
+        "items_up",
+        "items_down",
+        "live",
+        "requests",
+        "streams",
+        "mcp"
+      ],
+      "serverTime": "2026-09-18T09:00:00.000Z",
+      "providerKeyGeneration": 7,
+      "killedClusters": [],
+      "homeId": "mac-mini-7f3a",
+      "allowedClients": [
+        {
+          "clientDeviceId": "dev-41aa90c7",
+          "clientKind": "android",
+          "clientLabel": "Pixel 8"
+        },
+        {
+          "clientDeviceId": "dev-web-5d02",
+          "clientKind": "browser",
+          "clientLabel": "Safari on MacBook Air"
+        }
+      ]
+    },
+    {
+      "features": [
+        "mcp"
+      ],
+      "serverTime": "2026-09-18T09:00:00.000Z",
+      "providerKeyGeneration": 0,
+      "killedClusters": []
+    }
+  ]
+}

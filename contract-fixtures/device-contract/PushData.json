@@ -1,0 +1,68 @@
+{
+  "type": "PushData",
+  "examples": [
+    {
+      "v": "1",
+      "deviceId": "dev-41aa90c7",
+      "sentAt": "2026-09-18T09:00:00.000Z",
+      "endpointId": "cloud",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "projectId": "01J8ZK3F9APROJECT0000000001",
+      "title": "Fix cart",
+      "kind": "attention",
+      "reason": "approval",
+      "seq": "41",
+      "focus": "approval",
+      "body": "Needs your approval · pantria"
+    },
+    {
+      "v": "1",
+      "deviceId": "dev-41aa90c7",
+      "sentAt": "2026-09-18T09:00:00.000Z",
+      "endpointId": "cloud",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "projectId": "01J8ZK3F9APROJECT0000000001",
+      "title": "Fix cart",
+      "kind": "attention",
+      "reason": "question",
+      "seq": "42",
+      "focus": "question",
+      "body": "Asked you a question · pantria"
+    },
+    {
+      "v": "1",
+      "deviceId": "dev-41aa90c7",
+      "sentAt": "2026-09-18T09:00:00.000Z",
+      "endpointId": "cloud",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "projectId": "01J8ZK3F9APROJECT0000000001",
+      "title": "Fix cart",
+      "kind": "attention",
+      "reason": "failed",
+      "seq": "43",
+      "focus": "end",
+      "body": "Failed · pantria"
+    },
+    {
+      "v": "1",
+      "deviceId": "dev-41aa90c7",
+      "sentAt": "2026-09-18T09:00:00.000Z",
+      "endpointId": "cloud",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "projectId": "01J8ZK3F9APROJECT0000000001",
+      "title": "Fix cart",
+      "kind": "done",
+      "reason": "completed",
+      "seq": "44",
+      "body": "Finished · pantria"
+    },
+    {
+      "v": "1",
+      "deviceId": "dev-41aa90c7",
+      "sentAt": "2026-09-18T09:00:00.000Z",
+      "kind": "call",
+      "seq": "45",
+      "callId": "call-0001"
+    }
+  ]
+}

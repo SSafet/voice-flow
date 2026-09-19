@@ -1,0 +1,15 @@
+{
+  "type": "PersonaMemoryInput",
+  "examples": [
+    {
+      "operation": "read",
+      "kind": "core"
+    },
+    {
+      "operation": "update",
+      "kind": "ledger",
+      "content": "2026-09-18 — the staging database moved to kuro.\n",
+      "expected_revision": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

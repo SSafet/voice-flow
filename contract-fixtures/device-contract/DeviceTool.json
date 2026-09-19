@@ -1,0 +1,23 @@
+{
+  "type": "DeviceTool",
+  "examples": [
+    {
+      "name": "screen_capture",
+      "description": "Capture the screen and return it as a picture.",
+      "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"display\":{\"type\":\"integer\"}}}",
+      "class": "observe"
+    },
+    {
+      "name": "speak",
+      "description": "Say one sentence through the Mac speakers.",
+      "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}",
+      "class": "present"
+    },
+    {
+      "name": "get_location",
+      "description": "The phone position.",
+      "inputSchemaJson": "{\"type\":\"object\",\"properties\":{}}",
+      "class": "observe"
+    }
+  ]
+}

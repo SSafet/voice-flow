@@ -1,0 +1,9 @@
+{
+  "type": "DelegateTaskError",
+  "examples": [
+    {
+      "code": "budget_exhausted",
+      "message": "Today's budget is used up."
+    }
+  ]
+}

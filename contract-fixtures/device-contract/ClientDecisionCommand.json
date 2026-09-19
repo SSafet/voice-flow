@@ -1,0 +1,17 @@
+{
+  "type": "ClientDecisionCommand",
+  "examples": [
+    {
+      "clientDeviceId": "dev-web-77b1",
+      "decision": "allow"
+    },
+    {
+      "clientDeviceId": "dev-web-77b1",
+      "decision": "deny"
+    },
+    {
+      "clientDeviceId": "dev-web-5d02",
+      "decision": "remove"
+    }
+  ]
+}

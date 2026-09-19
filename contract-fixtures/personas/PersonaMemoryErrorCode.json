@@ -1,0 +1,9 @@
+{
+  "type": "PersonaMemoryErrorCode",
+  "examples": [
+    "invalid_revision",
+    "oversized",
+    "secret_detected",
+    "unavailable"
+  ]
+}

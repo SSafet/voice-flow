@@ -1,0 +1,8 @@
+{
+  "type": "DeviceCallResult",
+  "examples": [
+    {
+      "mcpJson": "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"42.6977, 23.3219\"}]}}"
+    }
+  ]
+}

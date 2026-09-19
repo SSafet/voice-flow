@@ -1,0 +1,34 @@
+{
+  "type": "ChannelRequest",
+  "examples": [
+    {
+      "id": "req-0001",
+      "service": "files",
+      "method": "files.read",
+      "paramsJson": "{\"root\":\"01J8ZK3F9APROJECT0000000001\",\"path\":\"src/cart.ts\"}",
+      "deadlineMs": 30000,
+      "origin": {
+        "clientDeviceId": "dev-41aa90c7",
+        "clientKind": "android",
+        "clientLabel": "Pixel 8"
+      },
+      "stream": {
+        "id": "str-0001",
+        "ticket": "tkt_5f0e6c1d2b3a",
+        "url": "wss://api.atika.ai/api/v1/device/stream"
+      }
+    },
+    {
+      "id": "req-0002",
+      "service": "captured",
+      "method": "captured.search",
+      "paramsJson": "{\"query\":\"invoice\"}",
+      "deadlineMs": 30000,
+      "origin": {
+        "clientDeviceId": "dev-41aa90c7",
+        "clientKind": "android",
+        "clientLabel": "Pixel 8"
+      }
+    }
+  ]
+}

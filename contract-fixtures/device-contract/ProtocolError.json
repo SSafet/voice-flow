@@ -1,0 +1,12 @@
+{
+  "type": "ProtocolError",
+  "examples": [
+    {
+      "code": "unsupported_version",
+      "message": "Update VoiceFlow on MacBook (it speaks version 4, Atika needs 5).",
+      "clientVersion": 4,
+      "serverVersion": 5,
+      "minSupported": 5
+    }
+  ]
+}

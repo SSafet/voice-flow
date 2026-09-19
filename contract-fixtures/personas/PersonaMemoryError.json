@@ -1,0 +1,22 @@
+{
+  "type": "PersonaMemoryError",
+  "examples": [
+    {
+      "code": "invalid_revision",
+      "message": "The file changed since you read it. Read it again and apply your change on top."
+    },
+    {
+      "code": "oversized",
+      "message": "Core memory holds at most 12,000 characters.",
+      "limit": 12000
+    },
+    {
+      "code": "secret_detected",
+      "message": "The content looks like it holds a secret. Nothing was stored."
+    },
+    {
+      "code": "unavailable",
+      "message": "This thread has no persona."
+    }
+  ]
+}

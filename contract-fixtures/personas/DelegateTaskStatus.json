@@ -1,0 +1,9 @@
+{
+  "type": "DelegateTaskStatus",
+  "examples": [
+    "completed",
+    "failed",
+    "stopped",
+    "refused"
+  ]
+}
