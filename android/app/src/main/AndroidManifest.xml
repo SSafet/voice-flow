@@ -14,6 +14,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
+        android:name=".VoiceFlowApp"
         android:label="Voice Flow"
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.VoiceFlow"
