@@ -42,6 +42,9 @@
         "opencode_updater",
         "openrouter_model_picker",
         "openrouter_models",
+        "outside_sessions_store",
+        "outside_sessions_threads",
+        "outside_sessions_turns",
         "overlay_contracts",
         "player",
         "qa_control",
@@ -1026,6 +1029,27 @@
       "runner": "unit",
       "suites": [
         "openrouter_models"
+      ]
+    },
+    {
+      "id": "tests/outside_sessions_threads/test.sh",
+      "runner": "unit",
+      "suites": [
+        "outside_sessions_threads"
+      ]
+    },
+    {
+      "id": "tests/outside_sessions_turns/test.sh",
+      "runner": "unit",
+      "suites": [
+        "outside_sessions_turns"
+      ]
+    },
+    {
+      "id": "tests/outside_sessions_store/test.sh",
+      "runner": "unit",
+      "suites": [
+        "outside_sessions_store"
       ]
     },
     {

@@ -166,6 +166,9 @@ run_unit_command backend_protocol "$PROJECT_DIR/.venv/bin/python" tests/test_bac
 run_unit_command fake_openai_server python3 tests/test_fake_openai_server.py -q
 run_unit_command harness_cli python3 tests/test_harness_cli.py -q
 run_unit_command evidence python3 tests/test_evidence.py -q
+run_unit_command outside_sessions_threads bash tests/outside_sessions_threads/test.sh
+run_unit_command outside_sessions_turns bash tests/outside_sessions_turns/test.sh
+run_unit_command outside_sessions_store bash tests/outside_sessions_store/test.sh
 if should_run app; then
     SELECTED_SUITES=$((SELECTED_SUITES + 1))
     run_step "compile release app" compile_app
