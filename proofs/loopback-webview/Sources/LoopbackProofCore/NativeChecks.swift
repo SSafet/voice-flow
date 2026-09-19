@@ -90,7 +90,12 @@ public func nativeChecks(port: Int, secret: String) -> [ProofRow] {
         request: "OPTIONS /probe/guarded HTTP/1.1\r\n\(goodHost)Origin: http://evil.example\r\n"
             + "Access-Control-Request-Method: GET\r\nAccess-Control-Request-Headers: x-loopback-secret\r\nConnection: close\r\n\r\n"
     )
-    let preflightRefused = (preflight ?? 0) >= 400
+    /// Not "any status at or above 400": a server with no guard and no such path
+    /// answers this request `404`, and a check that passes on that passes when the
+    /// thing it tests is absent, which the Global Constraints forbid. The refusal
+    /// this row is about is the one `HostOriginGuard` makes on a foreign `Origin`,
+    /// and that refusal is a `403`.
+    let preflightRefused = preflight == 403
     row("foreign_preflight_refused", preflightRefused,
         "OPTIONS /probe/guarded from http://evil.example: \(preflightDetail)")
 
