@@ -131,6 +131,33 @@ do {
 } catch PersonaStoreError.nameTaken(_) { } catch {
     expect(false, "a duplicate name gives name_taken, got \(error)")
 }
+// An empty or over-long name is a malformed request, refused by name.
+do {
+    _ = try store.create(name: "   ")
+    expect(false, "an empty name is refused")
+} catch PersonaStoreError.invalidPersona(_) { } catch {
+    expect(false, "an empty name gives invalid_persona, got \(error)")
+}
+do {
+    _ = try store.create(name: String(repeating: "a", count: 65))
+    expect(false, "an over-long name is refused")
+} catch PersonaStoreError.invalidPersona(_) { } catch {
+    expect(false, "an over-long name gives invalid_persona, got \(error)")
+}
+// A missing persona is named, not confused with an unusable one.
+do {
+    _ = try store.document(id: "no-such-persona")
+    expect(false, "a missing persona is refused")
+} catch PersonaStoreError.gone(_) { } catch {
+    expect(false, "a missing persona gives persona_gone, got \(error)")
+}
+do {
+    _ = try store.updateMemory(id: "no-such-persona", kind: "core", content: "x",
+                               expectedRevision: "0")
+    expect(false, "memory of a missing persona is refused")
+} catch PersonaStoreError.unavailable(_) { } catch {
+    expect(false, "memory of a missing persona gives unavailable, got \(error)")
+}
 // A different name that makes the same slug gets -2 (11 §3.5).
 do {
     let second = try store.create(name: "Flora!")
