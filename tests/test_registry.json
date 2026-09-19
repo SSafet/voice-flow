@@ -36,6 +36,7 @@
         "display_context",
         "evidence",
         "fake_openai_server",
+        "git_runner",
         "harness_cli",
         "hotkey_precedence",
         "inbox",

@@ -210,6 +210,8 @@ compile_and_run contract_self_check swift/Generated/PlatformContracts.swift \
     swift/Generated/PlatformContractsFixtures.swift swift/Contract/CleanText.swift \
     swift/Contract/FirstLineTitle.swift swift/Contract/ThreadBranchName.swift \
     swift/Contract/ContractSelfCheck.swift tests/contract_self_check/main.swift
+compile_and_run git_runner swift/Git/GitProgram.swift swift/Git/GitRunner.swift \
+    swift/Git/GitRevision.swift tests/git_runner/main.swift
 compile_and_run cloud_sync swift/CloudSyncModels.swift swift/CloudSyncStore.swift tests/cloud_sync/main.swift
 compile_and_run cloud_sync_bridge -D VOICE_FLOW_QA "${APP_SUPPORT_SOURCES[@]}" tests/cloud_sync_bridge/main.swift \
     -framework Cocoa -framework AVFoundation -framework CoreGraphics -framework ApplicationServices \
