@@ -124,8 +124,11 @@ expectEqual(shell("git diff --cached --name-only", in: staged)
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             "hand.txt", "the file staged by hand is still the only staged file")
 let statusAfterChange = shell("git status --porcelain", in: staged)
-expect(statusAfterChange != statusBefore,
-       "the test itself changed a file, so the two status readings must differ")
+// free.txt is untracked before and after, and an untracked file reads "?? free.txt" whatever
+// its content, so the two readings are equal exactly when recording touched nothing of the
+// person's: not the staging area, not the tracked files, not the list of untracked ones.
+expectEqual(statusAfterChange, statusBefore,
+            "recording two checkpoints left the person's status exactly as it was")
 expect(statusAfterChange.contains("A  hand.txt"),
        "the staged file is still staged: \(statusAfterChange)")
 
