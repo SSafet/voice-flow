@@ -31,6 +31,10 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 fail() { printf 'P1 phone check refused: %s\n' "$*" >&2; exit 1; }
 
+# One line, "a, b, c", from a list of lines. `paste -sd ', '` cycles the two
+# characters as separate delimiters and drops the space after the first.
+commas() { awk 'NR > 1 { printf ", " } { printf "%s", $0 } END { print "" }'; }
+
 mkdir -p "$EVIDENCE_DIR"
 
 main() {
@@ -45,12 +49,22 @@ main() {
   attached="$(adb devices | awk 'NR > 1 && $2 == "device" { print $1 }')"
   if [ -z "$attached" ]; then
     local seen
-    seen="$(adb devices | awk 'NR > 1 && NF { print $1" ("$2")" }' | paste -sd ', ' -)"
+    seen="$(adb devices | awk 'NR > 1 && NF { print $1" ("$2")" }' | commas)"
     if [ -n "$seen" ]; then
       fail "adb lists no device in the 'device' state; it sees: $seen"
     fi
     fail "adb devices lists no device; attach and authorise Safet's phone first"
   fi
+  # One device, named: with a phone and an emulator both attached every later
+  # adb call would answer "more than one device/emulator" and the run would die
+  # at install, after a full build. Refuse here, and name the one we chose on
+  # every call so a device appearing mid-run cannot redirect it.
+  local count
+  count="$(printf '%s\n' "$attached" | grep -c .)"
+  if [ "$count" -ne 1 ]; then
+    fail "adb lists $count devices in the 'device' state: $(printf '%s\n' "$attached" | commas). This run installs a debug build and reads one log — leave only Safet's phone attached."
+  fi
+  local -a device=(-s "$attached")
   printf 'device: %s\n' "$attached"
 
   # ── 2. the toolchain this Mac builds Android with, as check.sh selects it ──
@@ -79,10 +93,10 @@ main() {
   printf 'apk: %s\n' "$APK"
 
   printf '\n== install it\n'
-  adb install -r "$APK"
+  adb "${device[@]}" install -r "$APK"
 
   printf '\n== clear the log so "since the run started" means this run\n'
-  adb logcat -c
+  adb "${device[@]}" logcat -c
   printf 'log cleared at %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 
   # ── 4. the recording the run names, then the dictation by hand ────────────
@@ -93,15 +107,17 @@ main() {
   read -r recording_input || true
   local recording="$RECORDING_DEFAULT"
   if [ -n "$recording_input" ]; then
-    case "$recording_input" in
-      /*) recording="$recording_input" ;;
-      *) recording="$(cd "$(dirname "$recording_input")" 2>/dev/null && pwd)/$(basename "$recording_input")" ;;
-    esac
+    # The evidence line names this by absolute path. A folder that does not
+    # exist is refused here rather than silently becoming "/<name>.mp4".
+    local recording_dir
+    recording_dir="$(dirname "$recording_input")"
+    [ -d "$recording_dir" ] || fail "no folder at $recording_dir to hold the screen recording $recording_input; create it first"
+    recording="$(cd "$recording_dir" && pwd)/$(basename "$recording_input")"
   fi
   printf 'the run will name this recording: %s\n' "$recording"
 
   printf '\n== the foreground services before the dictation\n'
-  adb shell dumpsys activity services "$PACKAGE"
+  adb "${device[@]}" shell dumpsys activity services "$PACKAGE"
 
   printf '\n== dictate into another app, by hand\n'
   printf "  1. Open another app and put the cursor in its text field, for example Gmail's reply box.\n"
@@ -112,16 +128,15 @@ main() {
   read -r _ || true
 
   printf '\n== the foreground services after the dictation\n'
-  adb shell dumpsys activity services "$PACKAGE"
+  adb "${device[@]}" shell dumpsys activity services "$PACKAGE"
 
   # ── 5. the log since the run started, and the verdict it carries ──────────
   printf '\n== the log since the run started, filtered to the app and to the two names\n'
-  adb logcat -d -v threadtime > "$TMP_DIR/logcat.txt"
-  {
-    grep -F "$PACKAGE" "$TMP_DIR/logcat.txt" || true
-    grep -F "$FORBIDDEN_KIND" "$TMP_DIR/logcat.txt" || true
-    grep -F "$FORBIDDEN_MIC" "$TMP_DIR/logcat.txt" || true
-  } > "$TMP_DIR/filtered.txt"
+  adb "${device[@]}" logcat -d -v threadtime > "$TMP_DIR/logcat.txt"
+  # One pass, so a line that names the app and carries a forbidden name is
+  # printed once, in the order the log holds it.
+  grep -F -e "$PACKAGE" -e "$FORBIDDEN_KIND" -e "$FORBIDDEN_MIC" \
+    "$TMP_DIR/logcat.txt" > "$TMP_DIR/filtered.txt" || true
   cat "$TMP_DIR/filtered.txt"
 
   local result="PASS"
