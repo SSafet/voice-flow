@@ -335,6 +335,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         scheduleOpenCodeUpdates()
         vflog("app started")
+        let contract = ContractSelfCheck.bundled()
+        vflog("contract: \(contract.aboutLine)")
+        do { vflog(try ThreadDatabase.describe(ThreadDatabase.shared())) }
+        catch { vflog("threads.sqlite: could not be opened: \(error)") }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
