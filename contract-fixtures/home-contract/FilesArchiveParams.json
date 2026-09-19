@@ -1,0 +1,14 @@
+{
+  "type": "FilesArchiveParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "path": "src"
+    },
+    {
+      "rootId": "prj_pantria_01",
+      "path": "",
+      "exclude": []
+    }
+  ]
+}

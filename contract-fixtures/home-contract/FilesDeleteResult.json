@@ -1,0 +1,8 @@
+{
+  "type": "FilesDeleteResult",
+  "examples": [
+    {
+      "deleted": 2
+    }
+  ]
+}

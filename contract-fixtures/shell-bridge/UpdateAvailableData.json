@@ -1,0 +1,17 @@
+{
+  "type": "UpdateAvailableData",
+  "examples": [
+    {
+      "kind": "interface",
+      "currentVersion": "2.0.0",
+      "requiredVersion": "2.1.0",
+      "downloadUrl": "https://atika.ai/download/mac"
+    },
+    {
+      "kind": "protocol",
+      "currentVersion": "2",
+      "requiredVersion": "3",
+      "downloadUrl": "https://atika.ai/download/android"
+    }
+  ]
+}

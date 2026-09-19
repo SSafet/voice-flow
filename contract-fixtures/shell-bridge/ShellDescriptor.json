@@ -1,0 +1,84 @@
+{
+  "type": "ShellDescriptor",
+  "examples": [
+    {
+      "v": 1,
+      "shell": "mac",
+      "shellVersion": "2.0.0",
+      "interfaceBuildId": "7cbe540d",
+      "capabilities": [
+        "dictate",
+        "capture.screen",
+        "annotate",
+        "speak",
+        "notify",
+        "files.pick",
+        "files.pickFolder",
+        "files.save",
+        "files.reveal",
+        "permissions",
+        "external.open"
+      ],
+      "endpoints": [
+        {
+          "id": "local",
+          "kind": "device",
+          "baseUrl": "http://localhost:8792",
+          "authMode": "local-secret",
+          "secret": "q7Jm2c0pV4xN8sKd1fHa",
+          "label": "This Mac",
+          "state": "ready"
+        },
+        {
+          "id": "cloud",
+          "kind": "atika",
+          "baseUrl": "https://atika.ai",
+          "authMode": "shell-token",
+          "label": "Atika",
+          "state": "ready"
+        }
+      ],
+      "account": {
+        "userId": "usr_01J8ZK3F9A",
+        "displayName": "Safet",
+        "email": "owner@example.com"
+      },
+      "platform": {
+        "os": "macOS",
+        "osVersion": "27.0",
+        "formFactor": "desktop"
+      }
+    },
+    {
+      "v": 1,
+      "shell": "android",
+      "shellVersion": "2.0.0",
+      "interfaceBuildId": "7cbe540d",
+      "capabilities": [
+        "dictate",
+        "speak",
+        "notify",
+        "files.pick",
+        "files.save",
+        "permissions",
+        "external.open"
+      ],
+      "endpoints": [
+        {
+          "id": "cloud",
+          "kind": "atika",
+          "baseUrl": "https://atika.ai",
+          "authMode": "shell-token",
+          "label": "Atika",
+          "state": "signed-out",
+          "stateReason": "revoked"
+        }
+      ],
+      "platform": {
+        "os": "Android",
+        "osVersion": "16",
+        "formFactor": "phone"
+      }
+    }
+  ]
+}

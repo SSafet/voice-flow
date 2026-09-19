@@ -1,0 +1,13 @@
+{
+  "type": "FilesGitDiffParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "from": "refs/atika/checkpoints/trn_0001/before",
+      "path": "src/cart.ts"
+    },
+    {
+      "rootId": "prj_pantria_01"
+    }
+  ]
+}

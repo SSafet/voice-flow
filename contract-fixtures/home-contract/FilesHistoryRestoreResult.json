@@ -1,0 +1,14 @@
+{
+  "type": "FilesHistoryRestoreResult",
+  "examples": [
+    {
+      "restored": true,
+      "removed": false,
+      "preRestoreSnapshotId": "snap_9d02"
+    },
+    {
+      "restored": true,
+      "removed": true
+    }
+  ]
+}

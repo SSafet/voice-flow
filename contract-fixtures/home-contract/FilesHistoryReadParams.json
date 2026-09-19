@@ -1,0 +1,11 @@
+{
+  "type": "FilesHistoryReadParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "path": "src/cart.ts",
+      "kind": "commit",
+      "id": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+    }
+  ]
+}

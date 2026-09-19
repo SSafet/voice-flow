@@ -1,0 +1,28 @@
+{
+  "type": "SettingValue",
+  "examples": [
+    {
+      "kind": "boolean",
+      "boolean": false
+    },
+    {
+      "kind": "text",
+      "text": "alloy"
+    },
+    {
+      "kind": "number",
+      "number": 30
+    },
+    {
+      "kind": "text_list",
+      "textList": [
+        "flora",
+        "assistant"
+      ]
+    },
+    {
+      "kind": "json",
+      "json": "{\"new-thread\":\"mod+n\"}"
+    }
+  ]
+}

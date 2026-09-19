@@ -1,0 +1,25 @@
+{
+  "type": "FilesGitStatusResult",
+  "examples": [
+    {
+      "isRepo": true,
+      "branch": "atika/fix-cart-3f9a2c",
+      "upstream": "origin/atika/fix-cart-3f9a2c",
+      "ahead": 1,
+      "behind": 0,
+      "entries": [
+        {
+          "path": "src/cart.ts",
+          "index": ".",
+          "worktree": "M"
+        }
+      ]
+    },
+    {
+      "isRepo": false,
+      "ahead": 0,
+      "behind": 0,
+      "entries": []
+    }
+  ]
+}

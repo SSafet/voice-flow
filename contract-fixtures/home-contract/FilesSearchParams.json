@@ -1,0 +1,19 @@
+{
+  "type": "FilesSearchParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "q": "cart",
+      "kind": "content",
+      "regex": false,
+      "case": false,
+      "path": "src",
+      "includeIgnored": false,
+      "max": 200
+    },
+    {
+      "q": "README",
+      "kind": "name"
+    }
+  ]
+}

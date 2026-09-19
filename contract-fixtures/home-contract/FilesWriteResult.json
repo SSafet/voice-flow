@@ -1,0 +1,8 @@
+{
+  "type": "FilesWriteResult",
+  "examples": [
+    {
+      "etag": "\"a0b1c2d3\""
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "type": "FilesPickParams",
+  "examples": [
+    {
+      "multiple": true,
+      "accept": [
+        "image/*"
+      ]
+    },
+    {
+      "multiple": false,
+      "accept": []
+    }
+  ]
+}

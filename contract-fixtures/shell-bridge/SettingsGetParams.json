@@ -1,0 +1,12 @@
+{
+  "type": "SettingsGetParams",
+  "examples": [
+    {
+      "sections": [
+        "speech",
+        "thread_defaults"
+      ]
+    },
+    {}
+  ]
+}

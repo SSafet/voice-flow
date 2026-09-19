@@ -1,0 +1,21 @@
+{
+  "type": "PersonaTemplate",
+  "examples": [
+    {
+      "id": "build-software",
+      "name": "Build software",
+      "description": "A lead that hands work to a developer, a reviewer and a tester.",
+      "delegates": [
+        "developer",
+        "reviewer",
+        "qa"
+      ]
+    },
+    {
+      "id": "assistant",
+      "name": "Assistant",
+      "description": "The default persona.",
+      "delegates": []
+    }
+  ]
+}

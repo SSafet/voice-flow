@@ -1,0 +1,8 @@
+{
+  "type": "PermissionsOpenParams",
+  "examples": [
+    {
+      "id": "screen-recording"
+    }
+  ]
+}

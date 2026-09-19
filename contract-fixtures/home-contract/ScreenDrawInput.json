@@ -1,0 +1,44 @@
+{
+  "type": "ScreenDrawInput",
+  "examples": [
+    {
+      "on": "shot:2026-09-12_14-03-22-118",
+      "marks": [
+        {
+          "kind": "ellipse",
+          "color": "green",
+          "box": [
+            900,
+            500,
+            240,
+            120
+          ],
+          "stroke": 6,
+          "note": "click here"
+        },
+        {
+          "n": 2,
+          "kind": "arrow",
+          "color": "green",
+          "box": [
+            700,
+            400,
+            200,
+            100
+          ],
+          "from": [
+            700,
+            400
+          ],
+          "to": [
+            900,
+            500
+          ],
+          "stroke": 6
+        }
+      ],
+      "layer": "steps",
+      "replace": true
+    }
+  ]
+}

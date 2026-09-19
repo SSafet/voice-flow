@@ -1,0 +1,42 @@
+{
+  "type": "TerminalClientMessage",
+  "examples": [
+    {
+      "type": "term.open",
+      "open": {
+        "rootId": "prj_pantria_01",
+        "cols": 120,
+        "rows": 32
+      }
+    },
+    {
+      "type": "term.open",
+      "termId": "term_01",
+      "open": {
+        "rootId": "prj_pantria_01",
+        "cwd": "src",
+        "cols": 120,
+        "rows": 32
+      }
+    },
+    {
+      "type": "term.input",
+      "termId": "term_01",
+      "input": {
+        "data": "bHMgLWxhCg=="
+      }
+    },
+    {
+      "type": "term.resize",
+      "termId": "term_01",
+      "resize": {
+        "cols": 200,
+        "rows": 50
+      }
+    },
+    {
+      "type": "term.close",
+      "termId": "term_01"
+    }
+  ]
+}

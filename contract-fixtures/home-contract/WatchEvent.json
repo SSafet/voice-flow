@@ -1,0 +1,14 @@
+{
+  "type": "WatchEvent",
+  "examples": [
+    {
+      "type": "changed",
+      "rootId": "prj_pantria_01",
+      "dir": "src"
+    },
+    {
+      "type": "root_missing",
+      "rootId": "prj_pantria_01"
+    }
+  ]
+}

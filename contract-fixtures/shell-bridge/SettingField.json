@@ -1,0 +1,12 @@
+{
+  "type": "SettingField",
+  "examples": [
+    {
+      "field": "voice",
+      "value": {
+        "kind": "text",
+        "text": "alloy"
+      }
+    }
+  ]
+}

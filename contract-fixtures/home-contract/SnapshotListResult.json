@@ -1,0 +1,25 @@
+{
+  "type": "SnapshotListResult",
+  "examples": [
+    {
+      "entries": [
+        {
+          "name": "README.md",
+          "path": "README.md",
+          "kind": "file",
+          "size": 1842,
+          "mtimeMs": 1789725600123.5,
+          "mode": 33188
+        },
+        {
+          "name": "src",
+          "path": "src",
+          "kind": "dir",
+          "size": 96,
+          "mtimeMs": 1789725600000,
+          "mode": 16877
+        }
+      ]
+    }
+  ]
+}

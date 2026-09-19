@@ -1,0 +1,31 @@
+{
+  "type": "CapturedPackageResult",
+  "examples": [
+    {
+      "attachments": [
+        {
+          "id": "att_02",
+          "kind": "capture_bundle",
+          "mime": "application/json",
+          "bytes": 2210,
+          "name": "meta.json",
+          "url": "http://localhost:8792/captured/text?id=capture%3A2026-08-05_01-37-43",
+          "captureId": "capture:2026-08-05_01-37-43",
+          "modelText": "Narration: the cart total does not update."
+        },
+        {
+          "id": "att_03",
+          "kind": "image",
+          "mime": "image/jpeg",
+          "bytes": 380112,
+          "name": "frame-07.jpg",
+          "url": "http://localhost:8792/captured/picture?id=capture%3A2026-08-05_01-37-43%2F07",
+          "width": 3456,
+          "height": 2234,
+          "captureId": "capture:2026-08-05_01-37-43/07",
+          "forModel": false
+        }
+      ]
+    }
+  ]
+}

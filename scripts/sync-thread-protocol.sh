@@ -1,16 +1,19 @@
 #!/bin/bash
 # Copy the generated contract files (one Swift file, its fixture table and one
-# Kotlin file for every contract package) and every contract set's fixtures
+# Kotlin file for every contract package) into swift/Generated/ and the Android
+# source tree, and every contract set's fixtures into contract-fixtures/<set>/,
 # from the Atika repository, pinned to the commit named in thread-protocol.lock.
 #
 #   scripts/sync-thread-protocol.sh --update <atika-commit>   pin a new commit, then copy
 #   scripts/sync-thread-protocol.sh                           copy again from the pinned commit
-#   scripts/sync-thread-protocol.sh --check                   verify the copied files against the lock
+#   scripts/sync-thread-protocol.sh --check                   verify every copied file against the lock's per-file hash
 #
 # This is a copy pinned to a commit, not a package dependency: the Atika
 # repository is private and large, and VoiceFlow needs a handful of files.
-# --check needs neither the Atika repository nor the network, so install.sh
-# runs it before every build.
+# --check verifies every copied file against a per-file sha256 line in the lock
+# and needs neither the Atika repository nor the network, so install.sh runs it
+# before every build. The lock is written last, through a temporary file and a
+# rename, so an interrupted run leaves the lock that was there before.
 #
 # ATIKA_REPO        the local Atika clone (default: $HOME/repos/atika)
 # VF_PROJECT_DIR    this repository (default: the parent of this script)
@@ -20,12 +23,13 @@ PROJECT_DIR="${VF_PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 ATIKA_REPO="${ATIKA_REPO:-$HOME/repos/atika}"
 LOCK="$PROJECT_DIR/thread-protocol.lock"
 SWIFT_DEST="$PROJECT_DIR/swift/Generated"
+FIXTURE_DEST="$PROJECT_DIR/contract-fixtures"
 KOTLIN_DEST="$PROJECT_DIR/android/app/src/main/kotlin/com/voiceflow/mobile/generated"
 SOURCE="packages/thread-protocol"
 SWIFT_FILES=(PlatformContracts.swift PlatformContractsFixtures.swift)
 KOTLIN_FILES=(PlatformContracts.kt)
 STAGE=""
-trap '[ -z "$STAGE" ] || rm -rf "$STAGE"' EXIT
+trap '[ -z "$STAGE" ] || rm -rf "$STAGE"; rm -f "$LOCK.writing.$$"' EXIT
 
 fail() { echo "sync-thread-protocol: $*" >&2; exit 1; }
 
@@ -39,6 +43,43 @@ lock_value() {
 
 header_value() { # <file> <label>
     sed -n "s|^// $2: ||p" "$1" | head -n 1
+}
+
+sha256_of() { /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'; }
+
+# Every file this script writes, as "<sha256> <path relative to PROJECT_DIR>",
+# in a stable order. `shasum`, `awk` and `sort` each read their whole input, so
+# no stage can take SIGPIPE under `set -o pipefail`.
+copied_files() {
+    local file
+    for file in "${SWIFT_FILES[@]/#/$SWIFT_DEST/}" "${KOTLIN_FILES[@]/#/$KOTLIN_DEST/}"; do
+        printf '%s\n' "$file"
+    done
+    [ -d "$FIXTURE_DEST" ] && find "$FIXTURE_DEST" -type f -print
+    return 0
+}
+
+copied_hashes() {
+    local file
+    copied_files | LC_ALL=C sort | while read -r file; do
+        printf '%s %s\n' "$(sha256_of "$file")" "${file#"$PROJECT_DIR"/}"
+    done
+}
+
+# The lock is written last and renamed into place, so a run that dies during the
+# copy leaves the lock that was there before rather than one that describes
+# files that are not on disk.
+write_lock() { # <commit> <version> <schema>
+    local temporary="$LOCK.writing.$$"
+    {
+        echo "# Written by scripts/sync-thread-protocol.sh. Do not edit by hand."
+        echo "atika_commit=$1"
+        echo "protocol_version=$2"
+        echo "schema_sha256=$3"
+        echo "# One sha256 line per copied file. --check recomputes every one."
+        copied_hashes | sed 's|^|sha256 |'
+    } > "$temporary"
+    mv "$temporary" "$LOCK"
 }
 
 # The fixture table lists every contract set that has fixtures with its folder
@@ -66,11 +107,30 @@ check() {
     [ "$found" -eq 3 ] || fail "expected PlatformContracts.swift, PlatformContractsFixtures.swift and PlatformContracts.kt; found $found generated file(s). Run: scripts/sync-thread-protocol.sh"
     local set folder
     while read -r set folder; do
-        [ -d "$SWIFT_DEST/$set-fixtures" ] || fail "the fixtures of $set are missing. Run: scripts/sync-thread-protocol.sh"
+        [ -d "$FIXTURE_DEST/$set" ] || fail "the fixtures of $set are missing. Run: scripts/sync-thread-protocol.sh"
     done < <(fixture_folders "$SWIFT_DEST/PlatformContractsFixtures.swift")
-    [ -d "$SWIFT_DEST/thread-protocol-fixtures/rules" ] || fail "the rule fixtures are missing. Run: scripts/sync-thread-protocol.sh"
+    [ -d "$FIXTURE_DEST/thread-protocol/rules" ] || fail "the rule fixtures are missing. Run: scripts/sync-thread-protocol.sh"
+    [ -z "$(find "$SWIFT_DEST" -type f ! -name '*.swift' -print -quit)" ] ||
+        fail "swift/Generated holds a file that is not Swift; it is inside the build target. Run: scripts/sync-thread-protocol.sh"
     [ "$failures" -eq 0 ] || fail "$failures generated file(s) do not match the lock. Run: scripts/sync-thread-protocol.sh"
-    echo "thread protocol $version, schema ${hash:0:12}, Atika ${commit:0:12}: $found generated files match the lock"
+    # Ruling 4: every copied file, not only the three headers.
+    local keyword expected path actual listed=0
+    while read -r keyword expected path; do
+        [ "$keyword" = "sha256" ] || continue
+        listed=$((listed + 1))
+        [ -f "$PROJECT_DIR/$path" ] ||
+            fail "thread-protocol.lock lists $path, which is not there. Run: scripts/sync-thread-protocol.sh"
+        actual="$(sha256_of "$PROJECT_DIR/$path")"
+        [ "$actual" = "$expected" ] ||
+            fail "$path does not match thread-protocol.lock: $actual, not $expected. Run: scripts/sync-thread-protocol.sh"
+    done < "$LOCK"
+    [ "$listed" -gt 0 ] ||
+        fail "thread-protocol.lock carries no file hashes. Run: scripts/sync-thread-protocol.sh"
+    local present
+    present="$(copied_hashes | grep -c . || true)"
+    [ "$present" = "$listed" ] ||
+        fail "$present copied file(s) are on disk, $listed are in thread-protocol.lock. Run: scripts/sync-thread-protocol.sh"
+    echo "thread protocol $version, schema ${hash:0:12}, Atika ${commit:0:12}: $found generated files and $listed copied files match the lock"
 }
 
 copy_with_commit() { # <source file> <destination file> <commit>
@@ -78,25 +138,25 @@ copy_with_commit() { # <source file> <destination file> <commit>
     awk -v line="// Atika commit: $3" '{ print } /^\/\/ Schema sha256: / && !done { print line; done = 1 }' "$1" > "$2"
 }
 
-sync() {
-    local commit swift_header file set folder
-    commit="$(lock_value atika_commit)"
+sync() { # <commit> <version> <schema>
+    local commit="$1" version="$2" schema="$3" swift_header file set folder
     git -C "$ATIKA_REPO" cat-file -e "$commit^{commit}" 2>/dev/null ||
         fail "commit $commit is not in $ATIKA_REPO; fetch it or set ATIKA_REPO"
     STAGE="$(mktemp -d /tmp/vf-thread-protocol.XXXXXX)"
     git -C "$ATIKA_REPO" archive "$commit" "$SOURCE/generated" | tar -x -C "$STAGE"
 
     swift_header="$STAGE/$SOURCE/generated/swift/PlatformContracts.swift"
-    [ "$(header_value "$swift_header" "Protocol version")" = "$(lock_value protocol_version)" ] ||
+    [ "$(header_value "$swift_header" "Protocol version")" = "$version" ] ||
         fail "the lock's protocol_version does not match commit $commit; run --update $commit"
-    [ "$(header_value "$swift_header" "Schema sha256")" = "$(lock_value schema_sha256)" ] ||
+    [ "$(header_value "$swift_header" "Schema sha256")" = "$schema" ] ||
         fail "the lock's schema_sha256 does not match commit $commit; run --update $commit"
 
-    # swift/Generated/ holds nothing but what this script writes, so everything in it is replaced:
-    # a fixtures folder of a contract set that is gone, or a file from before the combined output, goes too.
-    rm -rf "$SWIFT_DEST"
+    # swift/Generated/ and contract-fixtures/ hold nothing but what this script
+    # writes, so everything in both is replaced: the fixtures of a contract set
+    # that is gone, and a file from before the combined output, go too.
+    rm -rf "$SWIFT_DEST" "$FIXTURE_DEST"
     rm -f "$KOTLIN_DEST"/ThreadProtocol*.kt "${KOTLIN_FILES[@]/#/$KOTLIN_DEST/}"
-    mkdir -p "$SWIFT_DEST" "$KOTLIN_DEST"
+    mkdir -p "$SWIFT_DEST" "$FIXTURE_DEST" "$KOTLIN_DEST"
     for file in "${SWIFT_FILES[@]}"; do
         copy_with_commit "$STAGE/$SOURCE/generated/swift/$file" "$SWIFT_DEST/$file" "$commit"
     done
@@ -105,9 +165,11 @@ sync() {
     done
     while read -r set folder; do
         git -C "$ATIKA_REPO" archive "$commit" "$folder" | tar -x -C "$STAGE"
-        mkdir -p "$SWIFT_DEST/$set-fixtures"
-        cp -R "$STAGE/$folder/." "$SWIFT_DEST/$set-fixtures/"
+        mkdir -p "$FIXTURE_DEST/$set"
+        cp -R "$STAGE/$folder/." "$FIXTURE_DEST/$set/"
     done < <(fixture_folders "$SWIFT_DEST/PlatformContractsFixtures.swift")
+    # The copy is finished; only now is the lock replaced.
+    write_lock "$commit" "$version" "$schema"
     check
 }
 
@@ -117,23 +179,21 @@ sync() {
 # and --update would refuse a commit that plainly has the file. `sed -n 1p`
 # reads its whole input, so no stage can take SIGPIPE.
 update() { # <commit-ish>
-    local commit header
+    local commit header version schema
     commit="$(git -C "$ATIKA_REPO" rev-parse --verify "$1^{commit}" 2>/dev/null)" ||
         fail "$1 is not a commit in $ATIKA_REPO"
     header="$(git -C "$ATIKA_REPO" show "$commit:$SOURCE/generated/swift/PlatformContracts.swift" 2>/dev/null)" ||
         fail "commit $commit has no $SOURCE/generated/swift/PlatformContracts.swift"
-    {
-        echo "# Written by scripts/sync-thread-protocol.sh --update. Do not edit by hand."
-        echo "atika_commit=$commit"
-        echo "protocol_version=$(printf '%s\n' "$header" | sed -n 's|^// Protocol version: ||p' | sed -n 1p)"
-        echo "schema_sha256=$(printf '%s\n' "$header" | sed -n 's|^// Schema sha256: ||p' | sed -n 1p)"
-    } > "$LOCK"
-    sync
+    version="$(printf '%s\n' "$header" | sed -n 's|^// Protocol version: ||p' | sed -n 1p)"
+    schema="$(printf '%s\n' "$header" | sed -n 's|^// Schema sha256: ||p' | sed -n 1p)"
+    [ -n "$version" ] && [ -n "$schema" ] ||
+        fail "commit $commit's PlatformContracts.swift carries no protocol version or schema hash"
+    sync "$commit" "$version" "$schema"
 }
 
 case "${1:-}" in
     --check) check ;;
     --update) [ -n "${2:-}" ] || fail "--update needs an Atika commit"; update "$2" ;;
-    "") sync ;;
+    "") sync "$(lock_value atika_commit)" "$(lock_value protocol_version)" "$(lock_value schema_sha256)" ;;
     *) fail "unknown argument: $1" ;;
 esac
