@@ -118,6 +118,21 @@ async function run() {
 
   check("no_cookie_is_set", document.cookie === "", "document.cookie = '" + document.cookie + "'");
 
+  const previewPort = (window.__shellDescriptor && window.__shellDescriptor.previewPort) || 0;
+  const framed = await new Promise(resolve => {
+    const onMessage = event => {
+      if (event.data === "preview-ok") { window.removeEventListener("message", onMessage); resolve("the framed page ran and answered"); }
+    };
+    window.addEventListener("message", onMessage);
+    const frame = document.createElement("iframe");
+    frame.src = "http://localhost:" + previewPort + "/";
+    frame.width = 320; frame.height = 48;
+    document.body.appendChild(frame);
+    setTimeout(() => resolve("timeout"), 5000);
+  });
+  check("iframe_to_another_localhost_port_loads", framed !== "timeout",
+        "iframe of http://localhost:" + previewPort + "/: " + framed);
+
   // Built with textContent, never innerHTML: a detail such as
   // "<script src=/probe/guarded.js> refused" is text, and pasting it into the
   // document as markup silently swallows every row after it.

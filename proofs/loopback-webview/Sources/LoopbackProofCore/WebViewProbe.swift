@@ -5,13 +5,15 @@ import WebKit
 @MainActor
 public final class WebViewProbe: NSObject, WKNavigationDelegate {
     private let port: Int
+    private let previewPort: Int
     private let state: ProofState
     private var webView: WKWebView?
     private var navigationRows: [ProofRow] = []
     private var navigationSettled = false
 
-    public init(port: Int, state: ProofState) {
+    public init(port: Int, previewPort: Int, state: ProofState) {
         self.port = port
+        self.previewPort = previewPort
         self.state = state
     }
 
@@ -23,7 +25,7 @@ public final class WebViewProbe: NSObject, WKNavigationDelegate {
 
         let configuration = WKWebViewConfiguration()
         let descriptor = WKUserScript(
-            source: "window.__shellDescriptor = {v:1, shell:\"mac\", secret:\"\(state.secret)\"};",
+            source: "window.__shellDescriptor = {v:1, shell:\"mac\", secret:\"\(state.secret)\", previewPort:\(previewPort)};",
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         )

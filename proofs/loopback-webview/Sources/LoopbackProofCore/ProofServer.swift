@@ -165,6 +165,41 @@ public struct ProofServer: Sendable {
     }
 }
 
+/// A stand-in for a development server on some other port, so the proof can show
+/// that the Preview pane's arrangement — a frame pointing at another `localhost`
+/// port — loads and runs inside the page.
+public struct PreviewServer: Sendable {
+    public let port: Int
+    public init(port: Int) { self.port = port }
+
+    public func run() async throws {
+        let router = Router()
+        router.get("/") { _, _ -> Response in
+            Response(
+                status: .ok,
+                headers: [.contentType: "text/html; charset=utf-8"],
+                body: .init(byteBuffer: ByteBuffer(string: previewPageHTML))
+            )
+        }
+        var logger = Logger(label: "loopback-proof-preview")
+        logger.logLevel = .error
+        let application = Application(
+            router: router,
+            configuration: .init(address: .hostname("127.0.0.1", port: port), serverName: "loopback-proof-preview"),
+            logger: logger
+        )
+        try await application.runService()
+    }
+}
+
+let previewPageHTML = #"""
+<!doctype html><html><head><meta charset="utf-8"><title>preview</title></head>
+<body style="background:#242018;color:#f0e6d6;font:12px -apple-system,sans-serif;margin:8px">
+a server on another localhost port
+<script>parent.postMessage("preview-ok", "*");</script>
+</body></html>
+"""#
+
 func jsonResponse(_ json: String) -> Response {
     Response(
         status: .ok,

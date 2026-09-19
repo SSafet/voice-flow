@@ -12,6 +12,16 @@ public func waitForListeners(port: Int, seconds: Double) -> Bool {
     return false
 }
 
+/// Waits until the stand-in development server accepts a connection.
+public func waitForPreviewListener(port: Int, seconds: Double) -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while Date() < deadline {
+        if RawHTTP.accepts(address: "127.0.0.1", port: port) { return true }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    return false
+}
+
 /// The checks that need no web view.
 public func nativeChecks(port: Int, secret: String) -> [ProofRow] {
     var rows: [ProofRow] = []
