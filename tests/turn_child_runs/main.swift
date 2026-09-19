@@ -50,6 +50,11 @@ check("a child item hangs under the lead's call",
       childItems.allSatisfy { $0.parentItemID == "call-item" })
 check("a child item's tool title names the delegate",
       childItems.contains { $0.toolCall?.title == "Asked d0" })
+checkEqual("a child run has no turn record of its own",
+           (try await store.turns(threadID: "thread-many")).count, 1)
+checkEqual("a child run has no queue entry", engine.queuedTurnIDs(threadID: "thread-many"), [])
+checkEqual("the lead's turn is still the running one",
+           engine.runningTurnID(threadID: "thread-many"), manyTurn.id)
 await runtime.release("thread-many")
 await engine.waitUntilIdle()
 
@@ -73,6 +78,7 @@ await engine.waitUntilIdle()
 // 3. Child runs are not counted against admission, and at most three run at a
 //    time; the parent holds the only slot in the whole Mac.
 driver.childRequests.removeAll()
+runtime.startedThreads.removeAll()
 runtime.holdThreads = ["thread-slot", "child-d0", "child-d1", "child-d2",
                        "child-d3", "child-d4", "child-d5"]
 store.seed(thread: makeThread(id: "thread-slot"))
@@ -92,10 +98,14 @@ for name in ["child-d1", "child-d2", "child-d3", "child-d4", "child-d5"] {
 }
 let slotResults = await slotTask.value
 checkEqual("all six tasks finished", slotResults.map(\.status), Array(repeating: "completed", count: 6))
+checkEqual("the lead never lost its own slot", engine.runningTurnID(threadID: "thread-slot"), slotTurn.id)
+await runtime.release("thread-slot")
+await engine.waitUntilIdle()
 
 // 4. A failing child is returned failed with its error and no retry; its item
 //    fails too.
 driver.childRequests.removeAll()
+runtime.startedThreads.removeAll()
 runtime.holdThreads = ["thread-fail"]
 runtime.failureByThread["child-d1"] = AgentRuntimeFailure(code: "runtime_error",
                                                           message: "the delegate crashed",
@@ -116,6 +126,8 @@ await engine.waitUntilIdle()
 // 5. Stop ends the turn and every child run: pending tasks come back stopped and
 //    no further child starts.
 driver.childRequests.removeAll()
+runtime.startedThreads.removeAll()
+runtime.failureByThread.removeAll()
 runtime.holdThreads = ["thread-stop-children", "child-d0", "child-d1", "child-d2"]
 store.seed(thread: makeThread(id: "thread-stop-children"))
 let stopTurn = try await startParent("thread-stop-children")

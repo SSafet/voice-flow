@@ -34,10 +34,48 @@ checkEqual("createThread returns a thread", created.thread.id.isEmpty, false)
 checkEqual("createThread returns a turn", created.turn?.status, TPTurnStatus.running)
 checkEqual("the title follows the first-line rule",
            created.thread.title, ContractTitle.firstLineTitle("Make the checkout faster\nand the tests green"))
+checkEqual("the working folder comes from the project registry",
+           created.thread.workspaceRoot.path, "/tmp/proj-1")
+checkEqual("a project folder's rootId is the project id",
+           created.thread.workspaceRoot.rootID, "proj-1")
+checkEqual("a project folder is not a worktree", created.thread.workspaceRoot.kind, .project)
 let firstTurnID = created.turn!.id
 await runtime.release(created.thread.id)
 await engine.waitUntilIdle()
 checkEqual("the first turn completed", (try await store.turn(id: firstTurnID))?.status, .completed)
+
+// 1b. An unknown project is refused by name, and nothing is written for it.
+let threadsBefore = (try await store.allTurns()).count
+do {
+    _ = try await engine.createThread(CreateThreadRequest(
+        commandID: "cmd-create-missing", projectID: "no-such-project", personaID: nil,
+        personaName: nil, runtime: .opencode, model: nil, reasoningEffort: nil,
+        trustProfile: .workspace, ownWorkingCopy: false, startedBy: userStartedBy(),
+        requestExpirySec: nil, message: "go", attachmentIDs: [], sentFrom: nil))
+    check("an unknown project is refused", false, "no error was thrown")
+} catch let error as TurnEngineError {
+    checkEqual("an unknown project is refused by name", error.code, "not_found")
+} catch {
+    check("an unknown project is refused", false, "\(error)")
+}
+checkEqual("the refused createThread wrote no turn", (try await store.allTurns()).count, threadsBefore)
+
+// 1c. The before-checkpoint is taken before the runtime is started, so a turn
+//     that crashes still has a point to measure the changes from.
+let orderHarness = EngineHarness()
+orderHarness.driver.runtimes[.opencode]!.holdThreads = []
+orderHarness.store.seed(thread: makeThread(id: "thread-order"))
+_ = try await orderHarness.engine.startTurn(StartTurnRequest(
+    commandID: "order-1", threadID: "thread-order", text: "go", attachmentIDs: [],
+    startedBy: userStartedBy(), requestExpirySec: nil, retryOfTurnID: nil, model: nil,
+    reasoningEffort: nil, sentFrom: nil, speakReply: false))
+await orderHarness.engine.waitUntilIdle()
+let beforeIndex = orderHarness.order.firstIndex(of: "checkpoint-before:thread-order")
+let startedIndex = orderHarness.order.firstIndex(of: "runtime-started:thread-order")
+check("the before-checkpoint was taken", beforeIndex != nil, "\(orderHarness.order.entries)")
+check("the runtime was started", startedIndex != nil, "\(orderHarness.order.entries)")
+check("the checkpoint came before the runtime",
+      (beforeIndex ?? Int.max) < (startedIndex ?? Int.min), "\(orderHarness.order.entries)")
 
 // 2. A second message to a busy thread is queued behind the running one, and a
 //    third behind the second: first in, first out.

@@ -4,6 +4,10 @@ import Foundation
 // into every `turn_*` suite beside the engine's own sources; it names the
 // engine's public surface and nothing private.
 
+// The suites compile the app sources without `swift/Core.swift`, the way every
+// other suite in this repository does, so they carry its logging stub.
+func vflog(_ message: String) {}
+
 var turnEngineFailures: [String] = []
 var turnEngineChecks = 0
 
@@ -111,9 +115,10 @@ func makeApproval(requestID: String, expiresAt: String? = nil) -> TPApproval {
                summary: "Run a command", toolItemID: nil)
 }
 
-func makeQuestion(requestID: String, expiresAt: String? = nil) -> TPQuestion {
+func makeQuestion(requestID: String, expiresAt: String? = nil,
+                  inputType: TPQuestionInputType = .text) -> TPQuestion {
     TPQuestion(danger: nil, expiresAt: expiresAt,
-               questions: [TPQuestionPrompt(allowFreeText: true, choices: nil, inputType: .text,
+               questions: [TPQuestionPrompt(allowFreeText: true, choices: nil, inputType: inputType,
                                             multiSelect: false, prompt: "Which file?", questionID: "q1")],
                requestID: requestID, resolution: nil)
 }
@@ -154,7 +159,7 @@ final class RecordingStore: TurnEngineStore {
     private(set) var storedTurns: [String: TPTurn] = [:]
     private(set) var storedItems: [String: TPItem] = [:]
     private(set) var storedBindings: [String: RuntimeBinding] = [:]
-    private(set) var appliedStamps: [TPEventStamp] = []
+    private(set) var appliedStamps: [TurnEventStamp] = []
     private(set) var appliedEvents: [TPDurableEvent] = []
     private(set) var batches: [TurnWriteBatch] = []
     private(set) var commands: [String: TurnCommandRecord] = [:]
@@ -162,7 +167,7 @@ final class RecordingStore: TurnEngineStore {
     /// Rises once per `apply`; a subscriber can prove the write happened first.
     private(set) var storeVersion = 0
     private(set) var appliedThreadIDs: [String] = []
-    func stampedEvent(at index: Int) -> (TPEventStamp, TPDurableEvent)? {
+    func stampedEvent(at index: Int) -> (TurnEventStamp, TPDurableEvent)? {
         guard index < appliedStamps.count, index < appliedEvents.count else { return nil }
         return (appliedStamps[index], appliedEvents[index])
     }
@@ -172,6 +177,11 @@ final class RecordingStore: TurnEngineStore {
 
     private var seqByThread: [String: Int] = [:]
     private var originSeqByThread: [String: Int] = [:]
+
+    /// The registry V1 owns, as far as the engine can see it: a project id and
+    /// the folder its threads run in. The engine must ask for a workspace root
+    /// and never build one itself.
+    var projectPaths: [String: String] = ["p1": "/tmp/p1", "proj-1": "/tmp/proj-1"]
 
     func seed(thread: TPThread) { storedThreads[thread.id] = thread }
     func seed(turn: TPTurn) { storedTurns[turn.id] = turn }
@@ -198,16 +208,16 @@ final class RecordingStore: TurnEngineStore {
         storedBindings["\(threadID)|\(runtime.rawValue)"]
     }
 
-    func apply(_ batch: TurnWriteBatch) throws -> [TPEventStamp] {
+    func apply(_ batch: TurnWriteBatch) throws -> [TurnEventStamp] {
         batches.append(batch)
-        var result: [TPEventStamp] = []
+        var result: [TurnEventStamp] = []
         for event in batch.events {
             let threadID = event.threadID
             let seq = (seqByThread[threadID] ?? 0) + 1
             let originSeq = (originSeqByThread[threadID] ?? 0) + 1
             seqByThread[threadID] = seq
             originSeqByThread[threadID] = originSeq
-            let stamp = TPEventStamp(seq: seq, origin: "self", originSeq: originSeq, at: iso())
+            let stamp = TurnEventStamp(seq: seq, origin: "self", originSeq: originSeq, at: iso())
             appliedStamps.append(stamp)
             appliedEvents.append(event)
             appliedThreadIDs.append(threadID)
@@ -225,6 +235,31 @@ final class RecordingStore: TurnEngineStore {
 
     func commandRecord(commandID: String) throws -> TurnCommandRecord? { commands[commandID] }
     func storeCommandRecord(_ record: TurnCommandRecord) throws { commands[record.commandID] = record }
+
+    func plannedWorkspace(projectID: String, threadID: String, title: String,
+                          ownWorkingCopy: Bool) throws -> (root: TPWorkspaceRoot, branch: String?) {
+        guard let path = projectPaths[projectID] else {
+            throw TurnEngineError.protocolError(code: "not_found",
+                                                message: "no project \(projectID)", retryable: false)
+        }
+        if ownWorkingCopy {
+            let branch = "thread/\(threadID)"
+            return (TPWorkspaceRoot(baseCommit: nil, branch: branch, kind: .worktree,
+                                    path: "\(path)/worktrees/\(threadID)", rootID: threadID), branch)
+        }
+        return (TPWorkspaceRoot(baseCommit: nil, branch: nil, kind: .project,
+                                path: path, rootID: projectID), nil)
+    }
+}
+
+// ───────────────────────────── the order log ─────────────────────────────────
+
+/// What happened in which order, written by the workspace double and the
+/// runtime double, so a test can pin an ordering rule the engine must keep.
+final class OrderLog {
+    private(set) var entries: [String] = []
+    func note(_ entry: String) { entries.append(entry) }
+    func firstIndex(of entry: String) -> Int? { entries.firstIndex(of: entry) }
 }
 
 // ───────────────────────────── the runtime double ────────────────────────────
@@ -253,9 +288,11 @@ final class GatedRuntime: AgentRuntime {
     var holdThreads: Set<String> = ["*"]
     var script: (AgentTurnRequest) -> [AgentRuntimeEvent] = { _ in [] }
     var finalText = "done"
+    var finalUsage: AgentUsage?
+    var order: OrderLog?
     var failure: AgentRuntimeFailure?
     var failureByThread: [String: AgentRuntimeFailure] = [:]
-    private(set) var startedThreads: [String] = []
+    var startedThreads: [String] = []
     private(set) var startedTurnIDs: [UUID] = []
     private(set) var cancelledTurnIDs: [UUID] = []
     private var threadByTurnID: [UUID: String] = [:]
@@ -271,6 +308,7 @@ final class GatedRuntime: AgentRuntime {
         startedThreads.append(request.conversationID)
         startedTurnIDs.append(request.turnID)
         threadByTurnID[request.turnID] = request.conversationID
+        order?.note("runtime-started:\(request.conversationID)")
         emit(.started(externalSessionID: "external-\(request.turnID.uuidString)"))
         for event in script(request) { emit(event) }
         if holdThreads.contains("*") || holdThreads.contains(request.conversationID) {
@@ -280,7 +318,7 @@ final class GatedRuntime: AgentRuntime {
         if let failure = failureByThread[request.conversationID] { throw failure }
         if let failure { throw failure }
         return AgentTurnResult(externalSessionID: "external-\(request.turnID.uuidString)",
-                               runtimeVersion: "test", text: finalText, usage: nil)
+                               runtimeVersion: "test", text: finalText, usage: finalUsage)
     }
 
     func cancel(turnID: UUID) async {
@@ -299,8 +337,8 @@ final class FakeDriver: TurnRuntimeDriver {
     var savedBindings: [String: RuntimeBinding] = [:]
     var delegatesByThread: [String: [TPPersonaDelegate]] = [:]
     private(set) var madeRequests: [(threadID: String, todayContext: String, delegatesBlock: String)] = []
-    private(set) var madeTurnIDs: [String] = []
-    private(set) var childRequests: [AgentTurnRequest] = []
+    var madeTurnIDs: [String] = []
+    var childRequests: [AgentTurnRequest] = []
 
     func runtime(for kind: TPRuntime) throws -> any AgentRuntime {
         guard let runtime = runtimes[kind] else {
@@ -355,10 +393,12 @@ final class FakeWorkspace: TurnWorkspace {
         git: TPTurnGit(branch: "main", dirty: true, headCommit: "abc", pushed: false,
                        unpushedCount: 1, upstreamRef: "origin/main"),
         warning: nil)
+    var order: OrderLog?
     private(set) var began: [String] = []
     private(set) var finished: [String] = []
     func begin(thread: TPThread, turn: TPTurn) -> String? {
         began.append(turn.id)
+        order?.note("checkpoint-before:\(thread.id)")
         return beforeName
     }
     func finish(thread: TPThread, turn: TPTurn) -> TurnCheckpointState {
@@ -391,6 +431,7 @@ final class EngineHarness {
     let engine: TurnEngine
     let signals: SignalRecorder
     let generalFolder: URL
+    let order = OrderLog()
     var limits: TurnAdmissionLimits
 
     init(limits: TurnAdmissionLimits = TurnAdmissionLimits()) {
@@ -403,6 +444,8 @@ final class EngineHarness {
         self.engine = TurnEngine(store: store, driver: driver, workspace: workspace,
                                  limits: limits, generalProjectFolder: general, clock: clock,
                                  activity: activity)
+        workspace.order = order
+        for runtime in driver.runtimes.values { runtime.order = order }
         _ = engine.subscribe { [signals, store] signal in
             signals.record(signal, storeVersion: store.storeVersion,
                            storedEventCount: store.appliedEvents.count,
@@ -444,7 +487,7 @@ final class SignalRecorder {
             storedEventWasPresentAtSignal.append(eventPresent)
         }
     }
-    var storedSignals: [(TPEventStamp, TPDurableEvent)] {
+    var storedSignals: [(TurnEventStamp, TPDurableEvent)] {
         signals.compactMap {
             if case let .stored(stamp, event) = $0 { return (stamp, event) }
             return nil

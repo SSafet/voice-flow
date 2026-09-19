@@ -82,6 +82,8 @@ store.seed(thread: makeThread(id: threadD))
 runtime.holdThreads = []
 runtime.script = { _ in [.textDelta(partID: "p", delta: "answer")] }
 runtime.finalText = "answer"
+runtime.finalUsage = AgentUsage(inputTokens: 1_200, outputTokens: 340,
+                                costUSD: Decimal(string: "0.25")!)
 let d1 = try await start(threadD, "finish")
 await engine.waitUntilIdle()
 let finished = try await store.turn(id: d1.id)
@@ -92,6 +94,9 @@ checkEqual("the after checkpoint is on the turn", finished?.checkpoints?.after, 
 checkEqual("the changed files are on the turn", finished?.changedFiles?.count, 1)
 checkEqual("the git state is on the turn", finished?.git?.branch, "main")
 checkEqual("the turn has an end", finished?.endedAt != nil, true)
+checkEqual("the runtime's input tokens are on the turn", finished?.usage?.inputTokens, 1_200)
+checkEqual("the runtime's output tokens are on the turn", finished?.usage?.outputTokens, 340)
+checkEqual("the cost is carried in millionths of a dollar", finished?.usage?.costMicros, 250_000)
 check("the workspace measured the turn", workspace.finished.contains(d1.id))
 let finalBatch = store.batches.last(where: { batch in
     batch.events.contains { $0.type == .turnUpdated && $0.turn?.status == .completed }
@@ -169,8 +174,64 @@ do {
     check("a cloud run is refused", false, "\(error)")
 }
 
-// 8. The power assertion is held from the first running turn to the last.
+// 8. The power assertion is held from the first running turn to the last: it is
+//    taken once for two turns that overlap, and released only when the second
+//    one ends, not when the first does.
 check("the assertion was taken", activity.beginCount >= 1)
 check("the assertion was released", activity.endCount >= 1)
+
+let awakeHarness = EngineHarness()
+let awakeRuntime = awakeHarness.driver.runtimes[.opencode]!
+awakeRuntime.holdThreads = ["*"]
+awakeHarness.store.seed(thread: makeThread(id: "thread-awake-one"))
+awakeHarness.store.seed(thread: makeThread(id: "thread-awake-two"))
+_ = try await awakeHarness.engine.startTurn(StartTurnRequest(
+    commandID: "awake-1", threadID: "thread-awake-one", text: "one", attachmentIDs: [],
+    startedBy: userStartedBy(), requestExpirySec: nil, retryOfTurnID: nil, model: nil,
+    reasoningEffort: nil, sentFrom: nil, speakReply: false))
+_ = try await awakeHarness.engine.startTurn(StartTurnRequest(
+    commandID: "awake-2", threadID: "thread-awake-two", text: "two", attachmentIDs: [],
+    startedBy: userStartedBy(), requestExpirySec: nil, retryOfTurnID: nil, model: nil,
+    reasoningEffort: nil, sentFrom: nil, speakReply: false))
+await waitFor("both turns are running") { awakeRuntime.startedThreads.count == 2 }
+checkEqual("two running turns take the assertion once", awakeHarness.activity.beginCount, 1)
+checkEqual("nothing was released while a turn runs", awakeHarness.activity.endCount, 0)
+await awakeRuntime.release("thread-awake-one")
+await waitFor("the first turn ended") {
+    awakeHarness.store.storedTurns.values.contains { $0.threadID == "thread-awake-one" && $0.status == .completed }
+}
+checkEqual("the assertion is still held for the second turn", awakeHarness.activity.endCount, 0)
+await awakeRuntime.release("thread-awake-two")
+await awakeHarness.engine.waitUntilIdle()
+checkEqual("the assertion is released when the last turn ends", awakeHarness.activity.endCount, 1)
+checkEqual("the assertion was never taken twice", awakeHarness.activity.beginCount, 1)
+
+// 9. Two threads running in the same folder are told about each other: the
+//    second turn's first notice names the thread already working there.
+let sharedHarness = EngineHarness()
+let sharedRuntime = sharedHarness.driver.runtimes[.opencode]!
+sharedRuntime.holdThreads = ["*"]
+sharedHarness.store.seed(thread: makeThread(id: "thread-shared-one", projectID: "p1"))
+sharedHarness.store.seed(thread: makeThread(id: "thread-shared-two", projectID: "p1"))
+let sharedOne = try await sharedHarness.engine.startTurn(StartTurnRequest(
+    commandID: "shared-1", threadID: "thread-shared-one", text: "one", attachmentIDs: [],
+    startedBy: userStartedBy(), requestExpirySec: nil, retryOfTurnID: nil, model: nil,
+    reasoningEffort: nil, sentFrom: nil, speakReply: false))
+await waitFor("the first folder turn is running") { sharedRuntime.startedThreads.count == 1 }
+let sharedTwo = try await sharedHarness.engine.startTurn(StartTurnRequest(
+    commandID: "shared-2", threadID: "thread-shared-two", text: "two", attachmentIDs: [],
+    startedBy: userStartedBy(), requestExpirySec: nil, retryOfTurnID: nil, model: nil,
+    reasoningEffort: nil, sentFrom: nil, speakReply: false))
+await waitFor("the second folder turn is running") { sharedRuntime.startedThreads.count == 2 }
+let sharedNotices = (try await sharedHarness.store.items(turnID: sharedTwo.id))
+    .filter { $0.kind == .notice }
+check("the second turn in a shared folder names the other thread",
+      sharedNotices.contains { $0.notice?.message.contains("Thread thread-shared-one") ?? false },
+      sharedNotices.compactMap { $0.notice?.message }.joined(separator: " | "))
+checkEqual("the first turn is the one that was already running",
+           sharedHarness.engine.runningTurnID(threadID: "thread-shared-one"), sharedOne.id)
+let loneNotices = (try await sharedHarness.store.items(turnID: sharedOne.id)).filter { $0.kind == .notice }
+check("the first turn had nobody to name", loneNotices.isEmpty,
+      loneNotices.compactMap { $0.notice?.message }.joined(separator: " | "))
 
 finishTurnEngine("turn lifecycle")

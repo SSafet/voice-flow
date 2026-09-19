@@ -44,6 +44,16 @@ await waitFor("the approval item is stored") {
 }
 checkEqual("the turn waits", store.storedTurns[turnA.id]?.status, .waiting)
 checkEqual("the thread waits", store.storedThreads[threadA]?.activity, .waiting)
+let openApproval = store.storedItems.values.first { $0.approval?.requestID == "req-1" }
+checkEqual("an approval is a tool approval", openApproval?.approval?.kind, .tool)
+checkEqual("the only options offered are allow once and reject once",
+           openApproval?.approval?.options.map(\.optionID), ["allow_once", "reject_once"])
+check("no lasting grant is offered",
+      openApproval?.approval?.options.allSatisfy { $0.kind == .allowOnce || $0.kind == .rejectOnce } ?? false)
+checkEqual("an unanswered request has no resolution", openApproval?.approval?.resolution, nil)
+check("a person's request expires in four hours by default",
+      expirySecondsRemaining(openApproval?.approval?.expiresAt, from: harness.clock.current) == 14_400,
+      openApproval?.approval?.expiresAt ?? "no expiry")
 try await engine.answerApproval(AnswerApprovalRequest(commandID: "a-answer", threadID: threadA,
                                                       requestID: "req-1", optionID: "allow_once",
                                                       answeredBy: firstAnswerer))
@@ -133,6 +143,44 @@ do {
 await questionHarness.driver.runtimes[.opencode]!.release("thread-question")
 await questionHarness.engine.waitUntilIdle()
 
+// 4b. A secret answer reaches the asker but is never written into an item or an
+//     event.
+let secretHarness = EngineHarness()
+secretHarness.driver.runtimes[.opencode]!.holdThreads = ["*"]
+secretHarness.store.seed(thread: makeThread(id: "thread-secret"))
+let secretTurn = try await secretHarness.engine.startTurn(StartTurnRequest(
+    commandID: "s-start", threadID: "thread-secret", text: "ask", attachmentIDs: [],
+    startedBy: userStartedBy(), requestExpirySec: nil, retryOfTurnID: nil, model: nil,
+    reasoningEffort: nil, sentFrom: nil, speakReply: false))
+let secretTask = Task { await secretHarness.engine.requestQuestion(
+    threadID: "thread-secret", turnID: secretTurn.id,
+    question: makeQuestion(requestID: "s-1", inputType: .secret)) }
+await waitFor("the secret question is stored") {
+    secretHarness.store.storedItems.values.contains { $0.question?.requestID == "s-1" }
+}
+try await secretHarness.engine.answerQuestion(AnswerQuestionRequest(
+    commandID: "s-answer", threadID: "thread-secret", requestID: "s-1",
+    answers: [TPQuestionAnswer(choiceIDS: nil, questionID: "q1", text: "correct-horse-battery")],
+    answeredBy: firstAnswerer))
+let secretResolution = await secretTask.value
+checkEqual("the asker still gets the secret",
+           secretResolution.answers?.first?.text, "correct-horse-battery")
+check("no stored item carries the secret",
+      secretHarness.store.storedItems.values.allSatisfy { item in
+          !(item.text ?? "").contains("correct-horse-battery")
+              && !(item.question?.resolution?.answers?.contains { ($0.text ?? "").contains("correct-horse-battery") } ?? false)
+      })
+check("no durable event carries the secret",
+      secretHarness.store.appliedEvents.allSatisfy { event in
+          !(event.item?.text ?? "").contains("correct-horse-battery")
+              && !(event.item?.question?.resolution?.answers?.contains { ($0.text ?? "").contains("correct-horse-battery") } ?? false)
+      })
+checkEqual("the secret question is still answered",
+           secretHarness.store.storedItems.values.first { $0.question?.requestID == "s-1" }?
+               .question?.resolution?.outcome, .answered)
+_ = try await secretHarness.engine.stop(StopTurnRequest(commandID: "s-stop",
+                                                        threadID: "thread-secret", turnID: nil))
+
 // 5. A command takes effect once per commandId: a repeat returns the original
 //    result and writes nothing second.
 runtime.holdThreads = ["*"]
@@ -144,13 +192,10 @@ await engine.waitUntilIdle()
 let repeatedSend = try await startHeld(threadB, commandID: "same-command")
 checkEqual("the repeat returns the original turn", repeatedSend.id, firstSend.id)
 checkEqual("only one turn was written", (try await store.turns(threadID: threadB)).count, 1)
-do {
-    _ = try await startHeld(threadB, commandID: "same-command")
-    // A repeat of the same parameters is not a new send, so nothing fails.
-    check("the third repeat is still the same turn", true)
-} catch {
-    check("the third repeat is still the same turn", false, "\(error)")
-}
+let thirdSend = try await startHeld(threadB, commandID: "same-command")
+checkEqual("the third repeat is still the original turn", thirdSend.id, firstSend.id)
+checkEqual("the third repeat wrote nothing either",
+           (try await store.turns(threadID: threadB)).count, 1)
 do {
     _ = try await engine.startTurn(StartTurnRequest(
         commandID: "same-command", threadID: threadB, text: "a different message", attachmentIDs: [],
@@ -183,8 +228,18 @@ await waitFor("the trigger's approval is stored") {
 let triggerItem = triggerHarness.store.storedItems.values.first { $0.approval?.requestID == "req-trigger" }
 checkEqual("the trigger's request expires at its own limit",
            expirySecondsRemaining(triggerItem?.approval?.expiresAt, from: triggerHarness.clock.current), 43_200)
-await triggerHarness.engine.stop(StopTurnRequest(commandID: "t-stop", threadID: "thread-trigger-fields", turnID: nil))
+let triggerStop = try await triggerHarness.engine.stop(
+    StopTurnRequest(commandID: "t-stop", threadID: "thread-trigger-fields", turnID: nil))
 _ = await triggerApproval.value
+
+// 7. Stop is a command too: a repeat under the same command id answers the same
+//    outcome and stops nothing a second time.
+let stopRepeat = try await triggerHarness.engine.stop(
+    StopTurnRequest(commandID: "t-stop", threadID: "thread-trigger-fields", turnID: nil))
+checkEqual("the repeated stop returns the first outcome", stopRepeat, triggerStop)
+checkEqual("the repeated stop named the same turn", stopRepeat.stoppedTurnIDs, [triggerTurn.id])
+checkEqual("the stopped turn is interrupted once",
+           triggerHarness.store.storedTurns[triggerTurn.id]?.status, .interrupted)
 
 finishTurnEngine("turn requests")
 
