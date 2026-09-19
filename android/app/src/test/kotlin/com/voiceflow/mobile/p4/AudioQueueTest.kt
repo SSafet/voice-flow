@@ -3,6 +3,8 @@ package com.voiceflow.mobile.p4
 import com.voiceflow.mobile.AudioQueue
 import com.voiceflow.mobile.DictationMode
 import com.voiceflow.mobile.QueueItem
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -60,6 +62,46 @@ class AudioQueueTest {
         assertEquals(emptyList<QueueItem>(), queue().items())
         assertNull(queue().item("nothing"))
         assertEquals(0, queue().count())
+    }
+
+    @Test
+    fun `enqueueing the same recording twice keeps one row in its first place`() {
+        val q = queue()
+        val a = recorded(tmp.root, "a", DictationMode.INSERT)
+        val b = recorded(tmp.root, "b", DictationMode.KEEP)
+        q.enqueue(a)
+        q.enqueue(b)
+        q.enqueue(a)
+
+        assertEquals(listOf("a", "b"), q.items().map { it.id })
+        assertEquals(2, q.count())
+    }
+
+    // ── the file the installed app already wrote is read, never lost ──
+
+    @Test
+    fun `a queue written by the installed app is read, whatever its rows say`() {
+        // The file is the same `queue.json` the shipped build writes, and its
+        // rows carry that build's mode spellings. Refusing them would throw the
+        // owner's queued recordings away on the first launch after the upgrade.
+        val legacy = JSONArray()
+        for ((id, mode) in listOf("old-1" to "bubble", "old-2" to "kept", "old-3" to "continue:42")) {
+            File(tmp.root, "queue").apply { mkdirs() }
+            File(tmp.root, "queue/$id.m4a").writeBytes(ByteArray(8) { 2 })
+            legacy.put(
+                JSONObject()
+                    .put("id", id)
+                    .put("file", File(tmp.root, "queue/$id.m4a").absolutePath)
+                    .put("mode", mode)
+                    .put("createdAt", 1_700_000_000_000L),
+            )
+        }
+        File(tmp.root, "queue.json").writeText(legacy.toString())
+
+        val q = queue()
+
+        assertEquals(listOf("old-1", "old-2", "old-3"), q.items().map { it.id })
+        assertEquals(listOf("bubble", "kept", "continue:42"), q.items().map { it.mode })
     }
 
     // ── nothing is deleted until the text exists ──
@@ -137,5 +179,22 @@ class AudioQueueTest {
         assertEquals(DictationMode.INSERT, DictationMode.parse("insert"))
         assertEquals(DictationMode.KEEP, DictationMode.parse("keep"))
         assertEquals(DictationMode.COMPOSER, DictationMode.parse("composer"))
+    }
+
+    @Test
+    fun `the shipped build's mode spellings map onto the three deliveries`() {
+        assertEquals(DictationMode.INSERT, DictationMode.parse("pasted"))
+        assertEquals(DictationMode.INSERT, DictationMode.parse("bubble"))
+        assertEquals(DictationMode.KEEP, DictationMode.parse("quick"))
+        assertEquals(DictationMode.COMPOSER, DictationMode.parse("assistant"))
+    }
+
+    @Test
+    fun `a mode this package does not own parses to nothing instead of throwing`() {
+        // `continue:<id>` is the one legacy capture P4 does not take over; the
+        // row stays in the queue for the screen that owns it until P6.
+        assertNull(DictationMode.parse("continue:42"))
+        assertNull(DictationMode.parse(""))
+        assertNull(DictationMode.parse("nonsense"))
     }
 }

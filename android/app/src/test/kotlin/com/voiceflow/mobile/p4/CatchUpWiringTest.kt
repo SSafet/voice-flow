@@ -51,6 +51,10 @@ class CatchUpWiringTest {
             .filterValues { it.contains("JobScheduler") || it.contains("JobService") }
             .keys
         assertTrue("no main source may schedule a system JobInfo: $offenders", offenders.isEmpty())
+        assertNull(
+            "the SyncJob service is gone from the manifest the build merged",
+            P4Paths.manifestComponent("service", ".SyncJob"),
+        )
     }
 
     @Test
@@ -59,5 +63,24 @@ class CatchUpWiringTest {
             .filterValues { it.contains("CatchUp.schedule(") || it.contains("CatchUpWorker") }
             .keys
         assertTrue("something must actually schedule catch-up: $callers", callers.isNotEmpty())
+    }
+
+    @Test
+    fun `a note saved on the phone asks for a catch-up of its own`() {
+        // 08 §3.9 step 2: the phone stores the dictation, and catch-up pushes it
+        // to Atika at the next opportunity — which only happens if saving asks.
+        val askers = P4Paths.mainSources()
+            .filterValues { it.contains("CatchUpReason.LOCAL_CHANGE") }
+            .keys
+        assertTrue("a local change must schedule catch-up: $askers", askers.isNotEmpty())
+    }
+
+    @Test
+    fun `the catch-up job states its network constraint and its unique work to WorkManager`() {
+        val source = P4Paths.source("CatchUpWorker.kt")
+        assertTrue("the constraint is WorkManager's own", source.contains("NetworkType.CONNECTED"))
+        assertTrue("one-off catch-up replaces the one already queued", source.contains("ExistingWorkPolicy"))
+        assertTrue("the periodic run is a PeriodicWorkRequest", source.contains("PeriodicWorkRequest"))
+        assertTrue("expedited work is asked for by name", source.contains("setExpedited"))
     }
 }

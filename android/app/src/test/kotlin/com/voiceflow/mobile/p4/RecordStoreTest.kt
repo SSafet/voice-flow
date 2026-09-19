@@ -11,6 +11,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -48,6 +49,10 @@ class RecordStoreTest {
         assertFalse(
             "the reduced store must not read or write a thread or a message",
             store.contains("CloudCollection.THREADS") || store.contains("CloudCollection.MESSAGES"),
+        )
+        assertFalse(
+            "agent_model belonged to the assistant being deleted; the reduced store does not touch it",
+            store.contains("agent_model"),
         )
     }
 
@@ -107,6 +112,16 @@ class RecordStoreTest {
     }
 
     @Test
+    fun `the edit the phone sends is valid on the wire and keeps the timestamps it sends today`() {
+        val edit = RecordStore.edit(DictationEntry("d2", "12:34:56", "2026-09-19", "Some words", "pasted", synced = false))
+        val payload = edit.payload as CloudPayload.Dictation
+        assertEquals("2026-09-19T12:34:56", payload.legacyTimestamp)
+        assertNotNull("the change carries the time the note was made", payload.modifiedAt)
+        // The gateway's own validator, run on the JSON this edit would send.
+        payload.validate(CloudCollection.DICTATIONS, "d2")
+    }
+
+    @Test
     fun `the closed preference set accepts dictation_cleanup_model and still refuses an unknown key`() {
         val accepted = CloudPayload.parse(
             CloudCollection.PREFERENCES, "dictation_cleanup_model",
@@ -121,5 +136,39 @@ class RecordStoreTest {
             error
         }
         assertTrue("an unknown preference key is still refused", refused != null)
+    }
+
+    @Test
+    fun `the journal decoder reads the new preference too, so a queued edit replays`() {
+        val decoded = CloudPayload.local(
+            CloudCollection.PREFERENCES, "dictation_cleanup_model",
+            JSONObject().put("value", "openrouter/other-model"),
+        ) as CloudPayload.Model
+        assertEquals("openrouter/other-model", decoded.value)
+    }
+
+    @Test
+    fun `the dictation record shape stays closed`() {
+        val extraField = try {
+            CloudPayload.parse(
+                CloudCollection.DICTATIONS, "d3",
+                JSONObject().put("text", "hello").put("destination", "kept").put("originDevice", "phone"),
+            )
+            null
+        } catch (error: CloudFailure.InvalidRecord) {
+            error
+        }
+        assertTrue("this design adds no field to the dictation record", extraField != null)
+
+        val thirdDestination = try {
+            CloudPayload.parse(
+                CloudCollection.DICTATIONS, "d4",
+                JSONObject().put("text", "hello").put("destination", "composer"),
+            )
+            null
+        } catch (error: CloudFailure.InvalidRecord) {
+            error
+        }
+        assertTrue("the wire has two destinations, pasted and kept", thirdDestination != null)
     }
 }

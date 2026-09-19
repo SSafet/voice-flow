@@ -21,6 +21,8 @@ internal object P4Paths {
 
     const val ACCESSIBILITY_XML = "android/app/src/main/res/xml/accessibility_service.xml"
 
+    const val MANIFEST = "android/app/src/main/AndroidManifest.xml"
+
     /** The VoiceFlow worktree root. */
     val repoRoot: File by lazy {
         var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
@@ -49,6 +51,35 @@ internal object P4Paths {
 
     /** The text of a main-source file that must exist. */
     fun source(relative: String): String = file("$SOURCE_DIR/$relative").readText()
+
+    /**
+     * The manifest the Android build merged, handed to the unit test task by
+     * `app/build.gradle.kts` as `-Dvoiceflow.mergedManifest` (P1's mechanism).
+     * This is what AGP actually produced, not what the source manifest says.
+     */
+    val mergedManifest: File by lazy {
+        val named = System.getProperty("voiceflow.mergedManifest")
+            ?: throw AssertionError(
+                "the system property voiceflow.mergedManifest is not set: app/build.gradle.kts must hand " +
+                    "the merged manifest of each variant to its unit test task (P1)",
+            )
+        val f = File(named)
+        if (!f.isFile) throw AssertionError("the merged manifest named by voiceflow.mergedManifest is missing: $named")
+        f
+    }
+
+    /**
+     * A component of the merged manifest by its `android:name`, which the
+     * manifest writes as a suffix (`.BubbleService`) or in full.
+     */
+    fun manifestComponent(tag: String, name: String): Element? {
+        val wanted = if (name.startsWith(".")) "com.voiceflow.mobile$name" else name
+        return elements(xml(mergedManifest), tag).firstOrNull {
+            val declared = androidAttribute(it, "name") ?: return@firstOrNull false
+            val full = if (declared.startsWith(".")) "com.voiceflow.mobile$declared" else declared
+            full == wanted
+        }
+    }
 
     /** Every main-source file of the app, keyed by file name. */
     fun mainSources(): Map<String, String> {

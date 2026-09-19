@@ -12,7 +12,6 @@ import com.voiceflow.mobile.RecordingState
 import com.voiceflow.mobile.TrampolineHandshake
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -79,11 +78,9 @@ class ForegroundOrderingTest {
         val f = Fixture()
         f.session.begin(DotState.RECORDING)
         val file = f.session.end()
-        val ending = f.steps.all().dropWhile { it != "demoteMicrophone" }
-        assertTrue("both happen: ${f.steps.all()}", ending.contains("removeDot"))
-        assertTrue(
-            "demote must come before removing the dot: ${f.steps.all()}",
-            ending.indexOf("demoteMicrophone") < ending.indexOf("removeDot"),
+        assertEquals(
+            listOf("showDot:RECORDING", "promoteMicrophone", "recorderStart", "recorderStop", "demoteMicrophone", "removeDot"),
+            f.steps.all(),
         )
         assertEquals("/tmp/take.m4a", file?.path)
         assertEquals(RecordingState.IDLE, f.session.state)
@@ -162,5 +159,47 @@ class ForegroundOrderingTest {
         val document = P4Paths.xml(P4Paths.file(P4Paths.ACCESSIBILITY_XML))
         val service = P4Paths.elements(document, "accessibility-service").single()
         assertEquals("the service is told to ask for nothing more than focus", "typeViewFocused", P4Paths.androidAttribute(service, "accessibilityEventTypes"))
+    }
+
+    // ── what the phone is actually told about the two components ──
+
+    @Test
+    fun `the service may claim the microphone and the side key never fronts the app`() {
+        val bubble = P4Paths.manifestComponent("service", ".BubbleService")
+            ?: throw AssertionError("the merged manifest declares no BubbleService")
+        val types = P4Paths.androidAttribute(bubble, "foregroundServiceType").orEmpty()
+        assertTrue("the promotion is only legal if the type is declared: $types", types.contains("microphone"))
+
+        val trampoline = P4Paths.manifestComponent("activity", ".DictateTrampoline")
+            ?: throw AssertionError("the merged manifest declares no DictateTrampoline")
+        assertTrue(
+            "an empty task affinity is what keeps a backgrounded MainActivity where it is",
+            trampoline.hasAttributeNS(P4Paths.ANDROID_NS, "taskAffinity"),
+        )
+        assertEquals("", trampoline.getAttributeNS(P4Paths.ANDROID_NS, "taskAffinity"))
+        assertEquals("true", P4Paths.androidAttribute(trampoline, "excludeFromRecents"))
+        assertTrue(
+            "the trampoline has no visible window",
+            P4Paths.file(P4Paths.MANIFEST).readText().contains("@android:style/Theme.NoDisplay"),
+        )
+    }
+
+    @Test
+    fun `the quick-settings tile starts a kept dictation through the same trampoline`() {
+        val tile = P4Paths.source("RecordTileService.kt")
+        assertTrue("the tile goes through the trampoline", tile.contains("DictateTrampoline"))
+        assertTrue("the tile starts a kept dictation", tile.contains("DictationMode.KEEP"))
+        assertFalse("the tile never opens the app", tile.contains("MainActivity"))
+    }
+
+    @Test
+    fun `the dot goes amber while the text is being made and flashes once when it lands`() {
+        val bubble = P4Paths.source("Bubble.kt")
+        assertTrue("amber while transcribing", bubble.contains("DotState.TRANSCRIBING"))
+        assertTrue("one bright flash when the text landed", bubble.contains("flashInserted("))
+        assertTrue(
+            "the dot says what it is doing, through P1's mapping",
+            bubble.contains("DotAnnouncement.contentDescriptionFor"),
+        )
     }
 }
