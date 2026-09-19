@@ -81,11 +81,27 @@ func writeSnapshot(root: URL, source: String, snapshot: String,
         .write(to: folder.appendingPathComponent("snapshot.json"))
 }
 
-func writeDictationsJSON(root: URL, entries: [(id: String, text: String, timestamp: String)]) throws {
-    let array = entries.map { ["id": $0.id, "text": $0.text, "timestamp": $0.timestamp] }
+/// `dictations.json` as the app writes it: an array of history entries whose
+/// fields are `id`, `text`, `time`, `timestamp` and `destination`.
+func writeDictationsJSON(root: URL,
+                         entries: [(id: String, text: String, timestamp: String, destination: String)]) throws {
+    let array = entries.map {
+        ["id": $0.id, "text": $0.text, "time": $0.timestamp,
+         "timestamp": $0.timestamp, "destination": $0.destination]
+    }
     try JSONSerialization.data(withJSONObject: array, options: [.sortedKeys])
         .write(to: root.appendingPathComponent("dictations.json"))
 }
+
+/// The shape rule 5 gives an id that no live entry could supply:
+/// `legacy-ds-` followed by sixteen lower-case hex characters.
+func isRecoveredID(_ id: String) -> Bool {
+    guard id.hasPrefix("legacy-ds-") else { return false }
+    let hex = id.dropFirst("legacy-ds-".count)
+    return hex.count == 16 && hex.allSatisfy { $0.isHexDigit && !$0.isUppercase }
+}
+
+struct SinkRefused: Error {}
 
 func freshRoot(_ name: String) throws -> URL {
     let root = FileManager.default.temporaryDirectory
@@ -98,6 +114,8 @@ func freshRoot(_ name: String) throws -> URL {
 /// content key are the two ways a dictation is already present.
 final class RecordingArchive {
     private(set) var added: [LegacyDictation] = []
+    /// How many times the retirement handed it a batch. Rule 7 says once.
+    private(set) var callCount = 0
     private var byID: [String: LegacyDictation] = [:]
     private var byContent: Set<String> = []
 
@@ -107,6 +125,7 @@ final class RecordingArchive {
     }
 
     func sink(_ records: [LegacyDictation]) throws -> Int {
+        callCount += 1
         var count = 0
         for record in records {
             let key = Self.contentKey(record)
@@ -154,12 +173,15 @@ do {
         (id: "item-1", text: "Kept dictation", capturedAt: iso("2026-09-01T10:00:00Z")),
         (id: "item-2", text: "Second old dictation", capturedAt: iso("2026-07-02T09:00:00Z"))
     ])
-    // A non-dictation source is moved whole and proves the byte count is over
-    // the whole folder, not only the dictations.
-    try writeSnapshot(root: root, source: "builtin-website", snapshot: "snap-9", items: [],
-                      extraByteFile: ("page.html", 4096))
+    // A non-dictation source is moved whole. Its items are never dictations:
+    // only `builtin-dictations` is read into the archive. It also proves the
+    // byte count is over the whole folder, not only the dictations.
+    try writeSnapshot(root: root, source: "builtin-website", snapshot: "snap-9", items: [
+        (id: "item-1", text: "Not a dictation", capturedAt: iso("2026-07-10T10:00:00Z"))
+    ], extraByteFile: ("page.html", 4096))
     try writeDictationsJSON(root: root, entries: [
-        (id: "live-kept-1", text: "Kept dictation", timestamp: "2026-09-01T10:00:00Z")
+        (id: "live-kept-1", text: "Kept dictation", timestamp: "2026-09-01T10:00:00Z",
+         destination: "kept")
     ])
     try Data("{}".utf8).write(to: root.appendingPathComponent("sources-registry.json"))
     try Data("{}".utf8).write(to: root.appendingPathComponent("source-collection-status.json"))
@@ -174,12 +196,23 @@ do {
     expect(report.dictationsOffered == 3, "the three distinct dictations are offered once, got \(report.dictationsOffered)")
     expect(report.dictationsAdded == 3, "three dictations reach the archive, got \(report.dictationsAdded)")
     expect(archive.added.count == 3, "the archive holds three dictations")
+    expect(archive.callCount == 1, "the sink is called once with the whole list, got \(archive.callCount)")
+    expect(archive.record(text: "Not a dictation") == nil,
+           "an item of a source other than builtin-dictations is never offered as a dictation")
     expect(archive.added.map(\.id).count == Set(archive.added.map(\.id)).count,
            "every offered dictation has a distinct id")
     expect(archive.record(text: "Kept dictation")?.id == "live-kept-1",
            "a dictation still in dictations.json keeps its own id")
+    expect(archive.record(text: "Kept dictation")?.destination == "kept",
+           "a matched dictation carries the destination of its dictations.json entry")
     expect(archive.record(text: "Oldest dictation") != nil, "a dictation older than the newest 200 is recovered")
+    expect(archive.record(text: "Oldest dictation")?.destination == nil,
+           "a recovered dictation with no live entry has no destination")
+    expect(archive.record(text: "Oldest dictation").map { isRecoveredID($0.id) } == true,
+           "a recovered dictation gets a legacy-ds-<16 hex> id, got \(archive.record(text: "Oldest dictation")?.id ?? "none")")
     expect(archive.record(text: "Second old dictation") != nil, "the second old dictation is recovered")
+    expect(archive.record(text: "Second old dictation").map { isRecoveredID($0.id) } == true,
+           "the second recovered dictation gets a legacy-ds-<16 hex> id")
     expect(archive.added.first?.text == "Oldest dictation", "records are offered oldest first")
     expect(archive.added.last?.text == "Kept dictation", "records are offered newest last")
 
@@ -193,6 +226,13 @@ do {
            "the legacy folder holds the same number of files (\(moved.files) vs \(baselineWithRegistry))")
     expect(moved.bytes == baseline.bytes + 4,
            "the legacy folder holds the same number of bytes (\(moved.bytes) vs \(baseline.bytes + 4))")
+    expect(report.filesMoved == moved.files,
+           "the report counts the files it moved (\(report.filesMoved) vs \(moved.files))")
+    expect(report.bytesMoved == moved.bytes,
+           "the report counts the bytes it moved (\(report.bytesMoved) vs \(moved.bytes))")
+    expect(report.movedItems.sorted() == ["source-collection-status.json", "source-snapshots", "sources-registry.json"],
+           "the report names the three moved items, got \(report.movedItems.sorted())")
+    expect(report.alreadyDone == false, "a run that moved the live folder is not already done")
     expect(FileManager.default.fileExists(atPath: legacy.appendingPathComponent("source-snapshots/builtin-dictations/snap-1/item-1.txt").path),
            "the original dictation copy is still readable under the legacy folder")
     expect(FileManager.default.fileExists(atPath: legacy.appendingPathComponent("sources-registry.json").path),
@@ -207,6 +247,7 @@ do {
     let second = try DataSourcesRetirement.run(configRoot: root, now: fixedNow, dictationSink: archiveAgain.sink)
     expect(second.dictationsAdded == 0, "the second run adds nothing, got \(second.dictationsAdded)")
     expect(second.movedItems.isEmpty, "the second run moves nothing")
+    expect(second.alreadyDone, "the second run reports the retirement as already done")
     expect(second.readFrom?.lastPathComponent == "source-snapshots",
            "the second run reads the copies where they now are")
     let stableAfter = fileCountAndBytes(legacy)
@@ -233,6 +274,23 @@ do {
     expect(archiveA.added.count == 1 && archiveB.added.count == 1, "each copy is offered once")
     expect(archiveA.added[0].id == archiveB.added[0].id,
            "a dictation with no live id gets the same deterministic id on every run")
+    expect(isRecoveredID(archiveA.added[0].id),
+           "the deterministic id has the legacy-ds-<16 hex> shape, got \(archiveA.added[0].id)")
+}
+
+// ── 2b. Two dictations of the same moment are ordered by their text. ───────
+
+do {
+    let root = try freshRoot("tie")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeSnapshot(root: root, source: "builtin-dictations", snapshot: "snap-tie", items: [
+        (id: "item-1", text: "Bravo said second", capturedAt: iso("2026-07-06T08:00:00Z")),
+        (id: "item-2", text: "Alpha said first", capturedAt: iso("2026-07-06T08:00:00Z"))
+    ])
+    let archive = RecordingArchive()
+    _ = try DataSourcesRetirement.run(configRoot: root, now: fixedNow, dictationSink: archive.sink)
+    expect(archive.added.map(\.text) == ["Alpha said first", "Bravo said second"],
+           "records of the same moment are ordered by text, got \(archive.added.map(\.text))")
 }
 
 // ── 3. Already moved by the importer: nothing to move, still read. ─────────
@@ -247,10 +305,15 @@ do {
     let archive = RecordingArchive()
     let report = try DataSourcesRetirement.run(configRoot: root, now: fixedNow, dictationSink: archive.sink)
     expect(report.movedItems.isEmpty, "a run that finds nothing live moves nothing")
+    expect(report.filesMoved == 0 && report.bytesMoved == 0, "a run that moves nothing counts nothing")
+    expect(report.alreadyDone, "a run that finds the copies already under legacy reports it")
+    expect(report.dictationsRead == 1, "the copy under the legacy folder is read, got \(report.dictationsRead)")
     expect(report.dictationsAdded == 1, "the copy is still read from the legacy folder")
     expect(report.readFrom?.resolvingSymlinksInPath().path.hasPrefix(movedRoot.resolvingSymlinksInPath().path) == true,
            "the report names the legacy location it read from")
     expect(archive.added.first?.text == "Moved earlier", "the moved dictation reaches the archive")
+    expect(FileManager.default.fileExists(atPath: movedRoot.appendingPathComponent("source-snapshots/builtin-dictations/snap-1/item-1.txt").path),
+           "the copy the importer had already moved is left where it is")
 }
 
 // ── 4. Refusals and failures by name. ─────────────────────────────────────
@@ -308,6 +371,85 @@ do {
 }
 
 do {
+    // An item path that escapes its snapshot folder is refused by the same
+    // name, and nothing is moved: the retirement never reads outside the
+    // folder it was given.
+    let root = try freshRoot("escape")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let folder = root.appendingPathComponent("source-snapshots/builtin-dictations/snap-e")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let snapshot: [String: Any] = [
+        "id": "snap-e", "sourceID": "builtin-dictations",
+        "collectedAt": referenceInterval(iso("2026-07-07T08:00:00Z")),
+        "bytes": 0, "skippedCount": 0,
+        "items": [[
+            "id": "item-1", "title": "Dictation · escape",
+            "relativePath": "../../../../dictations.json",
+            "contentType": "text/plain", "preview": "",
+            "capturedAt": referenceInterval(iso("2026-07-07T08:00:00Z"))
+        ]]
+    ]
+    try JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys])
+        .write(to: folder.appendingPathComponent("snapshot.json"))
+    let archive = RecordingArchive()
+    expectCode("source_snapshot_unreadable", "an item path that leaves its folder is named") {
+        _ = try DataSourcesRetirement.run(configRoot: root, now: fixedNow, dictationSink: archive.sink)
+    }
+    expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("source-snapshots").path),
+           "an escaping item path moves nothing")
+    expect(archive.added.isEmpty, "an escaping item path appends nothing")
+}
+
+do {
+    // The copies reach the archive before a single file is moved, and a move
+    // that cannot be made is named. `legacy` is a file here, so the
+    // destination cannot be created.
+    let root = try freshRoot("movefail")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeSnapshot(root: root, source: "builtin-dictations", snapshot: "snap-m", items: [
+        (id: "item-1", text: "Read before the move", capturedAt: iso("2026-07-08T08:00:00Z"))
+    ])
+    try Data("not a folder".utf8).write(to: root.appendingPathComponent("legacy"))
+    let archive = RecordingArchive()
+    expectCode("data_sources_move_failed", "a move that cannot be made is named") {
+        _ = try DataSourcesRetirement.run(configRoot: root, now: fixedNow, dictationSink: archive.sink)
+    }
+    expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("source-snapshots").path),
+           "a failed move leaves the live folder in place")
+    expect(archive.added.count == 1,
+           "the dictation reached the archive before the move was attempted, got \(archive.added.count)")
+
+    // The retry is not a duplicate: the same copy yields the same id.
+    try FileManager.default.removeItem(at: root.appendingPathComponent("legacy"))
+    let retry = try DataSourcesRetirement.run(configRoot: root, now: fixedNow, dictationSink: archive.sink)
+    expect(retry.dictationsAdded == 0, "the retry adds nothing, got \(retry.dictationsAdded)")
+    expect(archive.added.count == 1, "the retry leaves one record in the archive")
+    expect(retry.movedItems.contains("source-snapshots"), "the retry moves the live folder")
+    expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("\(legacyFolderName)/source-snapshots/builtin-dictations/snap-m/item-1.txt").path),
+           "the copy is readable under the legacy folder after the retry")
+}
+
+do {
+    // If the archive refuses the records, nothing has been moved and no
+    // destination folder is left behind for the next run to refuse.
+    let root = try freshRoot("sinkfails")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeSnapshot(root: root, source: "builtin-dictations", snapshot: "snap-s", items: [
+        (id: "item-1", text: "Never stored", capturedAt: iso("2026-07-09T08:00:00Z"))
+    ])
+    var thrown = false
+    do {
+        _ = try DataSourcesRetirement.run(configRoot: root, now: fixedNow,
+                                          dictationSink: { _ in throw SinkRefused() })
+    } catch { thrown = true }
+    expect(thrown, "a sink that refuses fails the run")
+    expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("source-snapshots").path),
+           "a refused sink moves nothing")
+    expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(legacyFolderName).path),
+           "a refused sink leaves no destination folder behind")
+}
+
+do {
     // Nothing to do is not an error.
     let root = try freshRoot("empty")
     defer { try? FileManager.default.removeItem(at: root) }
@@ -315,6 +457,9 @@ do {
     let report = try DataSourcesRetirement.run(configRoot: root, now: fixedNow, dictationSink: archive.sink)
     expect(report.dictationsOffered == 0 && report.movedItems.isEmpty,
            "a configuration root with nothing to retire is quiet")
+    expect(report.readFrom == nil, "a configuration root with nothing to retire names no reader")
+    expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(legacyFolderName).path),
+           "a configuration root with nothing to retire creates no legacy folder")
 }
 
 print("data sources retirement: ok")

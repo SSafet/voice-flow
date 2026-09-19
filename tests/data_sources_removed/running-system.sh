@@ -35,14 +35,47 @@ echo "ok 3 - $FILES files and $BYTES bytes match the baseline"
 
 ARCHIVE="$ROOT/dictations"
 [ -d "$ARCHIVE" ] || { echo "not ok - the dictation archive $ARCHIVE does not exist" >&2; exit 1; }
-MISSING=0
-while IFS= read -r copy; do
-    text="$(cat "$copy")"
-    [ -n "$text" ] || continue
-    grep -Fq "\"$text\"" "$ARCHIVE"/*.jsonl 2>/dev/null || { echo "missing from archive: $copy" >&2; MISSING=$((MISSING + 1)); }
-done < <(find "$LEGACY" -path '*builtin-dictations*' -type f -name 'item-*.txt')
-[ "$MISSING" -eq 0 ] || { echo "not ok - $MISSING dictation copies are not in the archive" >&2; exit 1; }
-echo "ok 4 - every builtin-dictations copy is in the dictation archive"
+# Every dictation that occurs in the moved builtin-dictations copies must be in
+# the archive. The copies carry the snapshot's own item ids (item-1, item-2 …),
+# not dictation ids, so the text of each copied item is what is compared, taken
+# from each snapshot.json rather than guessed from the file names.
+python3 - "$LEGACY" "$ARCHIVE" <<'PY' || exit 1
+import json, pathlib, sys
+
+legacy, archive = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+stored = set()
+for line in (l for f in sorted(archive.glob("*.jsonl")) for l in f.read_text(errors="replace").splitlines()):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        stored.add(json.loads(line).get("text", ""))
+    except json.JSONDecodeError:
+        print(f"not ok - {archive} holds a line that is not JSON", file=sys.stderr)
+        raise SystemExit(1)
+
+checked, missing = 0, []
+for snapshot in legacy.rglob("builtin-dictations/*/snapshot.json"):
+    for item in json.loads(snapshot.read_text()).get("items", []):
+        copy = snapshot.parent / item["relativePath"]
+        if not copy.is_file():
+            missing.append(f"{copy} (the copy itself is gone)")
+            continue
+        text = copy.read_text(errors="replace")
+        checked += 1
+        if text and text not in stored:
+            missing.append(str(copy))
+
+if not checked:
+    print("not ok - no builtin-dictations copy was found to check", file=sys.stderr)
+    raise SystemExit(1)
+for path in missing[:20]:
+    print(f"missing from the archive: {path}", file=sys.stderr)
+if missing:
+    print(f"not ok - {len(missing)} of {checked} dictation copies are not in the archive", file=sys.stderr)
+    raise SystemExit(1)
+print(f"ok 4 - all {checked} builtin-dictations copies are in the dictation archive")
+PY
 
 if [ -n "${S6_WAIT_SECONDS:-}" ]; then
     sleep "$S6_WAIT_SECONDS"

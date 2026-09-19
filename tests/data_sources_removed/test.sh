@@ -31,9 +31,10 @@ ok "the eight data-sources source files are gone"
 [ ! -e tests/source_review ] || die "tests/source_review still exists"
 ok "the data-sources and source-review test suites are gone"
 
-# No Swift file still names a data-sources type, field, column or entry point.
-# The list is every public name 07 section 5 deletes; a file that merely keeps
-# one of them alive would keep the feature reachable.
+# No file of the product, its suites or its scripts still names a data-sources
+# type, field, column or entry point. The list is every public name 07 section
+# 5 deletes; a file that merely keeps one of them alive would keep the feature
+# reachable, and a suite that still names one no longer compiles.
 SYMBOLS=(
     SourceKind SourceDefinition DataSourceStore DataSourceError
     SourceCollectionResult CollectedSourceDocument SourceSnapshot SourceStatus
@@ -47,13 +48,16 @@ SYMBOLS=(
     sourcesView dataSourceStore sourceCollector configureSourceWorkspace
     agentDataSourceOptions openAgentDataSources
 )
+SCAN=(swift tests scripts)
+# This suite's own files name every symbol on purpose; they are the check.
+SKIP=(--exclude-dir=data_sources_removed --exclude-dir=data_sources_retirement)
 for symbol in "${SYMBOLS[@]}"; do
-    if grep -rIq --include='*.swift' -e "$symbol" swift; then
-        hits="$(grep -rIl --include='*.swift' -e "$symbol" swift | tr '\n' ' ')"
-        die "swift/ still names $symbol ($hits)"
+    if grep -rIq "${SKIP[@]}" -e "$symbol" "${SCAN[@]}"; then
+        hits="$(grep -rIl "${SKIP[@]}" -e "$symbol" "${SCAN[@]}" | tr '\n' ' ')"
+        die "the tree still names $symbol ($hits)"
     fi
 done
-ok "no Swift source names a data-sources symbol"
+ok "no source, suite or script names a data-sources symbol"
 
 # The prompt composer keeps its other layers and has neither source layer.
 grep -q 'enum AgentPromptComposer' swift/AgentPromptComposer.swift ||
@@ -90,6 +94,30 @@ for path in 'tests/data_sources/main.swift' 'tests/data_sources/ui/main.swift' \
     grep -Fq "$path" tests/test_registry.json &&
         die "tests/test_registry.json still lists $path"
 done
+python3 -c 'import json,sys; json.load(open("tests/test_registry.json"))' ||
+    die "tests/test_registry.json is no longer valid JSON"
 ok "the registry no longer registers the deleted suites"
+
+# This suite is not optional: the unit gate runs it, so a later change that
+# brings the feature back is caught by the gate and not only by this file.
+grep -Fq 'tests/data_sources_removed/test.sh' scripts/test-agent-harness.sh ||
+    die "the harness does not run tests/data_sources_removed/test.sh"
+python3 - <<'PY' || die "tests/test_registry.json does not register data_sources_removed"
+import json
+registry = json.load(open("tests/test_registry.json"))
+suites = registry["runners"]["unit"]["required_suites"]
+assert "data_sources_removed" in suites, "required_suites is missing data_sources_removed"
+entries = [t for t in registry["tests"] if t["id"] == "tests/data_sources_removed/test.sh"]
+assert entries, "no tests entry for tests/data_sources_removed/test.sh"
+assert entries[0]["runner"] == "unit", "the entry is not on the unit runner"
+assert "data_sources_removed" in entries[0]["suites"], "the entry names no data_sources_removed suite"
+PY
+ok "the unit gate runs this check"
+
+# Subtraction has a floor: the watcher's own source folder is not this
+# feature's (07 section 5 keeps it) and must survive the deletion.
+[ -f watcher/sources/desktop/SOURCE.md ] ||
+    die "watcher/sources/desktop/SOURCE.md was deleted; it is the watcher's, not the feature's"
+ok "the watcher's own source folder survives"
 
 echo "all $PASS checks passed"
