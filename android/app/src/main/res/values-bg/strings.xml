@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="insertion_service_description">Въвежда диктовката ви в текстовото поле, което използвахте, така че плаващият балон работи във всяко приложение. Voice Flow не чете и не запазва нищо друго от екрана.</string>
+
+    <!-- Плаващият балон за диктовка (билет VF-51). -->
+    <string name="bubble_channel_name">Плаващ балон</string>
+    <string name="bubble_channel_description">Поддържа плаващия балон за диктовка активен във фонов режим.</string>
+    <string name="bubble_notification_title">Балонът за диктовка е включен</string>
+    <string name="bubble_notification_text">Докоснете плаващата точка, за да диктувате във всяко приложение</string>
+    <string name="bubble_notification_hide">Скриване</string>
+
+    <string name="bubble_mic_permission">Отворете Voice Flow веднъж, за да дадете достъп до микрофона</string>
+    <string name="bubble_mic_unavailable">Микрофонът е недостъпен: %1$s</string>
+    <string name="bubble_too_short">Твърде кратко — нищо не бе записано</string>
+    <string name="bubble_no_api_key">Още няма API ключ — отворете Voice Flow → Settings &amp; sync, за да го добавите</string>
+    <string name="bubble_transcription_failed">Неуспешно транскрибиране: %1$s</string>
+    <string name="bubble_offline_queued">Офлайн — на опашка, ще попадне в клипборда при връзка</string>
+    <string name="bubble_nothing_heard">Нищо не се чу</string>
+    <string name="bubble_clipboard_enable_accessibility">В клипборда — включете Voice Flow в Достъпност за автоматично вмъкване</string>
+    <string name="bubble_clipboard_no_field">В клипборда — няма фокусирано текстово поле</string>
+
+    <!-- Точката съобщава всяко работно състояние (08 §3.12). -->
+    <string name="dot_recording">Записва. Докоснете точката два пъти, за да спрете.</string>
+    <string name="dot_transcribing">Транскрибира</string>
+    <string name="dot_kept">Запазено</string>
+
+    <string name="dictate_alias_label">VF Диктуване</string>
+    <string name="record_tile_label">Voice Flow диктовка</string>
+</resources>
