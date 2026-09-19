@@ -86,14 +86,16 @@ cp "$PROJECT_DIR/thread-protocol.lock" "$BUILD_DEST/Contents/Resources/thread-pr
 
 # ── build Swift ────────────────────────────────────────
 # Swift Package Manager, so the app can link GRDB, Hummingbird, hummingbird-
-# websocket and Yams (06 §3.1). It replaces the one-command swiftc build of the
-# app and nothing else: the staging bundle, the signature, the swap and the bundled
-# runtimes below are untouched. -suppress-warnings keeps the output as quiet as
-# that call was; it suppresses warnings only, and an error still stops the build.
+# websocket and Yams (06 §3.1). It replaces the one-command compiler call that
+# built the app and nothing else: the staging bundle, the signature, the swap
+# and the bundled runtimes below are untouched. -suppress-warnings keeps the
+# output as quiet as that call was; it suppresses warnings only, and an error
+# still stops the build. This script installs the app the owner runs, so it
+# builds the release configuration and nothing else; the QA bundle is built by
+# scripts/install-agent-harness-qa.sh, which has its own build directory and so
+# does not force a full rebuild in each direction.
 echo "  Building Swift..."
-QA_FLAGS=()
-[ -n "${VOICE_FLOW_QA_BUILD:-}" ] && QA_FLAGS=(-Xswiftc -DVOICE_FLOW_QA)
-swift build -c release --package-path "$PROJECT_DIR" -Xswiftc -suppress-warnings "${QA_FLAGS[@]}"
+swift build -c release --package-path "$PROJECT_DIR" -Xswiftc -suppress-warnings
 BIN_PATH="$(swift build --package-path "$PROJECT_DIR" -c release --show-bin-path)"
 cp "$BIN_PATH/voice-flow" "$BUILD_DEST/Contents/MacOS/voice-flow"
 chmod +x "$BUILD_DEST/Contents/MacOS/voice-flow"

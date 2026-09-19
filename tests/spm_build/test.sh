@@ -21,12 +21,15 @@ for identity in GRDB.swift hummingbird.git hummingbird-websocket Yams; do
 done
 ok "GRDB, Hummingbird, hummingbird-websocket and Yams are pinned"
 
-# The build itself. -suppress-warnings keeps the output readable, exactly as the
-# single swiftc call did; errors are not warnings and still stop the build.
-# A release swift build runs whole-module optimization and drops the generated
-# declarations nothing references yet (task 9 adds the self-check that does), so
-# -no-whole-module-optimization keeps the compiled-in generated code observable.
-swift build -c release -Xswiftc -suppress-warnings -Xswiftc -no-whole-module-optimization
+# The build itself, with the flags the product ships and no others. Task 3 also
+# passed -no-whole-module-optimization, because nothing referenced the generated
+# declarations yet and whole-module optimization dropped them; task 9's
+# self-check references them, so the flag is gone. It had to go: it made this
+# suite's strongest check a statement about a binary the product never builds,
+# and it flipped the release configuration in the shared .build that the gate's
+# own "compile release app" step uses a moment later, paying a second full
+# release compile every run.
+swift build -c release -Xswiftc -suppress-warnings
 BINARY="$(swift build -c release --show-bin-path)/voice-flow"
 [ -x "$BINARY" ] || die "swift build produces the voice-flow binary"
 ok "swift build -c release produces the voice-flow binary"
@@ -88,12 +91,79 @@ grep -rn 'Quick type-check without installing' CLAUDE.md AGENTS.md >/dev/null &&
 ok "the quick type-check command is gone"
 
 # install.sh and the QA installer build the app and nothing else, so neither may
-# name swiftc at all any more. The test harness is different: compile_only
-# rightly keeps calling swiftc to compile a handful of files with one suite's
-# test, so what is checked there is the two functions that build the app.
-grep -n 'swiftc .*swift/\*\.swift' install.sh scripts/install-agent-harness-qa.sh >/dev/null &&
-    die "install.sh and the QA installer no longer call swiftc"
-ok "install.sh and the QA installer build through Swift Package Manager only"
+# name a bare `swiftc` any more. `-Xswiftc`, which hands one flag through to the
+# compiler, is a legitimate Swift Package Manager argument and is not a bare
+# `swiftc`, which is why this is not the grep at the top of the file. The test
+# harness is different: compile_only rightly keeps calling swiftc to compile a
+# handful of files with one suite's test, so what is checked there is the two
+# functions that build the app (below).
+python3 - <<'PY' || die "install.sh and the QA installer name no bare swiftc command"
+import re, pathlib
+bare = re.compile(r'(?<!-X)\bswiftc\b')
+assert bare.search("swiftc swift/*.swift -framework Cocoa"), "the search finds a bare swiftc"
+assert not bare.search("swift build -Xswiftc -suppress-warnings"), "-Xswiftc is not a bare swiftc"
+found = [f"{name}:{n}: {line.strip()}"
+         for name in ("install.sh", "scripts/install-agent-harness-qa.sh")
+         for n, line in enumerate(pathlib.Path(name).read_text().split("\n"), 1)
+         if bare.search(line)]
+assert not found, found
+PY
+ok "install.sh and the QA installer name no bare swiftc command, and the search can find one"
+
+# The Global Constraints call the signature and the swap load-bearing: "A build
+# that loses the signing identity or the grants is a failure." Nothing else in
+# the gate reads install.sh's signing block, so these guards do. Each of them is
+# taken out of a copy below, so none can quietly stop checking.
+signing_and_swap_guards() { # <a copy of install.sh>; prints what is missing
+    local file="$1"
+    grep -q 'VF_ADHOC' "$file" ||
+        echo "the VF_ADHOC guard is gone, so a build without a Developer ID would sign ad-hoc and reset every TCC grant"
+    /usr/bin/awk '
+        index($0, "\"${VF_ADHOC:-}\" != \"1\"") { window = 8; next }
+        window > 0 { window--; if ($0 ~ /^ *exit 1$/) refused = 1 }
+        END { exit refused ? 0 : 1 }' "$file" ||
+        echo "install.sh no longer exits 1 when there is no Developer ID identity and VF_ADHOC is unset"
+    grep -q -- '--timestamp=none' "$file" ||
+        echo "--timestamp=none is gone, so installing would depend on Apple's timestamp service"
+    grep -q -- '--identifier "com.voiceflow.app"' "$file" ||
+        echo "the executable is no longer signed with the identifier com.voiceflow.app"
+    grep -q -- 'codesign --force --deep' "$file" ||
+        echo "the finished bundle is no longer deep-signed"
+    grep -q -- 'codesign --verify --deep --strict "$BUILD_DEST"' "$file" ||
+        echo "the finished bundle is no longer verified"
+    grep -q 'PREVIOUS="$APP_DEST.previous"' "$file" ||
+        echo "the swap no longer renames the installed bundle aside"
+    grep -q 'mv "$APP_DEST" "$PREVIOUS"' "$file" ||
+        echo "the installed bundle is no longer renamed aside before the new one lands"
+    grep -q 'mv "$BUILD_DEST" "$APP_DEST"' "$file" ||
+        echo "the staged bundle is no longer renamed into place"
+    grep -qE 'rm -rf "\$APP_DEST"( |$)' "$file" &&
+        echo "the installed bundle is deleted rather than renamed aside, so a failed swap leaves nothing installed"
+    return 0
+}
+
+MISSING="$(signing_and_swap_guards install.sh)"
+[ -z "$MISSING" ] || die "install.sh keeps its signing and swap behaviour: $MISSING"
+ok "install.sh still refuses an unsigned build, signs and verifies the bundle, and swaps it in with two renames"
+
+# Each guard must be able to fail. Every mutation below is one the review made
+# by hand while the whole gate stayed green.
+PROBE="$(mktemp -d /tmp/k8-install-guard-probe.XXXXXX)"
+while IFS='|' read -r label expression; do
+    [ -n "$label" ] || continue
+    sed "$expression" install.sh > "$PROBE/install.sh"
+    [ -n "$(signing_and_swap_guards "$PROBE/install.sh")" ] ||
+        die "the signing and swap guards must go red when $label"
+done <<'MUTATIONS'
+the VF_ADHOC refusal is removed|/VF_ADHOC/d
+the timestamp argument is dropped|s/--timestamp=none//
+the bundle identifier is dropped|s/--identifier "com.voiceflow.app"//
+the deep verification is deleted|/codesign --verify --deep --strict/d
+the two-rename swap becomes a delete|s@^PREVIOUS="\$APP_DEST.previous"$@rm -rf "$APP_DEST"@
+the staged bundle is copied instead of renamed|s@^mv "\$BUILD_DEST" "\$APP_DEST"$@cp -R "$BUILD_DEST" "$APP_DEST"@
+MUTATIONS
+rm -rf "$PROBE"
+ok "each of those guards goes red when the behaviour it protects is taken out"
 
 python3 - <<'PY' || die "compile_app and compile_qa_app build with Swift Package Manager"
 import re, pathlib

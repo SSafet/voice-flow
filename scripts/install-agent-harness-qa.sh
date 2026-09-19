@@ -60,8 +60,10 @@ cp "$PROJECT_DIR/thread-protocol.lock" "$STAGED_APP/Contents/Resources/thread-pr
 # Swift Package Manager, from a snapshot of the package, so that another
 # session editing Swift files during this build cannot make an incoherent
 # binary. The snapshot needs the manifest and its resolution beside the
-# sources; the fixtures are copied because the launch-time contract
-# self-check reads them out of the bundle (K8 task 9).
+# sources; the contract fixtures are not in it, because they are data the
+# bundle carries — copied straight into Contents/Resources above, where the
+# launch-time contract self-check reads them (K8 task 9) — and not sources
+# this target compiles.
 cp "$PROJECT_DIR/Package.swift" "$PROJECT_DIR/Package.resolved" "$STAGE/"
 cp -R "$PROJECT_DIR/swift" "$STAGE/swift"
 QA_OPTIMIZATION_FLAGS=()
