@@ -121,7 +121,7 @@ DictationStore(root: root).save([
 
 // ── the disk, counted before anything reads it ────────────────────────────
 
-private struct Disk {
+struct Disk {
     var listing: [String] = []
     var bytes = 0
     var frames = 0
@@ -129,7 +129,7 @@ private struct Disk {
     var reviews = 0
     var recordings = 0
 }
-private func countDisk() -> Disk {
+func countDisk() -> Disk {
     var disk = Disk()
     let enumerator = files.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey])
     while let url = enumerator?.nextObject() as? URL {
