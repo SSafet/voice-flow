@@ -111,6 +111,15 @@ ok "--update refuses an unknown commit"
 run --update "$SECOND" >/dev/null
 grep -q '^sha256 [0-9a-f]\{64\} contract-fixtures/thread-protocol/Thread.json$' "$VF/thread-protocol.lock" ||
     die "the lock records one sha256 line per copied file"
+# A file the Finder leaves behind is not a copied file. `.gitignore` hides
+# `.DS_Store` from `git status`, so if it were counted, `--check` would fail on
+# a tree that is in fact correct, and install.sh — which runs `--check` before
+# every build — would refuse to build until the Atika clone was at hand again.
+touch "$VF/contract-fixtures/thread-protocol/.DS_Store"
+run --check >/dev/null 2>&1 || die "a dot-file under contract-fixtures must not break --check"
+rm -f "$VF/contract-fixtures/thread-protocol/.DS_Store"
+ok "a dot-file the Finder leaves behind is not counted as a copied file"
+
 printf 'x' >> "$VF/contract-fixtures/thread-protocol/Thread.json"
 MESSAGE="$(run --check 2>&1)" && die "--check must fail when a copied file changed"
 case "$MESSAGE" in
@@ -133,5 +142,33 @@ run --update "$THIRD" >/dev/null 2>&1 && die "--update must fail when a named fi
     die "an interrupted run leaves the lock that was there before, not one describing files that are not there"
 run --check >/dev/null 2>&1 && die "--check must report the half-copied tree the interrupted run left"
 ok "the lock is written last, and --check reports the tree an interrupted run left"
+
+# Ruling 4 names the mechanism as well as the outcome: the lock is "written
+# last, to a temporary file in the same directory, and renamed into place". The
+# check above cannot see the mechanism — a write_lock that wrote straight to the
+# lock would also leave the old lock behind when the run died during the copy —
+# so the shape of the function is read here, and the reading is proved able to
+# go red against a copy of the script that writes straight to the lock.
+write_lock_renames() { # <script>
+    /usr/bin/awk '
+        /^write_lock\(\)/ { inside = 1; next }
+        inside && /^\}$/ { inside = 0 }
+        inside && /> *"\$temporary"/ { temporary = 1 }
+        inside && /mv "\$temporary" "\$LOCK"/ { renamed = 1 }
+        inside && /> *"\$LOCK"/ { direct = 1 }
+        END { exit (temporary && renamed && !direct) ? 0 : 1 }
+    ' "$1"
+}
+write_lock_renames "$SCRIPT" ||
+    die "write_lock writes the lock to a temporary file and renames it into place"
+MUTANT="$WORK/writes-straight-to-the-lock.sh"
+sed -e 's|} > "$temporary"|} > "$LOCK"|' -e '/mv "$temporary" "$LOCK"/d' "$SCRIPT" > "$MUTANT"
+write_lock_renames "$MUTANT" &&
+    die "the reading must go red on a write_lock that writes straight to the lock"
+ok "write_lock writes a temporary file and renames it, and the reading sees when it does not"
+
+[ -z "$(find "$VF" -maxdepth 1 -name 'thread-protocol.lock.writing.*' -print -quit)" ] ||
+    die "no temporary lock file survives a run"
+ok "no temporary lock file is left behind"
 
 echo "all $PASS checks passed"
