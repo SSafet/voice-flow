@@ -61,6 +61,7 @@
         "thread_store_events",
         "thread_store_projects",
         "thread_store_records",
+        "thread_store_recovery",
         "voice_flow_paths",
         "watcher_bus",
         "window_placement",
@@ -1079,6 +1080,7 @@
     { "id": "tests/thread_store_records/test.sh", "runner": "unit", "suites": ["thread_store_records"] },
     { "id": "tests/thread_store_events/test.sh", "runner": "unit", "suites": ["thread_store_events"] },
     { "id": "tests/thread_store_projects/test.sh", "runner": "unit", "suites": ["thread_store_projects"] },
+    { "id": "tests/thread_store_recovery/test.sh", "runner": "unit", "suites": ["thread_store_recovery"] },
     { "id": "tests/contract_rules/main.swift", "runner": "unit", "suites": ["contract_rules"] },
     { "id": "tests/contract_self_check/main.swift", "runner": "unit", "suites": ["contract_self_check"] },
     {

@@ -191,6 +191,7 @@ run_unit_command thread_store bash tests/thread_store/test.sh
 run_unit_command thread_store_records bash tests/thread_store_records/test.sh
 run_unit_command thread_store_events bash tests/thread_store_events/test.sh
 run_unit_command thread_store_projects bash tests/thread_store_projects/test.sh
+run_unit_command thread_store_recovery bash tests/thread_store_recovery/test.sh
 if should_run app; then
     SELECTED_SUITES=$((SELECTED_SUITES + 1))
     run_step "compile release app" compile_app
