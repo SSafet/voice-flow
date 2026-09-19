@@ -47,5 +47,6 @@ them.
 
 What this does not cover: the real Voice Flow application, port 8792 and its `Info.plist`;
 the interface bundle and its delivery; the page reaching `https://atika.ai` from
-`http://localhost`; and the behaviour of the transport-security exception on macOS 14 and
-15, which this Mac cannot run.
+`http://localhost`; and the behaviour of the transport-security exception on macOS 13, 14
+and 15, which this Mac cannot run — 13 because the app's tracked `Info.plist` still sets
+`LSMinimumSystemVersion` to 13.0 until K8 raises it to the master plan's 14.0.

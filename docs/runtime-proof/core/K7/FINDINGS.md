@@ -87,10 +87,15 @@ checks**, including `secure_context`, and the two tables differ only in the dire
 `WKWebView` needs no exception.
 
 Recommendation: keep the key anyway, in the narrowest form the master plan already fixes,
-and stop calling it a requirement. `LSMinimumSystemVersion` is 14.0, this Mac cannot run
-macOS 14 or 15, and the key costs nothing: it names one host, allows insecure loads for that
-host only, and `NSAllowsLocalNetworking` stays unset. It is insurance for the older systems
-the app claims to support, and this is now a measured statement rather than an assumption.
+and stop calling it a requirement. Whose 14.0 floor: the master plan's and 06 §3.1's, where
+`LSMinimumSystemVersion` "rises from 13.0 to 14.0", and the two proof bundles' own plists,
+which declare 14.0. The app itself has not moved yet — its tracked
+`Voice Flow.app/Contents/Info.plist` still sets 13.0 (§9), and K8 is what raises it — so the
+older systems the key is insurance for start at macOS 13 today and at macOS 14 after K8.
+None of the three was measured: this Mac cannot run macOS 13, 14 or 15. The key costs
+nothing: it names one host, allows insecure loads for that host only, and
+`NSAllowsLocalNetworking` stays unset. What is measured is the other half — that macOS 27.0
+does not need it — and that is now a measured statement rather than an assumption.
 
 ## 6. A frame pointing at another `localhost` port loads and runs
 
@@ -146,5 +151,6 @@ capability (02 §3.6, 02 §3.7) — but the design no longer has to hedge about 
 
 The real app on port 8792; the interface bundle and its static delivery; the page reaching
 `https://atika.ai` from `http://localhost` — the Mac shell's second endpoint, which needs a
-deployed gateway and belongs to W3's sign-in work; and macOS 14 and 15, which this Mac
-cannot run.
+deployed gateway and belongs to W3's sign-in work; and macOS 13, 14 and 15, which this Mac
+cannot run. macOS 13 is in that list because the app's tracked `Info.plist` still admits it
+(§9) until K8 raises the floor to 14.0.
