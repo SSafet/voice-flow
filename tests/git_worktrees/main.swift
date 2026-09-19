@@ -100,7 +100,7 @@ guard case .success(let again) = worktrees.ensure(
 expectEqual(again.created, false, "the second call created nothing")
 expectEqual(again.path.path, first.path.path, "and answers with the same folder")
 expectEqual(again.branch, first.branch, "on the same branch")
-expectEqual(shell("git branch --list --format=%(refname:short) \(first.branch)", in: project)
+expectEqual(shell("git branch --list --format='%(refname:short)' \(first.branch)", in: project)
                 .split(separator: "\n").count,
             1, "there is one branch with that name, not two")
 expectEqual(shell("git worktree list --porcelain", in: project)
