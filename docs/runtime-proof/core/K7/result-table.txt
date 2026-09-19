@@ -1,0 +1,42 @@
+
+K7 loopback proof — port 8799, Version 27.0 (Build 26A428)
+
+CHECKS
+  pass  listens_on_127_0_0_1                    GET / over 127.0.0.1: 200
+  pass  listens_on_ipv6_loopback                GET / over [::1]: 200
+  pass  guarded_path_with_secret_accepted       GET /probe/guarded with the header: 200
+  pass  guarded_path_without_secret_refused     GET /probe/guarded without the header: 401
+  pass  foreign_origin_refused                  GET /probe/guarded with Origin: http://evil.example and the right secret: 403
+  pass  wrong_host_refused                      GET /probe/guarded with Host: evil.example: 403
+  pass  foreign_preflight_refused               OPTIONS /probe/guarded from http://evil.example: 403
+  pass  socket_without_ticket_refused_natively  ticket minted natively: 200; handshake with it: 101; handshake with no ticket: 400
+  pass  page_loads                              http://localhost:8799/ finished loading
+  pass  page_reported                           the page posted its results to /probe/report
+  pass  secure_context                          window.isSecureContext = true
+  pass  crypto_subtle_works                     SHA-256 returned 32 bytes
+  pass  clipboard_interface_present             navigator.clipboard.writeText is a function
+  pass  data_request_with_secret_accepted       GET /probe/guarded with the header: 200
+  pass  data_request_without_secret_refused     GET /probe/guarded without the header: 401
+  pass  xhr_with_secret_accepted                XMLHttpRequest with the header: 200
+  pass  subresource_without_secret_refused      <script src=/probe/guarded.js> refused; GET /probe/guarded.js with the header: 200
+  pass  ticket_minted_with_secret               POST /api/v1/threads/ticket: 200
+  pass  socket_opens_with_ticket                first socket: message:hello
+  pass  ticket_is_single_use                    second socket with the same ticket: error
+  pass  socket_without_ticket_refused           socket with no ticket: error
+  pass  no_cookie_is_set                        document.cookie = ''
+  pass  iframe_to_another_localhost_port_loads  iframe of http://localhost:8798/: the framed page ran and answered
+
+OBSERVATIONS
+  note  rule_list_compiled                      modify-headers compiled
+  note  upgrade_header_api_v1_threads_socket    the upgrade request to /api/v1/threads/socket carried no x-loopback-secret header
+  note  upgrade_header_probe_ruled_socket       the upgrade request to /probe/ruled/socket carried no x-loopback-secret header
+  note  page_snapshot                           written to /tmp/k7-proof/with-exception/page.png
+  note  notification_interface                  window.Notification exists, permission = default
+  note  rule_list_block_control                 GET /probe/ruled/blocked, which the rule list blocks: network-error: TypeError: Load failed
+  note  ruled_fetch                             GET /probe/ruled/fetch with no page-side header: 401
+  note  ruled_xhr                               XMLHttpRequest /probe/ruled/xhr with no page-side header: 401
+  note  ruled_subresource                       <script src=/probe/ruled/script.js>: refused
+  note  ruled_socket                            socket to /probe/ruled/socket: message:hello-ruled
+  note  websocket_js_header_argument            constructor rejected it: SyntaxError: The string did not match the expected pattern.
+
+23 of 23 checks passed.

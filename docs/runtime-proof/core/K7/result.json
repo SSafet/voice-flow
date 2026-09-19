@@ -1,0 +1,195 @@
+[
+  {
+    "detail" : "GET \/ over 127.0.0.1: 200",
+    "kind" : "check",
+    "name" : "listens_on_127_0_0_1",
+    "passed" : true
+  },
+  {
+    "detail" : "GET \/ over [::1]: 200",
+    "kind" : "check",
+    "name" : "listens_on_ipv6_loopback",
+    "passed" : true
+  },
+  {
+    "detail" : "GET \/probe\/guarded with the header: 200",
+    "kind" : "check",
+    "name" : "guarded_path_with_secret_accepted",
+    "passed" : true
+  },
+  {
+    "detail" : "GET \/probe\/guarded without the header: 401",
+    "kind" : "check",
+    "name" : "guarded_path_without_secret_refused",
+    "passed" : true
+  },
+  {
+    "detail" : "GET \/probe\/guarded with Origin: http:\/\/evil.example and the right secret: 403",
+    "kind" : "check",
+    "name" : "foreign_origin_refused",
+    "passed" : true
+  },
+  {
+    "detail" : "GET \/probe\/guarded with Host: evil.example: 403",
+    "kind" : "check",
+    "name" : "wrong_host_refused",
+    "passed" : true
+  },
+  {
+    "detail" : "OPTIONS \/probe\/guarded from http:\/\/evil.example: 403",
+    "kind" : "check",
+    "name" : "foreign_preflight_refused",
+    "passed" : true
+  },
+  {
+    "detail" : "ticket minted natively: 200; handshake with it: 101; handshake with no ticket: 400",
+    "kind" : "check",
+    "name" : "socket_without_ticket_refused_natively",
+    "passed" : true
+  },
+  {
+    "detail" : "modify-headers compiled",
+    "kind" : "observation",
+    "name" : "rule_list_compiled"
+  },
+  {
+    "detail" : "http:\/\/localhost:8799\/ finished loading",
+    "kind" : "check",
+    "name" : "page_loads",
+    "passed" : true
+  },
+  {
+    "detail" : "the page posted its results to \/probe\/report",
+    "kind" : "check",
+    "name" : "page_reported",
+    "passed" : true
+  },
+  {
+    "detail" : "the upgrade request to \/api\/v1\/threads\/socket carried no x-loopback-secret header",
+    "kind" : "observation",
+    "name" : "upgrade_header_api_v1_threads_socket"
+  },
+  {
+    "detail" : "the upgrade request to \/probe\/ruled\/socket carried no x-loopback-secret header",
+    "kind" : "observation",
+    "name" : "upgrade_header_probe_ruled_socket"
+  },
+  {
+    "detail" : "written to \/tmp\/k7-proof\/with-exception\/page.png",
+    "kind" : "observation",
+    "name" : "page_snapshot"
+  },
+  {
+    "detail" : "window.isSecureContext = true",
+    "kind" : "check",
+    "name" : "secure_context",
+    "passed" : true
+  },
+  {
+    "detail" : "SHA-256 returned 32 bytes",
+    "kind" : "check",
+    "name" : "crypto_subtle_works",
+    "passed" : true
+  },
+  {
+    "detail" : "navigator.clipboard.writeText is a function",
+    "kind" : "check",
+    "name" : "clipboard_interface_present",
+    "passed" : true
+  },
+  {
+    "detail" : "window.Notification exists, permission = default",
+    "kind" : "observation",
+    "name" : "notification_interface"
+  },
+  {
+    "detail" : "GET \/probe\/guarded with the header: 200",
+    "kind" : "check",
+    "name" : "data_request_with_secret_accepted",
+    "passed" : true
+  },
+  {
+    "detail" : "GET \/probe\/guarded without the header: 401",
+    "kind" : "check",
+    "name" : "data_request_without_secret_refused",
+    "passed" : true
+  },
+  {
+    "detail" : "XMLHttpRequest with the header: 200",
+    "kind" : "check",
+    "name" : "xhr_with_secret_accepted",
+    "passed" : true
+  },
+  {
+    "detail" : "<script src=\/probe\/guarded.js> refused; GET \/probe\/guarded.js with the header: 200",
+    "kind" : "check",
+    "name" : "subresource_without_secret_refused",
+    "passed" : true
+  },
+  {
+    "detail" : "POST \/api\/v1\/threads\/ticket: 200",
+    "kind" : "check",
+    "name" : "ticket_minted_with_secret",
+    "passed" : true
+  },
+  {
+    "detail" : "first socket: message:hello",
+    "kind" : "check",
+    "name" : "socket_opens_with_ticket",
+    "passed" : true
+  },
+  {
+    "detail" : "second socket with the same ticket: error",
+    "kind" : "check",
+    "name" : "ticket_is_single_use",
+    "passed" : true
+  },
+  {
+    "detail" : "socket with no ticket: error",
+    "kind" : "check",
+    "name" : "socket_without_ticket_refused",
+    "passed" : true
+  },
+  {
+    "detail" : "document.cookie = ''",
+    "kind" : "check",
+    "name" : "no_cookie_is_set",
+    "passed" : true
+  },
+  {
+    "detail" : "iframe of http:\/\/localhost:8798\/: the framed page ran and answered",
+    "kind" : "check",
+    "name" : "iframe_to_another_localhost_port_loads",
+    "passed" : true
+  },
+  {
+    "detail" : "GET \/probe\/ruled\/blocked, which the rule list blocks: network-error: TypeError: Load failed",
+    "kind" : "observation",
+    "name" : "rule_list_block_control"
+  },
+  {
+    "detail" : "GET \/probe\/ruled\/fetch with no page-side header: 401",
+    "kind" : "observation",
+    "name" : "ruled_fetch"
+  },
+  {
+    "detail" : "XMLHttpRequest \/probe\/ruled\/xhr with no page-side header: 401",
+    "kind" : "observation",
+    "name" : "ruled_xhr"
+  },
+  {
+    "detail" : "<script src=\/probe\/ruled\/script.js>: refused",
+    "kind" : "observation",
+    "name" : "ruled_subresource"
+  },
+  {
+    "detail" : "socket to \/probe\/ruled\/socket: message:hello-ruled",
+    "kind" : "observation",
+    "name" : "ruled_socket"
+  },
+  {
+    "detail" : "constructor rejected it: SyntaxError: The string did not match the expected pattern.",
+    "kind" : "observation",
+    "name" : "websocket_js_header_argument"
+  }
+]
