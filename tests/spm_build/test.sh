@@ -41,4 +41,27 @@ if ! strings "$BINARY" | grep -F "ThreadAnswerApprovalParams" >/dev/null; then
 fi
 ok "swift/Generated is compiled into the binary"
 
+grep -q 'swift build -c release' install.sh || die "install.sh builds with Swift Package Manager"
+grep -q 'swift build -c release' scripts/test-agent-harness.sh || die "the test harness builds the app with Swift Package Manager"
+grep -q 'swift build -c release' scripts/install-agent-harness-qa.sh || die "the QA installer builds with Swift Package Manager"
+grep -q 'swift build' CLAUDE.md || die "CLAUDE.md tells the reader how to build"
+grep -q 'swift build' AGENTS.md || die "AGENTS.md tells the reader how to build"
+ok "install.sh, the QA installer, the test harness and both instruction files build with Swift Package Manager"
+
+# The build must still refuse to run without the toolchain, and the refusal must
+# name the tool the build actually uses.
+grep -q 'command -v swift ' install.sh || die "install.sh checks for the swift driver before building"
+ok "install.sh checks for the swift driver"
+
+# Nothing that builds or documents the app may compile swift/*.swift with one
+# swiftc call any more. The search names the four files that build or document
+# the app and the scripts folder: two historical design documents
+# (design/ticket-22-capability-routing-plan.md:364 and
+# design/assistant-session-history-plan.md:237) quote the old command as a
+# record of how the app was built then, and a repository-wide search would
+# never go green because of them. Nothing under .build/ is searched either.
+LEFTOVER="$(grep -rn 'swiftc .*swift/\*\.swift' install.sh CLAUDE.md AGENTS.md scripts/ || true)"
+[ -z "$LEFTOVER" ] || die "a one-command swiftc build of swift/*.swift is left: $LEFTOVER"
+ok "no one-command swiftc build of swift/*.swift is left in install.sh, the scripts or the instruction files"
+
 echo "all $PASS checks passed"

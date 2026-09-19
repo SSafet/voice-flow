@@ -130,19 +130,17 @@ compile_only() {
 }
 
 compile_app() {
-    swiftc "$PROJECT_DIR"/swift/*.swift \
-        -framework Cocoa -framework AVFoundation -framework CoreGraphics \
-        -framework ApplicationServices -framework Accelerate -framework Security \
-        -framework ScreenCaptureKit -lsqlite3 -sdk "$XCODE_SDK" -O -suppress-warnings \
-        -o "$BUILD_DIR/voice-flow"
+    swift build -c release --package-path "$PROJECT_DIR" -Xswiftc -suppress-warnings
+    cp "$(swift build --package-path "$PROJECT_DIR" -c release --show-bin-path)/voice-flow" \
+        "$BUILD_DIR/voice-flow"
 }
 
 compile_qa_app() {
-    swiftc "$PROJECT_DIR"/swift/*.swift -D VOICE_FLOW_QA \
-        -framework Cocoa -framework AVFoundation -framework CoreGraphics \
-        -framework ApplicationServices -framework Accelerate -framework Security \
-        -framework ScreenCaptureKit -lsqlite3 -sdk "$XCODE_SDK" -O -suppress-warnings \
-        -o "$BUILD_DIR/voice-flow-qa"
+    swift build -c release --package-path "$PROJECT_DIR" -Xswiftc -suppress-warnings \
+        -Xswiftc -DVOICE_FLOW_QA --scratch-path "$PROJECT_DIR/.build-qa"
+    cp "$(swift build --package-path "$PROJECT_DIR" -c release \
+        --scratch-path "$PROJECT_DIR/.build-qa" --show-bin-path)/voice-flow" \
+        "$BUILD_DIR/voice-flow-qa"
 }
 
 APP_SUPPORT_SOURCES=()
@@ -166,6 +164,8 @@ run_unit_command backend_protocol "$PROJECT_DIR/.venv/bin/python" tests/test_bac
 run_unit_command fake_openai_server python3 tests/test_fake_openai_server.py -q
 run_unit_command harness_cli python3 tests/test_harness_cli.py -q
 run_unit_command evidence python3 tests/test_evidence.py -q
+run_unit_command thread_protocol_sync bash tests/thread_protocol_sync/test.sh
+run_unit_command spm_build bash tests/spm_build/test.sh
 if should_run app; then
     SELECTED_SUITES=$((SELECTED_SUITES + 1))
     run_step "compile release app" compile_app

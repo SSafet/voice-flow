@@ -45,18 +45,22 @@ cp -R "$PROJECT_DIR/voice_flow" "$STAGED_APP/Contents/Resources/voice_flow"
 find "$STAGED_APP/Contents/Resources/voice_flow" -type d -name __pycache__ \
     -prune -exec rm -rf {} +
 
-XCODE_SDK="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
-if [ ! -d "$XCODE_SDK" ]; then XCODE_SDK="$(xcrun --show-sdk-path)"; fi
-mkdir -p "$STAGE/module-cache"
-# Compile one coherent source snapshot even when another workspace task edits
-# Swift files during the signed QA build.
+# Swift Package Manager, from a snapshot of the package, so that another
+# session editing Swift files during this build cannot make an incoherent
+# binary. The snapshot needs the manifest and its resolution beside the
+# sources; the fixtures are copied because the launch-time contract
+# self-check reads them out of the bundle (K8 task 9).
+cp "$PROJECT_DIR/Package.swift" "$PROJECT_DIR/Package.resolved" "$STAGE/"
 cp -R "$PROJECT_DIR/swift" "$STAGE/swift"
-SWIFT_MODULECACHE_PATH="$STAGE/module-cache" CLANG_MODULE_CACHE_PATH="$STAGE/module-cache" \
-swiftc -o "$STAGED_APP/Contents/MacOS/voice-flow" \
-    "$STAGE"/swift/*.swift -D VOICE_FLOW_QA \
-    -framework Cocoa -framework AVFoundation -framework CoreGraphics \
-    -framework ApplicationServices -framework Accelerate -framework Security \
-    -framework ScreenCaptureKit -lsqlite3 -sdk "$XCODE_SDK" "${VOICE_FLOW_QA_OPTIMIZATION:--O}" -suppress-warnings
+QA_OPTIMIZATION_FLAGS=()
+if [ -n "${VOICE_FLOW_QA_OPTIMIZATION:-}" ]; then
+    QA_OPTIMIZATION_FLAGS=(-Xswiftc "$VOICE_FLOW_QA_OPTIMIZATION")
+fi
+swift build -c release --package-path "$STAGE" \
+    -Xswiftc -DVOICE_FLOW_QA -Xswiftc -suppress-warnings \
+    ${QA_OPTIMIZATION_FLAGS[@]+"${QA_OPTIMIZATION_FLAGS[@]}"}
+cp "$(swift build --package-path "$STAGE" -c release --show-bin-path)/voice-flow" \
+    "$STAGED_APP/Contents/MacOS/voice-flow"
 chmod 755 "$STAGED_APP/Contents/MacOS/voice-flow"
 
 SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null \
