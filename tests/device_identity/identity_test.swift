@@ -266,6 +266,10 @@ struct DeviceIdentityTests {
         }
         checks.check(!dumped.contains(restartGateway.accessTokenValue), "the access token is never written to the database")
         checks.check(!dumped.contains(storedKey.base64EncodedString()), "the private key is never written to the database")
+        let applied = try restartPool.read { db in try StoreMigrations.migrator().appliedIdentifiers(db) }
+        checks.check(applied.contains("0001 store meta"), "K8's first step is still registered first")
+        checks.check(applied.contains("0002 device identity"),
+                     "the identity table arrives with the one step named 0002 device identity")
 
         // ---- The old refresh material is retired once ------------------------
         let legacyGateway = FakeGateway()
