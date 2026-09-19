@@ -47,6 +47,11 @@ android {
 }
 
 kotlin {
+    // The build needs JDK 21. Without a toolchain, a wrong JDK fails deep inside
+    // AGP's jlink transform without ever naming a Java version; with it, Gradle
+    // says which Java it wants. The bytecode stays Java 17 — that is what
+    // compileOptions above and jvmTarget below decide, not this.
+    jvmToolchain(21)
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
     }
@@ -63,37 +68,59 @@ dependencies {
     testImplementation("org.json:json:20240303")
 }
 
+// What this build declares, by the configuration it declares it in, rendered at
+// configuration time: every configuration a dependency can be declared on, not
+// only `implementation` and `testImplementation`, so a fourth library cannot
+// enter through `debugImplementation`, `api`, `compileOnly`, `runtimeOnly` or an
+// androidTest bucket. Rendering it here rather than holding the live
+// DependencySet into the task action is also what keeps the task cacheable.
+// The two buckets the Android and Kotlin plugins fill for their own toolchain:
+// the JDK image AGP compiles against, and the Kotlin build-tools implementation.
+// Neither is a dependency of the app. They are named here rather than matched by
+// shape, so a bucket nobody expected gaining a dependency fails this task instead
+// of passing it.
+val toolchainConfigurations = setOf("androidJdkImage", "kotlinBuildToolsApiClasspath")
+
+val declaredDependencies: Map<String, Set<String>> = configurations
+    .filter { it.isCanBeDeclared && it.name !in toolchainConfigurations }
+    .associate { configuration ->
+        configuration.name to configuration.dependencies.map { dependency ->
+            val version = dependency.version
+            if (version.isNullOrEmpty()) {
+                "${dependency.group}:${dependency.name}"
+            } else {
+                "${dependency.group}:${dependency.name}:$version"
+            }
+        }.toSet()
+    }
+    .filterValues { it.isNotEmpty() }
+
 tasks.register("checkDependencyPins") {
     group = "verification"
+    description = "Fails when the build declares a dependency dependencies.txt does not pin, or the other way round."
     val pinnedFile = file("dependencies.txt")
-    val implementationDeps = configurations.getByName("implementation").dependencies
-    val testDeps = configurations.getByName("testImplementation").dependencies
+    val declared = declaredDependencies
+    inputs.file(pinnedFile)
+    inputs.property("declared", declared.toString())
     doLast {
-        fun render(dependencies: Iterable<org.gradle.api.artifacts.Dependency>): Set<String> =
-            dependencies.map { dependency ->
-                val version = dependency.version
-                if (version.isNullOrEmpty()) {
-                    "${dependency.group}:${dependency.name}"
-                } else {
-                    "${dependency.group}:${dependency.name}:$version"
-                }
-            }.toSet()
-        fun pinned(prefix: String): Set<String> = pinnedFile.readLines()
+        val pinned = pinnedFile.readLines()
             .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("#") && it.startsWith("$prefix ") }
-            .map { it.removePrefix("$prefix ").trim().removePrefix("platform ").trim() }
-            .toSet()
-        val declaredImplementation = render(implementationDeps)
-        val declaredTest = render(testDeps)
-        val pinnedImplementation = pinned("implementation")
-        val pinnedTest = pinned("testImplementation")
-        if (declaredImplementation != pinnedImplementation || declaredTest != pinnedTest) {
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .map { line ->
+                val configuration = line.substringBefore(' ')
+                configuration to line.substringAfter(' ').trim().removePrefix("platform ").trim()
+            }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, coordinates) -> coordinates.toSet() }
+        if (declared != pinned) {
+            val differing = (declared.keys + pinned.keys).filter { declared[it] != pinned[it] }.sorted()
             throw GradleException(
-                "the declared dependencies are not the pinned ones.\n" +
-                    "declared implementation: $declaredImplementation\n" +
-                    "pinned implementation:   $pinnedImplementation\n" +
-                    "declared testImplementation: $declaredTest\n" +
-                    "pinned testImplementation:   $pinnedTest",
+                "the declared dependencies are not the ones dependencies.txt pins.\n" +
+                    differing.joinToString("\n") { configuration ->
+                        "  $configuration\n" +
+                            "    declared: ${declared[configuration].orEmpty().sorted()}\n" +
+                            "    pinned:   ${pinned[configuration].orEmpty().sorted()}"
+                    },
             )
         }
     }
