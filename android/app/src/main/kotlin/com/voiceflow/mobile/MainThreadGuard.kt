@@ -3,6 +3,7 @@ package com.voiceflow.mobile
 import android.app.Application
 import android.os.StrictMode
 import android.util.Log
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 
 /**
@@ -96,6 +97,43 @@ object MainThreadGuard {
         return builder.build()
     }
 
+    /**
+     * [lift], then [block], then [restore] — whatever [block] does: return,
+     * throw, or return out of the caller.
+     *
+     * A lifted policy that is never put back would leave the thread unguarded
+     * for the rest of the process, so putting it back is the part worth
+     * proving. It is a parameter rather than a call so that a test can prove it
+     * without Android's own `StrictMode`, which no unit test can reach.
+     */
+    inline fun <Token, T> restoring(lift: () -> Token, restore: (Token) -> Unit, block: () -> T): T {
+        val token = lift()
+        try {
+            return block()
+        } finally {
+            restore(token)
+        }
+    }
+
+    /**
+     * Runs [block] with disk detection lifted on the calling thread, and puts
+     * the policy back afterwards. Network detection is never lifted.
+     *
+     * P1 removes nothing, so every surface P4 and P6 replace still reads and
+     * writes on the main thread: the history and chat lists, the preferences
+     * and keys each surface opens, the bubble's own recording path, the
+     * settings screen. A debug build dies on the first of those, which would
+     * make the guard impossible to ship before those surfaces are gone. Each
+     * of them says so here instead, so the exemption is one greppable name
+     * with a delete date rather than a weakened policy: the guard still kills
+     * a debug build for any code that does not name itself here.
+     */
+    inline fun <T> allowingDisk(block: () -> T): T = restoring(
+        { StrictMode.allowThreadDiskWrites() },
+        { StrictMode.setThreadPolicy(it) },
+        block,
+    )
+
     private fun report(kind: String, stack: Array<StackTraceElement>) {
         val line = sink.accept(kind, stack.toList())
         if (line != null) Log.w(TAG, line)
@@ -119,9 +157,14 @@ object MainThreadGuard {
 
 class ViolationSink {
 
-    private val seen = LinkedHashSet<String>()
+    /** One sink serves the whole process, and a penalty listener runs on whichever
+     * executor installed it, so the membership test and the insertion are one
+     * atomic step rather than two that a second thread can slip between. */
+    private val seen: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    val reported: Set<String> get() = seen
+    /** What has been reported so far. A copy: the sink's own set is nobody else's
+     * to clear, and a caller holding this must not watch it grow. */
+    val reported: Set<String> get() = seen.toSet()
 
     fun accept(kind: String, stack: List<StackTraceElement>): String? {
         val site = MainThreadGuard.siteOf(stack)
