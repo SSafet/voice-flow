@@ -33,7 +33,9 @@ class CloudSettingsActivity : Activity() {
     private val accent = Color.parseColor("#E8A33D")
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState); cloud = CloudSync(applicationContext); render()
+        super.onCreate(savedInstanceState)
+        cloud = MainThreadGuard.allowingDisk { CloudSync(applicationContext) }
+        render()
     }
     override fun onDestroy() { executor.shutdown(); super.onDestroy() }
     private fun label(text: String, size: Float = 14f, strong: Boolean = false): TextView = TextView(this).apply {
@@ -63,7 +65,10 @@ class CloudSettingsActivity : Activity() {
             }
         }
     }
-    private fun render() {
+    // The whole screen is drawn from the preferences and the cloud database, on
+    // the main thread, both when it opens and after every piece of work. P6
+    // deletes this screen; until then it names its own exemption.
+    private fun render(): Unit = MainThreadGuard.allowingDisk {
         root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(14), dp(22), dp(30)); setBackgroundColor(Color.parseColor("#0F0F12")) }
         setContentView(ScrollView(this).apply { addView(root) })
         action("‹ Back") { finish() }

@@ -149,15 +149,21 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        store = Store(this)
-        keys = Keys(this)
-        syncClient = SyncClient(this, store, keys)
-        pairing = Pairing(this, keys)
-        buildUI()
-        applyPairedState()
-        if (savedInstanceState == null) handleIntent(intent)
-        watchConnectivity()
-        SyncJob.schedule(this)
+        // Preferences, the key store, the record files and WorkManager are all
+        // opened here, on the main thread, and a debug build's StrictMode would
+        // kill the app for it. P6 deletes this screen; until then the surface
+        // names its own exemption rather than the guard being weakened.
+        MainThreadGuard.allowingDisk {
+            store = Store(this)
+            keys = Keys(this)
+            syncClient = SyncClient(this, store, keys)
+            pairing = Pairing(this, keys)
+            buildUI()
+            applyPairedState()
+            if (savedInstanceState == null) handleIntent(intent)
+            watchConnectivity()
+            SyncJob.schedule(this)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -176,7 +182,8 @@ class MainActivity : Activity() {
         refreshChat()
         // Bubble on but not running (fresh grant, killed service): restart it
         // silently once every permission it needs is actually in place.
-        if (prefs.getBoolean("bubble_enabled", false) && !BubbleService.running &&
+        if (MainThreadGuard.allowingDisk { prefs.getBoolean("bubble_enabled", false) } &&
+            !BubbleService.running &&
             Settings.canDrawOverlays(this) &&
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             startForegroundService(Intent(this, BubbleService::class.java))
@@ -219,9 +226,12 @@ class MainActivity : Activity() {
     // ══════════════════════ pairing gate ══════════════════════
 
     private fun applyPairedState() {
-        val cloud = CloudPreferences(this)
-        val isPaired = if (cloud.transport == SyncTransport.LOCAL) pairing.paired else cloud.chosen
-        if (cloud.transport != SyncTransport.LOCAL && cloud.chosen) { pairingLoopRunning = false; pairing.stopDiscovery() }
+        val isPaired = MainThreadGuard.allowingDisk {
+            val cloud = CloudPreferences(this)
+            val paired = if (cloud.transport == SyncTransport.LOCAL) pairing.paired else cloud.chosen
+            if (cloud.transport != SyncTransport.LOCAL && cloud.chosen) { pairingLoopRunning = false; pairing.stopDiscovery() }
+            paired
+        }
         pairPage.visibility = if (isPaired) View.GONE else View.VISIBLE
         tabBar.visibility = if (isPaired) View.VISIBLE else View.GONE
         if (!isPaired) {
@@ -424,7 +434,7 @@ class MainActivity : Activity() {
             visibility = View.GONE
             setOnClickListener {
                 text = "Checking local sync…"
-                prefs.edit().remove("sync_last_scan").apply()
+                MainThreadGuard.allowingDisk { prefs.edit().remove("sync_last_scan").apply() }
                 executor.execute { quietSync() }
             }
         }
@@ -524,7 +534,8 @@ class MainActivity : Activity() {
             0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         bubbleSwitch = Switch(this).apply {
             setOnCheckedChangeListener { _, checked ->
-                if (checked != prefs.getBoolean("bubble_enabled", false)) setBubbleEnabled(checked)
+                val enabled = MainThreadGuard.allowingDisk { prefs.getBoolean("bubble_enabled", false) }
+                if (checked != enabled) setBubbleEnabled(checked)
             }
         }
         bubbleRow.addView(bubbleSwitch)
@@ -658,7 +669,9 @@ class MainActivity : Activity() {
             return
         }
         try {
-            recorder.start(store.audioDir)
+            // Creates the queue folder and the .m4a on the main thread; P4 owns
+            // moving the recording path off it.
+            MainThreadGuard.allowingDisk { recorder.start(store.audioDir) }
             recordDot.background = roundBg(red, 66)
             recordRing.background = roundBg(Color.parseColor("#33E25B55"), 82)
             micIcon.visibility = View.INVISIBLE
@@ -685,7 +698,7 @@ class MainActivity : Activity() {
     }
 
     private fun stopRecording() {
-        val file = recorder.stop()
+        val file = MainThreadGuard.allowingDisk { recorder.stop() }
         main.removeCallbacks(levelTicker)
         recordDotsRow.visibility = View.GONE
         micIcon.visibility = View.VISIBLE
@@ -705,7 +718,9 @@ class MainActivity : Activity() {
             ideaMode -> "kept"
             else -> "pasted"
         }
-        store.enqueue(QueueItem(file.name, file.absolutePath, mode, System.currentTimeMillis()))
+        MainThreadGuard.allowingDisk {
+            store.enqueue(QueueItem(file.name, file.absolutePath, mode, System.currentTimeMillis()))
+        }
         recordStatus.text = "transcribing…"
         executor.execute { processQueue(); quietSync() }
     }
@@ -828,7 +843,7 @@ class MainActivity : Activity() {
 
     private fun refreshBubbleRow() {
         if (!::bubbleSwitch.isInitialized) return
-        val enabled = prefs.getBoolean("bubble_enabled", false)
+        val enabled = MainThreadGuard.allowingDisk { prefs.getBoolean("bubble_enabled", false) }
         bubbleSwitch.isChecked = enabled
         bubbleStatus.text = when {
             !enabled -> "hold the side key to dictate into any app"
@@ -840,7 +855,7 @@ class MainActivity : Activity() {
     }
 
     private fun setBubbleEnabled(on: Boolean) {
-        prefs.edit().putBoolean("bubble_enabled", on).apply()
+        MainThreadGuard.allowingDisk { prefs.edit().putBoolean("bubble_enabled", on).apply() }
         if (!on) {
             stopService(Intent(this, BubbleService::class.java))
             refreshBubbleRow()
@@ -875,8 +890,9 @@ class MainActivity : Activity() {
         }
         if (!BubbleService.running)
             startForegroundService(Intent(this, BubbleService::class.java))
-        if (!insertionServiceEnabled() && !prefs.getBoolean("bubble_a11y_asked", false)) {
-            prefs.edit().putBoolean("bubble_a11y_asked", true).apply()
+        if (!insertionServiceEnabled() &&
+            !MainThreadGuard.allowingDisk { prefs.getBoolean("bubble_a11y_asked", false) }) {
+            MainThreadGuard.allowingDisk { prefs.edit().putBoolean("bubble_a11y_asked", true).apply() }
             Toast.makeText(this,
                 "Enable “Voice Flow” in Accessibility so dictations type themselves into the focused field",
                 Toast.LENGTH_LONG).show()
@@ -885,8 +901,8 @@ class MainActivity : Activity() {
         }
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (!pm.isIgnoringBatteryOptimizations(packageName) &&
-            !prefs.getBoolean("bubble_battery_asked", false)) {
-            prefs.edit().putBoolean("bubble_battery_asked", true).apply()
+            !MainThreadGuard.allowingDisk { prefs.getBoolean("bubble_battery_asked", false) }) {
+            MainThreadGuard.allowingDisk { prefs.edit().putBoolean("bubble_battery_asked", true).apply() }
             try {
                 startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                     Uri.parse("package:$packageName")))
@@ -897,7 +913,7 @@ class MainActivity : Activity() {
 
     private fun bubbleRowTapped() {
         when {
-            !prefs.getBoolean("bubble_enabled", false) -> setBubbleEnabled(true)
+            !MainThreadGuard.allowingDisk { prefs.getBoolean("bubble_enabled", false) } -> setBubbleEnabled(true)
             !Settings.canDrawOverlays(this) -> startActivity(
                 Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             !insertionServiceEnabled() -> startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -910,7 +926,9 @@ class MainActivity : Activity() {
     private fun refreshHistory() {
         if (!::historyList.isInitialized) return
         historyList.removeAllViews()
-        val entries = store.dictations().take(100)
+        // Reads dictations.json, the preferences and the cloud database on the
+        // main thread. P4 replaces the record store; P6 deletes this screen.
+        val entries = MainThreadGuard.allowingDisk { store.dictations().take(100) }
         if (entries.isEmpty()) {
             historyList.addView(TextView(this).apply {
                 text = "No dictations yet"
@@ -995,7 +1013,7 @@ class MainActivity : Activity() {
     private fun refreshChat() {
         if (!::chatList.isInitialized) return
         chatList.removeAllViews()
-        val messages = store.chat()
+        val messages = MainThreadGuard.allowingDisk { store.chat() }
         if (messages.isEmpty()) {
             chatList.addView(TextView(this).apply {
                 text = "Ask by text, voice, or share a photo into Voice Flow."
@@ -1032,7 +1050,7 @@ class MainActivity : Activity() {
     private fun sendChat() {
         val userText = chatInput.text.toString().trim()
         if (userText.isEmpty()) return
-        val apiKey = keys.load(Keys.AGENT)
+        val apiKey = MainThreadGuard.allowingDisk { keys.load(Keys.AGENT) }
         if (apiKey.isNullOrBlank()) {
             Toast.makeText(this, "Waiting for keys from the Mac — sync first", Toast.LENGTH_SHORT).show()
             return
@@ -1041,7 +1059,7 @@ class MainActivity : Activity() {
         pendingImageBase64 = null
         attachLabel.visibility = View.GONE
         chatInput.setText("")
-        store.addChat(ChatMessage.now("user", userText))
+        MainThreadGuard.allowingDisk { store.addChat(ChatMessage.now("user", userText)) }
         refreshChat()
         val thinking = TextView(this).apply {
             this.text = "…"
@@ -1073,14 +1091,18 @@ class MainActivity : Activity() {
 
     private fun attachImage(uri: Uri) {
         try {
-            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
-            var sample = 1
-            while (maxOf(opts.outWidth, opts.outHeight) / sample > 1440) sample *= 2
-            val decode = BitmapFactory.Options().apply { inSampleSize = sample }
-            val bitmap = contentResolver.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it, null, decode)
-            } ?: return
+            // Decoding the shared image reads it on the main thread. P6 deletes
+            // the chat tab this belongs to.
+            val bitmap = MainThreadGuard.allowingDisk {
+                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+                var sample = 1
+                while (maxOf(opts.outWidth, opts.outHeight) / sample > 1440) sample *= 2
+                val decode = BitmapFactory.Options().apply { inSampleSize = sample }
+                contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, decode)
+                } ?: return
+            }
             val out = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
             pendingImageBase64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
@@ -1096,22 +1118,26 @@ class MainActivity : Activity() {
     private fun quietSync() {
         val result = runCatching { syncClient.sync() }
         main.post {
-            val cloud = CloudPreferences(this)
-            if (cloud.transport != SyncTransport.LOCAL) {
+            // The banner is rebuilt from the preferences the sync just wrote,
+            // on the main thread. P6 deletes the screen this banner sits on.
+            MainThreadGuard.allowingDisk {
+                val cloud = CloudPreferences(this)
+                if (cloud.transport != SyncTransport.LOCAL) {
+                    offlineBanner.visibility = View.VISIBLE
+                    offlineBanner.text = if (cloud.transport == SyncTransport.OFF) "Local only · Settings to connect" else (result.getOrNull() ?: "Changes saved here · Settings to review")
+                    refreshHistory()
+                    return@post
+                }
+                if (!pairing.paired) return@post
+                val last = prefs.getLong("sync_last_success", 0)
+                val lastText = if (last == 0L) "Not synced yet" else "Last synced " +
+                    java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(last))
                 offlineBanner.visibility = View.VISIBLE
-                offlineBanner.text = if (cloud.transport == SyncTransport.OFF) "Local only · Settings to connect" else (result.getOrNull() ?: "Changes saved here · Settings to review")
-                refreshHistory()
-                return@post
+                offlineBanner.text = if (result.isFailure || syncClient.lastError != null)
+                    "$lastText · Mac unavailable\nSame Wi-Fi, Mac awake, VoiceFlow allowed through firewall. Tap to retry."
+                else "$lastText · ${syncClient.macName()} · Tap to sync"
+                if (result.getOrNull() != null) refreshHistory()
             }
-            if (!pairing.paired) return@post
-            val last = prefs.getLong("sync_last_success", 0)
-            val lastText = if (last == 0L) "Not synced yet" else "Last synced " +
-                java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(last))
-            offlineBanner.visibility = View.VISIBLE
-            offlineBanner.text = if (result.isFailure || syncClient.lastError != null)
-                "$lastText · Mac unavailable\nSame Wi-Fi, Mac awake, VoiceFlow allowed through firewall. Tap to retry."
-            else "$lastText · ${syncClient.macName()} · Tap to sync"
-            if (result.getOrNull() != null) refreshHistory()
         }
     }
 
@@ -1119,7 +1145,7 @@ class MainActivity : Activity() {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                prefs.edit().remove("sync_last_scan").apply()
+                MainThreadGuard.allowingDisk { prefs.edit().remove("sync_last_scan").apply() }
                 executor.execute { processQueue(); quietSync() }
             }
         })

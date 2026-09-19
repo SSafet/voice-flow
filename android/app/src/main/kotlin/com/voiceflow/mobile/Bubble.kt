@@ -69,15 +69,19 @@ class BubbleService : Service() {
     override fun onCreate() {
         super.onCreate()
         running = true
-        store = Store(this)
-        keys = Keys(this)
-        syncClient = SyncClient(this, store, keys)
-        startInForeground(recording = false)
-        SyncJob.schedule(this)
+        // Preferences, the key store and WorkManager all read disk here, on the
+        // main thread. P4 moves this off it; until then the guard is told so.
+        MainThreadGuard.allowingDisk {
+            store = Store(this)
+            keys = Keys(this)
+            syncClient = SyncClient(this, store, keys)
+            startInForeground(recording = false)
+            SyncJob.schedule(this)
+        }
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                prefs.edit().remove("sync_last_scan").apply()
+                MainThreadGuard.allowingDisk { prefs.edit().remove("sync_last_scan").apply() }
                 executor.execute { drainAndSync(null) }
             }
         }
@@ -87,7 +91,7 @@ class BubbleService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_HIDE) {
-            prefs.edit().putBoolean("bubble_enabled", false).apply()
+            MainThreadGuard.allowingDisk { prefs.edit().putBoolean("bubble_enabled", false).apply() }
             stopSelf()
             return START_NOT_STICKY
         }
@@ -105,7 +109,7 @@ class BubbleService : Service() {
 
     override fun onDestroy() {
         running = false
-        recorder.stopQuietly()
+        MainThreadGuard.allowingDisk { recorder.stopQuietly() }
         netCallback?.let {
             (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager)
                 .unregisterNetworkCallback(it)
@@ -202,8 +206,10 @@ class BubbleService : Service() {
             PixelFormat.TRANSLUCENT,
         )
         lp.gravity = Gravity.TOP or Gravity.START
-        lp.x = prefs.getInt("bubble_x", dm.widthPixels - size - dp(4))
-        lp.y = prefs.getInt("bubble_y", (dm.heightPixels * 0.38f).toInt())
+        MainThreadGuard.allowingDisk {
+            lp.x = prefs.getInt("bubble_x", dm.widthPixels - size - dp(4))
+            lp.y = prefs.getInt("bubble_y", (dm.heightPixels * 0.38f).toInt())
+        }
         view.setOnTouchListener(DragTapListener(size))
         windowManager.addView(view, lp)
         bubble = view
@@ -241,7 +247,9 @@ class BubbleService : Service() {
                         else dm.widthPixels - size - dp(4)
                     lp.y = lp.y.coerceIn(dp(4), dm.heightPixels - size - dp(4))
                     wm?.updateViewLayout(v, lp)
-                    prefs.edit().putInt("bubble_x", lp.x).putInt("bubble_y", lp.y).apply()
+                    MainThreadGuard.allowingDisk {
+                        prefs.edit().putInt("bubble_x", lp.x).putInt("bubble_y", lp.y).apply()
+                    }
                 }
             }
             return true
@@ -319,7 +327,9 @@ class BubbleService : Service() {
         }
         startInForeground(recording = true)
         try {
-            recorder.start(store.audioDir)
+            // Creates the queue folder and the .m4a on the main thread; P4 owns
+            // moving the recording path off it.
+            MainThreadGuard.allowingDisk { recorder.start(store.audioDir) }
             setState(DotState.RECORDING)
         } catch (e: Exception) {
             toast(getString(R.string.bubble_mic_unavailable, e.message?.take(80)))
@@ -329,15 +339,17 @@ class BubbleService : Service() {
     }
 
     private fun stopRecording() {
-        val file = recorder.stop()
+        val file = MainThreadGuard.allowingDisk { recorder.stop() }
         startInForeground(recording = false)
         if (file == null) {
             setState(DotState.IDLE)
             toast(getString(R.string.bubble_too_short))
             return
         }
-        store.enqueue(QueueItem(file.name, file.absolutePath, "bubble",
-            System.currentTimeMillis()))
+        MainThreadGuard.allowingDisk {
+            store.enqueue(QueueItem(file.name, file.absolutePath, "bubble",
+                System.currentTimeMillis()))
+        }
         setState(DotState.TRANSCRIBING)
         val freshId = file.name
         executor.execute { drainAndSync(freshId) }
@@ -454,8 +466,11 @@ class DictateTrampoline : android.app.Activity() {
 class BubbleBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-        val prefs = context.getSharedPreferences("app", Context.MODE_PRIVATE)
-        if (!prefs.getBoolean("bubble_enabled", false)) return
+        val enabled = MainThreadGuard.allowingDisk {
+            context.getSharedPreferences("app", Context.MODE_PRIVATE)
+                .getBoolean("bubble_enabled", false)
+        }
+        if (!enabled) return
         if (!Settings.canDrawOverlays(context)) return
         context.startForegroundService(Intent(context, BubbleService::class.java))
     }
