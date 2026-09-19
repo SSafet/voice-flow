@@ -5,6 +5,14 @@ import HummingbirdWebSocket
 import Logging
 import NIOCore
 
+/// The name both listeners put in their `Server` header. It carries this process's
+/// own number, so an answer on the proof's port can be told apart from an answer by
+/// any other server — including a stale copy of this same program left over from an
+/// earlier run, which every task in this plan invites by using one fixed port.
+public func proofServerName() -> String {
+    "loopback-proof/\(ProcessInfo.processInfo.processIdentifier)"
+}
+
 public struct ProofServer: Sendable {
     public let port: Int
     public let state: ProofState
@@ -43,16 +51,17 @@ public struct ProofServer: Sendable {
         var logger = Logger(label: "loopback-proof")
         logger.logLevel = .error
 
+        let name = proofServerName()
         let ipv4 = Application(
             router: router,
             server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
-            configuration: .init(address: .hostname("127.0.0.1", port: port), serverName: "loopback-proof"),
+            configuration: .init(address: .hostname("127.0.0.1", port: port), serverName: name),
             logger: logger
         )
         let ipv6 = Application(
             router: router,
             server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
-            configuration: .init(address: .hostname("::1", port: port), serverName: "loopback-proof"),
+            configuration: .init(address: .hostname("::1", port: port), serverName: name),
             logger: logger
         )
 

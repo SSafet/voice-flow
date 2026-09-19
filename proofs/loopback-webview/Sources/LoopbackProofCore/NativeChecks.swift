@@ -30,18 +30,35 @@ public func nativeChecks(port: Int, secret: String) -> [ProofRow] {
     }
 
     let goodHost = "Host: localhost:\(port)\r\n"
+    let ourServerName = proofServerName()
 
-    let (v4, v4Detail) = status(
-        address: "127.0.0.1",
-        request: "GET / HTTP/1.1\r\n\(goodHost)Connection: close\r\n\r\n"
-    )
-    row("listens_on_127_0_0_1", v4 == 200, "GET / over 127.0.0.1: \(v4Detail)")
+    /// A status code alone would pass against whatever happens to hold the port,
+    /// and these two checks are the ones that say the proof's own listeners are up.
+    /// So the answer has to carry the `Server` header that names *this* process
+    /// before its 200 counts; otherwise both listeners could be dead and the table
+    /// would still say they answered.
+    func answersOnLoopback(address: String) -> (Bool, String) {
+        do {
+            let reply = try RawHTTP.send(
+                address: address,
+                port: port,
+                request: "GET / HTTP/1.1\r\n\(goodHost)Connection: close\r\n\r\n"
+            )
+            guard reply.raw.lowercased().contains("\r\nserver: \(ourServerName.lowercased())\r\n") else {
+                return (false, "\(reply.status), but from another server: this program answers with "
+                        + "\"Server: \(ourServerName)\" and that answer did not")
+            }
+            return (reply.status == 200, "\(reply.status)")
+        } catch {
+            return (false, "\(error)")
+        }
+    }
 
-    let (v6, v6Detail) = status(
-        address: "::1",
-        request: "GET / HTTP/1.1\r\n\(goodHost)Connection: close\r\n\r\n"
-    )
-    row("listens_on_ipv6_loopback", v6 == 200, "GET / over [::1]: \(v6Detail)")
+    let (v4, v4Detail) = answersOnLoopback(address: "127.0.0.1")
+    row("listens_on_127_0_0_1", v4, "GET / over 127.0.0.1: \(v4Detail)")
+
+    let (v6, v6Detail) = answersOnLoopback(address: "::1")
+    row("listens_on_ipv6_loopback", v6, "GET / over [::1]: \(v6Detail)")
 
     _ = secret
     return rows

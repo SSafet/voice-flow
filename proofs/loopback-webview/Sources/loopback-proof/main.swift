@@ -39,8 +39,6 @@ final class ProofDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func runProof() async {
-        try? FileManager.default.createDirectory(at: outDirectory, withIntermediateDirectories: true)
-
         let port = self.port
         let ready = await Task.detached { waitForListeners(port: port, seconds: 10) }.value
         if !ready {
@@ -54,22 +52,51 @@ final class ProofDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // Something answered, which is not the same as this proof's own server
+        // answering: another process may hold the port. A listener that recorded a
+        // failure makes the run a failure, never a footnote under a pass.
+        if let why = await state.serverErrorText() {
+            finish([ProofRow(kind: .check, name: "server_listens", passed: false,
+                             detail: "a listener of this proof stopped although \(port) answered: \(why). "
+                             + "Something else may hold the port: lsof -nP -iTCP:\(port) -sTCP:LISTEN")])
+            return
+        }
+
         let secret = state.secret
         let rows = await Task.detached { nativeChecks(port: port, secret: secret) }.value
         await state.addAll(rows)
         finish(await state.allRows())
     }
 
+    private var tableTitle: String {
+        "K7 loopback proof — port \(port), \(ProcessInfo.processInfo.operatingSystemVersionString)"
+    }
+
     private func finish(_ rows: [ProofRow]) {
-        let table = renderTable(rows, title: "K7 loopback proof — port \(port), \(ProcessInfo.processInfo.operatingSystemVersionString)")
-        print(table)
-        try? table.write(to: outDirectory.appendingPathComponent("result-table.txt"), atomically: true, encoding: .utf8)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(rows) {
-            try? data.write(to: outDirectory.appendingPathComponent("result.json"))
+        var rows = rows
+        if let problem = writeEvidence(rows) {
+            rows.append(ProofRow(kind: .check, name: "evidence_written", passed: false, detail: problem))
         }
+        print(renderTable(rows, title: tableTitle))
         exit(allChecksPassed(rows) ? 0 : 1)
+    }
+
+    /// Writes the two files this run is judged by, and says why when it could not.
+    /// A silent failure here would leave an earlier run's files in place and a
+    /// later task would copy them into the repository as this run's evidence, so
+    /// the reason becomes a failed check and the exit status carries it.
+    private func writeEvidence(_ rows: [ProofRow]) -> String? {
+        do {
+            try FileManager.default.createDirectory(at: outDirectory, withIntermediateDirectories: true)
+            try renderTable(rows, title: tableTitle)
+                .write(to: outDirectory.appendingPathComponent("result-table.txt"), atomically: true, encoding: .utf8)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(rows).write(to: outDirectory.appendingPathComponent("result.json"))
+            return nil
+        } catch {
+            return "the evidence of this run could not be written into \(outDirectory.path): \(error)"
+        }
     }
 }
 
