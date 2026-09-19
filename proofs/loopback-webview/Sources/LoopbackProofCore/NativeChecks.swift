@@ -60,6 +60,39 @@ public func nativeChecks(port: Int, secret: String) -> [ProofRow] {
     let (v6, v6Detail) = answersOnLoopback(address: "::1")
     row("listens_on_ipv6_loopback", v6, "GET / over [::1]: \(v6Detail)")
 
-    _ = secret
+    let (withSecret, withSecretDetail) = status(
+        address: "127.0.0.1",
+        request: "GET /probe/guarded HTTP/1.1\r\n\(goodHost)x-loopback-secret: \(secret)\r\nConnection: close\r\n\r\n"
+    )
+    row("guarded_path_with_secret_accepted", withSecret == 200, "GET /probe/guarded with the header: \(withSecretDetail)")
+
+    let (noSecret, noSecretDetail) = status(
+        address: "127.0.0.1",
+        request: "GET /probe/guarded HTTP/1.1\r\n\(goodHost)Connection: close\r\n\r\n"
+    )
+    row("guarded_path_without_secret_refused", noSecret == 401, "GET /probe/guarded without the header: \(noSecretDetail)")
+
+    let (foreignOrigin, foreignOriginDetail) = status(
+        address: "127.0.0.1",
+        request: "GET /probe/guarded HTTP/1.1\r\n\(goodHost)Origin: http://evil.example\r\nx-loopback-secret: \(secret)\r\nConnection: close\r\n\r\n"
+    )
+    row("foreign_origin_refused", foreignOrigin == 403,
+        "GET /probe/guarded with Origin: http://evil.example and the right secret: \(foreignOriginDetail)")
+
+    let (wrongHost, wrongHostDetail) = status(
+        address: "127.0.0.1",
+        request: "GET /probe/guarded HTTP/1.1\r\nHost: evil.example\r\nx-loopback-secret: \(secret)\r\nConnection: close\r\n\r\n"
+    )
+    row("wrong_host_refused", wrongHost == 403, "GET /probe/guarded with Host: evil.example: \(wrongHostDetail)")
+
+    let (preflight, preflightDetail) = status(
+        address: "127.0.0.1",
+        request: "OPTIONS /probe/guarded HTTP/1.1\r\n\(goodHost)Origin: http://evil.example\r\n"
+            + "Access-Control-Request-Method: GET\r\nAccess-Control-Request-Headers: x-loopback-secret\r\nConnection: close\r\n\r\n"
+    )
+    let preflightRefused = (preflight ?? 0) >= 400
+    row("foreign_preflight_refused", preflightRefused,
+        "OPTIONS /probe/guarded from http://evil.example: \(preflightDetail)")
+
     return rows
 }

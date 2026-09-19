@@ -13,6 +13,35 @@ public func proofServerName() -> String {
     "loopback-proof/\(ProcessInfo.processInfo.processIdentifier)"
 }
 
+public let secretHeaderName = HTTPField.Name("x-loopback-secret")!
+
+struct HostOriginGuard<Context: RequestContext>: RouterMiddleware {
+    let hosts: Set<String>
+    let origin: String
+
+    func handle(_ request: Request, context: Context, next: (Request, Context) async throws -> Response) async throws -> Response {
+        guard let host = request.head.authority?.lowercased(), hosts.contains(host) else {
+            throw HTTPError(.forbidden, message: "host not allowed")
+        }
+        if let requestOrigin = request.headers[.origin], requestOrigin != origin {
+            throw HTTPError(.forbidden, message: "origin not allowed")
+        }
+        return try await next(request, context)
+    }
+}
+
+struct SecretGuard<Context: RequestContext>: RouterMiddleware {
+    let state: ProofState
+
+    func handle(_ request: Request, context: Context, next: (Request, Context) async throws -> Response) async throws -> Response {
+        let presented = request.headers[secretHeaderName]
+        guard let presented, presented == state.secret else {
+            throw HTTPError(.unauthorized, message: "secret missing or wrong")
+        }
+        return try await next(request, context)
+    }
+}
+
 public struct ProofServer: Sendable {
     public let port: Int
     public let state: ProofState
@@ -29,7 +58,9 @@ public struct ProofServer: Sendable {
     var pageOrigin: String { "http://localhost:\(port)" }
 
     func makeRouters() -> (Router<BasicWebSocketRequestContext>, Router<BasicWebSocketRequestContext>) {
+        let state = self.state
         let router = Router(context: BasicWebSocketRequestContext.self)
+        router.add(middleware: HostOriginGuard(hosts: allowedHosts, origin: pageOrigin))
 
         // The page. No secret: it stands for the interface bundle, which Atika
         // serves publicly anyway.
@@ -41,7 +72,14 @@ public struct ProofServer: Sendable {
             )
         }
 
+        let guarded = router.group().add(middleware: SecretGuard(state: state))
+
+        guarded.get("/probe/guarded") { _, _ -> Response in
+            jsonResponse(#"{"ok":true}"#)
+        }
+
         let wsRouter = Router(context: BasicWebSocketRequestContext.self)
+        wsRouter.add(middleware: HostOriginGuard(hosts: allowedHosts, origin: pageOrigin))
         return (router, wsRouter)
     }
 
@@ -85,4 +123,12 @@ public struct ProofServer: Sendable {
             throw error
         }
     }
+}
+
+func jsonResponse(_ json: String) -> Response {
+    Response(
+        status: .ok,
+        headers: [.contentType: "application/json"],
+        body: .init(byteBuffer: ByteBuffer(string: json))
+    )
 }
