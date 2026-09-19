@@ -43,8 +43,6 @@ import java.util.concurrent.Executors
 /// Transcriber pipeline as in-app takes ("bubble" mode), so offline
 /// recordings survive and everything syncs.
 class BubbleService : Service() {
-    private enum class State { IDLE, RECORDING, TRANSCRIBING }
-
     private lateinit var store: Store
     private lateinit var keys: Keys
     private lateinit var syncClient: SyncClient
@@ -57,7 +55,7 @@ class BubbleService : Service() {
     private var bubble: FrameLayout? = null
     private var dot: View? = null
     private lateinit var lp: WindowManager.LayoutParams
-    private var state = State.IDLE
+    private var state = DotState.IDLE
     private var pulse: ValueAnimator? = null
     private var netCallback: ConnectivityManager.NetworkCallback? = null
 
@@ -148,8 +146,13 @@ class BubbleService : Service() {
     private fun buildNotification(): Notification {
         val nm = getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL) == null) {
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Floating bubble", NotificationManager.IMPORTANCE_MIN))
+            val channel = NotificationChannel(
+                CHANNEL,
+                getString(R.string.bubble_channel_name),
+                NotificationManager.IMPORTANCE_MIN,
+            )
+            channel.description = getString(R.string.bubble_channel_description)
+            nm.createNotificationChannel(channel)
         }
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
@@ -158,10 +161,14 @@ class BubbleService : Service() {
             PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_mic)
-            .setContentTitle("Dictation bubble is on")
-            .setContentText("Tap the floating dot to dictate into any app")
+            .setContentTitle(getString(R.string.bubble_notification_title))
+            .setContentText(getString(R.string.bubble_notification_text))
             .setContentIntent(open)
-            .addAction(Notification.Action.Builder(null, "Hide", hide).build())
+            .addAction(
+                Notification.Action.Builder(
+                    null, getString(R.string.bubble_notification_hide), hide,
+                ).build(),
+            )
             .setOngoing(true)
             .build()
     }
@@ -243,28 +250,30 @@ class BubbleService : Service() {
 
     private fun onBubbleTap() {
         when (state) {
-            State.RECORDING -> stopRecording()
-            State.TRANSCRIBING -> {}          // hands off while a take is in flight
-            State.IDLE -> startRecording()
+            DotState.RECORDING -> stopRecording()
+            DotState.TRANSCRIBING -> {}          // hands off while a take is in flight
+            DotState.IDLE -> startRecording()
+            DotState.KEPT -> {}                  // P4 enters KEPT; a tap here is a no-op
         }
     }
 
-    private fun setState(s: State) {
+    private fun setState(s: DotState) {
         state = s
         // The dot exists only while a take is in flight: attach on leaving
         // IDLE, detach shortly after returning (the delay lets the success
         // flash play out; re-checked in case a new take started meanwhile).
-        if (s == State.IDLE) {
-            main.postDelayed({ if (state == State.IDLE) removeBubble() }, 700)
+        if (s == DotState.IDLE) {
+            main.postDelayed({ if (state == DotState.IDLE) removeBubble() }, 700)
         } else if (bubble == null && Settings.canDrawOverlays(this)) {
             addBubble()
         }
         val d = dot ?: return
+        d.contentDescription = DotAnnouncement.contentDescriptionFor(s)?.let { getString(it) }
         pulse?.cancel(); pulse = null
         d.scaleX = 1f; d.scaleY = 1f; d.alpha = 1f
-        (d.background as GradientDrawable).setColor(if (s == State.RECORDING) red else accent)
+        (d.background as GradientDrawable).setColor(if (s == DotState.RECORDING) red else accent)
         when (s) {
-            State.RECORDING -> pulse = ValueAnimator.ofFloat(1f, 1.6f).apply {
+            DotState.RECORDING -> pulse = ValueAnimator.ofFloat(1f, 1.6f).apply {
                 duration = 520; repeatCount = ValueAnimator.INFINITE
                 repeatMode = ValueAnimator.REVERSE
                 addUpdateListener { a ->
@@ -273,13 +282,14 @@ class BubbleService : Service() {
                 }
                 start()
             }
-            State.TRANSCRIBING -> pulse = ValueAnimator.ofFloat(1f, 0.25f).apply {
+            DotState.TRANSCRIBING -> pulse = ValueAnimator.ofFloat(1f, 0.25f).apply {
                 duration = 340; repeatCount = ValueAnimator.INFINITE
                 repeatMode = ValueAnimator.REVERSE
                 addUpdateListener { a -> d.alpha = a.animatedValue as Float }
                 start()
             }
-            State.IDLE -> {}
+            DotState.IDLE -> {}
+            DotState.KEPT -> {}
         }
     }
 
@@ -302,7 +312,7 @@ class BubbleService : Service() {
     private fun startRecording() {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED) {
-            toast("Open Voice Flow once to grant microphone access")
+            toast(getString(R.string.bubble_mic_permission))
             startActivity(Intent(this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             return
@@ -310,10 +320,10 @@ class BubbleService : Service() {
         startInForeground(recording = true)
         try {
             recorder.start(store.audioDir)
-            setState(State.RECORDING)
+            setState(DotState.RECORDING)
         } catch (e: Exception) {
-            toast("Mic unavailable: ${e.message?.take(80)}")
-            setState(State.IDLE)
+            toast(getString(R.string.bubble_mic_unavailable, e.message?.take(80)))
+            setState(DotState.IDLE)
             startInForeground(recording = false)
         }
     }
@@ -322,13 +332,13 @@ class BubbleService : Service() {
         val file = recorder.stop()
         startInForeground(recording = false)
         if (file == null) {
-            setState(State.IDLE)
-            toast("Too short — nothing captured")
+            setState(DotState.IDLE)
+            toast(getString(R.string.bubble_too_short))
             return
         }
         store.enqueue(QueueItem(file.name, file.absolutePath, "bubble",
             System.currentTimeMillis()))
-        setState(State.TRANSCRIBING)
+        setState(DotState.TRANSCRIBING)
         val freshId = file.name
         executor.execute { drainAndSync(freshId) }
     }
@@ -347,12 +357,12 @@ class BubbleService : Service() {
     /// were meant for is long gone.
     private fun drain(freshId: String?) {
         val pending = store.queue().filter { it.mode == "bubble" }
-        if (pending.isEmpty()) { main.post { if (state == State.TRANSCRIBING) setState(State.IDLE) }; return }
+        if (pending.isEmpty()) { main.post { if (state == DotState.TRANSCRIBING) setState(DotState.IDLE) }; return }
         val openAIKey = keys.load(Keys.OPENAI)
         if (openAIKey.isNullOrBlank()) {
             main.post {
-                setState(State.IDLE)
-                if (freshId != null) toast("No API key yet — open Voice Flow → Settings & sync to add it")
+                setState(DotState.IDLE)
+                if (freshId != null) toast(getString(R.string.bubble_no_api_key))
             }
             return
         }
@@ -363,15 +373,15 @@ class BubbleService : Service() {
                 Transcriber.transcribe(file, openAIKey, syncClient.vocabulary())
             } catch (e: Net.HttpError) {
                 main.post {
-                    setState(State.IDLE)
-                    if (freshId != null) toast("Transcription failed: ${e.message?.take(80)}")
+                    setState(DotState.IDLE)
+                    if (freshId != null) toast(getString(R.string.bubble_transcription_failed, e.message?.take(80)))
                 }
                 if (e.code == 401 || e.code == 429) return
                 store.dequeue(item.id); continue
             } catch (_: Exception) {
                 main.post {
-                    setState(State.IDLE)
-                    if (freshId != null) toast("Offline — queued, lands on the clipboard when back")
+                    setState(DotState.IDLE)
+                    if (freshId != null) toast(getString(R.string.bubble_offline_queued))
                 }
                 return
             }
@@ -380,18 +390,18 @@ class BubbleService : Service() {
                 Transcriber.clean(raw, agentKey, syncClient.vocabulary()) else raw
             store.dequeue(item.id)
             if (cleaned.isBlank()) {
-                main.post { setState(State.IDLE); if (freshId != null) toast("Nothing heard") }
+                main.post { setState(DotState.IDLE); if (freshId != null) toast(getString(R.string.bubble_nothing_heard)) }
                 continue
             }
             store.addDictation(DictationEntry.now(cleaned, "pasted"))
             val insert = item.id == freshId
             main.post { deliver(cleaned, insert) }
         }
-        main.post { if (state == State.TRANSCRIBING) setState(State.IDLE) }
+        main.post { if (state == DotState.TRANSCRIBING) setState(DotState.IDLE) }
     }
 
     private fun deliver(text: String, insert: Boolean) {
-        setState(State.IDLE)
+        setState(DotState.IDLE)
         if (insert && InsertionService.instance?.insert(text) == true) {
             flashInserted()
             return
@@ -399,9 +409,9 @@ class BubbleService : Service() {
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("dictation", text))
         if (insert) {
-            toast(if (InsertionService.instance == null)
-                "On clipboard — enable Voice Flow in Accessibility to auto-insert"
-            else "On clipboard — no text field focused")
+            toast(getString(if (InsertionService.instance == null)
+                R.string.bubble_clipboard_enable_accessibility
+            else R.string.bubble_clipboard_no_field))
         }
     }
 

@@ -15,7 +15,7 @@
 
     <application
         android:name=".VoiceFlowApp"
-        android:label="Voice Flow"
+        android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.VoiceFlow"
         android:usesCleartextTraffic="true">
@@ -67,7 +67,7 @@
             android:name=".Dictate"
             android:targetActivity=".DictateTrampoline"
             android:exported="true"
-            android:label="VF Dictate"
+            android:label="@string/dictate_alias_label"
             android:icon="@mipmap/ic_dictate">
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
@@ -96,7 +96,7 @@
         <service
             android:name=".InsertionService"
             android:exported="true"
-            android:label="Voice Flow"
+            android:label="@string/app_name"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -116,7 +116,7 @@
             android:name=".RecordTileService"
             android:exported="true"
             android:icon="@drawable/ic_mic"
-            android:label="Voice Flow dictate"
+            android:label="@string/record_tile_label"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

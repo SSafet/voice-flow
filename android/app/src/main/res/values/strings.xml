@@ -1,4 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- A brand name: it stays "Voice Flow" in every locale. -->
+    <string name="app_name" translatable="false">Voice Flow</string>
+
     <string name="insertion_service_description">Types your dictation into the text field you were using, so the floating bubble works in any app. Voice Flow does not read or store anything else from the screen.</string>
+
+    <!-- The floating dictation bubble (ticket VF-51). -->
+    <string name="bubble_channel_name">Floating bubble</string>
+    <string name="bubble_channel_description">Keeps the floating dictation bubble running in the background.</string>
+    <string name="bubble_notification_title">Dictation bubble is on</string>
+    <string name="bubble_notification_text">Tap the floating dot to dictate into any app</string>
+    <string name="bubble_notification_hide">Hide</string>
+
+    <string name="bubble_mic_permission">Open Voice Flow once to grant microphone access</string>
+    <string name="bubble_mic_unavailable">Mic unavailable: %1$s</string>
+    <string name="bubble_too_short">Too short — nothing captured</string>
+    <string name="bubble_no_api_key">No API key yet — open Voice Flow → Settings &amp; sync to add it</string>
+    <string name="bubble_transcription_failed">Transcription failed: %1$s</string>
+    <string name="bubble_offline_queued">Offline — queued, lands on the clipboard when back</string>
+    <string name="bubble_nothing_heard">Nothing heard</string>
+    <string name="bubble_clipboard_enable_accessibility">On clipboard — enable Voice Flow in Accessibility to auto-insert</string>
+    <string name="bubble_clipboard_no_field">On clipboard — no text field focused</string>
+
+    <!-- The dot announces each working state (08 §3.12). -->
+    <string name="dot_recording">Recording. Double tap the dot to stop.</string>
+    <string name="dot_transcribing">Transcribing</string>
+    <string name="dot_kept">Kept</string>
+
+    <!-- The .Dictate assist alias and the quick-settings tile. -->
+    <string name="dictate_alias_label">VF Dictate</string>
+    <string name="record_tile_label">Voice Flow dictate</string>
 </resources>
