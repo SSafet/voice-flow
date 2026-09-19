@@ -1,4 +1,44 @@
+import AppKit
+import CoreGraphics
 import Foundation
+
+/// Immutable identity + geometry for one attached display. Capture runs keep
+/// this value so later pointer, window, or session changes cannot reroute them.
+///
+/// It lives beside `VoiceFlowPaths` because every stand-alone suite that
+/// compiles `CaptureRouting.swift` also compiles this file, and no other source
+/// is common to all of them.
+struct DisplayContext: Equatable {
+    let id: CGDirectDisplayID
+    let frame: NSRect
+    let visibleFrame: NSRect
+    let backingScaleFactor: CGFloat
+    /// One-based display index accepted by `/usr/sbin/screencapture -D`.
+    let captureIndex: Int
+
+    var shotGeometry: (width: Int, height: Int) {
+        let scale = min(1.0, 1440.0 / frame.width)
+        return (
+            Int((frame.width * scale).rounded()),
+            Int((frame.height * scale).rounded())
+        )
+    }
+
+    var annotationPointScale: CGFloat {
+        let width = shotGeometry.width
+        return width > 0 ? frame.width / CGFloat(width) : 1.0
+    }
+
+    /// Convert an AppKit global point (bottom-left origin) into screenshot
+    /// pixels (top-left origin) for this display.
+    func screenshotPoint(forGlobalPoint point: NSPoint) -> CGPoint {
+        let scale = annotationPointScale
+        return CGPoint(
+            x: (point.x - frame.minX) / scale,
+            y: (frame.maxY - point.y) / scale
+        )
+    }
+}
 
 /// One source of truth for Voice Flow's writable data locations.
 ///

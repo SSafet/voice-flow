@@ -1,5 +1,17 @@
 import Foundation
 
+#if !SWIFT_PACKAGE
+// The stand-alone dictation suite compiles `CaptureRouting.swift` without the
+// app files that declare the types it names (`App.swift`, `Capture.swift`).
+// These minimal stand-ins let the routing contract type-check there; the app
+// build, which defines SWIFT_PACKAGE, uses the real declarations.
+final class PendingInteraction {
+    var sessionId: String?
+}
+
+struct CaptureSummary {}
+#endif
+
 /// Where a capture went. Stored as data only — the Inbox filter chips are the
 /// one place it surfaces; rows never label it (panel redesign, ticket #15).
 enum CaptureDestination: String, Codable {
