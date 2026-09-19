@@ -28,6 +28,7 @@
         "cloud_sync_bridge",
         "codex_appserver",
         "codex_runtime",
+        "contract_rules",
         "daily_focus",
         "data_sources",
         "data_sources_ui",
@@ -1069,6 +1070,7 @@
     { "id": "tests/spm_build/test.sh", "runner": "unit", "suites": ["spm_build"] },
     { "id": "tests/ripgrep_runtime/test.sh", "runner": "unit", "suites": ["ripgrep_runtime"] },
     { "id": "tests/thread_protocol_sync/test.sh", "runner": "unit", "suites": ["thread_protocol_sync"] },
+    { "id": "tests/contract_rules/main.swift", "runner": "unit", "suites": ["contract_rules"] },
     {
       "id": "tests/test_backend_protocol.py",
       "runner": "unit",

@@ -153,6 +153,16 @@
       ]
     },
     {
+      "id": "BLD-07",
+      "area": "build",
+      "name": "Carry the contract's four pure rules in Swift and hold them to the contract's own fixture files",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/contract_rules/main.swift"
+      ]
+    },
+    {
       "id": "CAP-01",
       "area": "capture_store",
       "name": "Write capture transcript, metadata, and ordered frames",

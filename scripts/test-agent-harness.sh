@@ -183,6 +183,8 @@ if should_run app; then
 fi
 
 compile_and_run voice_flow_paths swift/VoiceFlowPaths.swift tests/voice_flow_paths/main.swift
+compile_and_run contract_rules swift/Contract/CleanText.swift swift/Contract/FirstLineTitle.swift \
+    swift/Contract/ThreadBranchName.swift tests/contract_rules/main.swift
 compile_and_run cloud_sync swift/CloudSyncModels.swift swift/CloudSyncStore.swift tests/cloud_sync/main.swift
 compile_and_run cloud_sync_bridge -D VOICE_FLOW_QA "${APP_SUPPORT_SOURCES[@]}" tests/cloud_sync_bridge/main.swift \
     -framework Cocoa -framework AVFoundation -framework CoreGraphics -framework ApplicationServices \
