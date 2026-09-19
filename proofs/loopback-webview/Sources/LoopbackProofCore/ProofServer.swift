@@ -72,6 +72,12 @@ public struct ProofServer: Sendable {
             )
         }
 
+        // Not guarded: the control for the content rule list. A page that cannot reach
+        // it is being stopped by the rule list and by nothing else.
+        router.get("/probe/ruled/blocked") { _, _ -> Response in
+            jsonResponse(#"{"ok":true,"note":"not blocked"}"#)
+        }
+
         let guarded = router.group().add(middleware: SecretGuard(state: state))
 
         guarded.get("/probe/guarded") { _, _ -> Response in
@@ -99,6 +105,19 @@ public struct ProofServer: Sendable {
             return jsonResponse(#"{"ok":true}"#)
         }
 
+        // Paths a content rule list is asked to inject the header into. They are
+        // guarded by the same secret, so a 200 means the injection reached them.
+        for suffix in ["fetch", "xhr"] {
+            guarded.get("/probe/ruled/\(suffix)") { _, _ -> Response in jsonResponse(#"{"ok":true}"#) }
+        }
+        guarded.get("/probe/ruled/script.js") { _, _ -> Response in
+            Response(
+                status: .ok,
+                headers: [.contentType: "text/javascript; charset=utf-8"],
+                body: .init(byteBuffer: ByteBuffer(string: "window.__ruledScriptLoaded = true;"))
+            )
+        }
+
         let wsRouter = Router(context: BasicWebSocketRequestContext.self)
         wsRouter.add(middleware: HostOriginGuard(hosts: allowedHosts, origin: pageOrigin))
 
@@ -117,6 +136,22 @@ public struct ProofServer: Sendable {
             },
             onUpgrade: { _, outbound, _ in
                 try await outbound.write(.text("hello"))
+            }
+        )
+
+        // Upgrades whatever arrives, and writes down the header it saw: this route
+        // is not a guard, it is the measuring point for the content rule list.
+        wsRouter.ws(
+            "/probe/ruled/socket",
+            shouldUpgrade: { request, _ in
+                await state.recordUpgradeHeader(
+                    path: "/probe/ruled/socket",
+                    value: request.headers[secretHeaderName]
+                )
+                return .upgrade([:])
+            },
+            onUpgrade: { _, outbound, _ in
+                try await outbound.write(.text("hello-ruled"))
             }
         )
 

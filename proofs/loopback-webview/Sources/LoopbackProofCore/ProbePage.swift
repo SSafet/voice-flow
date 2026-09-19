@@ -133,6 +133,21 @@ async function run() {
   check("iframe_to_another_localhost_port_loads", framed !== "timeout",
         "iframe of http://localhost:" + previewPort + "/: " + framed);
 
+  observe("rule_list_block_control", "GET /probe/ruled/blocked, which the rule list blocks: " + await status("/probe/ruled/blocked", false));
+  observe("ruled_fetch", "GET /probe/ruled/fetch with no page-side header: " + await status("/probe/ruled/fetch", false));
+  observe("ruled_xhr", "XMLHttpRequest /probe/ruled/xhr with no page-side header: " + await xhrStatus("/probe/ruled/xhr", false));
+  observe("ruled_subresource", "<script src=/probe/ruled/script.js>: " + await loadScript("/probe/ruled/script.js"));
+  observe("ruled_socket", "socket to /probe/ruled/socket: " + await openSocket("/probe/ruled/socket", "hello-ruled"));
+
+  let headerArg = "";
+  try {
+    const ws = new WebSocket(location.origin.replace(/^http/, "ws") + "/probe/ruled/socket",
+                             {headers:{"x-loopback-secret": secret}});
+    headerArg = "constructor accepted a second argument of type object; readyState " + ws.readyState;
+    ws.close();
+  } catch (e) { headerArg = "constructor rejected it: " + e; }
+  observe("websocket_js_header_argument", headerArg);
+
   // Built with textContent, never innerHTML: a detail such as
   // "<script src=/probe/guarded.js> refused" is text, and pasting it into the
   // document as markup silently swallows every row after it.

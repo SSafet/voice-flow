@@ -17,11 +17,40 @@ public final class WebViewProbe: NSObject, WKNavigationDelegate {
         self.state = state
     }
 
+    /// Compiles the content rule list that asks WebKit to add the header itself.
+    /// Returns the row describing what happened, and the list when it compiled.
+    private func compileRuleList(storeDirectory: URL) async -> (ProofRow, WKContentRuleList?) {
+        let secret = state.secret
+        // Two rules. The first is the mechanism under test: can WebKit itself put the
+        // header on every request the page makes? The second is the control: a plain
+        // block on one path under the same filter, so that a failure of the first
+        // cannot be blamed on a filter that never matched.
+        let json = """
+        [{"trigger":{"url-filter":"probe/ruled/"},\
+        "action":{"type":"modify-headers","priority":1,\
+        "request-headers":[{"operation":"set","header":"x-loopback-secret","value":"\(secret)"}]}},\
+        {"trigger":{"url-filter":"probe/ruled/blocked"},"action":{"type":"block"}}]
+        """
+        guard let store = WKContentRuleListStore(url: storeDirectory) else {
+            return (ProofRow(kind: .observation, name: "rule_list_compiled",
+                             passed: nil, detail: "WKContentRuleListStore(url:) returned nil"), nil)
+        }
+        do {
+            let list = try await store.compileContentRuleList(forIdentifier: "loopback-proof", encodedContentRuleList: json)
+            return (ProofRow(kind: .observation, name: "rule_list_compiled", passed: nil,
+                             detail: list == nil ? "compiled to nil" : "modify-headers compiled"), list)
+        } catch {
+            return (ProofRow(kind: .observation, name: "rule_list_compiled", passed: nil,
+                             detail: "did not compile: \(error)"), nil)
+        }
+    }
+
     /// Loads the page in a web view that belongs to no window, and waits for the
     /// page to post its rows back.
     public func run(storeDirectory: URL, snapshotPath: URL?) async -> [ProofRow] {
         var rows: [ProofRow] = []
-        _ = storeDirectory
+        let (ruleRow, ruleList) = await compileRuleList(storeDirectory: storeDirectory)
+        rows.append(ruleRow)
 
         let configuration = WKWebViewConfiguration()
         let descriptor = WKUserScript(
@@ -30,6 +59,7 @@ public final class WebViewProbe: NSObject, WKNavigationDelegate {
             forMainFrameOnly: true
         )
         configuration.userContentController.addUserScript(descriptor)
+        if let ruleList { configuration.userContentController.add(ruleList) }
 
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 800), configuration: configuration)
         view.navigationDelegate = self
@@ -57,6 +87,18 @@ public final class WebViewProbe: NSObject, WKNavigationDelegate {
         }
         rows.append(ProofRow(kind: .check, name: "page_reported", passed: true,
                              detail: "the page posted its results to /probe/report"))
+
+        for path in ["/api/v1/threads/socket", "/probe/ruled/socket"] {
+            let seen = await state.upgradeHeader(path: path)
+            let detail: String
+            switch seen {
+            case .none: detail = "no upgrade request reached \(path)"
+            case .some(""): detail = "the upgrade request to \(path) carried no x-loopback-secret header"
+            case .some(let value): detail = "the upgrade request to \(path) carried x-loopback-secret = \(value.prefix(8))…"
+            }
+            rows.append(ProofRow(kind: .observation, name: "upgrade_header\(path.replacingOccurrences(of: "/", with: "_"))",
+                                 passed: nil, detail: detail))
+        }
 
         if let snapshotPath {
             let detail = await snapshot(of: view, to: snapshotPath)
