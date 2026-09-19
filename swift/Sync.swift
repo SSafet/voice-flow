@@ -241,7 +241,7 @@ final class SyncServer: NSObject {
         // Continue-append, ticket #36): forwarded when the text changed,
         // skipped when identical. Id-less/unknown items keep the old
         // time+text dedupe and land as adds.
-        let existing = DictationsView.recentEntries(limit: 500)
+        let existing = DictationStore.shared.recent(limit: 500)
         var seen = Set(existing.map { $0.time + "\u{1}" + $0.text })
         let textById = Dictionary(existing.compactMap { e in e.id.map { ($0, e.text) } },
                                   uniquingKeysWith: { a, _ in a })
@@ -275,7 +275,7 @@ final class SyncServer: NSObject {
         if !incomingChat.isEmpty { Self.mergeMobileChat(incomingChat) }
 
         // ── response: Mac history + settings parity ──
-        let recent = DictationsView.recentEntries(limit: 200).map {
+        let recent = DictationStore.shared.recent(limit: 200).map {
             ["id": $0.id ?? "",
              "text": $0.text, "time": $0.time,
              "timestamp": $0.timestamp ?? "",

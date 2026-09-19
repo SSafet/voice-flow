@@ -2136,44 +2136,6 @@ private final class GrownTextView: NSTextView {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  Dictation history entry (shown in the ChatPanel Dictations tab)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/// Where a capture went. Stored as data only — the Inbox filter chips are the
-/// one place it surfaces; rows never label it (panel redesign, ticket #15).
-enum CaptureDestination: String, Codable {
-    case pasted      // landed in the frontmost app (classic dictation)
-    case kept        // brain dump — recorded into Voice Flow only (ticket #2)
-    case assistant   // routed to the in-app assistant
-    case session     // routed to a Claude session
-}
-
-struct HistoryEntry: Codable {
-    var text: String
-    var time: String
-    /// Full creation date-time for processing cursors. Optional so existing
-    /// history continues to decode without rewriting or dropping any fields.
-    var timestamp: String?
-    /// Stable identity for Continue-append and cross-device sync upserts
-    /// (ticket #36). Optional so existing entries keep decoding; assigned
-    /// lazily the first time identity is needed.
-    var id: String?
-    // Optional so pre-redesign dictations.json entries still decode:
-    // nil destination = pasted, nil seen = already revisited.
-    var destination: CaptureDestination?
-    var seen: Bool?
-    /// Optional so existing dictations.json and mobile records keep decoding.
-    /// Local paths are intentionally not synced to Android.
-    var capability: CaptureCapability?
-    var attachments: [String]?
-    var captureId: String?
-
-    var effectiveDestination: CaptureDestination { destination ?? .pasted }
-    /// Only kept items carry unread semantics.
-    var isUnrevisited: Bool { effectiveDestination == .kept && seen == false }
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Floating Transcript Panel (fallback for non-AX apps)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -2280,8 +2242,6 @@ class FloatingTranscriptPanel {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 final class DictationsView: NSView, NSGestureRecognizerDelegate {
-    /// Synchronous portable persistence hook, installed by the cloud adapter.
-    static var onPersist: (([HistoryEntry]) -> Void)?
     /// The Inbox filters — views over HistoryEntry.destination.
     private enum InboxFilter: Int, CaseIterable {
         case all, kept, pasted, assistant
@@ -2309,8 +2269,6 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
     private var scrollView: NSScrollView!
 
     private let renderCap = 60
-    private let storeCap = 200
-    private static let storeURL = VoiceFlowPaths.shared.file("dictations.json")
 
     /// Kept items not yet revisited — surfaced on the Kept chip and usable
     /// for a future tab badge.
@@ -2327,7 +2285,7 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
-        entries = DictationsView.loadEntries()
+        entries = DictationStore.shared.all()
         setupUI()
         rebuildContent()
     }
@@ -2414,8 +2372,10 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
                                     capability: capability,
                                     attachments: attachments.isEmpty ? nil : attachments,
                                     captureId: captureId), at: 0)
-        if entries.count > storeCap { entries = Array(entries.prefix(storeCap)) }
-        DictationsView.saveEntries(entries)
+        if entries.count > DictationStore.keepInFile {
+            entries = Array(entries.prefix(DictationStore.keepInFile))
+        }
+        DictationStore.shared.save(entries)
         styleChips()
         rebuildContent()
         onUnreadChanged?(unrevisitedCount)
@@ -2438,7 +2398,7 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
         entry.seen = false
         entries.remove(at: idx)
         entries.insert(entry, at: 0)
-        DictationsView.saveEntries(entries)
+        DictationStore.shared.save(entries)
         styleChips()
         rebuildContent()
         onUnreadChanged?(unrevisitedCount)
@@ -2467,7 +2427,7 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
             entry.seen = false
             entries.remove(at: idx)
             entries.insert(entry, at: 0)
-            DictationsView.saveEntries(entries)
+            DictationStore.shared.save(entries)
             styleChips()
             rebuildContent()
             onUnreadChanged?(unrevisitedCount)
@@ -2617,7 +2577,7 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
 
         if entry.isUnrevisited {
             entries[card.entryIndex].seen = true
-            DictationsView.saveEntries(entries)
+            DictationStore.shared.save(entries)
             card.textLabel?.textColor = Theme.text2
             styleChips()
             onUnreadChanged?(unrevisitedCount)
@@ -2632,7 +2592,7 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
         guard index >= 0, index < entries.count else { return }
         if entries[index].id == nil {
             entries[index].id = UUID().uuidString
-            DictationsView.saveEntries(entries)
+            DictationStore.shared.save(entries)
         }
         guard let id = entries[index].id else { return }
         onContinueRequested?(id)
@@ -2675,42 +2635,10 @@ final class DictationsView: NSView, NSGestureRecognizerDelegate {
     /// Newest-first dictations straight from the store (used by the MCP
     /// get_recent_dictations tool — no UI involved).
     func reloadSavedEntries() {
-        entries = Self.loadEntries()
+        entries = DictationStore.shared.all()
         styleChips()
         rebuildContent()
         onUnreadChanged?(unrevisitedCount)
-    }
-
-    static func projectPortableEntries(_ entries: [HistoryEntry]) {
-        saveEntries(entries)
-    }
-
-    static func recentEntries(limit: Int) -> [HistoryEntry] {
-        Array(loadEntries().prefix(max(0, limit)))
-    }
-
-    private static func loadEntries() -> [HistoryEntry] {
-        guard let data = try? Data(contentsOf: storeURL),
-              var list = try? JSONDecoder().decode([HistoryEntry].self, from: data) else { return [] }
-        // One-time compatibility migration for pre-Continue history. IDs must
-        // be durable before sync exports an entry; otherwise Android invents
-        // an identity the Mac cannot recognize when the continued text returns.
-        var migrated = false
-        for index in list.indices where list[index].id?.isEmpty ?? true {
-            list[index].id = UUID().uuidString
-            migrated = true
-        }
-        if migrated { saveEntries(list) }
-        return list
-    }
-
-    private static func saveEntries(_ entries: [HistoryEntry]) {
-        onPersist?(entries)
-        let dir = storeURL.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(entries) {
-            try? data.write(to: storeURL, options: .atomic)
-        }
     }
 }
 

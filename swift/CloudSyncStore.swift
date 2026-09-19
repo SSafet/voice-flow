@@ -7,6 +7,9 @@ struct CloudLocalRecord: Codable {
     var payload: CloudPayload?
     var lastLivePayload: CloudPayload?
     var remote: CloudRecord?
+    /// The device that made the change which created this record, so a
+    /// projected dictation can keep its origin. nil means this Mac or unknown.
+    var actor: CloudChangeActor?
     var pending: [CloudOperation] = []
     var conflicts: [CloudConflict] = []
     /// Superseded unsent edits are retained for recovery when a person resolves
@@ -183,6 +186,7 @@ final class CloudSyncStore {
                     var row = state.records[key] ?? CloudLocalRecord(collection: remote.collection, recordId: remote.recordId, payload: nil)
                     if let resolved = change.resolvedConflictId { row.conflicts.removeAll { $0.conflictId == resolved } }
                     row.blocked = !row.conflicts.isEmpty
+                    if row.actor == nil, let actor = change.actor { row.actor = actor }
                     try accept(remote, into: &row)
                     state.records[key] = row
                 } else if change.kind == "conflict", let conflict = change.conflict {

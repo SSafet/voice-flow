@@ -35,6 +35,7 @@
         "daily_focus",
         "data_sources",
         "data_sources_ui",
+        "dictation_store",
         "display_context",
         "evidence",
         "fake_openai_server",
@@ -1077,6 +1078,7 @@
     { "id": "tests/thread_store/main.swift", "runner": "unit", "suites": ["thread_store"] },
     { "id": "tests/captured_context/main.swift", "runner": "unit", "suites": ["captured_context"] },
     { "id": "tests/captured_store/main.swift", "runner": "unit", "suites": ["captured_store"] },
+    { "id": "tests/dictation_store/main.swift", "runner": "unit", "suites": ["dictation_store"] },
     { "id": "tests/contract_rules/main.swift", "runner": "unit", "suites": ["contract_rules"] },
     { "id": "tests/contract_self_check/main.swift", "runner": "unit", "suites": ["contract_self_check"] },
     {
