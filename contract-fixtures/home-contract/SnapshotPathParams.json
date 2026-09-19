@@ -1,0 +1,9 @@
+{
+  "type": "SnapshotPathParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "path": "notes"
+    }
+  ]
+}

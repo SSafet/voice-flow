@@ -1,0 +1,9 @@
+{
+  "type": "FilesPathParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "path": "README.md"
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "type": "Root",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "homeId": "home_atika_01",
+      "kind": "project",
+      "projectId": "prj_pantria_01",
+      "label": "pantria",
+      "path": "/home/atika/projects/pantria",
+      "missing": false,
+      "writable": true,
+      "deleteMode": "permanent",
+      "preview": "link"
+    },
+    {
+      "rootId": "wt_fix_cart_3f9a2c",
+      "homeId": "home_atika_01",
+      "kind": "worktree",
+      "projectId": "prj_pantria_01",
+      "threadId": "thr_fix_cart_3f9a2c",
+      "label": "pantria · fix-cart-3f9a2c",
+      "path": "/home/atika/worktrees/pantria/fix-cart-3f9a2c",
+      "missing": false,
+      "writable": true,
+      "deleteMode": "permanent",
+      "preview": "link"
+    },
+    {
+      "rootId": "cont_fix_cart_3f9a2c",
+      "homeId": "home_atika_01",
+      "kind": "continuation",
+      "projectId": "prj_voiceflow_01",
+      "threadId": "thr_fix_cart_3f9a2c",
+      "label": "voice-flow · continuation",
+      "path": "/home/atika/.atika/continuations/prj_voiceflow_01/fix-cart-3f9a2c",
+      "missing": false,
+      "writable": true,
+      "deleteMode": "permanent",
+      "preview": "link"
+    },
+    {
+      "rootId": "home",
+      "homeId": "home_atika_01",
+      "kind": "home",
+      "label": "Home",
+      "path": "/home/atika",
+      "missing": false,
+      "writable": true,
+      "deleteMode": "permanent",
+      "preview": "link"
+    },
+    {
+      "rootId": "personas-home_mac_01",
+      "homeId": "home_mac_01",
+      "kind": "personas",
+      "label": "Personas",
+      "path": "/Users/safet/.config/voice-flow/personas",
+      "missing": false,
+      "writable": true,
+      "deleteMode": "trash",
+      "preview": "on_home"
+    },
+    {
+      "rootId": "prj_voiceflow_01",
+      "homeId": "home_mac_01",
+      "kind": "project",
+      "projectId": "prj_voiceflow_01",
+      "label": "voice-flow",
+      "path": "/Users/safet/repos/voice-flow",
+      "missing": true,
+      "writable": false,
+      "deleteMode": "trash",
+      "preview": "on_home"
+    }
+  ]
+}

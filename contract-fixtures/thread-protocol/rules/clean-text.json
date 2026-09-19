@@ -1,0 +1,39 @@
+{
+  "rule": "cleanText",
+  "description": [
+    "cleanText replaces every U+0000 and every lone surrogate with U+FFFD, the replacement character, and changes nothing else: no other control character, no trimming, no Unicode normalisation. A lone surrogate is a UTF-16 code unit in D800-DBFF that is not followed by a unit in DC00-DFFF, or a unit in DC00-DFFF that is not preceded by a unit in D800-DBFF; a well-formed pair is left exactly as it is. One unit is replaced by one unit, so the length in UTF-16 code units never changes and the offsets of a live delta still agree with the completed item.",
+    "Why both characters: Postgres refuses U+0000 in text and in jsonb, and refuses an unpaired surrogate escape in jsonb; a JSON writer turns a lone surrogate into exactly such an escape (\\uD83D), which Swift's JSONDecoder refuses as well. Atika's copy of a mirrored event must equal the Mac's, so one of either in a tool's output would be refused on every retry and block that thread's mirror.",
+    "The cases in \"cases\" are ordinary JSON strings, and every one of them is well formed: no JSON string in this file holds a lone surrogate, deliberately. Swift's JSONDecoder and JSONSerialization refuse a whole document that carries an unpaired surrogate escape (\"Missing low code point in surrogate pair\"), so one such case in \"cases\" would make this file unreadable to the Swift copy it exists for.",
+    "The cases in \"unitCases\" carry those inputs as UTF-16 code units instead: \"textUnits\" and \"expectedUnits\" are lists of numbers, which every language reads the same way. A Swift String cannot hold a lone surrogate at all - String(decoding:as:UTF16.self) has already replaced it with U+FFFD - so a Swift copy of this rule that takes a String can never see the input it exists to repair, and a Swift test that built a String out of \"textUnits\" would pass with no rule written at all.",
+    "How a Swift implementation is therefore written: it takes UTF-16 code units (String.UTF16View or [UInt16]), scans them, replaces 0 and every unpaired surrogate unit with 0xFFFD, keeps a 0xD800-0xDBFF unit that is followed by a 0xDC00-0xDFFF unit together with that unit, and makes the String at the end, after the rule has run. Its test builds [UInt16] from \"textUnits\", applies the rule to those units and compares the result unit by unit with \"expectedUnits\"; for \"cases\" it may use the strings as they stand, because they are well formed.",
+    "Order beside the other rule: an executor that must fit a cap cuts first with cutText and cleans what it kept (fixtures/rules/cut-text.json)."
+  ],
+  "cases": [
+    { "text": "", "expected": "" },
+    { "text": "$ pnpm test\n3 passed", "expected": "$ pnpm test\n3 passed" },
+    { "text": "\u0000", "expected": "\ufffd" },
+    { "text": "a\u0000b", "expected": "a\ufffdb" },
+    { "text": "\u0000start and end\u0000", "expected": "\ufffdstart and end\ufffd" },
+    { "text": "three\u0000\u0000\u0000in a row", "expected": "three\ufffd\ufffd\ufffdin a row" },
+    { "text": "find . -print0: a.txt\u0000b.txt\u0000", "expected": "find . -print0: a.txt\ufffdb.txt\ufffd" },
+    { "text": "other control characters stay: \u0001 \u0007 \t \r\n \u001b[31m \u007f", "expected": "other control characters stay: \u0001 \u0007 \t \r\n \u001b[31m \u007f" },
+    { "text": "a replacement character that is already there stays: \ufffd", "expected": "a replacement character that is already there stays: \ufffd" },
+    { "text": "outside the basic plane: \ud83d\uded2\u0000\ud83e\uddfa and \u041a\u0438\u0440\u0438\u043b\u0438\u0446\u0430\u0000", "expected": "outside the basic plane: \ud83d\uded2\ufffd\ud83e\uddfa and \u041a\u0438\u0440\u0438\u043b\u0438\u0446\u0430\ufffd" },
+    { "text": "the six characters \\u0000 are not U+0000", "expected": "the six characters \\u0000 are not U+0000" },
+    { "text": "0 and \\0 and %00 are not U+0000 either", "expected": "0 and \\0 and %00 are not U+0000 either" },
+    { "text": "a well-formed pair is untouched: \ud83d\uded2", "expected": "a well-formed pair is untouched: \ud83d\uded2" }
+  ],
+  "unitCases": [
+    { "name": "a lone high surrogate between two letters", "textUnits": [97,55357,98], "expectedUnits": [97,65533,98] },
+    { "name": "a lone high surrogate at the very end", "textUnits": [97,98,55357], "expectedUnits": [97,98,65533] },
+    { "name": "a lone low surrogate at the very start", "textUnits": [57042,97,98], "expectedUnits": [65533,97,98] },
+    { "name": "a reversed pair: the low unit first, then the high unit", "textUnits": [57042,55357], "expectedUnits": [65533,65533] },
+    { "name": "a well-formed pair is kept as it is", "textUnits": [97,55357,57042,98], "expectedUnits": [97,55357,57042,98] },
+    { "name": "a lone high surrogate immediately before a well-formed pair", "textUnits": [55357,55357,57042], "expectedUnits": [65533,55357,57042] },
+    { "name": "a well-formed pair immediately before a lone low surrogate", "textUnits": [55357,57042,57042], "expectedUnits": [55357,57042,65533] },
+    { "name": "two well-formed pairs in a row", "textUnits": [55357,57042,55358,56826], "expectedUnits": [55357,57042,55358,56826] },
+    { "name": "U+0000 and a lone surrogate in one text", "textUnits": [0,97,55357,0], "expectedUnits": [65533,97,65533,65533] },
+    { "name": "text with no surrogate and no U+0000 comes back unchanged", "textUnits": [97,98], "expectedUnits": [97,98] },
+    { "name": "the empty text", "textUnits": [], "expectedUnits": [] }
+  ]
+}

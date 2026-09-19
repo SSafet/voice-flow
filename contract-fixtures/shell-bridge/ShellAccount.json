@@ -1,0 +1,10 @@
+{
+  "type": "ShellAccount",
+  "examples": [
+    {
+      "userId": "usr_01J8ZK3F9A",
+      "displayName": "Safet",
+      "email": "owner@example.com"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "type": "FilesTreeParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "path": "",
+      "depth": 3,
+      "max": 2000
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "type": "FilesListParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "path": ""
+    },
+    {
+      "rootId": "prj_pantria_01",
+      "path": "src",
+      "hidden": true
+    }
+  ]
+}

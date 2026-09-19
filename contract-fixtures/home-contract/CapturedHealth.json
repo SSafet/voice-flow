@@ -1,0 +1,133 @@
+{
+  "type": "CapturedHealth",
+  "examples": [
+    {
+      "deviceId": "dev_macmini_01",
+      "generatedAt": "2026-09-18T10:00:00.000Z",
+      "watcher": {
+        "enabled": false,
+        "running": false,
+        "lastLineAt": "2026-09-18T10:00:00.000Z"
+      },
+      "index": {
+        "state": "building",
+        "daysDone": 12,
+        "daysTotal": 31,
+        "picturesRecognised": 9100,
+        "picturesTotal": 28646
+      },
+      "textRecognitionLanguages": [
+        "en-US"
+      ],
+      "pictures": {
+        "usedBytes": 6400000000,
+        "budgetBytes": 10000000000,
+        "missing": 459,
+        "diskLow": false,
+        "lastCleanup": {
+          "at": "2026-09-18T10:00:00.000Z",
+          "bytes": 1200000000,
+          "days": 9
+        },
+        "pendingPlan": {
+          "planId": "plan_2026-09-18",
+          "bytes": 800000000,
+          "days": 6,
+          "files": 5200,
+          "reason": "over budget"
+        }
+      },
+      "recordings": {
+        "undelivered": 17,
+        "noSpeech": 3
+      },
+      "review": {
+        "lastReviewDay": "2026-08-04",
+        "lastRun": {
+          "at": "2026-09-18T10:00:00.000Z",
+          "status": "completed",
+          "threadId": "thr_fix_cart_3f9a2c"
+        }
+      },
+      "recordSync": {
+        "state": "ok",
+        "lastSuccessAt": "2026-09-18T10:00:00.000Z"
+      },
+      "retention": [
+        {
+          "stream": "dictations",
+          "rule": "kept"
+        },
+        {
+          "stream": "watcher frames",
+          "rule": "budget",
+          "value": 10000000000
+        },
+        {
+          "stream": "recordings",
+          "rule": "until_delivered"
+        },
+        {
+          "stream": "derived pictures",
+          "rule": "days",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "deviceId": "dev_macmini_01",
+      "generatedAt": "2026-09-18T10:00:00.000Z",
+      "watcher": {
+        "enabled": true,
+        "running": true,
+        "lastLineAt": "2026-09-18T10:05:00.000Z"
+      },
+      "index": {
+        "state": "ready",
+        "daysDone": 31,
+        "daysTotal": 31,
+        "picturesRecognised": 28646,
+        "picturesTotal": 28646
+      },
+      "textRecognitionLanguages": [
+        "en-US"
+      ],
+      "pictures": {
+        "usedBytes": 6400000000,
+        "budgetBytes": 10000000000,
+        "missing": 0,
+        "diskLow": false
+      },
+      "recordings": {
+        "undelivered": 17,
+        "noSpeech": 3
+      },
+      "review": {},
+      "recordSync": {
+        "state": "failing",
+        "lastSuccessAt": "2026-09-18T10:00:00.000Z",
+        "lastError": "HTTP 503 from the record sync"
+      },
+      "retention": [
+        {
+          "stream": "dictations",
+          "rule": "kept"
+        },
+        {
+          "stream": "watcher frames",
+          "rule": "budget",
+          "value": 10000000000
+        },
+        {
+          "stream": "recordings",
+          "rule": "until_delivered"
+        },
+        {
+          "stream": "derived pictures",
+          "rule": "days",
+          "value": 1
+        }
+      ]
+    }
+  ]
+}

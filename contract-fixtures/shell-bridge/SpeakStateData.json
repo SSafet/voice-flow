@@ -1,0 +1,17 @@
+{
+  "type": "SpeakStateData",
+  "examples": [
+    {
+      "playbackId": "play-0003",
+      "state": "playing"
+    },
+    {
+      "playbackId": "play-0003",
+      "state": "paused"
+    },
+    {
+      "playbackId": "play-0003",
+      "state": "ended"
+    }
+  ]
+}

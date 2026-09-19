@@ -1,0 +1,16 @@
+{
+  "type": "PermissionsListResult",
+  "examples": [
+    {
+      "rows": [
+        {
+          "id": "microphone",
+          "title": "Microphone",
+          "detail": "Needed to dictate.",
+          "state": "ok",
+          "actionLabel": "Open settings"
+        }
+      ]
+    }
+  ]
+}

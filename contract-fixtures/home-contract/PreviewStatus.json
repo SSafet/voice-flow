@@ -1,0 +1,21 @@
+{
+  "type": "PreviewStatus",
+  "examples": [
+    {
+      "machine": "awake",
+      "listening": true,
+      "processName": "web",
+      "processStatus": "running"
+    },
+    {
+      "machine": "awake",
+      "listening": false,
+      "processName": "web",
+      "processStatus": "crashed"
+    },
+    {
+      "machine": "asleep",
+      "listening": false
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "type": "FilesSaveParams",
+  "examples": [
+    {
+      "url": "https://atika.ai/api/v1/files/download?ticket=abc",
+      "name": "report.pdf"
+    }
+  ]
+}

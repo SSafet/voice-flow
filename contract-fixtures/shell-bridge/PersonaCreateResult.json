@@ -1,0 +1,24 @@
+{
+  "type": "PersonaCreateResult",
+  "examples": [
+    {
+      "persona": {
+        "id": "release-notes",
+        "homeId": "atika",
+        "name": "Release notes",
+        "description": "Writes release notes from merged pull requests.",
+        "instructions": "You write release notes. Keep them short.",
+        "coreMemory": "",
+        "model": "anthropic/claude-sonnet-4.5",
+        "reasoningEffort": "medium",
+        "skills": [],
+        "delegates": [],
+        "isDefault": false,
+        "usable": true,
+        "issues": [],
+        "revision": "3f9a2c51",
+        "version": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "type": "BridgeError",
+  "examples": [
+    {
+      "code": "permission_denied",
+      "message": "Screen recording is not allowed.",
+      "permissionId": "screen-recording",
+      "detail": "CGPreflightScreenCaptureAccess returned false"
+    },
+    {
+      "code": "not_supported",
+      "message": "This phone cannot capture the screen."
+    },
+    {
+      "code": "cancelled_by_user",
+      "message": "You closed the file panel."
+    },
+    {
+      "code": "busy",
+      "message": "A dictation is already running."
+    },
+    {
+      "code": "timeout",
+      "message": "The app did not answer."
+    },
+    {
+      "code": "not_signed_in",
+      "message": "Sign in to Atika first."
+    },
+    {
+      "code": "internal",
+      "message": "Something went wrong in the app."
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "type": "ShellPlatform",
+  "examples": [
+    {
+      "os": "macOS",
+      "osVersion": "27.0",
+      "formFactor": "desktop"
+    },
+    {
+      "os": "Android",
+      "osVersion": "16",
+      "formFactor": "phone"
+    },
+    {
+      "os": "Android",
+      "osVersion": "16",
+      "formFactor": "tablet"
+    }
+  ]
+}

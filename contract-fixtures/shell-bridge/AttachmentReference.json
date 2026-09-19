@@ -1,0 +1,160 @@
+{
+  "type": "AttachmentReference",
+  "examples": [
+    {
+      "id": "att-0001",
+      "kind": "file",
+      "mime": "application/pdf",
+      "bytes": 48213,
+      "name": "invoice.pdf",
+      "url": "https://appassets.androidplatform.net/shell-files/att-0001"
+    },
+    {
+      "id": "att-0002",
+      "kind": "image",
+      "mime": "image/jpeg",
+      "bytes": 912344,
+      "name": "IMG_2041.jpg",
+      "url": "http://localhost:8792/shell-files/att-0002",
+      "localPath": "/Users/safet/Pictures/IMG_2041.jpg",
+      "width": 4032,
+      "height": 3024
+    },
+    {
+      "id": "att-0003",
+      "kind": "capture_bundle",
+      "mime": "application/json",
+      "bytes": 2210,
+      "name": "meta.json",
+      "url": "http://localhost:8792/shell-files/att-0003",
+      "localPath": "/Users/safet/.config/voice-flow/captures/2026-09-18-090000/meta.json",
+      "captureId": "capture:2026-09-18-090000",
+      "modelText": "Narration: the cart button does nothing.\n00:03 Safari — Pantrella — Cart (1 mark)"
+    },
+    {
+      "id": "att-0004",
+      "kind": "image",
+      "mime": "image/jpeg",
+      "bytes": 388120,
+      "name": "frame-13.jpg",
+      "url": "http://localhost:8792/shell-files/att-0004",
+      "captureId": "capture:2026-09-18-090000/13",
+      "context": {
+        "app": "Safari",
+        "bundleId": "com.apple.Safari",
+        "windowTitle": "Pantrella — Cart",
+        "url": "pantrella.com/cart",
+        "display": {
+          "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+          "index": 1,
+          "widthPt": 1728,
+          "heightPt": 1117,
+          "scale": 2
+        },
+        "windowBox": [
+          0,
+          50,
+          3456,
+          2184
+        ],
+        "pointer": [
+          1210,
+          640
+        ],
+        "private": false
+      },
+      "forModel": false,
+      "width": 3456,
+      "height": 2234
+    },
+    {
+      "id": "att-0005",
+      "kind": "annotated_screenshot",
+      "mime": "image/jpeg",
+      "bytes": 640233,
+      "name": "shot-090000.jpg",
+      "url": "http://localhost:8792/shell-files/att-0005",
+      "localPath": "/Users/safet/.config/voice-flow/shots/2026-09-18/shot-090000.jpg",
+      "captureId": "shot:2026-09-18/shot-090000.jpg",
+      "context": {
+        "app": "Safari",
+        "bundleId": "com.apple.Safari",
+        "windowTitle": "Pantrella — Cart",
+        "url": "pantrella.com/cart",
+        "display": {
+          "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+          "index": 1,
+          "widthPt": 1728,
+          "heightPt": 1117,
+          "scale": 2
+        },
+        "windowBox": [
+          0,
+          50,
+          3456,
+          2184
+        ],
+        "pointer": [
+          1210,
+          640
+        ],
+        "private": false
+      },
+      "modelText": "3 marks on Safari — Pantrella — Cart. 1 arrow. 2 rect over \"Checkout\". 3 text: this button does nothing.",
+      "width": 3456,
+      "height": 2234,
+      "marks": [
+        {
+          "n": 1,
+          "kind": "arrow",
+          "color": "red",
+          "box": [
+            400,
+            300,
+            220,
+            140
+          ],
+          "from": [
+            400,
+            300
+          ],
+          "to": [
+            620,
+            440
+          ],
+          "stroke": 6
+        },
+        {
+          "n": 2,
+          "kind": "rect",
+          "color": "amber",
+          "box": [
+            640,
+            420,
+            300,
+            90
+          ],
+          "stroke": 4,
+          "underText": "Checkout"
+        },
+        {
+          "n": 3,
+          "kind": "text",
+          "color": "white",
+          "box": [
+            660,
+            520,
+            260,
+            40
+          ],
+          "origin": [
+            660,
+            520
+          ],
+          "note": "this button does nothing",
+          "stroke": 2
+        }
+      ]
+    }
+  ]
+}

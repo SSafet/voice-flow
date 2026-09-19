@@ -1,0 +1,20 @@
+{
+  "type": "CapturedGetInput",
+  "examples": [
+    {
+      "id": "shot:2026-09-12_14-03-22-118"
+    },
+    {
+      "id": "shot:2026-09-12_14-03-22-118",
+      "picture": true,
+      "variant": "clean",
+      "region": [
+        400,
+        300,
+        800,
+        200
+      ],
+      "textOffset": 8000
+    }
+  ]
+}

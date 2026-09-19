@@ -1,0 +1,15 @@
+{
+  "type": "FilesWriteParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "path": "README.md",
+      "ifMatch": "\"9f31c0a4\""
+    },
+    {
+      "rootId": "prj_pantria_01",
+      "path": "notes/ideas.md",
+      "ifNoneMatch": "*"
+    }
+  ]
+}

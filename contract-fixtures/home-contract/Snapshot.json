@@ -1,0 +1,54 @@
+{
+  "type": "Snapshot",
+  "examples": [
+    {
+      "id": "snap_0",
+      "time": "2026-09-18T10:00:00.000Z",
+      "reason": "sleep",
+      "bytesAdded": 0,
+      "ok": true
+    },
+    {
+      "id": "snap_1",
+      "time": "2026-09-18T10:00:00.000Z",
+      "reason": "hourly",
+      "bytesAdded": 1048576,
+      "ok": false
+    },
+    {
+      "id": "snap_2",
+      "time": "2026-09-18T10:00:00.000Z",
+      "reason": "manual",
+      "bytesAdded": 2097152,
+      "ok": true
+    },
+    {
+      "id": "snap_3",
+      "time": "2026-09-18T10:00:00.000Z",
+      "reason": "pre_restore",
+      "bytesAdded": 3145728,
+      "ok": true
+    },
+    {
+      "id": "snap_4",
+      "time": "2026-09-18T10:00:00.000Z",
+      "reason": "pre_roll",
+      "bytesAdded": 4194304,
+      "ok": true
+    },
+    {
+      "id": "snap_5",
+      "time": "2026-09-18T10:00:00.000Z",
+      "reason": "pre_cutover",
+      "bytesAdded": 5242880,
+      "ok": true
+    },
+    {
+      "id": "snap_6",
+      "time": "2026-09-18T10:00:00.000Z",
+      "reason": "legacy",
+      "bytesAdded": 6291456,
+      "ok": true
+    }
+  ]
+}

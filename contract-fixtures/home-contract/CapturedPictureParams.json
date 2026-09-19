@@ -1,0 +1,19 @@
+{
+  "type": "CapturedPictureParams",
+  "examples": [
+    {
+      "id": "frame:2026-08-18T00-00-06",
+      "maxPx": 160
+    },
+    {
+      "id": "shot:2026-09-12_14-03-22-118",
+      "variant": "clean",
+      "region": [
+        400,
+        300,
+        800,
+        200
+      ]
+    }
+  ]
+}

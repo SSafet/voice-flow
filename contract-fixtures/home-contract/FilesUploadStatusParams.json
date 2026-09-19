@@ -1,0 +1,9 @@
+{
+  "type": "FilesUploadStatusParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "uploadId": "upl_01"
+    }
+  ]
+}

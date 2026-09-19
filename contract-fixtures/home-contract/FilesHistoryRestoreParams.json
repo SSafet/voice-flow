@@ -1,0 +1,21 @@
+{
+  "type": "FilesHistoryRestoreParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "path": "src/cart.ts",
+      "version": {
+        "kind": "checkpoint",
+        "id": "refs/atika/checkpoints/trn_0001/before"
+      }
+    },
+    {
+      "rootId": "prj_pantria_01",
+      "path": "notes/ideas.md",
+      "version": {
+        "kind": "snapshot",
+        "id": "snap_7c1e"
+      }
+    }
+  ]
+}

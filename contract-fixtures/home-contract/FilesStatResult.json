@@ -1,0 +1,14 @@
+{
+  "type": "FilesStatResult",
+  "examples": [
+    {
+      "name": "README.md",
+      "path": "README.md",
+      "kind": "file",
+      "size": 1842,
+      "mtimeMs": 1789725600123.5,
+      "mode": 33188,
+      "etag": "\"9f31c0a4\""
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "type": "FilesUploadAppendParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "uploadId": "upl_01",
+      "offset": 1048576
+    }
+  ]
+}

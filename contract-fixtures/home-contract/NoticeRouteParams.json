@@ -1,0 +1,8 @@
+{
+  "type": "NoticeRouteParams",
+  "examples": [
+    {
+      "code": "unclean_restart"
+    }
+  ]
+}

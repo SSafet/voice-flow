@@ -1,0 +1,15 @@
+{
+  "type": "DictatePartialData",
+  "examples": [
+    {
+      "captureId": "dict-0007",
+      "text": "fix the",
+      "isFinal": false
+    },
+    {
+      "captureId": "dict-0007",
+      "text": "fix the cart button",
+      "isFinal": true
+    }
+  ]
+}

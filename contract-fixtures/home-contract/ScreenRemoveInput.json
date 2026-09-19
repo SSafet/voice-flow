@@ -1,0 +1,14 @@
+{
+  "type": "ScreenRemoveInput",
+  "examples": [
+    {
+      "id": "deploy-guide"
+    },
+    {
+      "layer": "steps"
+    },
+    {
+      "allMine": true
+    }
+  ]
+}

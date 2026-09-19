@@ -1,0 +1,17 @@
+{
+  "type": "FilesMoveParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "from": "notes/ideas.md",
+      "to": "notes/archive/ideas.md"
+    },
+    {
+      "rootId": "prj_pantria_01",
+      "from": "logo.png",
+      "to": "assets/logo.png",
+      "toRootId": "prj_voiceflow_01",
+      "overwrite": true
+    }
+  ]
+}

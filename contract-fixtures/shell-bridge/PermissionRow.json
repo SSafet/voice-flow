@@ -1,0 +1,26 @@
+{
+  "type": "PermissionRow",
+  "examples": [
+    {
+      "id": "microphone",
+      "title": "Microphone",
+      "detail": "Needed to dictate.",
+      "state": "ok",
+      "actionLabel": "Open settings"
+    },
+    {
+      "id": "screen-recording",
+      "title": "Screen recording",
+      "detail": "Needed to capture the screen.",
+      "state": "needed",
+      "actionLabel": "Open settings"
+    },
+    {
+      "id": "overlay",
+      "title": "Draw over other apps",
+      "detail": "Not available on this device.",
+      "state": "unavailable",
+      "actionLabel": "Open settings"
+    }
+  ]
+}

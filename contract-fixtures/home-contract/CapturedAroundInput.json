@@ -1,0 +1,12 @@
+{
+  "type": "CapturedAroundInput",
+  "examples": [
+    {
+      "at": "2026-09-18T13:00:00+03:00",
+      "windowMinutes": 10
+    },
+    {
+      "id": "dictation:6f1c2a0e-5b7d-4f6e-9a3b-2d1c0e9f8a7b"
+    }
+  ]
+}

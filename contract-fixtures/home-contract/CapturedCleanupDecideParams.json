@@ -1,0 +1,13 @@
+{
+  "type": "CapturedCleanupDecideParams",
+  "examples": [
+    {
+      "planId": "plan_2026-09-18",
+      "decision": "run"
+    },
+    {
+      "planId": "plan_2026-09-18",
+      "decision": "dismiss"
+    }
+  ]
+}

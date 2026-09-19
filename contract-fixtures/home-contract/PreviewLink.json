@@ -1,0 +1,14 @@
+{
+  "type": "PreviewLink",
+  "examples": [
+    {
+      "port": 3000,
+      "url": "https://3000-abcdefghijklmnopqrstuvwxyz.preview.example"
+    },
+    {
+      "port": 3000,
+      "url": "https://3000-abcdefghijklmnopqrstuvwxyz.preview.example",
+      "lastUsedAt": "2026-09-18T10:00:00.000Z"
+    }
+  ]
+}

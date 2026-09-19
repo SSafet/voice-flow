@@ -1,0 +1,23 @@
+{
+  "type": "CapturedSearchInput",
+  "examples": [
+    {
+      "text": "pantrella deploy",
+      "from": "2026-09-17 09:00",
+      "to": "2026-09-18T18:00:00+03:00",
+      "apps": [
+        "Google Chrome"
+      ],
+      "kinds": [
+        "shot",
+        "dictation"
+      ],
+      "limit": 10
+    },
+    {
+      "threadId": "thr_fix_cart_3f9a2c",
+      "cursor": "c_20"
+    },
+    {}
+  ]
+}

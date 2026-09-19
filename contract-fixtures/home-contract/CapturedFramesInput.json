@@ -1,0 +1,13 @@
+{
+  "type": "CapturedFramesInput",
+  "examples": [
+    {
+      "from": "2026-09-18 09:00",
+      "to": "2026-09-18 10:00",
+      "apps": [
+        "com.apple.dt.Xcode"
+      ],
+      "maxPictures": 6
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "type": "Entry",
+  "examples": [
+    {
+      "name": "README.md",
+      "path": "README.md",
+      "kind": "file",
+      "size": 1842,
+      "mtimeMs": 1789725600123.5,
+      "mode": 33188
+    },
+    {
+      "name": "src",
+      "path": "src",
+      "kind": "dir",
+      "size": 96,
+      "mtimeMs": 1789725600000,
+      "mode": 16877
+    },
+    {
+      "name": "current",
+      "path": "releases/current",
+      "kind": "symlink",
+      "size": 12,
+      "mtimeMs": 1789725600000,
+      "mode": 41453,
+      "target": "v12"
+    },
+    {
+      "name": ".env",
+      "path": ".env",
+      "kind": "file",
+      "size": 310,
+      "mtimeMs": 1789725600000,
+      "mode": 33152,
+      "blocked": "secret"
+    },
+    {
+      "name": "src",
+      "path": "src",
+      "kind": "dir",
+      "size": 96,
+      "mtimeMs": 1789725600000,
+      "mode": 16877,
+      "children": [
+        {
+          "name": "index.ts",
+          "path": "src/index.ts",
+          "kind": "file",
+          "size": 420,
+          "mtimeMs": 1789725600000,
+          "mode": 33188
+        },
+        {
+          "name": "node_modules",
+          "path": "src/node_modules",
+          "kind": "dir",
+          "size": 4096,
+          "mtimeMs": 1789725600000,
+          "mode": 16877,
+          "childrenOmitted": true
+        }
+      ]
+    }
+  ]
+}

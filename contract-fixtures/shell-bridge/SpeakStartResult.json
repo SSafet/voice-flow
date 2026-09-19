@@ -1,0 +1,8 @@
+{
+  "type": "SpeakStartResult",
+  "examples": [
+    {
+      "playbackId": "play-0003"
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "type": "SettingsSection",
+  "examples": [
+    {
+      "id": "speech",
+      "fields": [
+        {
+          "field": "voice",
+          "value": {
+            "kind": "text",
+            "text": "alloy"
+          }
+        },
+        {
+          "field": "speed",
+          "value": {
+            "kind": "number",
+            "number": 1.1
+          }
+        },
+        {
+          "field": "cleanupEnabled",
+          "value": {
+            "kind": "boolean",
+            "boolean": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "thread_defaults",
+      "fields": [
+        {
+          "field": "runtime",
+          "value": {
+            "kind": "text",
+            "text": "claude"
+          }
+        },
+        {
+          "field": "model",
+          "value": {
+            "kind": "text",
+            "text": "claude-sonnet-4-5"
+          }
+        },
+        {
+          "field": "effort",
+          "value": {
+            "kind": "text",
+            "text": "medium"
+          }
+        },
+        {
+          "field": "persona",
+          "value": {
+            "kind": "text",
+            "text": "flora"
+          }
+        },
+        {
+          "field": "trustProfile",
+          "value": {
+            "kind": "text",
+            "text": "workspace"
+          }
+        }
+      ]
+    },
+    {
+      "id": "keyboard_map",
+      "fields": [
+        {
+          "field": "bindings",
+          "value": {
+            "kind": "json",
+            "json": "{\"new-thread\":\"mod+n\",\"toggle-dock\":\"mod+j\"}"
+          }
+        }
+      ]
+    },
+    {
+      "id": "granted_folders",
+      "fields": [
+        {
+          "field": "folders",
+          "value": {
+            "kind": "text_list",
+            "textList": [
+              "/Users/safet/repos",
+              "/Users/safet/Documents"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

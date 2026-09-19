@@ -1,0 +1,32 @@
+{
+  "type": "BridgeResponse",
+  "examples": [
+    {
+      "v": 1,
+      "id": "r2",
+      "kind": "response",
+      "ok": true,
+      "result": {
+        "captureId": "dict-0007"
+      }
+    },
+    {
+      "v": 1,
+      "id": "r3",
+      "kind": "response",
+      "ok": true,
+      "result": {}
+    },
+    {
+      "v": 1,
+      "id": "r4",
+      "kind": "response",
+      "ok": false,
+      "error": {
+        "code": "permission_denied",
+        "message": "Screen recording is not allowed.",
+        "permissionId": "screen-recording"
+      }
+    }
+  ]
+}

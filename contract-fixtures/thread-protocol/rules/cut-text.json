@@ -1,0 +1,30 @@
+{
+  "rule": "cutText",
+  "description": [
+    "cutText(text, maxUnits) returns at most maxUnits UTF-16 code units of text and never splits a surrogate pair: when the unit that would end the cut is a high surrogate (D800-DBFF), the cut takes one unit less. It cuts and does nothing else - no cleaning, no trimming, no ellipsis. A text that already fits comes back unchanged, and a maxUnits of zero or less gives the empty text.",
+    "Why: this contract cuts long text (a message at 200 KiB, a tool call's output at 32 KiB, a persona's core memory at 12,000 characters, a mark's note at 2,000), and a cut counted in UTF-16 code units can fall between the two halves of a character outside the basic plane. The half left behind is a lone surrogate, which a JSON writer turns into an escape that Postgres jsonb refuses and Swift's JSONDecoder refuses, and one of them blocks a thread's mirror.",
+    "Order: an executor cuts first and cleans what it kept (cleanText, fixtures/rules/clean-text.json). Cleaning text that is about to be thrown away costs for nothing, and a cut never leaves half a pair for the cleaning to turn into a replacement character. Both homes follow that order, so both write the same bytes.",
+    "The Swift copy cuts UTF-16 code units (String.UTF16View), not Characters and not Unicode scalars: one Character can be many units (a family emoji, a letter with combining marks), so a copy that counted Characters would cut somewhere else than this one. Kotlin's String.substring counts the same units. Cutting the units and then making a Swift String is not enough either: Swift replaces the dangling half with U+FFFD, so it would return maxUnits units where this rule returns maxUnits minus one.",
+    "Every text and every expected value here is well formed, so they are ordinary JSON strings; the inputs no JSON string can carry belong to the cleaning rule and live in fixtures/rules/clean-text.json."
+  ],
+  "cases": [
+    { "name": "the empty text", "text": "", "maxUnits": 5, "expected": "" },
+    { "name": "text shorter than the cut is unchanged", "text": "abc", "maxUnits": 10, "expected": "abc" },
+    { "name": "text exactly as long as the cut is unchanged", "text": "abcde", "maxUnits": 5, "expected": "abcde" },
+    { "name": "plain text longer than the cut", "text": "abcdef", "maxUnits": 3, "expected": "abc" },
+    { "name": "a cut of zero gives the empty text", "text": "abcdef", "maxUnits": 0, "expected": "" },
+    { "name": "a cut below zero gives the empty text", "text": "abcdef", "maxUnits": -1, "expected": "" },
+    { "name": "outside the basic plane: the cut falls between two pairs", "text": "\ud83d\uded2\ud83e\uddfa", "maxUnits": 2, "expected": "\ud83d\uded2" },
+    { "name": "outside the basic plane: the cut would split the second pair, so it takes one unit less", "text": "\ud83d\uded2\ud83e\uddfa", "maxUnits": 3, "expected": "\ud83d\uded2" },
+    { "name": "outside the basic plane: the cut would split the only pair", "text": "\ud83d\uded2", "maxUnits": 1, "expected": "" },
+    { "name": "outside the basic plane: the cut takes the whole pair", "text": "\ud83d\uded2", "maxUnits": 2, "expected": "\ud83d\uded2" },
+    { "name": "a pair after a letter, cut between the halves", "text": "a\ud83d\uded2b", "maxUnits": 2, "expected": "a" },
+    { "name": "a pair after a letter, cut after the pair", "text": "a\ud83d\uded2b", "maxUnits": 3, "expected": "a\ud83d\uded2" },
+    { "name": "a pair after a letter, cut past the end", "text": "a\ud83d\uded2b", "maxUnits": 99, "expected": "a\ud83d\uded2b" },
+    { "name": "inside the basic plane, one unit per character, whatever the script", "text": "\u041a\u0438\u0440\u0438\u043b\u0438\u0446\u0430", "maxUnits": 4, "expected": "\u041a\u0438\u0440\u0438" },
+    { "name": "a combining mark is its own unit and may be cut from its letter", "text": "e\u0301clair", "maxUnits": 1, "expected": "e" },
+    { "name": "cutText does not clean: U+0000 is cut like any other unit", "text": "a\u0000b", "maxUnits": 2, "expected": "a\u0000" },
+    { "name": "cutText does not clean: U+FFFD is an ordinary unit too", "text": "a\ufffdb", "maxUnits": 2, "expected": "a\ufffd" },
+    { "name": "a line feed is one unit", "text": "one\ntwo", "maxUnits": 4, "expected": "one\n" }
+  ]
+}

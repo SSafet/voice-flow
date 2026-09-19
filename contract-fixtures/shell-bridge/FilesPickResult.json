@@ -1,0 +1,31 @@
+{
+  "type": "FilesPickResult",
+  "examples": [
+    {
+      "attachments": [
+        {
+          "id": "att-0001",
+          "kind": "file",
+          "mime": "application/pdf",
+          "bytes": 48213,
+          "name": "invoice.pdf",
+          "url": "https://appassets.androidplatform.net/shell-files/att-0001"
+        },
+        {
+          "id": "att-0002",
+          "kind": "image",
+          "mime": "image/jpeg",
+          "bytes": 912344,
+          "name": "IMG_2041.jpg",
+          "url": "http://localhost:8792/shell-files/att-0002",
+          "localPath": "/Users/safet/Pictures/IMG_2041.jpg",
+          "width": 4032,
+          "height": 3024
+        }
+      ]
+    },
+    {
+      "attachments": []
+    }
+  ]
+}

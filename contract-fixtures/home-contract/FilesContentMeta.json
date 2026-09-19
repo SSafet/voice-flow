@@ -1,0 +1,14 @@
+{
+  "type": "FilesContentMeta",
+  "examples": [
+    {
+      "etag": "\"9f31c0a4\"",
+      "contentType": "text/markdown; charset=utf-8"
+    },
+    {
+      "etag": "\"77aa01bc\"",
+      "contentType": "application/javascript",
+      "contentRange": "bytes 0-1023/48211"
+    }
+  ]
+}

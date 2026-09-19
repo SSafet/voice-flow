@@ -1,0 +1,14 @@
+{
+  "type": "ComposerRefuseParams",
+  "examples": [
+    {
+      "topic": "composer.insert",
+      "threadId": "6B1F0E0C-52C1-4C55-9B5B-0D4A1B3F9A2C",
+      "reason": "thread_unknown"
+    },
+    {
+      "topic": "composer.attach",
+      "reason": "no_draft_composer"
+    }
+  ]
+}

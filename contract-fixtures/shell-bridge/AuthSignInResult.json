@@ -1,0 +1,8 @@
+{
+  "type": "AuthSignInResult",
+  "examples": [
+    {
+      "started": true
+    }
+  ]
+}

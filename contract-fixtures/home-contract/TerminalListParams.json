@@ -1,0 +1,8 @@
+{
+  "type": "TerminalListParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01"
+    }
+  ]
+}

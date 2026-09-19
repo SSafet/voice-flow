@@ -1,0 +1,11 @@
+{
+  "type": "CapturedRecordingsRetryParams",
+  "examples": [
+    {},
+    {
+      "ids": [
+        "recording:0b6d1f6e-7a55-4c0e-8d53-0c1f4b9f2e11"
+      ]
+    }
+  ]
+}

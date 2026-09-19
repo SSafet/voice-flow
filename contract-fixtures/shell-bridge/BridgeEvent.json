@@ -1,0 +1,22 @@
+{
+  "type": "BridgeEvent",
+  "examples": [
+    {
+      "v": 1,
+      "kind": "event",
+      "topic": "connectivity",
+      "data": {
+        "online": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event",
+      "topic": "composer.insert",
+      "data": {
+        "text": "fix the cart button",
+        "source": "dictation"
+      }
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "type": "PreviewRouteParams",
+  "examples": [
+    {
+      "port": 3000
+    }
+  ]
+}

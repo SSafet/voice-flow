@@ -1,0 +1,11 @@
+{
+  "type": "ShellEscapeResult",
+  "examples": [
+    {
+      "handled": true
+    },
+    {
+      "handled": false
+    }
+  ]
+}

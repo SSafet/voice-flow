@@ -1,0 +1,8 @@
+{
+  "type": "FilesPickFolderParams",
+  "examples": [
+    {
+      "purpose": "project"
+    }
+  ]
+}

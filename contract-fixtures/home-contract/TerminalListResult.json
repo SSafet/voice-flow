@@ -1,0 +1,17 @@
+{
+  "type": "TerminalListResult",
+  "examples": [
+    {
+      "terminals": [
+        {
+          "termId": "term_01",
+          "rootId": "prj_pantria_01",
+          "cwd": "/home/atika/projects/pantria",
+          "title": "zsh",
+          "createdAt": "2026-09-18T10:00:00.000Z",
+          "attached": true
+        }
+      ]
+    }
+  ]
+}

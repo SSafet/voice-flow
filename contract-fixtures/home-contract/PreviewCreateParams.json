@@ -1,0 +1,8 @@
+{
+  "type": "PreviewCreateParams",
+  "examples": [
+    {
+      "port": 3000
+    }
+  ]
+}

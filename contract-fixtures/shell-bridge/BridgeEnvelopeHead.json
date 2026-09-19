@@ -1,0 +1,17 @@
+{
+  "type": "BridgeEnvelopeHead",
+  "examples": [
+    {
+      "v": 1,
+      "kind": "request"
+    },
+    {
+      "v": 1,
+      "kind": "response"
+    },
+    {
+      "v": 1,
+      "kind": "event"
+    }
+  ]
+}

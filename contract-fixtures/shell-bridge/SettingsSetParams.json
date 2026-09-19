@@ -1,0 +1,13 @@
+{
+  "type": "SettingsSetParams",
+  "examples": [
+    {
+      "section": "thread_defaults",
+      "field": "persona",
+      "value": {
+        "kind": "text",
+        "text": "flora"
+      }
+    }
+  ]
+}

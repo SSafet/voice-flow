@@ -1,0 +1,55 @@
+{
+  "type": "ScreenPanelInput",
+  "examples": [
+    {
+      "id": "deploy-guide",
+      "kind": "guide",
+      "title": "Deploy Pantrella",
+      "note": "staging first",
+      "steps": [
+        {
+          "text": "Open the terminal"
+        },
+        {
+          "text": "Run the deploy",
+          "detail": "fly deploy --app pantrella-stg"
+        }
+      ],
+      "activeStep": 2,
+      "position": "center-right"
+    },
+    {
+      "id": "env-values",
+      "kind": "panel",
+      "title": "Values to paste",
+      "blocks": [
+        {
+          "kind": "heading",
+          "text": "Staging"
+        },
+        {
+          "kind": "code",
+          "text": "FLY_APP=pantrella-stg"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "one",
+            "two"
+          ]
+        },
+        {
+          "kind": "text",
+          "text": "Paste them in order."
+        }
+      ],
+      "position": "top-left",
+      "display": "37D8832A-2D66-02CA-B9F7-8F30A301B230"
+    },
+    {
+      "id": "deploy-guide",
+      "kind": "guide",
+      "activeStep": 3
+    }
+  ]
+}

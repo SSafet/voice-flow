@@ -1,0 +1,14 @@
+{
+  "type": "FilesReadParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "path": "README.md"
+    },
+    {
+      "rootId": "prj_pantria_01",
+      "path": "dist/app.js",
+      "range": "bytes=0-1023"
+    }
+  ]
+}

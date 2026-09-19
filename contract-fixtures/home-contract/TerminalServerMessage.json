@@ -1,0 +1,67 @@
+{
+  "type": "TerminalServerMessage",
+  "examples": [
+    {
+      "type": "term.opened",
+      "termId": "term_01",
+      "opened": {
+        "cwd": "/home/atika/projects/pantria",
+        "cols": 120,
+        "rows": 32,
+        "replay": "JCA=",
+        "resumed": "live"
+      }
+    },
+    {
+      "type": "term.opened",
+      "termId": "term_01",
+      "opened": {
+        "cwd": "/home/atika/projects/pantria",
+        "cols": 120,
+        "rows": 32,
+        "replay": "JCA=",
+        "resumed": "screen_only"
+      }
+    },
+    {
+      "type": "term.opened",
+      "termId": "term_01",
+      "opened": {
+        "cwd": "/home/atika/projects/pantria",
+        "cols": 120,
+        "rows": 32,
+        "replay": "JCA=",
+        "resumed": "new"
+      }
+    },
+    {
+      "type": "term.output",
+      "termId": "term_01",
+      "output": {
+        "seq": 41,
+        "data": "dG90YWwgMTIK"
+      }
+    },
+    {
+      "type": "term.exit",
+      "termId": "term_01",
+      "exit": {
+        "exitCode": 0
+      }
+    },
+    {
+      "type": "term.exit",
+      "termId": "term_01",
+      "exit": {
+        "signal": "SIGHUP"
+      }
+    },
+    {
+      "type": "term.error",
+      "error": {
+        "code": "terminal.limit",
+        "message": "This home already has 8 terminals."
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "type": "FilesUploadCreateParams",
+  "examples": [
+    {
+      "rootId": "prj_pantria_01",
+      "path": "data/import.csv",
+      "length": 314572800,
+      "overwrite": false
+    }
+  ]
+}
