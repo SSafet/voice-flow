@@ -64,4 +64,15 @@ LEFTOVER="$(grep -rn 'swiftc .*swift/\*\.swift' install.sh CLAUDE.md AGENTS.md s
 [ -z "$LEFTOVER" ] || die "a one-command swiftc build of swift/*.swift is left: $LEFTOVER"
 ok "no one-command swiftc build of swift/*.swift is left in install.sh, the scripts or the instruction files"
 
+PLIST="Voice Flow.app/Contents/Info.plist"
+[ "$(/usr/bin/plutil -extract LSMinimumSystemVersion raw -o - "$PLIST")" = "14.0" ] ||
+    die "LSMinimumSystemVersion is 14.0, the floor hummingbird-websocket declares"
+[ "$(/usr/bin/plutil -extract NSAppTransportSecurity.NSExceptionDomains.localhost.NSExceptionAllowsInsecureHTTPLoads raw -o - "$PLIST")" = "true" ] ||
+    die "plain HTTP is allowed for the host localhost"
+/usr/bin/plutil -extract NSAppTransportSecurity.NSAllowsLocalNetworking raw -o - "$PLIST" >/dev/null 2>&1 &&
+    die "NSAllowsLocalNetworking must not be set"
+[ "$(/usr/bin/plutil -extract NSAppTransportSecurity.NSExceptionDomains raw -o - "$PLIST" | grep -c .)" -ge 1 ] ||
+    die "the exception domains dictionary is readable"
+ok "the bundle admits macOS 14 and allows plain HTTP for localhost and nothing else"
+
 echo "all $PASS checks passed"
