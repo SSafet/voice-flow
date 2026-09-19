@@ -187,7 +187,7 @@ guard let workingDiff = diffText(from: nil, to: nil, path: nil) else { exit(1) }
 expect(workingDiff.contains("never-added.txt"),
        "a diff against the working copy shows a file that was never added, which plain git diff would miss")
 expect(workingDiff.contains("changed again"), "and the edits to a tracked file")
-let refsBeforeDiff = shell("git for-each-ref --format=%(refname) refs/", in: repo)
+let refsBeforeDiff = shell("git for-each-ref --format='%(refname)' refs/", in: repo)
 
 guard let pathDiff = diffText(from: nil, to: nil, path: "edited.txt") else { exit(1) }
 expect(pathDiff.contains("edited.txt"), "a diff limited to one path shows that path")
@@ -198,7 +198,7 @@ guard let checkpointDiff = diffText(from: "refs/atika/checkpoints/th_1/tu_1-befo
 else { exit(1) }
 expect(checkpointDiff.contains("later.txt"),
        "a checkpoint reference may be the left-hand side of a diff")
-expectEqual(shell("git for-each-ref --format=%(refname) refs/", in: repo), refsBeforeDiff,
+expectEqual(shell("git for-each-ref --format='%(refname)' refs/", in: repo), refsBeforeDiff,
             "and asking for diffs wrote no reference of its own")
 
 for refused in ["main", "HEAD~1", "refs/heads/main", "--upload-pack=/bin/sh", "@{upstream}"] {

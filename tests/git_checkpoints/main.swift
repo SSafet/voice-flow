@@ -102,7 +102,7 @@ shell("git add hand.txt", in: staged)
 write("free\n", to: staged.appendingPathComponent("free.txt"))
 let statusBefore = shell("git status --porcelain", in: staged)
 let headBefore = shell("git rev-parse HEAD", in: staged)
-let branchesBefore = shell("git branch --format=%(refname)", in: staged)
+let branchesBefore = shell("git branch --format='%(refname)'", in: staged)
 let indexModifiedBefore = (try? fileManager.attributesOfItem(
     atPath: staged.appendingPathComponent(".git/index").path)[.modificationDate]) as? Date
 
@@ -118,7 +118,7 @@ expectEqual(indexModifiedAfter, indexModifiedBefore,
             "the repository's own index file was never written")
 
 expectEqual(shell("git rev-parse HEAD", in: staged), headBefore, "HEAD did not move")
-expectEqual(shell("git branch --format=%(refname)", in: staged), branchesBefore,
+expectEqual(shell("git branch --format='%(refname)'", in: staged), branchesBefore,
             "no branch was created")
 expectEqual(shell("git diff --cached --name-only", in: staged)
                 .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -129,7 +129,7 @@ expect(statusAfterChange != statusBefore,
 expect(statusAfterChange.contains("A  hand.txt"),
        "the staged file is still staged: \(statusAfterChange)")
 
-let listed = shell("git for-each-ref --format=%(refname) refs/atika/checkpoints/", in: staged)
+let listed = shell("git for-each-ref --format='%(refname)' refs/atika/checkpoints/", in: staged)
     .split(separator: "\n").map(String.init)
 expectEqual(listed.sorted(), [stagedAfter.ref, stagedBefore.ref].sorted(),
             "for-each-ref lists the before and the after reference and nothing else")
@@ -162,7 +162,7 @@ expectEqual(shell("git rev-parse --verify --quiet HEAD", in: unborn)
 
 guard let repeatedFirst = record(repo, "th_1", "tu_1", .before) else { exit(1) }
 expectEqual(repeatedFirst.ref, before.ref, "the second recording answers with the same name")
-let afterRepeat = shell("git for-each-ref --format=%(refname) \(CheckpointRefs.threadPrefix("th_1"))",
+let afterRepeat = shell("git for-each-ref --format='%(refname)' \(CheckpointRefs.threadPrefix("th_1"))",
                         in: repo).split(separator: "\n")
 expectEqual(afterRepeat.count, 1, "recording twice leaves one reference, not two")
 
@@ -293,13 +293,13 @@ expectEqual(GitCheckpoints.changedFilesMax, 300, "which is the contract's TURN_C
 
 // ─────────── a tree of the working copy that leaves no reference ───────────
 
-let refsBeforeTree = shell("git for-each-ref --format=%(refname) refs/", in: work)
+let refsBeforeTree = shell("git for-each-ref --format='%(refname)' refs/", in: work)
 guard case .success(let throwaway) = checkpoints.workingCopyTree(
     folder: work, threadId: "th_6", turnId: "tu_6") else {
     FileHandle.standardError.write(Data("FAIL: the working-copy tree could not be built\n".utf8))
     exit(1)
 }
-expectEqual(shell("git for-each-ref --format=%(refname) refs/", in: work), refsBeforeTree,
+expectEqual(shell("git for-each-ref --format='%(refname)' refs/", in: work), refsBeforeTree,
             "building a throw-away tree writes no reference")
 expect(shell("git ls-tree -r --name-only \(throwaway)", in: work).contains("created.txt"),
        "a file that was never added is in the throw-away tree, which is why it exists")
@@ -366,7 +366,7 @@ case .success(let removed):
 case .failure(let warning):
     expect(false, "deleting the thread's checkpoints failed: \(warning.message)")
 }
-expectEqual(shell("git for-each-ref --format=%(refname) refs/atika/checkpoints/", in: staged)
+expectEqual(shell("git for-each-ref --format='%(refname)' refs/atika/checkpoints/", in: staged)
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             "", "nothing is left under the checkpoint prefix")
 switch checkpoints.deleteThreadCheckpoints(folder: staged, threadId: "th_2") {
