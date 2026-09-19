@@ -46,8 +46,12 @@ guard let pool = try? ThreadDatabase.open(at: ThreadDatabase.url(configRoot: con
     fputs("FAIL: threads.sqlite could not be opened\n", stderr)
     exit(1)
 }
-expect(try? pool.read { db in try StoreMigrations.migrator().appliedIdentifiers(db) } != nil,
-       "the shared migrator runs against threads.sqlite")
+let applied = (try? pool.read { db in try StoreMigrations.migrator().appliedIdentifiers(db) }) ?? []
+expect(applied.contains { $0.hasSuffix("persona records") },
+       "the shared migrator registers the persona records step, applied: \(applied.sorted())")
+expect(applied.count >= 2,
+       "the persona records step is added beside the steps already there, not in place of them")
+expect(PersonaRecordsMigration.tableName == "persona_records", "the table is persona_records")
 
 let columns = (try? pool.read { db in
     try Row.fetchAll(db, sql: "PRAGMA table_info(persona_records)")
@@ -116,12 +120,32 @@ expect(bumped.deletedAt == nil, "the factory carries no deletedAt by default")
 // ── reading back ─────────────────────────────────────────
 
 let all = (try? recordStore.all()) ?? []
-expect(Set(all.map(\.id)) == ["flora", "scout"], "all() reads every stored row")
+expect(all.map(\.id) == ["flora", "scout"],
+       "all() reads every stored row in UTF-8 order of the id, got \(all.map(\.id))")
 expect(all.first { $0.id == "scout" }?.deletedAt == "2026-09-19T00:00:00.000Z",
        "all() includes a deleted record")
 expect((try? recordStore.record(id: "scout"))?.instructions == "B changed",
        "record(id:) reads one row")
 expect((try? recordStore.record(id: "missing")) == nil, "an unknown id answers nil")
+
+// The row is the record's JSON, and the key columns are the record's own facts.
+let storedRow = (try? pool.read { db in
+    try Row.fetchOne(db, sql: "SELECT home_id, record, fingerprint, deleted_at FROM persona_records"
+                     + " WHERE home_id = ? AND id = ?", arguments: ["home-test", "scout"])
+}) ?? nil
+if let storedRow,
+   let storedJSON = storedRow["record"] as? String,
+   let decoded = try? JSONDecoder().decode(TPPersona.self, from: Data(storedJSON.utf8)) {
+    expect(storedRow["home_id"] as? String == "home-test", "home_id is the record's homeId")
+    expect(storedRow["deleted_at"] as? String == "2026-09-19T00:00:00.000Z",
+           "deleted_at is the record's deletedAt")
+    expect(storedRow["fingerprint"] as? String == PersonaRecordStore.fingerprint(of: decoded),
+           "the fingerprint column is the fingerprint of the stored record")
+    expect(decoded.instructions == "B changed", "the record column holds the JSON of the record")
+    expect(decoded.version == firstVersion + 2, "the stored JSON carries the stored version")
+} else {
+    expect(false, "persona_records holds one row per record with its JSON")
+}
 
 if failures == 0 {
     print("persona records tests passed")

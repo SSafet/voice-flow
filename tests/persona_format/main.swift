@@ -33,27 +33,35 @@ private func write(_ text: String, to url: URL) {
     try? Data(text.utf8).write(to: url)
 }
 
-// ── the slug rule (11, "Slug"; K5 decision 16) ───────────
+// ── the slug rule (11 §3.5; K5 decision 16) ──────────────
+// K5's fixtures/rules/slugs.json is the contract: both homes give the same name
+// the same slug, so the cases are read from the copied file, never re-typed here.
 
-let slugCases: [(String, [String], String)] = [
-    ("FLORA", [], "flora"),
-    ("Go Code Reviewer", [], "go-code-reviewer"),
-    ("  Plan & organize!  ", [], "plan-organize"),
-    ("QA", ["qa"], "qa-2"),
-    ("QA", ["qa", "qa-2", "qa-3"], "qa-4"),
-    ("Émile Übung", [], "mile-bung"),
-    ("日本語", [], "persona"),
-    ("---", ["persona"], "persona-2"),
-    ("_hidden", [], "hidden"),
-    (String(repeating: "a", count: 63) + " b", [], String(repeating: "a", count: 63)),
-    (String(repeating: "a", count: 64), [String(repeating: "a", count: 64)],
-     String(repeating: "a", count: 62) + "-2"),
-]
-for (name, taken, expected) in slugCases {
-    let slug = PersonaFormat.slug(fromName: name, taken: Set(taken))
-    expect(slug == expected, "slug(\(name.debugDescription)) == \(expected), got \(slug)")
-    expect(PersonaFormat.isSlug(slug), "slug(\(name.debugDescription)) is a valid slug")
-    expect(!taken.contains(slug), "slug(\(name.debugDescription)) is not already taken")
+private struct SlugCase: Decodable { let name: String; let taken: [String]; let slug: String }
+private struct SlugFixture: Decodable { let rule: String; let cases: [SlugCase] }
+
+let repositoryRoot = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()   // tests/persona_format
+    .deletingLastPathComponent()   // tests
+    .deletingLastPathComponent()   // repository root
+let personaFixturesRoot = repositoryRoot
+    .appendingPathComponent("contract-fixtures/personas", isDirectory: true)
+
+let slugFixtureURL = personaFixturesRoot.appendingPathComponent("rules/slugs.json")
+guard let slugData = try? Data(contentsOf: slugFixtureURL),
+      let slugFixture = try? JSONDecoder().decode(SlugFixture.self, from: slugData) else {
+    fputs("FAIL: \(slugFixtureURL.path) is missing or does not decode as {rule, cases}; "
+          + "the copy script must carry K5's rule fixtures\n", stderr)
+    exit(1)
+}
+expect(slugFixture.cases.count >= 11,
+       "the slug fixture carries K5's cases, found \(slugFixture.cases.count)")
+expect(slugFixture.rule.contains("persona"), "the fixture names the slug rule")
+for item in slugFixture.cases {
+    let slug = PersonaFormat.slug(fromName: item.name, taken: Set(item.taken))
+    expect(slug == item.slug, "slug(\(item.name.debugDescription)) == \(item.slug), got \(slug)")
+    expect(PersonaFormat.isSlug(slug), "slug(\(item.name.debugDescription)) is a valid slug")
+    expect(!item.taken.contains(slug), "slug(\(item.name.debugDescription)) is not already taken")
 }
 expect(PersonaFormat.isSlug("flora"), "plain slug accepted")
 expect(!PersonaFormat.isSlug("Flora"), "uppercase refused")
@@ -67,12 +75,14 @@ expect(PersonaFormat.isReservedFolderName("_drafts"), "_drafts is reserved")
 expect(!PersonaFormat.isReservedFolderName("flora"), "flora is not reserved")
 
 // ── lengths count UTF-16 code units and never split a pair ─
+// The cut is the contract package's own rule, already in Swift as
+// ContractText.cutText (K8); this package declares no second cut.
 
-expect(PersonaFormat.cutToUTF16Units("abcdef", maxUnits: 4) == "abcd", "cuts at the unit count")
-expect(PersonaFormat.cutToUTF16Units("abc", maxUnits: 4) == "abc", "short text is unchanged")
-expect(PersonaFormat.cutToUTF16Units("abc\u{1F600}", maxUnits: 4) == "abc",
+expect(ContractText.cutText("abcdef", maxUnits: 4) == "abcd", "cuts at the unit count")
+expect(ContractText.cutText("abc", maxUnits: 4) == "abc", "short text is unchanged")
+expect(ContractText.cutText("abc\u{1F600}", maxUnits: 4) == "abc",
        "a cut never leaves half a surrogate pair")
-expect(PersonaFormat.cutToUTF16Units("ab\u{1F600}", maxUnits: 4) == "ab\u{1F600}",
+expect(ContractText.cutText("ab\u{1F600}", maxUnits: 4) == "ab\u{1F600}",
        "a whole pair inside the limit is kept")
 expect(PersonaFormat.sha256Hex(Data()) ==
        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -187,6 +197,19 @@ if case .success(let read) = header("---\nname: FLORA\nskills: a, b\ndelegates: 
 } else {
     expect(false, "a complete header reads")
 }
+// The seven keys of 06 §3.4: the effort key is spelled `effort` in the file and
+// is the record's reasoningEffort.
+if case .success(let read) = header(
+    "---\nname: FLORA\ndescription: d\nvoice: nova\nmodel: openrouter/x\neffort: high\n---\nB") {
+    expect(read.description == "d", "the description is read")
+    expect(read.voice == "nova", "the voice is read")
+    expect(read.model == "openrouter/x", "the model is read")
+    expect(read.effort == "high", "the header key is `effort`")
+    expect(read.skills == nil, "an absent skills key is absent, not an empty list")
+    expect(read.delegates == nil, "an absent delegates key is absent, not an empty list")
+} else {
+    expect(false, "a header with description, voice, model and effort reads")
+}
 if case .failure(let problem) = header("---\ndescription: no name\n---\nBody") {
     expect(problem == .nameMissing, "a header without a name is name_missing")
 } else {
@@ -214,18 +237,21 @@ if case .failure(let problem) = header("---\nname: \(String(repeating: "a", coun
 // ── the folder reader and the checker (11 §3.3 item 1) ───
 
 let readerRoot = makeRoot()
-write("---\nname: FLORA\nmodel: openrouter/x\n---\nYou are FLORA.\n",
-      to: readerRoot.appendingPathComponent("flora/persona.md"))
+let floraFile = "---\nname: FLORA\nmodel: openrouter/x\neffort: high\n---\nYou are FLORA.\n"
+write(floraFile, to: readerRoot.appendingPathComponent("flora/persona.md"))
 write("core facts\n", to: readerRoot.appendingPathComponent("flora/memory/core.md"))
-write("notes\n", to: readerRoot.appendingPathComponent("flora/memory/ledger.md"))
 write("---\nname: tickets\ndescription: file tickets\n---\nBody\n",
       to: readerRoot.appendingPathComponent("flora/skills/tickets/SKILL.md"))
 write("not a persona\n", to: readerRoot.appendingPathComponent("My Persona/persona.md"))
 write("ignored\n", to: readerRoot.appendingPathComponent(".trash/old/persona.md"))
 try? Data("outside\n".utf8).write(to: readerRoot.appendingPathComponent("outside.txt"))
+// memory/ledger.md is a link out of the persona folder, and nothing else wrote
+// that path first, so the link is really there.
+let ledgerLink = readerRoot.appendingPathComponent("flora/memory/ledger.md")
 try? FileManager.default.createSymbolicLink(
-    at: readerRoot.appendingPathComponent("flora/memory/ledger.md"),
-    withDestinationURL: readerRoot.appendingPathComponent("outside.txt"))
+    at: ledgerLink, withDestinationURL: readerRoot.appendingPathComponent("outside.txt"))
+expect((try? FileManager.default.destinationOfSymbolicLink(atPath: ledgerLink.path)) != nil,
+       "the escaping link of this test was created")
 
 let readerSnapshot = PersonaRootReader.read(root: readerRoot)
 expect(readerSnapshot.personas.map(\.slug) == ["flora"],
@@ -245,12 +271,20 @@ guard let flora = readerCheck.records.first(where: { $0.id == "flora" }) else {
 expect(!flora.usable, "a link that leaves the folder makes the persona unusable")
 expect(flora.issues.contains { $0.code == PersonaIssueCode.symlinkEscape },
        "the symlink_escape issue is reported")
-expect(flora.revision == PersonaFormat.sha256Hex(
-    Data("---\nname: FLORA\nmodel: openrouter/x\n---\nYou are FLORA.\n".utf8)),
+expect(flora.revision == PersonaFormat.sha256Hex(Data(floraFile.utf8)),
        "the revision is the hash of persona.md's bytes")
 expect(flora.isDefault, "the home's default persona is marked isDefault")
 expect(flora.homeID == "home-test", "the record carries the home id")
 expect(flora.version == 1, "the checker produces the first version")
+expect(flora.deletedAt == nil, "the checker produces no deletedAt")
+expect(flora.model == "openrouter/x", "the record carries the header's model")
+expect(flora.reasoningEffort == "high", "the header's effort is the record's reasoningEffort")
+expect(flora.coreMemory == "core facts\n", "the record carries memory/core.md")
+// No skills key: every valid skill folder is active (06 §3.4).
+expect(flora.skills.map(\.name) == ["tickets"],
+       "a persona with no skills key gets every valid skill folder, got \(flora.skills.map(\.name))")
+expect(flora.skills.first?.description == "file tickets",
+       "the active skill carries the description of its SKILL.md")
 
 // A persona folder with no persona.md is frontmatter_invalid, not a silent skip.
 let missingRoot = makeRoot()
@@ -261,15 +295,21 @@ expect(missingCheck.records.count == 1, "a folder without persona.md is still a 
 expect(missingCheck.records.first?.issues.contains { $0.code == PersonaIssueCode.frontmatterInvalid } == true,
        "a folder without persona.md is frontmatter_invalid")
 
-// Duplicate names are reported on every persona that shares the name.
+// Duplicate names are reported on every persona that shares the name, and the
+// name is unique without regard to letter case (06 §3.4).
 let duplicateRoot = makeRoot()
 write("---\nname: FLORA\n---\nA\n", to: duplicateRoot.appendingPathComponent("flora/persona.md"))
-write("---\nname: FLORA\n---\nB\n", to: duplicateRoot.appendingPathComponent("flora-2/persona.md"))
+write("---\nname: flora\n---\nB\n", to: duplicateRoot.appendingPathComponent("flora-2/persona.md"))
 let duplicateCheck = PersonaChecker.check(PersonaRootReader.read(root: duplicateRoot),
     input: PersonaChecker.Input(homeId: "home-test", defaultPersonaId: nil))
+expect(duplicateCheck.records.count == 2, "both folders are personas")
 expect(duplicateCheck.records.allSatisfy { record in
     record.issues.contains { $0.code == PersonaIssueCode.nameDuplicate }
-}, "every persona sharing a name is name_duplicate")
+}, "every persona sharing a name, whatever its letter case, is name_duplicate")
+expect(duplicateCheck.records.allSatisfy { !$0.usable },
+       "name_duplicate makes both personas unusable")
+expect(duplicateCheck.records.map(\.id) == ["flora", "flora-2"],
+       "records come in UTF-8 order of the slug, got \(duplicateCheck.records.map(\.id))")
 
 // ── the build check: every K5 fixture folder ─────────────
 
@@ -280,11 +320,7 @@ struct FixtureExpectation: Decodable {
     let invalidFolderNames: [String]
 }
 
-let fixturesRoot = URL(fileURLWithPath: #filePath)
-    .deletingLastPathComponent()   // tests/persona_format
-    .deletingLastPathComponent()   // tests
-    .deletingLastPathComponent()   // repository root
-    .appendingPathComponent("contract-fixtures/personas/folders", isDirectory: true)
+let fixturesRoot = personaFixturesRoot.appendingPathComponent("folders", isDirectory: true)
 
 let cases = [
     "core-memory", "delegates", "empty-root", "folder-names", "frontmatter-invalid",

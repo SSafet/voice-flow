@@ -8,6 +8,7 @@ BIN="$(swift build -c debug --show-bin-path)"
 swiftc -o /tmp/vf-persona-format -I "$BIN/Modules" -L "$BIN" \
     swift/VoiceFlowPaths.swift \
     swift/Generated/PlatformContracts.swift \
+    swift/Contract/CleanText.swift \
     swift/Personas/PersonaPaths.swift swift/Personas/PersonaFormat.swift \
     swift/Personas/PersonaIssue.swift swift/Personas/PersonaFrontMatter.swift \
     swift/Personas/PersonaHeader.swift swift/Personas/PersonaSnapshot.swift \
