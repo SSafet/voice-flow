@@ -472,7 +472,9 @@ final class WorkflowWatcher {
     private let scheduler = SourceScheduler()
     private var statusTimer: Timer?
     var onEvent: ((String, [String: Any], Date) -> Void)? {
-        didSet { scheduler.bus.onAppend = onEvent }
+        didSet {
+            if let onEvent { scheduler.bus.addAppendObserver(onEvent) }
+        }
     }
 
     var isRunning: Bool { scheduler.isRunning }

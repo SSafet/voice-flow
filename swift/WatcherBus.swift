@@ -37,7 +37,15 @@ final class DayBus {
 
     private let writeQueue = DispatchQueue(label: "voiceflow.watcher.bus", qos: .utility)
     private var currentDay = ""
-    var onAppend: ((String, [String: Any], Date) -> Void)?
+
+    /// Called with every appended line. A list, not one slot: the captured
+    /// index and the job triggers both hear every line, and registering a
+    /// second observer must not silently unsubscribe the first.
+    private var appendObservers: [(String, [String: Any], Date) -> Void] = []
+
+    func addAppendObserver(_ observer: @escaping (String, [String: Any], Date) -> Void) {
+        appendObservers.append(observer)
+    }
 
     private static let dayFormatter: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
@@ -86,7 +94,7 @@ final class DayBus {
                 try? entry.write(to: url)
             }
         }
-        onAppend?(stream, line, date)
+        for observer in appendObservers { observer(stream, line, date) }
     }
 
     /// Write a timestamped artifact and return the filename the stream should
