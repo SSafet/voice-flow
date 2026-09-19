@@ -75,4 +75,35 @@ PLIST="Voice Flow.app/Contents/Info.plist"
     die "the exception domains dictionary is readable"
 ok "the bundle admits macOS 14 and allows plain HTTP for localhost and nothing else"
 
+# R12: the single swiftc build and the quick type-check command are gone, and
+# these greps are what keeps them gone. They must be able to find something:
+printf 'swiftc swift/*.swift -framework Cocoa\n' > /tmp/k8-subtraction-probe.sh
+grep -rn 'swiftc .*swift/\*\.swift' /tmp/k8-subtraction-probe.sh >/dev/null ||
+    die "the subtraction grep can find a one-command swiftc build when there is one"
+rm -f /tmp/k8-subtraction-probe.sh
+ok "the subtraction check is able to fail"
+
+grep -rn 'Quick type-check without installing' CLAUDE.md AGENTS.md >/dev/null &&
+    die "the quick type-check command is gone from both instruction files"
+ok "the quick type-check command is gone"
+
+# install.sh and the QA installer build the app and nothing else, so neither may
+# name swiftc at all any more. The test harness is different: compile_only
+# rightly keeps calling swiftc to compile a handful of files with one suite's
+# test, so what is checked there is the two functions that build the app.
+grep -n 'swiftc .*swift/\*\.swift' install.sh scripts/install-agent-harness-qa.sh >/dev/null &&
+    die "install.sh and the QA installer no longer call swiftc"
+ok "install.sh and the QA installer build through Swift Package Manager only"
+
+python3 - <<'PY' || die "compile_app and compile_qa_app build with Swift Package Manager"
+import re, pathlib
+text = pathlib.Path("scripts/test-agent-harness.sh").read_text()
+for name in ("compile_app", "compile_qa_app"):
+    body = re.search(rf"^{name}\(\) \{{(.*?)^\}}", text, re.S | re.M)
+    assert body, name
+    assert "swift build" in body.group(1), name
+    assert not re.search(r'(?<!-X)\bswiftc\b', body.group(1)), name
+PY
+ok "compile_app and compile_qa_app build with Swift Package Manager"
+
 echo "all $PASS checks passed"
