@@ -1,0 +1,31 @@
+Fetching https://github.com/migueldeicaza/SwiftTerm.git from cache
+Fetched https://github.com/migueldeicaza/SwiftTerm.git from cache (0.76s)
+Computing version for https://github.com/migueldeicaza/SwiftTerm.git
+Computed https://github.com/migueldeicaza/SwiftTerm.git at 1.19.0 (1.29s)
+Fetching https://github.com/apple/swift-argument-parser from cache
+Fetched https://github.com/apple/swift-argument-parser from cache (0.57s)
+Computing version for https://github.com/apple/swift-argument-parser
+Computed https://github.com/apple/swift-argument-parser at 1.8.2 (1.02s)
+Creating working copy for https://github.com/migueldeicaza/SwiftTerm.git
+Working copy of https://github.com/migueldeicaza/SwiftTerm.git resolved at 1.19.0
+Creating working copy for https://github.com/apple/swift-argument-parser
+Working copy of https://github.com/apple/swift-argument-parser resolved at 1.8.2
+Building for production...
+[Planning deferred tasks]
+[33 / 58]
+[34 / 59] SwiftTermBuildInfoGenerator-product
+[45 / 94]
+[52 / 94]
+[54 / 94]
+[58 / 94]
+[61 / 94]
+[66 / 94]
+[67 / 94]
+[68 / 94]
+[69 / 94]
+[70 / 94] SwiftTermBuildInfoGenerator-product
+[72 / 94] SwiftTermBuildInfoGenerator-product
+warning: /private/tmp/k8-swiftterm-probe/.build/out/Intermediates.noindex/SwiftTerm.build/Release/SwiftTerm_SwiftTerm-b.build/Metal/Shaders.dia Could not read serialized diagnostics file: Error Domain=NSCocoaErrorDomain Code=260 "The file “Shaders.dia” couldn’t be opened because there is no such file." UserInfo={NSFilePath=/private/tmp/k8-swiftterm-probe/.build/out/Intermediates.noindex/SwiftTerm.build/Release/SwiftTerm_SwiftTerm-b.build/Metal/Shaders.dia, NSURL=file:///private/tmp/k8-swiftterm-probe/.build/out/Intermediates.noindex/SwiftTerm.build/Release/SwiftTerm_SwiftTerm-b.build/Metal/Shaders.dia, NSUnderlyingError=0x79d6a40510 {Error Domain=NSPOSIXErrorDomain Code=2 "No such file or directory"}}
+error: CompileMetalFile /private/tmp/k8-swiftterm-probe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/Metal/Shaders.metal failed with a nonzero exit code. Command line:     cd /private/tmp/k8-swiftterm-probe/.build/checkouts/SwiftTerm
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal -c -target air64-apple-macos12.0 -I/private/tmp/k8-swiftterm-probe/.build/out/Products/Release/include -F/private/tmp/k8-swiftterm-probe/.build/out/Products/Release -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk -fmetal-math-mode\=fast -fmetal-math-fp32-functions\=fast -serialize-diagnostics /private/tmp/k8-swiftterm-probe/.build/out/Intermediates.noindex/SwiftTerm.build/Release/SwiftTerm_SwiftTerm-b.build/Metal/Shaders.dia -o /private/tmp/k8-swiftterm-probe/.build/out/Intermediates.noindex/SwiftTerm.build/Release/SwiftTerm_SwiftTerm-b.build/Metal/Shaders.air -MMD -MT dependencies -MF /private/tmp/k8-swiftterm-probe/.build/out/Intermediates.noindex/SwiftTerm.build/Release/SwiftTerm_SwiftTerm-b.build/Metal/Shaders.dat /private/tmp/k8-swiftterm-probe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/Metal/Shaders.metal
+error: Build failed
