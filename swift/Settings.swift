@@ -545,6 +545,7 @@ private struct AssistantSettingsView: View {
     @State private var claudeStatus = "Checking…"
     @ObservedObject var store: SettingsStore
     @State private var openCodeStatus = "Starts on demand"
+    @State private var sandboxLine = "sandbox: not checked"
     @State private var modelCatalog = OpenRouterModelCatalogResult(
         models: [], source: .fallback, fetchedAt: nil, warning: nil)
     @State private var refreshingModels = false
@@ -656,6 +657,7 @@ private struct AssistantSettingsView: View {
                 Text("Backend")
             } footer: {
                 Text("This is the default for new conversations. Each Assistant conversation can switch between Codex and OpenCode from its own header.")
+                Text(sandboxLine).font(.caption).foregroundStyle(.secondary)
             }
 
             Section {
@@ -830,11 +832,36 @@ private struct AssistantSettingsView: View {
         .task {
             await refreshOpenCodeStatus()
             await refreshClaudeStatus()
+            await refreshRuntimeHealth()
             await loadOpenRouterModels()
         }
         .onChange(of: store.agentBackend) { _ in
             Task { await refreshClaudeStatus() }
         }
+    }
+
+    /// The sandbox health line, probed once per appearance through the one
+    /// rule file every runtime is started under.
+    @MainActor
+    private func refreshRuntimeHealth() async {
+        let line = await Task.detached(priority: .utility) { () -> String in
+            let configRoot = VoiceFlowPaths.shared.configRoot
+            let root = configRoot.appendingPathComponent("runtime-health", isDirectory: true)
+            let rules = RuntimeRuleFile.Inputs(
+                runtime: .codex, trustProfile: .workspace,
+                folders: RuntimeFolders(
+                    workingDirectory: root, personaDirectory: nil, scratchDirectory: root),
+                projectRoots: [], grantedRoots: [],
+                runtimeHome: FileManager.default.homeDirectoryForCurrentUser,
+                dial: AgentCapabilityDial(), configRoot: configRoot)
+            guard let prefix = try? RuntimeRuleFile.launchPrefix(rules, threadID: "settings"),
+                  prefix.count >= 3 else {
+                return SandboxHealth(working: false, detail: "sandbox-exec is missing").line
+            }
+            return RuntimeHealth.probeSandbox(
+                profileURL: URL(fileURLWithPath: prefix[2])).line
+        }.value
+        sandboxLine = line
     }
 
     @MainActor

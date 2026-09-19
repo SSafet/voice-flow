@@ -181,7 +181,7 @@ struct AgentPermissionPolicy: Equatable {
             "edit": "allow",
             "skill": "allow",
             "external_directory": "allow",
-            "task": "allow",
+            "task": "deny",
             "todowrite": "allow",
             "question": "allow",
         ]

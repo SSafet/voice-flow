@@ -17,22 +17,24 @@ enum OpenCodeLaunch {
     @discardableResult
     static func writeToolFiles(endpoint: URL, token: String, configHome: URL) throws -> [String] {
         let manager = FileManager.default
-        let staging = configHome.appendingPathComponent(
-            ".opencode-tools-\(UUID().uuidString)", isDirectory: true)
-        try manager.createDirectory(at: staging, withIntermediateDirectories: true)
-        defer { try? manager.removeItem(at: staging) }
-        try AgentToolProjection(endpoint: endpoint, token: token).project(into: staging)
-        let generated = staging.appendingPathComponent(".opencode/tools", isDirectory: true)
-        let names = try manager.contentsOfDirectory(atPath: generated.path).sorted()
-
         let target = toolsDirectory(configHome: configHome)
         let parent = target.deletingLastPathComponent()
         try manager.createDirectory(at: parent, withIntermediateDirectories: true)
+        let staging = parent.appendingPathComponent(
+            ".tools-\(UUID().uuidString)", isDirectory: true)
+        try manager.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: staging) }
+        for (name, source) in AgentToolProjection(endpoint: endpoint, token: token).sources() {
+            try Data(source.utf8).write(
+                to: staging.appendingPathComponent("\(name).ts"), options: [.atomic])
+        }
+        let names = try manager.contentsOfDirectory(atPath: staging.path).sorted()
+
         let previous = parent.appendingPathComponent("tools-previous-\(UUID().uuidString)")
         let existed = manager.fileExists(atPath: target.path)
         if existed { try manager.moveItem(at: target, to: previous) }
         do {
-            try manager.moveItem(at: generated, to: target)
+            try manager.moveItem(at: staging, to: target)
             if existed { try? manager.removeItem(at: previous) }
         } catch {
             if existed { try? manager.moveItem(at: previous, to: target) }

@@ -24,9 +24,6 @@ enum CodexBackendError: LocalizedError {
     case threadNotFound(String)
     /// `codex app-server` could not start (older CLI); use `codex exec`.
     case appServerUnavailable(String)
-    /// The shared app-server is serving another workspace right now; this
-    /// one turn goes through `codex exec` without giving up the server.
-    case appServerBusy
 
     var errorDescription: String? {
         switch self {
@@ -44,8 +41,6 @@ enum CodexBackendError: LocalizedError {
             return "Codex thread \(id) is no longer available."
         case .appServerUnavailable(let message):
             return "codex app-server unavailable: \(message)"
-        case .appServerBusy:
-            return "codex app-server is busy with another workspace."
         }
     }
 }
@@ -164,8 +159,7 @@ final class CodexExecBackend {
              instructions: String = "",
              images: [Data],
              resumeThread: String?,
-             workingDirectory: URL? = nil,
-             extraWritableRoots: [String] = [],
+             folders: RuntimeFolders,
              model: String? = nil,
              reasoningEffort: String? = nil,
              onThreadStarted: @escaping (String) -> Void,
@@ -185,14 +179,14 @@ final class CodexExecBackend {
 
         let args = Self.executionArguments(
             prompt: prompt, imagePaths: imagePaths, resumeThread: resumeThread,
-            extraWritableRoots: extraWritableRoots, model: model, reasoningEffort: reasoningEffort,
+            extraWritableRoots: [], model: model, reasoningEffort: reasoningEffort,
             instructions: instructions)
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
         proc.arguments = args
         proc.environment = Self.sanitizedEnvironment()
-        proc.currentDirectoryURL = workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser
+        proc.currentDirectoryURL = folders.workingDirectory
         let stdout = Pipe()
         let stderr = Pipe()
         proc.standardOutput = stdout
@@ -398,8 +392,7 @@ protocol CodexExecuting: AnyObject {
              instructions: String,
              images: [Data],
              resumeThread: String?,
-             workingDirectory: URL?,
-             extraWritableRoots: [String],
+             folders: RuntimeFolders,
              model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,

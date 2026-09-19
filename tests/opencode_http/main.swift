@@ -192,7 +192,7 @@ var failures: [String] = []
 let request = AgentTurnRequest(
     turnID: UUID(), conversationID: "conversation-a", assistant: nil,
     priorMessages: [], prompt: "task", screenshots: [],
-    workingDirectory: directory, extraWritableRoots: [], trustProfile: .workspace,
+    folders: RuntimeFolders(workingDirectory: directory, personaDirectory: nil, scratchDirectory: directory), trustProfile: .workspace,
     model: AgentModelSelection(provider: "test", model: "model"), instructions: "SYSTEM_PERSONA")
 // Missing sessions are idle, but malformed entries must never authorize a
 // new POST: the previous turn may still be running in the server.
@@ -241,7 +241,7 @@ expect(plainBody["variant"] == nil,
 let effortRequest = AgentTurnRequest(
     turnID: UUID(), conversationID: "conversation-a", assistant: nil,
     priorMessages: [], prompt: "task", screenshots: [],
-    workingDirectory: directory, extraWritableRoots: [], trustProfile: .workspace,
+    folders: RuntimeFolders(workingDirectory: directory, personaDirectory: nil, scratchDirectory: directory), trustProfile: .workspace,
     model: AgentModelSelection(
         provider: "test", model: "model", reasoningEffort: "low"))
 _ = try await client.sendMessage(

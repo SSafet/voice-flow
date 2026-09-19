@@ -280,40 +280,13 @@ enum AgentToolDispatcher {
 }
 
 struct AgentToolProjection {
-    private static let projectionLock = NSLock()
     let endpoint: URL
     let token: String
 
-    func project(into assistant: AssistantDefinition) throws {
-        try project(into: assistant.directory)
-    }
-
-    func project(into directory: URL) throws {
-        // Multiple conversations of one assistant intentionally share the
-        // same generated .opencode tree. Serialize the tiny atomic refresh so
-        // concurrent agents cannot remove or move each other's staging dir.
-        Self.projectionLock.lock()
-        defer { Self.projectionLock.unlock() }
-        let root = directory.appendingPathComponent(".opencode/tools")
-        let staging = directory.appendingPathComponent(
-            ".opencode/.tools-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-        do {
-            for (name, source) in sources() {
-                try Data(source.utf8).write(
-                    to: staging.appendingPathComponent("\(name).ts"), options: [.atomic])
-            }
-            if FileManager.default.fileExists(atPath: root.path) {
-                try FileManager.default.removeItem(at: root)
-            }
-            try FileManager.default.moveItem(at: staging, to: root)
-        } catch {
-            try? FileManager.default.removeItem(at: staging)
-            throw error
-        }
-    }
-
-    private func sources() -> [(String, String)] {
+    /// The tool sources, one entry per tool name. `OpenCodeLaunch` writes
+    /// these into OpenCode's own settings folder; nothing is projected into a
+    /// persona or a project folder any more.
+    func sources() -> [(String, String)] {
         let schemas: [(String, String, String)] = [
             ("voiceflow_computer", "Look at or control the user's Mac through Voice Flow. A screenshot returns a bounded absolute image path; call read on that path to see pixels.",
              "action: tool.schema.enum(['screenshot','cursor_position','left_click','right_click','double_click','mouse_move','drag','type','key','scroll','wait']), coordinate: tool.schema.array(tool.schema.number()).length(2).optional(), start_coordinate: tool.schema.array(tool.schema.number()).length(2).optional(), text: tool.schema.string().optional(), direction: tool.schema.enum(['up','down','left','right']).optional(), amount: tool.schema.number().int().min(1).max(30).optional(), duration: tool.schema.number().min(0).max(30).optional()"),

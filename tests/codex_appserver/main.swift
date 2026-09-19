@@ -71,22 +71,19 @@ expect(CodexRolloutUsage.read(threadID: usageID, sessionsRoot: usageRoot) == nil
 
 // ── Request shapes ──
 
-let launch = CodexAppServerProtocol.launchArguments(extraWritableRoots: ["/tmp/a", "/tmp/b"])
+let launch = CodexAppServerProtocol.launchArguments()
 expect(launch.first == "app-server", "the process must be the app-server")
 expect(launch.contains("mcp_servers={}"), "the user's MCP servers must stay out of assistant turns")
-expect(launch.contains("sandbox_workspace_write.network_access=true"), "network access mirrors the exec path")
-expect(launch.contains("sandbox_workspace_write.writable_roots=[\"/tmp/a\", \"/tmp/b\"]"),
-       "writable roots must be TOML-quoted: \(launch)")
-expect(!CodexAppServerProtocol.launchArguments(extraWritableRoots: []).contains { $0.hasPrefix("sandbox_workspace_write.writable_roots") },
-       "no roots means no writable_roots override")
+expect(!launch.contains { $0.hasPrefix("sandbox_mode") },
+       "codex is confined from outside, so it must not open a sandbox of its own")
+expect(!launch.contains { $0.hasPrefix("sandbox_workspace_write.writable_roots") },
+       "codex is confined from outside, so it is given no writable roots of its own")
 
 // Backslashes and control characters are legal macOS filename characters.
 // A backslash-n in a folder name must never become a different writable root.
 let unusualRoots = ["/tmp/folder\\name", "/tmp/quote\"name", "/tmp/line\nfeed",
                     "/tmp/tab\tname", "/tmp/control\u{7f}", "/tmp/Български"]
 let expectedRoots = #"sandbox_workspace_write.writable_roots=["/tmp/folder\\name", "/tmp/quote\"name", "/tmp/line\u000Afeed", "/tmp/tab\u0009name", "/tmp/control\u007F", "/tmp/Български"]"#
-expect(CodexAppServerProtocol.launchArguments(extraWritableRoots: unusualRoots).contains(expectedRoots),
-       "app-server writable-root names were altered or produced invalid TOML")
 for resumeThread: String? in [nil, "thread-a"] {
     expect(CodexExecBackend.executionArguments(
         prompt: "task", imagePaths: [], resumeThread: resumeThread,

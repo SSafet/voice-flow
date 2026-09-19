@@ -132,8 +132,8 @@ func makeRequest(turnID: UUID = UUID()) -> AgentTurnRequest {
     AgentTurnRequest(
         turnID: turnID, conversationID: "conversation-a", assistant: nil,
         priorMessages: [], prompt: "Task only", screenshots: [],
-        workingDirectory: FileManager.default.temporaryDirectory,
-        extraWritableRoots: [], trustProfile: .workspace,
+        folders: RuntimeFolders(workingDirectory: FileManager.default.temporaryDirectory, personaDirectory: nil, scratchDirectory: FileManager.default.temporaryDirectory),
+        trustProfile: .workspace,
         model: AgentModelSelection(provider: "openrouter", model: "test/model"), instructions: "OPENCODE_IDENTITY")
 }
 
@@ -224,8 +224,8 @@ let staleMessage = AssistantHistoryMessage(role: .assistant, text: "Canonical pr
 let staleRequest = AgentTurnRequest(
     turnID: UUID(), conversationID: "conversation-a", assistant: nil,
     priorMessages: [staleMessage], prompt: "# Current task\nRecover", screenshots: [],
-    workingDirectory: FileManager.default.temporaryDirectory,
-    extraWritableRoots: [], trustProfile: .workspace,
+    folders: RuntimeFolders(workingDirectory: FileManager.default.temporaryDirectory, personaDirectory: nil, scratchDirectory: FileManager.default.temporaryDirectory),
+    trustProfile: .workspace,
     model: AgentModelSelection(provider: "openrouter", model: "test/model"), instructions: "OPENCODE_IDENTITY")
 let staleDone = DispatchSemaphore(value: 0)
 Task {

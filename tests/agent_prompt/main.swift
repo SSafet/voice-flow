@@ -25,43 +25,45 @@ let history = [
 ]
 let layers = AgentPromptComposer.layers(
     assistant: assistant, priorMessages: history, task: "TASK_MARKER",
-    includeHandoff: true, includeSkillBodies: true, sourceContext: "SOURCE_COPY_MARKER",
+    includeHandoff: true, sourceContext: "SOURCE_COPY_MARKER",
     sourceInstructions: "SOURCE_GUIDANCE_MARKER")
 let instructions = AgentPromptComposer.instructions(layers, additional: "APP_COMMUNICATION_MARKER")
 let prompt = AgentPromptComposer.userMessage(layers)
-for marker in ["PERSONA_MARKER", "SKILL_MARKER", "SOURCE_GUIDANCE_MARKER", "APP_COMMUNICATION_MARKER"] {
+for marker in ["PERSONA_MARKER", "Example skill", "SOURCE_GUIDANCE_MARKER", "APP_COMMUNICATION_MARKER"] {
     expect(instructions.contains(marker) && !prompt.contains(marker), "instruction leaked or disappeared: \(marker)")
 }
+expect(!instructions.contains("SKILL_MARKER"),
+       "a skill's body must never be pasted into the prompt")
 for marker in ["memory marker", "HANDOFF_MARKER", "TASK_MARKER", "SOURCE_COPY_MARKER"] {
     expect(prompt.contains(marker) && !instructions.contains(marker), "context promoted or lost: \(marker)")
 }
 let resumedLayers = AgentPromptComposer.layers(
     assistant: assistant, priorMessages: history, task: "NEXT_TASK",
-    includeHandoff: false, includeSkillBodies: true, sourceContext: "NEW_COPY",
+    includeHandoff: false, sourceContext: "NEW_COPY",
     sourceInstructions: "NEW_GUIDANCE")
 let resumedInstructions = AgentPromptComposer.instructions(resumedLayers)
 let resumed = AgentPromptComposer.userMessage(resumedLayers)
-expect(resumedInstructions.contains("PERSONA_MARKER") && resumedInstructions.contains("SKILL_MARKER")
+expect(resumedInstructions.contains("PERSONA_MARKER") && resumedInstructions.contains("Example skill")
        && resumedInstructions.contains("NEW_GUIDANCE") && !resumedInstructions.contains("SOURCE_GUIDANCE_MARKER"),
        "resume must supply current instructions, including selected skills and source guidance")
 expect(!resumed.contains("PERSONA_MARKER") && !resumed.contains("HANDOFF_MARKER")
        && resumed.contains("memory marker") && resumed.contains("NEXT_TASK") && resumed.contains("NEW_COPY"),
        "resume must contain only current task/context without reintroducing the handoff")
 let noBodies = AgentPromptComposer.layers(assistant: assistant, priorMessages: [], task: "T",
-    includeHandoff: false, includeSkillBodies: false)
+    includeHandoff: false)
 expect(AgentPromptComposer.instructions(noBodies).contains("Example skill")
        && !AgentPromptComposer.instructions(noBodies).contains("SKILL_MARKER"),
        "OpenCode/review skill descriptions must remain separate from user input")
 let beforeFocus = try DailyFocus.read()
 try DailyFocus.replace("CURRENT_FOCUS_MARKER", expected: beforeFocus)
 let focusedLayers = AgentPromptComposer.layers(assistant: assistant, priorMessages: history,
-    task: "Follow up", includeHandoff: false, includeSkillBodies: false)
+    task: "Follow up", includeHandoff: false)
 expect(focusedLayers.dailyContext.contains("CURRENT_FOCUS_MARKER"),
        "every resumed assistant must receive the current shared briefing")
 let firstFocus = try DailyFocus.read()
 try DailyFocus.replace("REPLACED_FOCUS_MARKER", expected: firstFocus)
 let updatedFocusLayers = AgentPromptComposer.layers(assistant: assistant, priorMessages: history,
-    task: "Follow up", includeHandoff: false, includeSkillBodies: false)
+    task: "Follow up", includeHandoff: false)
 expect(updatedFocusLayers.dailyContext.contains("REPLACED_FOCUS_MARKER")
        && !updatedFocusLayers.dailyContext.contains("CURRENT_FOCUS_MARKER"),
        "focus replacement must reach the next turn without a restart")

@@ -64,11 +64,11 @@ expect(jobAfterAssistantEdit?.selectedSourceIDs == [sourceB.id] && jobAfterAssis
     "assistant changes silently widened or changed automation access")
 let layers = AgentPromptComposer.layers(assistant: assistant,
     priorMessages: [AssistantHistoryMessage(role: .user, text: "PRIOR_USER")],
-    task: "Summarize the copied email.", includeHandoff: true, includeSkillBodies: false,
+    task: "Summarize the copied email.", includeHandoff: true,
     sourceContext: frozenA.evidence, sourceInstructions: frozenA.instructions)
 let request = AgentTurnRequest(turnID: UUID(), conversationID: "test-conversation", assistant: assistant,
     priorMessages: [], prompt: AgentPromptComposer.userMessage(layers),
-    screenshots: [], workingDirectory: root, extraWritableRoots: [root.path], trustProfile: .workspace,
+    screenshots: [], folders: RuntimeFolders(workingDirectory: root, personaDirectory: nil, scratchDirectory: root), trustProfile: .workspace,
     model: AgentModelSelection(provider: "openrouter", model: "test/reviewer"),
     instructions: AgentPromptComposer.instructions(layers),
     sourceContext: frozenA.evidence, sourceAccessMode: .reviewCopies)

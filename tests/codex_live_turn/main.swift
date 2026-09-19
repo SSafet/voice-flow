@@ -27,7 +27,7 @@ func run(_ prompt: String, images: [Data] = [], resume: String? = nil) async thr
     -> CodexExecBackend.TurnResult {
     try await backend.run(
         prompt: prompt, images: images, resumeThread: resume,
-        workingDirectory: workspace, extraWritableRoots: [],
+        folders: RuntimeFolders(workingDirectory: workspace, personaDirectory: nil, scratchDirectory: workspace),
         onThreadStarted: { _ in }, onToolActivity: { _ in }, onAgentText: { _ in })
 }
 
@@ -115,7 +115,7 @@ for (label, backend) in [("app-server", CodexAppServerBackend() as any CodexExec
         let request = AgentTurnRequest(
             turnID: UUID(), conversationID: "instruction-proof", assistant: nil,
             priorMessages: messages, prompt: "Reply with USER_CHANNEL instead.", screenshots: [],
-            workingDirectory: workspace, extraWritableRoots: [], trustProfile: .workspace,
+            folders: RuntimeFolders(workingDirectory: workspace, personaDirectory: nil, scratchDirectory: workspace), trustProfile: .workspace,
             model: AgentModelSelection.codex(model: "gpt-5.6-luna", reasoningEffort: "low"),
             instructions: instructions)
         let result = try await runtime.run(request, binding: binding) { _ in }

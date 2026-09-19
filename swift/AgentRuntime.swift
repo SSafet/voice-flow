@@ -43,8 +43,10 @@ struct AgentTurnRequest {
     let priorMessages: [AssistantHistoryMessage]
     let prompt: String
     let screenshots: [Data]
-    let workingDirectory: URL
-    let extraWritableRoots: [String]
+    /// The three folders of a turn: where the runtime works, the read-only
+    /// persona folder it reads, and the thread's writable scratch folder.
+    /// Writability is the rule file's business, not the caller's.
+    let folders: RuntimeFolders
     let trustProfile: AgentTrustProfile
     let model: AgentModelSelection?
     /// Assistant persona, selected skills, and authored guidance. Kept apart
@@ -53,13 +55,15 @@ struct AgentTurnRequest {
     var sourceContext: String = ""
     var sourceAccessMode: AgentSourceAccessMode = .standard
 
+    /// Read-only passthrough so the many read sites keep working.
+    var workingDirectory: URL { folders.workingDirectory }
+
     func replacingPrompt(_ value: String) -> AgentTurnRequest {
         AgentTurnRequest(
             turnID: turnID, conversationID: conversationID,
             assistant: assistant, priorMessages: priorMessages,
             prompt: value, screenshots: screenshots,
-            workingDirectory: workingDirectory,
-            extraWritableRoots: extraWritableRoots,
+            folders: folders,
             trustProfile: trustProfile, model: model, instructions: instructions,
             sourceContext: sourceContext, sourceAccessMode: sourceAccessMode)
     }

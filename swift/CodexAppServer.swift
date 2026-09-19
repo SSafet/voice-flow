@@ -89,23 +89,13 @@ enum CodexAppServerProtocol {
         return object["result"] as? [String: Any]
     }
 
-    /// Process arguments. The sandbox and network policy mirror the `exec`
-    /// path exactly; writable roots are fixed for the process lifetime, so a
-    /// request with a different set restarts it.
-    static func launchArguments(extraWritableRoots: [String]) -> [String] {
-        var args = [
+    /// Process arguments. Codex is confined from outside by VoiceFlow's rule
+    /// file, so it is given no writable roots of its own here.
+    static func launchArguments() -> [String] {
+        [
             "app-server",
-            "-c", "sandbox_mode=\"workspace-write\"",
-            "-c", "sandbox_workspace_write.network_access=true",
             "-c", "mcp_servers={}",
         ]
-        if !extraWritableRoots.isEmpty {
-            let toml = extraWritableRoots
-                .map(CodexExecBackend.tomlString)
-                .joined(separator: ", ")
-            args.append(contentsOf: ["-c", "sandbox_workspace_write.writable_roots=[\(toml)]"])
-        }
-        return args
     }
 
     static func threadParams(cwd: String, resumeThread: String?, instructions: String = "") -> [String: Any] {
@@ -189,7 +179,7 @@ final class CodexAppServerBackend: CodexExecuting {
     private var lineBuffer = Data()
     private var nextID = 1
     private var pending: [Int: CheckedContinuation<[String: Any]?, Error>] = [:]
-    private var launchedRoots: [String]?
+    private var rootSignature: String?
     /// Active turns by thread id: automations run two Codex jobs at once
     /// beside the assistant, all over this one process.
     private var turns: [String: TurnState] = [:]
@@ -245,17 +235,18 @@ final class CodexAppServerBackend: CodexExecuting {
              instructions: String = "",
              images: [Data],
              resumeThread: String?,
-             workingDirectory: URL?,
-             extraWritableRoots: [String],
+             folders: RuntimeFolders,
              model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
              onToolActivity: @escaping (String) -> Void,
              onAgentText: @escaping (String) -> Void) async throws -> CodexExecBackend.TurnResult {
         guard let binary = CodexExecBackend.findBinary() else { throw CodexBackendError.notInstalled }
-        guard CodexExecBackend.isLoggedIn else { throw CodexBackendError.notLoggedIn }
 
-        try await startIfNeeded(binary: binary, roots: extraWritableRoots)
+        try await startIfNeeded(binary: binary, rootSignature: folders.workingDirectory.path)
+        // Sign-in is asked of the app server itself, never guessed from a file
+        // on disk: an account/read that fails is a real refusal.
+        _ = try await request("account/read", [:])
 
         var imagePaths: [String] = []
         for (index, data) in images.enumerated() {
@@ -266,7 +257,7 @@ final class CodexAppServerBackend: CodexExecuting {
         }
         defer { imagePaths.forEach { try? FileManager.default.removeItem(atPath: $0) } }
 
-        let cwd = (workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser).path
+        let cwd = folders.workingDirectory.path
         let threadId: String
         if let resumeThread {
             do {
@@ -340,46 +331,40 @@ final class CodexAppServerBackend: CodexExecuting {
 
     /// Concurrent turns share one start: the first caller spawns, the rest
     /// await the same task instead of racing a second process into being.
-    /// A joined start may have been for other roots; the caller re-checks
-    /// and starts again (or is told the server is busy) rather than running
-    /// on a process whose writable roots are not its own.
-    private func startIfNeeded(binary: String, roots: [String]) async throws {
-        for _ in 0..<3 {
-            let existing: Task<Void, Error>? = lock.withLock {
-                let alive = process?.isRunning == true && launchedRoots == roots
-                if alive { return nil }
-                if let starting { return starting }
-                let task = Task { try await self.ensureProcess(binary: binary, roots: roots) }
-                starting = task
-                return task
+    /// This backend serves one thread, so its working folder never changes
+    /// under a live process.
+    private func startIfNeeded(binary: String, rootSignature: String) async throws {
+        let existing: Task<Void, Error>? = lock.withLock {
+            let alive = process?.isRunning == true && self.rootSignature == rootSignature
+            if alive { return nil }
+            if let starting { return starting }
+            let task = Task {
+                try await self.ensureProcess(binary: binary, rootSignature: rootSignature)
             }
-            guard let existing else { return }
-            do {
-                try await existing.value
-            } catch {
-                lock.withLock { if starting == existing { starting = nil } }
-                throw error
-            }
-            lock.withLock { if starting == existing { starting = nil } }
-            if lock.withLock({ process?.isRunning == true && launchedRoots == roots }) { return }
+            starting = task
+            return task
         }
-        throw CodexBackendError.appServerBusy
+        guard let existing else { return }
+        do {
+            try await existing.value
+        } catch {
+            lock.withLock { if starting == existing { starting = nil } }
+            throw error
+        }
+        lock.withLock { if starting == existing { starting = nil } }
     }
 
-    private func ensureProcess(binary: String, roots: [String]) async throws {
+    private func ensureProcess(binary: String, rootSignature: String) async throws {
         let needsRestart = lock.withLock { () -> Bool in
             guard let process, process.isRunning else { return true }
-            return launchedRoots != roots
+            return self.rootSignature != rootSignature
         }
         guard needsRestart else { return }
-        // Restarting with different roots must not cut a running turn.
-        let busy = lock.withLock { !turns.isEmpty }
-        if busy { throw CodexBackendError.appServerBusy }
         terminateProcess(lock.withLock { process })
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
-        proc.arguments = CodexAppServerProtocol.launchArguments(extraWritableRoots: roots)
+        proc.arguments = CodexAppServerProtocol.launchArguments()
         proc.environment = CodexExecBackend.sanitizedEnvironment()
         proc.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         let input = Pipe()
@@ -410,7 +395,7 @@ final class CodexAppServerBackend: CodexExecuting {
             stdin = input.fileHandleForWriting
             stdout = output
             lineBuffer = Data()
-            launchedRoots = roots
+            self.rootSignature = rootSignature
         }
         do {
             // The initialize request is not cancellable on its own: the
@@ -425,7 +410,7 @@ final class CodexAppServerBackend: CodexExecuting {
                 ])
             }
             notify("initialized", [:])
-            vflog("codex app-server: ready (roots: \(roots.count))")
+            vflog("codex app-server: ready for one thread")
         } catch {
             terminateProcess(proc)
             throw CodexBackendError.appServerUnavailable(error.localizedDescription)
@@ -439,7 +424,7 @@ final class CodexAppServerBackend: CodexExecuting {
             stdin = nil
             stdout?.fileHandleForReading.readabilityHandler = nil
             stdout = nil
-            launchedRoots = nil
+            rootSignature = nil
             let waiting = Array(pending.values)
             pending.removeAll()
             let running = Array(turns.values)

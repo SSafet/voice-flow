@@ -509,7 +509,7 @@ final class AgentSession {
         let reviewAssistant = sourceTurnAssistant
         let layers = AgentPromptComposer.layers(
             assistant: reviewAssistant, priorMessages: turn.preparation.priorMessages,
-            task: turn.text, includeHandoff: true, includeSkillBodies: false,
+            task: turn.text, includeHandoff: true,
             sourceContext: pendingSourceContext.evidence,
             sourceInstructions: pendingSourceContext.instructions)
         let request = AgentTurnRequest(
@@ -517,8 +517,12 @@ final class AgentSession {
             priorMessages: turn.preparation.priorMessages,
             prompt: AgentPromptComposer.userMessage(layers),
             screenshots: turn.images,
-            workingDirectory: reviewAssistant?.directory ?? VoiceFlowPaths.shared.configRoot,
-            extraWritableRoots: [], trustProfile: .observe,
+            folders: RuntimeFolders(
+                workingDirectory: reviewAssistant?.directory ?? VoiceFlowPaths.shared.configRoot,
+                personaDirectory: reviewAssistant?.directory,
+                scratchDirectory: RuntimeFolders.scratchDirectory(
+                    threadID: sessionId, configRoot: VoiceFlowPaths.shared.configRoot)),
+            trustProfile: .observe,
             model: AgentModelSelection(provider: "openrouter",
                 model: preferredModel(for: .opencode, sessionId: sessionId),
                 reasoningEffort: UserSettings.shared.agentReasoningEffort),
@@ -573,21 +577,12 @@ final class AgentSession {
         let turnID = runningTurnID ?? UUID()
         let workingDirectory = activeAssistant?.directory
             ?? VoiceFlowPaths.shared.directory("assistants/default")
-        do {
-            if let activeAssistant { _ = try AgentSkillStore.project(for: activeAssistant) }
-        } catch {
-            let message = error.localizedDescription
-            recordNote(message)
-            DispatchQueue.main.async { self.onError?(message) }
-            finish(nil)
-            return
-        }
         let layers = AgentPromptComposer.layers(
             assistant: activeAssistant,
             priorMessages: turn.preparation.priorMessages,
             task: turn.text,
             includeHandoff: turn.preparation.requiresFreshSession,
-            includeSkillBodies: false, sourceContext: pendingSourceContext.evidence,
+            sourceContext: pendingSourceContext.evidence,
             sourceInstructions: pendingSourceContext.instructions)
         let prompt = AgentPromptComposer.userMessage(layers)
         let binding = turn.preparation.resumeExternalSessionID == nil ? nil : turn.preparation.previousBinding
@@ -596,8 +591,12 @@ final class AgentSession {
             assistant: activeAssistant,
             priorMessages: turn.preparation.priorMessages,
             prompt: prompt, screenshots: turn.images,
-            workingDirectory: workingDirectory,
-            extraWritableRoots: [], trustProfile: foregroundTrustProfile,
+            folders: RuntimeFolders(
+                workingDirectory: workingDirectory,
+                personaDirectory: activeAssistant?.directory,
+                scratchDirectory: RuntimeFolders.scratchDirectory(
+                    threadID: sessionId, configRoot: VoiceFlowPaths.shared.configRoot)),
+            trustProfile: foregroundTrustProfile,
             model: AgentModelSelection(
                 provider: "openrouter", model: preferredModel(for: .opencode, sessionId: sessionId),
                 reasoningEffort: UserSettings.shared.agentReasoningEffort),
@@ -733,15 +732,12 @@ final class AgentSession {
             priorMessages: turn.preparation.priorMessages,
             task: turn.text,
             includeHandoff: turn.preparation.requiresFreshSession,
-            includeSkillBodies: true, sourceContext: pendingSourceContext.evidence,
+            sourceContext: pendingSourceContext.evidence,
             sourceInstructions: pendingSourceContext.instructions)
         let prompt = AgentPromptComposer.userMessage(layers)
         let instructions = AgentPromptComposer.instructions(
             layers, additional: codexPreamble + "\n\n" + codexAccessNote)
         let sessionId = runningSessionId ?? currentSessionId
-        let ticketsDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/tickets").path
-        let queueDir = VoiceFlowPaths.shared.directory("queue").path
         let turnID = runningTurnID ?? UUID()
         let workingDirectory = activeAssistant?.directory
             ?? FileManager.default.homeDirectoryForCurrentUser
@@ -752,8 +748,11 @@ final class AgentSession {
             priorMessages: turn.preparation.priorMessages,
             prompt: prompt,
             screenshots: turn.images,
-            workingDirectory: workingDirectory,
-            extraWritableRoots: activeAssistant == nil ? [] : [ticketsDir, queueDir],
+            folders: RuntimeFolders(
+                workingDirectory: workingDirectory,
+                personaDirectory: activeAssistant?.directory,
+                scratchDirectory: RuntimeFolders.scratchDirectory(
+                    threadID: sessionId, configRoot: VoiceFlowPaths.shared.configRoot)),
             trustProfile: foregroundTrustProfile,
             model: kind == .claude
                 ? AgentModelSelection(

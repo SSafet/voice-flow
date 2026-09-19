@@ -153,32 +153,36 @@ for (arguments, label) in [
 
 let projection = AgentToolProjection(
     endpoint: URL(string: "http://127.0.0.1:1234/internal/tools")!, token: "token-canary")
-try projection.project(into: assistant)
-for name in AgentToolDispatcher.names {
-    let text = try String(contentsOf: root.appendingPathComponent(".opencode/tools/\(name).ts"))
-    expect(text.contains("@opencode-ai/plugin") && text.contains("token-canary"),
-           "missing custom tool projection \(name)")
+let toolSources = projection.sources()
+expect(Set(toolSources.map(\.0)) == Set(AgentToolDispatcher.names),
+       "the generated tool sources must match the dispatcher's tools")
+for (_, source) in toolSources {
+    expect(source.contains("@opencode-ai/plugin") && source.contains("token-canary"),
+           "a generated tool source is missing its plugin import or capability token")
 }
-let toolProjectionGroup = DispatchGroup()
-let toolProjectionQueue = DispatchQueue(
-    label: "agent-tools-projection-race", attributes: .concurrent)
-let toolProjectionErrorLock = NSLock()
-var toolProjectionErrors: [String] = []
-for _ in 0..<20 {
-    toolProjectionGroup.enter()
-    toolProjectionQueue.async {
-        defer { toolProjectionGroup.leave() }
-        do { try projection.project(into: assistant) }
-        catch {
-            toolProjectionErrorLock.lock()
-            toolProjectionErrors.append(error.localizedDescription)
-            toolProjectionErrorLock.unlock()
-        }
-    }
+let configHome = root.appendingPathComponent("open-config")
+let firstWrite = try OpenCodeLaunch.writeToolFiles(
+    endpoint: projection.endpoint, token: "token-canary", configHome: configHome)
+expect(Set(firstWrite) == Set(AgentToolDispatcher.names.map { "\($0).ts" }),
+       "writeToolFiles did not write every tool into the settings folder")
+for name in firstWrite {
+    let text = try String(contentsOf:
+        OpenCodeLaunch.toolsDirectory(configHome: configHome).appendingPathComponent(name))
+    expect(text.contains("token-canary"), "the first start's tools must carry its token")
 }
-toolProjectionGroup.wait()
-expect(toolProjectionErrors.isEmpty,
-       "concurrent tool projection raced: \(toolProjectionErrors)")
+let secondWrite = try OpenCodeLaunch.writeToolFiles(
+    endpoint: projection.endpoint, token: "token-two", configHome: configHome)
+expect(Set(secondWrite) == Set(AgentToolDispatcher.names.map { "\($0).ts" }),
+       "a second start must leave exactly the same tool set")
+for name in secondWrite {
+    let text = try String(contentsOf:
+        OpenCodeLaunch.toolsDirectory(configHome: configHome).appendingPathComponent(name))
+    expect(text.contains("token-two") && !text.contains("token-canary"),
+           "a second start must replace the previous token, never keep both")
+}
+expect(!FileManager.default.fileExists(
+    atPath: assistant.directory.appendingPathComponent(".opencode").path),
+    "nothing may be generated inside a persona folder")
 expect(AgentToolOutput(data: ["value": String(repeating: "x", count: 30_000)])
     .json().contains("truncated"), "oversized result did not steer pagination")
 print("agent tools tests passed")

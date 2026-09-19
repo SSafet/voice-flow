@@ -56,7 +56,7 @@ final class FakeCodex: CodexExecuting {
     func interrupt() { interrupted = true }
 
     func run(prompt: String, instructions: String, images: [Data], resumeThread: String?,
-             workingDirectory: URL?, extraWritableRoots: [String],
+             folders: RuntimeFolders,
              model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
@@ -81,8 +81,8 @@ let runtime = CodexAgentRuntime(backend: fake, fallback: nil)
 let request = AgentTurnRequest(
     turnID: UUID(), conversationID: "conversation-a", assistant: nil,
     priorMessages: [], prompt: "Do the task", screenshots: [Data([1, 2, 3])],
-    workingDirectory: FileManager.default.temporaryDirectory,
-    extraWritableRoots: ["/tmp/allowed"], trustProfile: .workspace,
+    folders: RuntimeFolders(workingDirectory: FileManager.default.temporaryDirectory, personaDirectory: nil, scratchDirectory: FileManager.default.temporaryDirectory),
+    trustProfile: .workspace,
     model: AgentModelSelection(
         provider: "openai", model: "gpt-5.6-luna", reasoningEffort: "low"),
     instructions: "PERSONA_AND_SKILLS")
@@ -144,7 +144,7 @@ final class BlockingCodex: CodexExecuting {
     func interrupt() { interruptedThreads.append(nil) }
     func interrupt(threadId: String?) { interruptedThreads.append(threadId) }
     func run(prompt: String, instructions: String, images: [Data], resumeThread: String?,
-             workingDirectory: URL?, extraWritableRoots: [String],
+             folders: RuntimeFolders,
              model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
@@ -166,8 +166,8 @@ for lateThread in [false, true] {
     let liveRequest = AgentTurnRequest(
         turnID: UUID(), conversationID: "conversation-c", assistant: nil,
         priorMessages: [], prompt: "long task", screenshots: [],
-        workingDirectory: FileManager.default.temporaryDirectory,
-        extraWritableRoots: [], trustProfile: .workspace, model: nil)
+        folders: RuntimeFolders(workingDirectory: FileManager.default.temporaryDirectory, personaDirectory: nil, scratchDirectory: FileManager.default.temporaryDirectory),
+        trustProfile: .workspace, model: nil)
     let finished = DispatchSemaphore(value: 0)
     Task {
         _ = try? await blockingRuntime.run(liveRequest, binding: nil) { _ in }
@@ -197,7 +197,7 @@ final class GoneThreadCodex: CodexExecuting {
     var resumes: [String?] = []
     func interrupt() {}
     func run(prompt: String, instructions: String, images: [Data], resumeThread: String?,
-             workingDirectory: URL?, extraWritableRoots: [String],
+             folders: RuntimeFolders,
              model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
@@ -219,8 +219,8 @@ let goneRequest = AgentTurnRequest(
     priorMessages: [AssistantHistoryMessage(role: .user, text: "earlier question"),
                     AssistantHistoryMessage(role: .assistant, text: "earlier answer")],
     prompt: "follow-up", screenshots: [],
-    workingDirectory: FileManager.default.temporaryDirectory,
-    extraWritableRoots: [], trustProfile: .workspace, model: nil, instructions: "FRESH_IDENTITY")
+    folders: RuntimeFolders(workingDirectory: FileManager.default.temporaryDirectory, personaDirectory: nil, scratchDirectory: FileManager.default.temporaryDirectory),
+    trustProfile: .workspace, model: nil, instructions: "FRESH_IDENTITY")
 let goneSemaphore = DispatchSemaphore(value: 0)
 var goneResult: AgentTurnResult?
 var goneEvents: [String] = []
@@ -247,7 +247,7 @@ final class NoAppServer: CodexExecuting {
     var calls = 0
     func interrupt() {}
     func run(prompt: String, instructions: String, images: [Data], resumeThread: String?,
-             workingDirectory: URL?, extraWritableRoots: [String],
+             folders: RuntimeFolders,
              model: String?,
              reasoningEffort: String?,
              onThreadStarted: @escaping (String) -> Void,
@@ -282,8 +282,9 @@ let editedRequest = AgentTurnRequest(
     turnID: UUID(), conversationID: "conversation-a", assistant: nil,
     priorMessages: [AssistantHistoryMessage(role: .user, text: "CANONICAL_QUESTION"),
                     AssistantHistoryMessage(role: .assistant, text: "CANONICAL_ANSWER")],
-    prompt: "NEW_TASK", screenshots: [], workingDirectory: FileManager.default.temporaryDirectory,
-    extraWritableRoots: [], trustProfile: .workspace, model: nil, instructions: "UPDATED_PERSONA")
+    prompt: "NEW_TASK", screenshots: [],
+    folders: RuntimeFolders(workingDirectory: FileManager.default.temporaryDirectory, personaDirectory: nil, scratchDirectory: FileManager.default.temporaryDirectory),
+    trustProfile: .workspace, model: nil, instructions: "UPDATED_PERSONA")
 let editedDone = DispatchSemaphore(value: 0)
 Task {
     _ = try? await runtime.run(editedRequest, binding: binding) { _ in }

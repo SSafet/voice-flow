@@ -554,6 +554,12 @@ actor OpenCodeSupervisor: OpenCodeServing {
             toolDependencies = try OpenCodeToolDependencies.source()
             try OpenCodeToolDependencies.install(from: toolDependencies, into: configRoot)
             try OpenCodeToolDependencies.install(from: toolDependencies, into: configRoot.appendingPathComponent("opencode"))
+            // VoiceFlow's five tools are written once per server start into
+            // OpenCode's own redirected settings folder, never into a project
+            // or a persona folder.
+            try OpenCodeLaunch.writeToolFiles(
+                endpoint: toolConnection.endpoint, token: toolConnection.token,
+                configHome: configRoot)
         } catch {
             gateway.stop(); toolServer.stop()
             throw error
@@ -633,26 +639,25 @@ actor OpenCodeSupervisor: OpenCodeServing {
             }
         }
 
-        let sandboxPolicy = Self.sandboxPolicy(profile: profile)
+        let rules = RuntimeRuleFile.Inputs(
+            runtime: .opencode, trustProfile: profile,
+            folders: RuntimeFolders(
+                workingDirectory: root,
+                personaDirectory: nil,
+                scratchDirectory: root.appendingPathComponent("thread-scratch", isDirectory: true)),
+            projectRoots: [],
+            grantedRoots: AgentSandboxSettings.shared.snapshot().workspaceRoots,
+            runtimeHome: root, dial: dial, configRoot: configRoot)
+        let sandboxPolicy = RuntimeRuleFile.policy(rules)
         let sandboxPrefix: [String]
         do {
-            let profileURL = root.appendingPathComponent("sandbox.sb")
-            guard let prefix = try AgentSandbox.launchPrefix(
-                policy: sandboxPolicy, profileURL: profileURL) else {
-                // Refusing to start beats starting unconfined: a runtime that
-                // quietly loses its boundary is the failure this ticket exists
-                // to prevent.
-                gateway.stop(); toolServer.stop(); egress?.stop()
-                throw OpenCodeSupervisorError.launchFailed(
-                    "sandbox-exec is unavailable, so the agent cannot be contained")
-            }
-            sandboxPrefix = prefix
-        } catch let error as OpenCodeSupervisorError {
-            throw error
+            // The rule file is written under the configuration root, outside
+            // every folder the confined process may write, so a turn can never
+            // rewrite its own next confinement.
+            sandboxPrefix = try RuntimeRuleFile.launchPrefix(rules, threadID: profile.rawValue)
         } catch {
             gateway.stop(); toolServer.stop(); egress?.stop()
-            throw OpenCodeSupervisorError.launchFailed(
-                "could not write the sandbox profile: \(error.localizedDescription)")
+            throw error
         }
 
         let process = Process()
@@ -918,34 +923,31 @@ actor OpenCodeSupervisor: OpenCodeServing {
         return Data(bytes).base64EncodedString()
     }
 
-    /// The containment for one trust profile, derived from the user's granted
-    /// roots and dial (VF-59). Pure and deterministic so `acquireConnection`
-    /// can compare it against what a running process was launched with.
-    static func sandboxPolicy(profile: AgentTrustProfile) -> AgentSandboxPolicy {
+    /// The one rule file's inputs for a trust profile, derived from the
+    /// person's granted roots and dial (VF-59). Pure and deterministic so
+    /// `acquireConnection` can compare it against what a running process was
+    /// launched with.
+    static func ruleInputs(profile: AgentTrustProfile) -> RuntimeRuleFile.Inputs {
         let settings = AgentSandboxSettings.shared.snapshot()
-        let dial = settings.dial
-        let runtimeRoot = VoiceFlowPaths.shared
+        let root = VoiceFlowPaths.shared
             .directory("runtime/opencode/\(profile.rawValue)")
-        let workspaces = settings.workspaceRoots.compactMap { raw -> URL? in
-            let expanded = NSString(string: raw).expandingTildeInPath
-            guard !expanded.isEmpty, expanded.hasPrefix("/") else { return nil }
-            return URL(fileURLWithPath: expanded)
-        }
-        // Assistant folders stay writable regardless of the granted list —
-        // memory, ledger and skills live there and are the agent's own state.
-        let assistantRoot = VoiceFlowPaths.shared.directory("assistants")
-        var temporary: [URL] = []
-        if let tmp = ProcessInfo.processInfo.environment["TMPDIR"] {
-            temporary.append(URL(fileURLWithPath: tmp))
-        }
-        temporary.append(URL(fileURLWithPath: "/private/var/folders"))
-        temporary.append(URL(fileURLWithPath: "/private/tmp"))
-        return AgentSandboxPolicy(
-            workspaceRoots: workspaces,
-            runtimeRoots: [runtimeRoot, assistantRoot],
-            temporaryRoots: temporary,
-            allowShell: dial.runCommands,
-            allowNetwork: dial.reachNetwork)
+        return RuntimeRuleFile.Inputs(
+            runtime: .opencode, trustProfile: profile,
+            folders: RuntimeFolders(
+                workingDirectory: root,
+                personaDirectory: nil,
+                scratchDirectory: root.appendingPathComponent("thread-scratch", isDirectory: true)),
+            projectRoots: [],
+            grantedRoots: settings.workspaceRoots,
+            runtimeHome: root,
+            dial: settings.dial,
+            configRoot: root.appendingPathComponent("config", isDirectory: true))
+    }
+
+    /// The containment for one trust profile, rendered by the one generator
+    /// every runtime shares.
+    static func sandboxPolicy(profile: AgentTrustProfile) -> AgentSandboxPolicy {
+        RuntimeRuleFile.policy(ruleInputs(profile: profile))
     }
 
     static func sanitizedEnvironment(

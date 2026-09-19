@@ -76,42 +76,25 @@ try skillText.write(
     atomically: true, encoding: .utf8)
 let loaded = try AgentSkillStore.loadSelected(for: assistant)
 expect(loaded.count == 1 && loaded[0].name == "sample-skill", "selected skill did not validate")
-let manifest = try AgentSkillStore.project(for: assistant)
-expect(manifest.entries.count == 1, "skill projection manifest is incomplete")
-let projected = assistantDirectory.appendingPathComponent(manifest.entries[0].projectedPath)
-let projectedText = try String(contentsOf: projected)
-expect(projectedText.contains("SKILL_NONCE_8421"), "projected skill differs")
-let codexSkillPrompt = try AgentSkillStore.promptBlock(for: assistant)
-expect(codexSkillPrompt.contains("SKILL_NONCE_8421"), "Codex skill projection differs")
+let direct = try AgentSkillStore.load(name: "sample-skill", assistant: assistant)
+expect(direct.description == "A deterministic selected skill"
+       && direct.contents.contains("SKILL_NONCE_8421"),
+       "a skill's own file must still load whole")
+let listed = RuntimeSkills.promptList(skills: loaded)
+expect(listed.contains("sample-skill") && listed.contains("A deterministic selected skill")
+       && listed.contains(skillDirectory.appendingPathComponent("SKILL.md").path)
+       && !listed.contains("SKILL_NONCE_8421"),
+       "a skill reaches the model as name, description and path, never its body")
 
 let unselected = assistantDirectory.appendingPathComponent("skills/not-selected")
 try FileManager.default.createDirectory(at: unselected, withIntermediateDirectories: true)
 try skillText.replacingOccurrences(of: "sample-skill", with: "not-selected")
     .write(to: unselected.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
-_ = try AgentSkillStore.project(for: assistant)
-expect(!FileManager.default.fileExists(
-    atPath: assistantDirectory.appendingPathComponent(".opencode/skills/not-selected").path),
-    "unselected skill leaked into projection")
-
-let skillProjectionGroup = DispatchGroup()
-let skillProjectionQueue = DispatchQueue(
-    label: "agent-skill-projection-race", attributes: .concurrent)
-let skillProjectionErrorLock = NSLock()
-var skillProjectionErrors: [String] = []
-for _ in 0..<20 {
-    skillProjectionGroup.enter()
-    skillProjectionQueue.async {
-        defer { skillProjectionGroup.leave() }
-        do { _ = try AgentSkillStore.project(for: assistant) }
-        catch {
-            skillProjectionErrorLock.lock()
-            skillProjectionErrors.append(error.localizedDescription)
-            skillProjectionErrorLock.unlock()
-        }
-    }
-}
-skillProjectionGroup.wait()
-expect(skillProjectionErrors.isEmpty,
-       "concurrent skill projection raced: \(skillProjectionErrors)")
+_ = try AgentSkillStore.load(name: "not-selected", assistant: assistant)
+let stillSelected = try AgentSkillStore.loadSelected(for: assistant)
+expect(stillSelected.count == 1,
+       "an unselected skill must never join the selected list")
+expect(RuntimeSkills.promptList(skills: []) == "",
+       "no skills must be the empty string")
 
 print("agent capabilities tests passed")

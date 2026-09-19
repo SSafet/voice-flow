@@ -2,10 +2,12 @@ import Foundation
 
 /// How `claude -p` is started (06 §3.6).
 ///
-/// The stream-json shape stays; what is added is which setting sources apply,
-/// the permission mode the trust profile maps to, one strict MCP server that
-/// can reach VoiceFlow's tools, the persona and scratch folders, and a
-/// four-hour tool limit so a call can wait for a person.
+/// `RuntimeRuleFile` renders the one kernel rule file that confines every
+/// runtime; this type only describes Claude Code's own arguments and
+/// environment. The stream-json shape stays; what is added is which setting
+/// sources apply, the permission mode the trust profile maps to, one strict
+/// MCP server that can reach VoiceFlow's tools, the persona and scratch
+/// folders, and a four-hour tool limit so a call can wait for a person.
 enum ClaudeCodeLaunch {
     static let toolTimeoutMilliseconds = 14_400_000
     static let serverName = "voiceflow"

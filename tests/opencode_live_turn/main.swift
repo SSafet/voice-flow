@@ -44,7 +44,6 @@ try "---\nname: test-skill\ndescription: Deterministic live test skill\n---\nRet
 let assistant = AssistantDefinition(
     slug: "live-open-code", name: "Live", description: "", voice: nil,
     instructions: "", directory: directory, selectedSkills: ["test-skill"])
-_ = try AgentSkillStore.project(for: assistant)
 
 let deniedMarker = directory.appendingPathComponent("permission-deny.txt")
 let allowedMarker = directory.appendingPathComponent("permission-allow.txt")
@@ -90,8 +89,8 @@ func run(prompt: String, images: [Data] = [], turnID: UUID = UUID()) async throw
     let request = AgentTurnRequest(
         turnID: turnID, conversationID: "live-conversation",
         assistant: assistant, priorMessages: [], prompt: prompt,
-        screenshots: images, workingDirectory: directory,
-        extraWritableRoots: [], trustProfile: .workspace,
+        screenshots: images, folders: RuntimeFolders(workingDirectory: directory, personaDirectory: nil, scratchDirectory: directory),
+        trustProfile: .workspace,
         model: AgentModelSelection(provider: "openrouter", model: "test/model"))
     let result = try await runtime.run(request, binding: binding) { _ in }
     binding = RuntimeBinding(

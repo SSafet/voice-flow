@@ -66,15 +66,18 @@ final class AgentRuntimeJobExecutor: AgentJobExecuting {
             assistant: assistant, priorMessages: preparation.priorMessages,
             task: job.prompt,
             includeHandoff: copiesOnly || preparation.requiresFreshSession,
-            includeSkillBodies: !copiesOnly && job.runtime.usesSubscriptionCLI,
             sourceContext: sourceContext.evidence, sourceInstructions: sourceContext.instructions)
         let request = AgentTurnRequest(
             turnID: run.turnID, conversationID: job.conversationID,
             assistant: assistant, priorMessages: preparation.priorMessages,
             prompt: AgentPromptComposer.userMessage(layers),
             screenshots: [],
-            workingDirectory: assistant.directory,
-            extraWritableRoots: [], trustProfile: job.trustProfile,
+            folders: RuntimeFolders(
+                workingDirectory: assistant.directory,
+                personaDirectory: assistant.directory,
+                scratchDirectory: RuntimeFolders.scratchDirectory(
+                    threadID: job.conversationID, configRoot: VoiceFlowPaths.shared.configRoot)),
+            trustProfile: job.trustProfile,
             model: copiesOnly || job.runtime == .opencode
                 ? AgentModelSelection(
                     provider: "openrouter",

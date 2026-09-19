@@ -13,6 +13,9 @@ final class CodexAgentRuntime: AgentRuntime {
 
     private let primary: any CodexExecuting
     private let fallback: (any CodexExecuting)?
+    /// One Codex process per thread (06 §3.6). The pool owns process lifetime
+    /// only; the app-server handshake stays in the backend.
+    private let processPool = CodexProcessPool()
     private let lock = NSLock()
     private var useFallback = false
     private var threads: [UUID: String] = [:]
@@ -21,7 +24,7 @@ final class CodexAgentRuntime: AgentRuntime {
     private var pendingCancels: Set<UUID> = []
 
     init(backend: any CodexExecuting = CodexAppServerBackend(),
-         fallback: (any CodexExecuting)? = CodexExecBackend()) {
+         fallback: (any CodexExecuting)? = nil) {
         self.primary = backend
         self.fallback = fallback
     }
@@ -108,9 +111,11 @@ final class CodexAgentRuntime: AgentRuntime {
         backend.interrupt(threadId: threadId)
     }
 
-    /// End the long-lived app-server, if that is what the backend is.
+    /// End the long-lived app-server, if that is what the backend is, and
+    /// stop every pooled Codex process.
     func shutdown() {
         (primary as? CodexAppServerBackend)?.shutdown()
+        processPool.stopAll()
     }
 
     private func runTurn(_ request: AgentTurnRequest, resumeThread: String?, prompt: String,
@@ -124,8 +129,7 @@ final class CodexAgentRuntime: AgentRuntime {
                 instructions: request.instructions,
                 images: request.screenshots,
                 resumeThread: resumeThread,
-                workingDirectory: request.workingDirectory,
-                extraWritableRoots: request.extraWritableRoots,
+                folders: request.folders,
                 model: request.model?.model,
                 reasoningEffort: request.model?.reasoningEffort,
                 onThreadStarted: { id in
@@ -139,10 +143,6 @@ final class CodexAgentRuntime: AgentRuntime {
             lock.withLock { useFallback = true }
             return try await runTurn(request, resumeThread: resumeThread, prompt: prompt,
                                      emit: emit, onThreadStarted: onThreadStarted)
-        } catch CodexBackendError.appServerBusy where override == nil && fallback != nil {
-            vflog("codex: app-server busy with another workspace — this turn runs through codex exec")
-            return try await runTurn(request, resumeThread: resumeThread, prompt: prompt,
-                                     emit: emit, onThreadStarted: onThreadStarted, using: fallback)
         } catch CodexBackendError.threadNotFound(let id) where resumeThread != nil {
             vflog("codex: thread \(id) is gone — starting fresh with the canonical handoff")
             emit(.activity("Resuming from history"))

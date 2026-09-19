@@ -122,6 +122,27 @@ compile_only() {
     if [[ " $* " == *"swift/AgentPromptComposer.swift "* && " $* " != *"swift/DailyFocus.swift "* ]]; then
         set -- "$@" "$PROJECT_DIR/swift/DailyFocus.swift"
     fi
+    # Work package V3: a suite that compiles one of the launcher-aware sources
+    # also needs the one rule file, the launch types and the generated
+    # contracts, whether or not it named them. Each file is added once.
+    case " $* " in
+        *"swift/AgentRuntime.swift "*|*"swift/CodexAgentRuntime.swift "*|*"swift/CodexAppServer.swift "*|\
+        *"swift/ClaudeCode.swift "*|*"swift/OpenCodeAgentRuntime.swift "*|*"swift/OpenCodeSupervisor.swift "*|\
+        *"swift/AgentPromptComposer.swift "*|*"swift/AgentTools.swift "*|*"swift/AgentCapabilities.swift "*)
+            for extra in Generated/PlatformContracts.swift AgentRuntimeTypes.swift \
+                AgentCapabilities.swift AgentPermissionPolicy.swift Sandbox.swift \
+                Runtimes/RuntimeFolders.swift Runtimes/RuntimeGrants.swift \
+                Runtimes/RuntimeLaunchError.swift Runtimes/RuntimeRuleFile.swift \
+                Runtimes/RuntimeVersion.swift Runtimes/RuntimeHealth.swift \
+                Runtimes/RuntimeLauncher.swift Runtimes/RuntimeSkills.swift \
+                Runtimes/CodexLaunch.swift Runtimes/CodexProcessPool.swift \
+                Runtimes/ClaudeCodeLaunch.swift; do
+                [[ " $* " == *"$extra "* ]] || set -- "$@" "$PROJECT_DIR/swift/$extra"
+            done
+            if [[ " $* " == *"swift/AgentTools.swift "* && " $* " != *"swift/Runtimes/OpenCodeLaunch.swift "* ]]; then
+                set -- "$@" "$PROJECT_DIR/swift/Runtimes/OpenCodeLaunch.swift"
+            fi ;;
+    esac
     if [[ " $* " == *"/swift/Store/"* ]]; then
         grdb_flags
         set -- "$@" ${GRDB_FLAGS[@]+"${GRDB_FLAGS[@]}"}

@@ -25,7 +25,6 @@ enum AgentPromptComposer {
                        priorMessages: [AssistantHistoryMessage],
                        task: String,
                        includeHandoff: Bool,
-                       includeSkillBodies: Bool,
                        sourceContext: String = "",
                        sourceInstructions: String = "") -> AgentPromptLayers {
         let persona: String
@@ -39,14 +38,9 @@ enum AgentPromptComposer {
             memory = current.isEmpty
                 ? "# Current durable memory\n(empty)"
                 : "# Current durable memory\n\(current)"
-            if includeSkillBodies {
-                skills = (try? AgentSkillStore.promptBlock(for: assistant)) ?? ""
-            } else {
-                let selected = (try? AgentSkillStore.loadSelected(for: assistant)) ?? []
-                skills = selected.isEmpty ? "" : "# Selected skills\n" + selected
-                    .map { "- \($0.name): \($0.description)" }
-                    .joined(separator: "\n")
-            }
+            let selected = (try? AgentSkillStore.loadSelected(for: assistant)) ?? []
+            let list = RuntimeSkills.promptList(skills: selected)
+            skills = list.isEmpty ? "" : "# Selected skills\n" + list
         } else {
             persona = ""
             memory = ""

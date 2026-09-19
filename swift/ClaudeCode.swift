@@ -279,6 +279,9 @@ final class ClaudeCodeAgentRuntime: AgentRuntime {
         }
         let newSessionID = UUID().uuidString.lowercased()
         let sessionID = binding?.externalSessionID ?? newSessionID
+        var addedFolders: [String] = []
+        if let persona = request.folders.personaDirectory { addedFolders.append(persona.path) }
+        addedFolders.append(request.folders.scratchDirectory.path)
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
         proc.arguments = ClaudeCodeProtocol.arguments(
@@ -286,9 +289,11 @@ final class ClaudeCodeAgentRuntime: AgentRuntime {
             trustProfile: request.trustProfile,
             model: request.model?.model,
             reasoningEffort: request.model?.reasoningEffort,
-            extraDirectories: request.extraWritableRoots,
+            extraDirectories: addedFolders,
             instructions: request.instructions)
-        proc.environment = Self.sanitizedEnvironment()
+        var environment = Self.sanitizedEnvironment()
+        environment["MCP_TOOL_TIMEOUT"] = String(ClaudeCodeLaunch.toolTimeoutMilliseconds)
+        proc.environment = environment
         proc.currentDirectoryURL = request.workingDirectory
         let stdin = Pipe()
         let stdout = Pipe()

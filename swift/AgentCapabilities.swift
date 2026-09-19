@@ -185,19 +185,7 @@ struct AgentSkill: Equatable {
     let digest: String
 }
 
-struct AgentSkillProjectionEntry: Codable, Equatable {
-    let skill: String
-    let sourceDigest: String
-    let projectedPath: String
-}
-
-struct AgentSkillProjectionManifest: Codable, Equatable {
-    let version: Int
-    let entries: [AgentSkillProjectionEntry]
-}
-
 enum AgentSkillStore {
-    private static let projectionLock = NSLock()
     private static let namePattern = try! NSRegularExpression(
         pattern: #"^[a-z0-9]+(?:-[a-z0-9]+)*$"#)
 
@@ -230,70 +218,5 @@ enum AgentSkillStore {
         return AgentSkill(
             name: name, description: description, sourceURL: url,
             contents: text, digest: AgentDigest.sha256(text))
-    }
-
-    @discardableResult
-    static func project(for assistant: AssistantDefinition) throws -> AgentSkillProjectionManifest {
-        // Skills and tools are assistant-scoped projections, not
-        // conversation-scoped state. Concurrent runs may refresh the exact
-        // same target and therefore must share one filesystem transaction.
-        projectionLock.lock()
-        defer { projectionLock.unlock() }
-        let skills = try loadSelected(for: assistant)
-        let opencodeRoot = assistant.directory.appendingPathComponent(".opencode")
-        let target = opencodeRoot.appendingPathComponent("skills")
-        let staging = opencodeRoot.appendingPathComponent(".skills-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-        do {
-            var entries: [AgentSkillProjectionEntry] = []
-            for skill in skills {
-                let directory = staging.appendingPathComponent(skill.name)
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                let projected = directory.appendingPathComponent("SKILL.md")
-                try Data(skill.contents.utf8).write(to: projected, options: [.atomic])
-                entries.append(AgentSkillProjectionEntry(
-                    skill: skill.name, sourceDigest: skill.digest,
-                    projectedPath: ".opencode/skills/\(skill.name)/SKILL.md"))
-            }
-            let manifest = AgentSkillProjectionManifest(version: 1, entries: entries)
-            let data = try JSONEncoder.sorted.encode(manifest)
-            try data.write(to: staging.appendingPathComponent("manifest.json"), options: [.atomic])
-            if FileManager.default.fileExists(atPath: target.path) {
-                let old = opencodeRoot.appendingPathComponent(".skills-old-\(UUID().uuidString)")
-                try FileManager.default.moveItem(at: target, to: old)
-                do {
-                    try FileManager.default.moveItem(at: staging, to: target)
-                    try? FileManager.default.removeItem(at: old)
-                } catch {
-                    try? FileManager.default.moveItem(at: old, to: target)
-                    throw error
-                }
-            } else {
-                try FileManager.default.moveItem(at: staging, to: target)
-            }
-            return manifest
-        } catch {
-            try? FileManager.default.removeItem(at: staging)
-            throw error
-        }
-    }
-
-    static func promptBlock(for assistant: AssistantDefinition,
-                            maxCharacters: Int = 16_000) throws -> String {
-        let blocks = try loadSelected(for: assistant).map { skill in
-            "## Skill: \(skill.name)\n\(skill.contents)"
-        }.joined(separator: "\n\n")
-        guard !blocks.isEmpty else { return "" }
-        return blocks.count <= maxCharacters
-            ? "\n\n# Selected Voice Flow skills\n\(blocks)"
-            : "\n\n# Selected Voice Flow skills\n\(String(blocks.prefix(maxCharacters)))\n…(skills clipped)"
-    }
-}
-
-private extension JSONEncoder {
-    static var sorted: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
     }
 }
