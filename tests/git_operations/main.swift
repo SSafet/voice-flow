@@ -187,13 +187,15 @@ guard let workingDiff = diffText(from: nil, to: nil, path: nil) else { exit(1) }
 expect(workingDiff.contains("never-added.txt"),
        "a diff against the working copy shows a file that was never added, which plain git diff would miss")
 expect(workingDiff.contains("changed again"), "and the edits to a tracked file")
+// The test's own checkpoint reference is made BEFORE the first reading, so the two readings
+// differ only if asking for a diff wrote a reference.
+shell("git update-ref refs/atika/checkpoints/th_1/tu_1-before \(firstCommit)", in: repo)
 let refsBeforeDiff = shell("git for-each-ref --format='%(refname)' refs/", in: repo)
 
 guard let pathDiff = diffText(from: nil, to: nil, path: "edited.txt") else { exit(1) }
 expect(pathDiff.contains("edited.txt"), "a diff limited to one path shows that path")
 expect(!pathDiff.contains("never-added.txt"), "and nothing else")
 
-shell("git update-ref refs/atika/checkpoints/th_1/tu_1-before \(firstCommit)", in: repo)
 guard let checkpointDiff = diffText(from: "refs/atika/checkpoints/th_1/tu_1-before", to: nil, path: nil)
 else { exit(1) }
 expect(checkpointDiff.contains("later.txt"),
