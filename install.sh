@@ -44,6 +44,9 @@ VF_PROJECT_DIR="$PROJECT_DIR" "$PROJECT_DIR/scripts/sync-thread-protocol.sh" --c
 echo "  Preparing pinned OpenCode runtime..."
 "$PROJECT_DIR/scripts/prepare-opencode-runtime.sh" "$RUNTIME_STAGE/OpenCode"
 
+echo "  Preparing pinned ripgrep..."
+"$PROJECT_DIR/scripts/prepare-ripgrep-runtime.sh" "$RUNTIME_STAGE/ripgrep"
+
 # ── copy the .app template into the staging bundle ─────
 rm -rf "$BUILD_DEST"
 cp -R "$PROJECT_DIR/$APP_NAME.app" "$BUILD_DEST"
@@ -60,6 +63,10 @@ cp "$RUNTIME_STAGE/OpenCode/opencode" "$BUILD_DEST/Contents/Resources/Runtime/Op
 cp "$RUNTIME_STAGE/OpenCode/versions.json" "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/versions.json"
 cp "$RUNTIME_STAGE/OpenCode/tool-sdk.json" "$RUNTIME_STAGE/OpenCode/tool-sdk.tar.gz" "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/"
 chmod 755 "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/opencode"
+mkdir -p "$BUILD_DEST/Contents/Resources/Runtime/ripgrep"
+cp "$RUNTIME_STAGE/ripgrep/rg" "$BUILD_DEST/Contents/Resources/Runtime/ripgrep/rg"
+cp "$RUNTIME_STAGE/ripgrep/versions.json" "$BUILD_DEST/Contents/Resources/Runtime/ripgrep/versions.json"
+chmod 755 "$BUILD_DEST/Contents/Resources/Runtime/ripgrep/rg"
 
 # Write project directory path into bundle (used to locate .venv).
 # VF_PROJECT_DIR overrides it when compiling from a throwaway snapshot
@@ -118,6 +125,8 @@ codesign --force "${SIGN_TIMESTAMP_ARGS[@]}" --sign "$SIGN_ID" --identifier "com
     "$BUILD_DEST/Contents/MacOS/voice-flow"
 codesign --force "${SIGN_TIMESTAMP_ARGS[@]}" --sign "$SIGN_ID" \
     "$BUILD_DEST/Contents/Resources/Runtime/OpenCode/opencode"
+codesign --force "${SIGN_TIMESTAMP_ARGS[@]}" --sign "$SIGN_ID" \
+    "$BUILD_DEST/Contents/Resources/Runtime/ripgrep/rg"
 RUNTIME_ARCH="$(uname -m)"
 [ "$RUNTIME_ARCH" = "x86_64" ] || RUNTIME_ARCH="arm64"
 SOURCE_RUNTIME_SHA="$(plutil -extract "assets.$RUNTIME_ARCH.binarySHA256" raw \
