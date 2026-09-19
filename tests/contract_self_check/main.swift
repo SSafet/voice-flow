@@ -23,6 +23,28 @@ guard good.fixtureFiles > 0, good.examples > 0, good.ruleCases > 0 else {
 }
 guard good.protocolVersion == "2" else { fail("the lock says protocol version 2, not \(good.protocolVersion)") }
 guard good.schemaSHA256.count == 64 else { fail("the lock carries a schema hash") }
+
+// The line accounts for every fixture file the bundle carries, counted from the
+// folders themselves. Some committed fixtures have no generated Swift type and
+// are never decoded; the line says how many rather than claiming them all.
+var jsonOnDisk = 0
+for (set, _) in tpFixtureFolders {
+    let folder = fixtures.appendingPathComponent(set, isDirectory: true)
+    jsonOnDisk += ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+        .filter { $0.hasSuffix(".json") }.count
+}
+guard good.fixtureFiles + good.skippedFiles == jsonOnDisk else {
+    fail("the line accounts for every fixture file on disk: "
+        + "\(good.fixtureFiles) decoded plus \(good.skippedFiles) skipped is not \(jsonOnDisk)")
+}
+guard good.aboutLine.contains("\(good.fixtureFiles) of \(jsonOnDisk) fixture files decoded") else {
+    fail("the line says how many of the files on disk were decoded: \(good.aboutLine)")
+}
+if good.skippedFiles > 0 {
+    guard good.aboutLine.contains("\(good.skippedFiles) have no generated Swift type") else {
+        fail("the line says why the rest were skipped: \(good.aboutLine)")
+    }
+}
 print(good.aboutLine)
 
 // A copy, damaged three ways at once.
@@ -45,7 +67,7 @@ for expected in ["Thread.json", "Turn.json", "Unknown.json"] {
         fail("the damage to \(expected) is reported; got \(bad.problems)")
     }
 }
-guard !bad.aboutLine.contains("all fixtures decoded") else {
+guard !bad.aboutLine.contains("fixture files decoded") else {
     fail("a failing check must not print the passing line: \(bad.aboutLine)")
 }
 

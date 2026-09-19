@@ -9,22 +9,29 @@ enum ContractSelfCheck {
         let protocolVersion: String
         let schemaSHA256: String
         let fixtureFiles: Int
+        /// Fixture files the bundle carries that the generated table names but
+        /// gives no Swift type for, so nothing decodes them. They are counted
+        /// so the About line cannot read as a claim about every file there.
+        let skippedFiles: Int
         let examples: Int
         let ruleCases: Int
         let problems: [String]
 
         var passed: Bool { problems.isEmpty }
 
-        /// "Thread protocol 2, schema 4ebb898c6fab, all fixtures decoded
-        /// (66 files, 162 examples), all four rules match (74 cases)"
+        /// "Thread protocol 2, schema 4ebb898c6fab, 200 of 219 fixture files
+        /// decoded (438 examples), 19 have no generated Swift type, all four
+        /// rules match (74 cases)"
         var aboutLine: String {
             let schema = String(schemaSHA256.prefix(12))
             guard passed else {
                 return "Thread protocol \(protocolVersion), schema \(schema), "
                     + "\(problems.count) problem(s): \(problems[0])"
             }
+            let skipped = skippedFiles == 0 ? "" : "\(skippedFiles) have no generated Swift type, "
             return "Thread protocol \(protocolVersion), schema \(schema), "
-                + "all fixtures decoded (\(fixtureFiles) files, \(examples) examples), "
+                + "\(fixtureFiles) of \(fixtureFiles + skippedFiles) fixture files decoded "
+                + "(\(examples) examples), \(skipped)"
                 + "all four rules match (\(ruleCases) cases)"
         }
     }
@@ -65,9 +72,14 @@ enum ContractSelfCheck {
         var problems: [String] = []
         let lockValues = readLock(lockFile, problems: &problems)
         var files = 0
+        var skipped = 0
         var examples = 0
         var presentEverywhere = Set<String>()
-        let known = Set(tpFixtureTypes).union(tpFixtureTypesWithoutSwift)
+        // Sorted once, not once per contract set: the list grows with every
+        // contract package, and this runs on the main thread at launch.
+        let decodable = tpFixtureTypes.sorted()
+        let withoutSwift = Set(tpFixtureTypesWithoutSwift)
+        let known = Set(tpFixtureTypes).union(withoutSwift)
         if tpFixtureFolders.isEmpty { problems.append("the generated fixture table lists no contract set") }
         for (set, _) in tpFixtureFolders {
             let folder = fixturesRoot.appendingPathComponent(set, isDirectory: true)
@@ -81,7 +93,8 @@ enum ContractSelfCheck {
             for name in present.subtracting(known).sorted() {
                 problems.append("\(set)/\(name).json: the generated table does not know this type")
             }
-            for type in tpFixtureTypes.sorted() where present.contains(type) {
+            skipped += present.intersection(withoutSwift).count
+            for type in decodable where present.contains(type) {
                 files += 1
                 let file = folder.appendingPathComponent("\(type).json", isDirectory: false)
                 do {
@@ -96,7 +109,7 @@ enum ContractSelfCheck {
                 }
             }
         }
-        for type in tpFixtureTypes.sorted() where !presentEverywhere.contains(type) {
+        for type in decodable where !presentEverywhere.contains(type) {
             problems.append("\(type).json: the file is missing")
         }
         let rules = runRules(
@@ -109,6 +122,7 @@ enum ContractSelfCheck {
             protocolVersion: lockValues.version,
             schemaSHA256: lockValues.schema,
             fixtureFiles: files,
+            skippedFiles: skipped,
             examples: examples,
             ruleCases: rules,
             problems: problems
