@@ -30,6 +30,7 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
+import java.io.File
 import java.util.concurrent.Executors
 
 /// The floating dictation bubble (ticket VF-51): a small dot drawn over
@@ -45,10 +46,12 @@ class BubbleService : Service() {
     private lateinit var queue: AudioQueue
     private lateinit var syncClient: SyncClient
     private lateinit var dictation: DictationService
+    private lateinit var session: RecordingSession
     private val recorder = Recorder()
     private val executor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("app", Context.MODE_PRIVATE) }
+    private var takeMode = DictationMode.INSERT
 
     /// A finished take enters through the one pipeline; the dot's sink only
     /// decides how the text becomes visible.
@@ -66,6 +69,7 @@ class BubbleService : Service() {
 
     private val accent = Color.parseColor("#E8A33D")
     private val red = Color.parseColor("#E25B55")
+    private val keep = Color.parseColor("#5B8DEF")
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -77,6 +81,32 @@ class BubbleService : Service() {
         queue = AudioQueue(filesDir)
         syncClient = SyncClient(this)
         dictation = DictationService(this, delivered)
+        session = RecordingSession(
+            overlay = object : OverlayHost {
+                override fun showDot(mode: DotState) { setState(mode) }
+                override fun setPulsing(on: Boolean) { if (on) setState(state) else stopPulse() }
+                override fun removeDot() { setState(DotState.IDLE) }
+            },
+            foreground = object : ForegroundHost {
+                override fun promoteMicrophone(): Boolean = startInForeground(recording = true)
+                override fun demoteMicrophone() { startInForeground(recording = false) }
+            },
+            recorder = object : RecorderPort {
+                override fun start(): Boolean =
+                    try { recorder.start(queue.audioDir); true } catch (_: Exception) { false }
+                override fun stop(): File? = recorder.stop()
+            },
+            notices = object : NoticeSink {
+                override fun show(code: String) {
+                    val refusal = RecordingRefusal.entries.firstOrNull { it.code == code }
+                        ?: throw IllegalArgumentException("unknown recording refusal: $code")
+                    toast(getString(when (refusal) {
+                        RecordingRefusal.MIC_REFUSED -> R.string.mic_refused
+                        RecordingRefusal.RECORDER_FAILED -> R.string.recorder_failed
+                    }))
+                }
+            },
+        )
         startInForeground(recording = false)
         SyncJob.schedule(this)
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -97,7 +127,12 @@ class BubbleService : Service() {
             return START_NOT_STICKY
         }
         if (intent?.action == ACTION_TOGGLE) {
-            onBubbleTap()
+            // The side key and the tile both come through the trampoline with
+            // a mode; a tap on the dot itself is a plain insert dictation.
+            val mode = DictationMode.parse(
+                intent.getStringExtra(DictateTrampoline.EXTRA_MODE) ?: DictationMode.INSERT.wire,
+            ) ?: DictationMode.INSERT
+            onBubbleTap(mode)
             return START_STICKY
         }
         // Catch up on anything queued offline. "fresh_id" (adb test seam —
@@ -131,10 +166,12 @@ class BubbleService : Service() {
     /// Foreground type juggling for Android 14+: the service lives as
     /// specialUse (bubble host) and only claims the microphone type for the
     /// span of a recording — claiming it up front would make background
-    /// starts (boot, sticky restart) illegal.
-    private fun startInForeground(recording: Boolean) {
+    /// starts (boot, sticky restart) illegal. Returns false when the type
+    /// upgrade is refused, so the ordering can refuse the take by name rather
+    /// than record into a type the system will not allow.
+    private fun startInForeground(recording: Boolean): Boolean {
         val notif = buildNotification()
-        try {
+        return try {
             if (Build.VERSION.SDK_INT >= 34) {
                 var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
                 if (recording) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
@@ -142,9 +179,10 @@ class BubbleService : Service() {
             } else {
                 startForeground(NOTIF_ID, notif)
             }
+            true
         } catch (_: Exception) {
-            // Type upgrade refused (edge OEM policies) — recording still
-            // proceeds; the overlay-permission exemption covers mic access.
+            // Type upgrade refused (edge OEM policies): say so, do not record.
+            !recording
         }
     }
 
@@ -240,7 +278,7 @@ class BubbleService : Service() {
                     }
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!dragging) { onBubbleTap(); return true }
+                    if (!dragging) { onBubbleTap(DictationMode.INSERT); return true }
                     val dm = resources.displayMetrics
                     lp.x = if (lp.x + size / 2 < dm.widthPixels / 2) dp(4)
                         else dm.widthPixels - size - dp(4)
@@ -253,12 +291,11 @@ class BubbleService : Service() {
         }
     }
 
-    private fun onBubbleTap() {
+    private fun onBubbleTap(mode: DictationMode) {
         when (state) {
-            DotState.RECORDING -> stopRecording()
+            DotState.RECORDING, DotState.KEPT -> stopRecording()
             DotState.TRANSCRIBING -> {}          // hands off while a take is in flight
-            DotState.IDLE -> startRecording()
-            DotState.KEPT -> {}                  // P4 enters KEPT; a tap here is a no-op
+            DotState.IDLE -> startRecording(mode)
         }
     }
 
@@ -276,9 +313,13 @@ class BubbleService : Service() {
         d.contentDescription = DotAnnouncement.contentDescriptionFor(s)?.let { getString(it) }
         pulse?.cancel(); pulse = null
         d.scaleX = 1f; d.scaleY = 1f; d.alpha = 1f
-        (d.background as GradientDrawable).setColor(if (s == DotState.RECORDING) red else accent)
+        (d.background as GradientDrawable).setColor(when (s) {
+            DotState.RECORDING -> red
+            DotState.KEPT -> keep
+            else -> accent
+        })
         when (s) {
-            DotState.RECORDING -> pulse = ValueAnimator.ofFloat(1f, 1.6f).apply {
+            DotState.RECORDING, DotState.KEPT -> pulse = ValueAnimator.ofFloat(1f, 1.6f).apply {
                 duration = 520; repeatCount = ValueAnimator.INFINITE
                 repeatMode = ValueAnimator.REVERSE
                 addUpdateListener { a ->
@@ -294,8 +335,14 @@ class BubbleService : Service() {
                 start()
             }
             DotState.IDLE -> {}
-            DotState.KEPT -> {}
         }
+    }
+
+    /// Stop the working pulse without changing which state the dot shows — the
+    /// refused take keeps the mode's colour, static.
+    private fun stopPulse() {
+        pulse?.cancel(); pulse = null
+        dot?.scaleX = 1f; dot?.scaleY = 1f; dot?.alpha = 1f
     }
 
     /// One bright expand-and-settle on the dot: the transcript went into the
@@ -314,34 +361,35 @@ class BubbleService : Service() {
 
     // ══════════════════════ record → transcribe → deliver ══════════════════════
 
-    private fun startRecording() {
+    private fun startRecording(mode: DictationMode) {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED) {
             toast(getString(R.string.bubble_mic_permission))
             startActivity(Intent(this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            DictateTrampoline.pending?.refused(RecordingRefusal.MIC_REFUSED)
             return
         }
-        startInForeground(recording = true)
-        try {
-            recorder.start(queue.audioDir)
-            setState(DotState.RECORDING)
-        } catch (e: Exception) {
-            toast(getString(R.string.bubble_mic_unavailable, e.message?.take(80)))
-            setState(DotState.IDLE)
-            startInForeground(recording = false)
+        takeMode = mode
+        val dot = if (mode == DictationMode.KEEP) DotState.KEPT else DotState.RECORDING
+        when (val result = session.begin(dot)) {
+            BeginResult.Started -> DictateTrampoline.pending?.confirmed()
+            is BeginResult.Refused -> {
+                // The dot has said its refusal; let it go once the notice has
+                // been read, and release a waiting trampoline.
+                setState(DotState.IDLE)
+                DictateTrampoline.pending?.refused(result.refusal)
+            }
         }
     }
 
     private fun stopRecording() {
-        val file = recorder.stop()
-        startInForeground(recording = false)
+        val file = session.end()
         if (file == null) {
-            setState(DotState.IDLE)
             toast(getString(R.string.bubble_too_short))
             return
         }
-        queue.enqueue(QueueItem(file.name, file.absolutePath, DictationMode.INSERT.wire,
+        queue.enqueue(QueueItem(file.name, file.absolutePath, takeMode.wire,
             System.currentTimeMillis()))
         setState(DotState.TRANSCRIBING)
         val freshId = file.name
@@ -378,7 +426,7 @@ class BubbleService : Service() {
                 Refusal.NO_KEY -> if (freshId != null) toast(getString(R.string.bubble_no_api_key))
                 Refusal.OFFLINE -> if (freshId != null) toast(getString(R.string.bubble_offline_queued))
                 Refusal.TRANSCRIPTION_FAILED ->
-                    if (freshId != null) toast(getString(R.string.bubble_transcription_failed, "transcription_failed"))
+                    if (freshId != null) toast(getString(R.string.bubble_transcription_failed, Refusal.TRANSCRIPTION_FAILED.code))
                 Refusal.NOTHING_HEARD -> if (freshId != null) toast(getString(R.string.bubble_nothing_heard))
                 null -> {}
             }
@@ -416,22 +464,50 @@ class BubbleService : Service() {
 }
 
 /// Invisible trampoline behind the ".Dictate" assist alias (side-key long
-/// press): with the bubble running it toggles bubble recording in place —
-/// the frontmost app keeps focus, so the transcript still lands at the
-/// cursor — and only without the bubble does it open the app to record,
-/// as before. Theme.NoDisplay: nothing flashes on screen.
+/// press) and the quick-settings tile: it asks the bubble to record in place
+/// — the frontmost app keeps focus, so the transcript still lands at the
+/// cursor — and holds itself open until the service confirms the dot is up
+/// and recording began, or refuses (08 §3.7). Theme.NoDisplay: nothing
+/// flashes on screen.
 class DictateTrampoline : android.app.Activity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
-        if (BubbleService.running) {
-            startService(Intent(this, BubbleService::class.java)
-                .setAction(BubbleService.ACTION_TOGGLE))
-        } else {
-            startActivity(Intent(this, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra("start_recording", true))
+        val mode = DictationMode.parse(
+            intent.getStringExtra(EXTRA_MODE) ?: DictationMode.INSERT.wire,
+        ) ?: DictationMode.INSERT
+        val handshake = TrampolineHandshake()
+        handshake.requested()
+        pending = handshake
+        startService(Intent(this, BubbleService::class.java)
+            .setAction(BubbleService.ACTION_TOGGLE)
+            .putExtra(EXTRA_MODE, mode.wire))
+        val handler = Handler(Looper.getMainLooper())
+        val deadline = System.currentTimeMillis() + WAIT_MS
+        val poll = object : Runnable {
+            override fun run() {
+                if (handshake.done || System.currentTimeMillis() >= deadline) {
+                    pending = null
+                    finish()
+                } else {
+                    handler.postDelayed(this, 20)
+                }
+            }
         }
-        finish()
+        handler.post(poll)
+    }
+
+    companion object {
+        /// The mode the caller wants recorded, a [DictationMode.wire] value.
+        const val EXTRA_MODE = "mode"
+
+        /// The handshake the service confirms or refuses while this activity
+        /// is alive; null when no trampoline is waiting.
+        @Volatile var pending: TrampolineHandshake? = null
+            private set
+
+        /// A refused or wedged service must never trap the activity: after
+        /// this long the trampoline finishes anyway.
+        private const val WAIT_MS = 2_000L
     }
 }
 

@@ -14,6 +14,8 @@
 
     <string name="bubble_mic_permission">Open Voice Flow once to grant microphone access</string>
     <string name="bubble_mic_unavailable">Mic unavailable: %1$s</string>
+    <string name="mic_refused">Microphone unavailable — check Voice Flow\'s microphone permission</string>
+    <string name="recorder_failed">Could not start recording — try again</string>
     <string name="bubble_too_short">Too short — nothing captured</string>
     <string name="bubble_no_api_key">No API key yet — open Voice Flow → Settings &amp; sync to add it</string>
     <string name="bubble_transcription_failed">Transcription failed: %1$s</string>

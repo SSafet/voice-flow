@@ -7,9 +7,12 @@ import android.service.quicksettings.TileService
 
 class RecordTileService : TileService() {
     override fun onClick() {
-        val intent = Intent(this, MainActivity::class.java)
+        // A kept dictation, through the same no-window trampoline the side key
+        // uses: it never opens the app, so the tile starts recording while the
+        // frontmost app keeps focus.
+        val intent = Intent(this, DictateTrampoline::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            .putExtra("start_recording", true)
+            .putExtra(DictateTrampoline.EXTRA_MODE, DictationMode.KEEP.wire)
         if (Build.VERSION.SDK_INT >= 34) {
             startActivityAndCollapse(
                 PendingIntent.getActivity(
