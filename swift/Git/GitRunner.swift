@@ -241,6 +241,34 @@ struct GitRunner: Sendable {
     }
 }
 
+/// The half of the revision gate that must run a process, so it lives beside the
+/// only type that starts one; the refusal names and the error value stay in
+/// `GitRevision`.
+extension GitRevision {
+    static func accept(_ value: String, folder: URL, runner: GitRunner)
+        -> Result<String, GitOperationError> {
+        if value == "HEAD" {
+            return .success(value)
+        }
+        guard isCommitId(value) || CheckpointRefs.isCheckpointRef(value) else {
+            return .failure(refusal(value))
+        }
+        switch runner.run(["rev-parse", "--verify", "--quiet", "--end-of-options", "\(value)^{commit}"],
+                          in: folder, query: true) {
+        case .success:
+            return .success(value)
+        case .failure:
+            return .failure(refusal(value))
+        }
+    }
+
+    private static func refusal(_ value: String) -> GitOperationError {
+        GitOperationError(
+            code: "invalid_params",
+            message: "the revision \"\(value)\" is not HEAD, a commit id or a checkpoint reference of this project")
+    }
+}
+
 /// The two pipe readers run beside the process, so their results are collected
 /// behind a lock and read after both have finished.
 private final class OutputBox: @unchecked Sendable {

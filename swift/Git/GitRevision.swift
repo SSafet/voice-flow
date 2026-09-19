@@ -47,27 +47,4 @@ enum GitRevision {
         let allowed = CharacterSet(charactersIn: "0123456789abcdef")
         return value.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
-
-    static func accept(_ value: String, folder: URL, runner: GitRunner)
-        -> Result<String, GitOperationError> {
-        if value == "HEAD" {
-            return .success(value)
-        }
-        guard isCommitId(value) || CheckpointRefs.isCheckpointRef(value) else {
-            return .failure(refusal(value))
-        }
-        switch runner.run(["rev-parse", "--verify", "--quiet", "--end-of-options", "\(value)^{commit}"],
-                          in: folder, query: true) {
-        case .success:
-            return .success(value)
-        case .failure:
-            return .failure(refusal(value))
-        }
-    }
-
-    private static func refusal(_ value: String) -> GitOperationError {
-        GitOperationError(
-            code: "invalid_params",
-            message: "the revision \"\(value)\" is not HEAD, a commit id or a checkpoint reference of this project")
-    }
 }

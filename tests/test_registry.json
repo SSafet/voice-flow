@@ -36,6 +36,7 @@
         "display_context",
         "evidence",
         "fake_openai_server",
+        "folder_watch",
         "git_checkpoints",
         "git_operations",
         "git_runner",
