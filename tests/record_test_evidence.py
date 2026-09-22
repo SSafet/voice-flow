@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "tests" / "test_registry.json"
 ORDER = {"unit": 0, "live": 1, "e2e": 2, "release": 3}
-SOURCE_DIRECTORIES = {"swift", "voice_flow", "tests", "scripts", "runtime", "watcher", "assets", ".github"}
+SOURCE_DIRECTORIES = {"swift", "voice_flow", "tests", "scripts", "runtime", "watcher", "assets", ".github", "web", "proofs"}
 
 
 def is_source(path: bytes) -> bool:

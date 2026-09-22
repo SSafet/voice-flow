@@ -57,6 +57,7 @@
         "player",
         "qa_control",
         "qa_launch_isolation",
+        "t3_native_shell",
         "queue_editor",
         "ripgrep_runtime",
         "sandbox_containment",
@@ -1151,6 +1152,13 @@
       "runner": "unit",
       "suites": [
         "thread_store_recovery"
+      ]
+    },
+    {
+      "id": "tests/t3_native_shell/test.sh",
+      "runner": "unit",
+      "suites": [
+        "t3_native_shell"
       ]
     },
     {
