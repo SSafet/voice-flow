@@ -1,0 +1,33 @@
+{
+  "sourceCommit": "dc1132d",
+  "helperDependencyCommit": "9de9787",
+  "platformHelperSourceCommit": "805e9a3",
+  "recordedAt": "2026-09-22T14:38:11.601385+00:00",
+  "query": {
+    "command": "VF_CAPTURED_QUERY_FIXTURE=/tmp/vf-s2-sdk-fixture.json bash tests/captured_query_service/test.sh",
+    "exitCode": 0,
+    "assertions": 115,
+    "configRoot": "fresh mktemp directory under /tmp",
+    "wholeProductionClosureCompiled": true
+  },
+  "sdk": {
+    "repository": "https://github.com/modelcontextprotocol/swift-sdk",
+    "revision": "a0ae212ebf6eab5f754c3129608bc5557637e605",
+    "command": "VF_CAPTURED_QUERY_FIXTURE=/tmp/vf-s2-sdk-probe-fixture.json VF_MCP_SDK_CHECKOUT=/tmp/vf-s2-swift-mcp-sdk bash tests/captured_query_service/sdk-probe.sh",
+    "exitCode": 0,
+    "tests": 84,
+    "suites": 7,
+    "fixtureSHA256": "10d7279b11c862226800fad65e57cb17d27b199560b387c01f47c1c29e9af82d",
+    "finalSourceFixtureMatchesSDKFixture": true
+  },
+  "manifestSHA256": "02fdf67b0f8dc477f12576f7980695daea7c6e221125de988ec942c58a9219be",
+  "limits": {
+    "dailyAppTouched": false,
+    "realUserFilesReadOrWritten": false,
+    "modelCalls": 0,
+    "liveCaptureStarted": false,
+    "publicServerStarted": false,
+    "fullAppBuildRun": false,
+    "signedAppGate": "owned by root platform integration"
+  }
+}

@@ -1,0 +1,18 @@
+Build complete! (28,01 sec)
+◇ Suite "Tool Tests" started.
+◇ Suite "Server.currentHandlerContext Tests" started.
+◇ Suite CapturedSDKAdapterProbe started.
+◇ Suite "StatefulHTTPServerTransport Tests" started.
+◇ Suite "StatelessHTTPServerTransport Tests" started.
+◇ Suite "Version Negotiation Tests" started.
+◇ Suite "Cancellation Tests" started.
+◇ Test productionCapturedReplyFitsSupportedSDK() started.
+✔ Suite "Tool Tests" passed after 0.027 seconds.
+✔ Suite "Version Negotiation Tests" passed after 0.028 seconds.
+✔ Test productionCapturedReplyFitsSupportedSDK() passed after 0.039 seconds.
+✔ Suite CapturedSDKAdapterProbe passed after 0.043 seconds.
+✔ Suite "StatefulHTTPServerTransport Tests" passed after 0.078 seconds.
+✔ Suite "StatelessHTTPServerTransport Tests" passed after 0.088 seconds.
+✔ Suite "Server.currentHandlerContext Tests" passed after 0.129 seconds.
+✔ Suite "Cancellation Tests" passed after 0.159 seconds.
+✔ Test run with 84 tests in 7 suites passed after 0.160 seconds.
