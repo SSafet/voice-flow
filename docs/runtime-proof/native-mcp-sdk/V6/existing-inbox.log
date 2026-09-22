@@ -1,0 +1,8 @@
+capability catalog: 179 capabilities across 24 areas; MCP 15/15; registry 193/193
+OpenCode manifest: v2.0.12, 2 macOS architectures, digests valid
+RUN: compile inbox
+PASS: compile inbox (2s)
+RUN: inbox
+inbox tests passed
+PASS: inbox (0s)
+agent harness: selected unit suite 'inbox' passed; full gate not run

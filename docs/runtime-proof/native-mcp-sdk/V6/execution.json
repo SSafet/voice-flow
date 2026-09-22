@@ -1,0 +1,59 @@
+{
+  "source_commit": "22c5c69bb0ba68a71833300695333af492c018c9",
+  "started_utc": "2026-09-22T15:16:38.298707+00:00",
+  "checks": [
+    {
+      "name": "native-http-sdk",
+      "command": [
+        "tests/native_mcp_sdk/test.sh"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 13.82
+    },
+    {
+      "name": "captured-sdk-query",
+      "command": [
+        "tests/native_mcp_sdk/captured.sh"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 16.062
+    },
+    {
+      "name": "existing-inbox",
+      "command": [
+        "scripts/test-agent-harness.sh",
+        "--unit",
+        "--only",
+        "inbox"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 2.736
+    },
+    {
+      "name": "native-source-parse",
+      "command": [
+        "swiftc",
+        "-frontend",
+        "-parse",
+        "swift/App.swift",
+        "swift/App+MCPTools.swift",
+        "swift/TTS.swift",
+        "swift/LocalAPI.swift"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.058
+    },
+    {
+      "name": "whitespace",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.012
+    }
+  ],
+  "source_bytes_unchanged": true,
+  "completed_utc": "2026-09-22T15:17:10.992587+00:00"
+}
