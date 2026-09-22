@@ -37,7 +37,7 @@ guard VoiceFlowPaths.shared.isIsolated else {
 }
 
 private let files = FileManager.default
-private let root = VoiceFlowPaths.shared.configRoot.resolvingSymlinksInPath()
+private let root = VoiceFlowPaths.shared.configRoot
     .appendingPathComponent("index-build", isDirectory: true)
 try? files.removeItem(at: root)
 try files.createDirectory(at: root, withIntermediateDirectories: true)
@@ -131,11 +131,14 @@ struct Disk {
 }
 func countDisk() -> Disk {
     var disk = Disk()
-    let enumerator = files.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey])
-    while let url = enumerator?.nextObject() as? URL {
+    // FileManager's path enumerator supplies relative names itself. URL
+    // enumeration expands /tmp to /private/tmp on macOS, and Foundation URL
+    // normalization may collapse it back; never derive names by string length.
+    let enumerator = files.enumerator(atPath: root.path)
+    while let relative = enumerator?.nextObject() as? String {
+        let url = root.appendingPathComponent(relative)
         guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
         else { continue }
-        let relative = String(url.path.dropFirst(root.path.count + 1))
         // The index itself is not part of what was captured.
         if relative.hasPrefix("index/") { continue }
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0

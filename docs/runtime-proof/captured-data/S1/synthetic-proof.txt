@@ -1,0 +1,6 @@
+activity	none	1
+dictation	none	1
+frame	present	1
+watcher days: 1/1; ready
+remote dictation: dictation:proof-phone	qa-phone
+Source bytes unchanged: 3 files, 293 bytes, manifest SHA256 ff62a9df2297f8f530f6973841a3e7eff5788b888260927e355022220f8debe0
