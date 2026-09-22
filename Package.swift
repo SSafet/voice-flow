@@ -20,6 +20,7 @@ let package = Package(
         .executable(name: "voice-flow", targets: ["VoiceFlowApp"])
     ],
     dependencies: [
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.1"),
         .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.11.1"),
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", exact: "2.26.0"),
         .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", exact: "2.7.0"),
@@ -29,6 +30,7 @@ let package = Package(
         .executableTarget(
             name: "VoiceFlowApp",
             dependencies: [
+                .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),

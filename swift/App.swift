@@ -353,9 +353,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // process exits so Codex/OpenCode and their tool children cannot be
         // reparented as orphans.
         let teardown = DispatchSemaphore(value: 0)
+        let nativeMCP = mcpServer
         let foregroundAgent = agent
         let backgroundSupervisor = agentSupervisor
         Task.detached {
+            await nativeMCP?.stop()
             await foregroundAgent?.shutdown()
             await backgroundSupervisor?.shutdown()
             await AgentPermissionBroker.shared.rejectAll()
@@ -3474,11 +3476,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         mcpServer = MCPServer()
-        mcpServer.callTool = { [weak self] name, arguments, session in
+        mcpServer.callTool = { [weak self] name, arguments, session, cancellation in
             guard let self else {
                 return MCPServer.ToolResult.fail("Voice Flow is shutting down.")
             }
-            return self.handleMCPTool(name, arguments, session)
+            return self.handleMCPTool(name, arguments, session, cancellation)
         }
         // Connecting is NOT engaging: every Claude Code session initializes
         // every registered MCP server, so a fresh connection must neither
@@ -3486,11 +3488,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // target eligibility) starts with the first user-facing tool call —
         // see the engagement hook in handleMCPTool.
         mcpServer.onSessionConnected = nil
-        localAPIServer.onMCP = { [weak self] body, sessionId in
-            self?.mcpServer.handle(body: body, sessionId: sessionId) ?? (503, nil, nil)
+        localAPIServer.onMCP = { [weak self] method, headers, body in
+            guard let self else { return .error(statusCode: 503, .internalError("App unavailable")) }
+            return await self.mcpServer.handleHTTP(method: method, headers: headers, body: body)
         }
-        localAPIServer.onMCPSessionEnd = { [weak self] sessionId in
-            guard let self, let closed = self.mcpServer.sessions.close(sessionId) else { return }
+        mcpServer.onSessionEnded = { [weak self] closed in
+            guard let self else { return }
             DispatchQueue.main.async {
                 self.lastMCPDisplay.removeValue(forKey: closed.id)
                 // An unread stack survives its session as a ghost picker
