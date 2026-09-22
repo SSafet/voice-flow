@@ -20,6 +20,13 @@
       "ahead": 0,
       "behind": 0,
       "entries": []
+    },
+    {
+      "isRepo": false,
+      "ahead": 0,
+      "behind": 0,
+      "entries": [],
+      "unavailableReason": "Git is not installed on this home."
     }
   ]
 }

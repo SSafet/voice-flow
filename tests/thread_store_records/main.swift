@@ -104,7 +104,8 @@ let git = TPTurnGit(branch: "main", dirty: true, headCommit: "def5678",
                     pushed: false, unpushedCount: 2, upstreamRef: "origin/main")
 let checkpoints = TPTurnCheckpoints(after: "refs/atika/checkpoints/t_one/after",
                                     before: "refs/atika/checkpoints/t_one/before")
-let changed = [TPChangedFile(added: 12, path: "swift/Threads/Store/ThreadStore.swift", removed: 3)]
+let changed = [TPChangedFile(added: 12, binary: false, kind: .modified,
+                             path: "swift/Threads/Store/ThreadStore.swift", previousPath: nil, removed: 3)]
 let turn = makeTurn(id: "turn_one", threadID: "t_one", status: .interrupted,
                     git: git, checkpoints: checkpoints, changedFiles: changed,
                     stopReason: .cancelled, reasoningEffort: "max")
