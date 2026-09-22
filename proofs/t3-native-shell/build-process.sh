@@ -6,6 +6,8 @@ cd "$(dirname "$0")/../.."
 archive=${1:?Pass the reviewed complete CLI archive}
 digest=${2:?Pass its reviewed SHA256}
 output=${3:?Pass a new output directory under /tmp}
+mode=${4:-console}
+if [[ "$mode" != console && "$mode" != gui ]]; then exit 64; fi
 output=$(python3 - "$output" <<'PY'
 from pathlib import Path
 import sys
@@ -19,12 +21,16 @@ PY
 if [[ -e "$output" ]]; then exit 64; fi
 mkdir -m 700 "$output"
 bundle="$output/Voice Flow T3 Process QA.app"
+if [[ "$mode" == gui ]]; then bundle="$output/Voice Flow T3 Packaged QA.app"; fi
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp proofs/t3-native-shell/Info.plist "$bundle/Contents/Info.plist"
 "${VOICE_FLOW_TEST_PYTHON:-.venv/bin/python}" scripts/stage-t3-shell-runtime.py --archive "$archive" --sha256 "$digest" --destination "$bundle/Contents/Resources/T3" > "$output/staging-receipt.json"
+sources=(swift/Shell/T3ShellPolicy.swift swift/Shell/T3BrowserAuthentication.swift swift/Shell/T3EnvironmentProcess.swift proofs/t3-native-shell/process-main.swift)
+if [[ "$mode" == gui ]]; then
+  sources=(swift/VoiceFlowPaths.swift swift/Captured/CapturedSourceEvents.swift swift/Shell/*.swift proofs/t3-native-shell/packaged-main.swift)
+fi
 swiftc -target "$(uname -m)-apple-macos14" -swift-version 5 -DVOICE_FLOW_QA -parse-as-library \
-  swift/QALaunchIsolation.swift swift/Shell/T3ShellPolicy.swift swift/Shell/T3BrowserAuthentication.swift \
-  swift/Shell/T3EnvironmentProcess.swift proofs/t3-native-shell/process-main.swift \
+  swift/QALaunchIsolation.swift "${sources[@]}" \
   -o "$bundle/Contents/MacOS/t3-shell-fixture"
 codesign --force --sign - "$bundle"
 codesign --verify --deep --strict "$bundle"
