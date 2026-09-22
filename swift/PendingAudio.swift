@@ -13,6 +13,11 @@ enum PendingAudioStore {
         root.directory("pending-audio")
     }
 
+    /// Persist reservation before recording bytes can be published or pruned.
+    static func retain(runId: UUID, delivery: CapturedPendingDelivery, root: VoiceFlowPaths = .shared) throws {
+        try CapturedPendingFiles.write(delivery, source: directory(root: root).appendingPathComponent("\(runId.uuidString).wav"))
+    }
+
     /// Writes 16-bit mono PCM as a WAV. Returns the file URL, or nil when the
     /// write fails (the capture proceeds regardless — persistence is a net,
     /// not a gate).
@@ -33,6 +38,7 @@ enum PendingAudioStore {
 
     static func remove(runId: UUID, root: VoiceFlowPaths = .shared) {
         let url = directory(root: root).appendingPathComponent("\(runId.uuidString).wav")
+        guard !CapturedPendingFiles.isProtected(url) else { return }
         do {
             try FileManager.default.removeItem(at: url)
             CapturedSourceEvents.didCommit(root: root.configRoot)
@@ -57,6 +63,7 @@ enum PendingAudioStore {
 
     private static func prune(root: VoiceFlowPaths) {
         for stale in pendingFiles(root: root).dropFirst(keepLimit) {
+            guard !CapturedPendingFiles.isProtected(stale) else { continue }
             try? FileManager.default.removeItem(at: stale)
         }
     }

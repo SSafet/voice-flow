@@ -16,6 +16,9 @@ assert.equal(Object.getOwnPropertyDescriptor(page, 'voiceFlowShell').writable, f
 assert.equal((await bridge.describe()).documentId, 'doc');
 await bridge.publishComposerTarget('doc', null);
 assert.deepEqual(JSON.parse(JSON.stringify(messages[1])), {version: 1, type: 'composer', documentId: 'doc', target: null});
+const captureRequest = {deliveryId: 'd', captureId: 'shot:s', offset: 0, maxBytes: 524288};
+await bridge.readCapture(captureRequest);
+assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), {version: 1, type: 'readCapture', request: captureRequest});
 const input = {deliveryId: 'same-stable-id'};
 assert.equal((await bridge.__deliver(input)).status, 'unavailable');
 const unsubscribe = bridge.onInput(async x => ({deliveryId: x.deliveryId, status: 'accepted'}));

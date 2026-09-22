@@ -16,6 +16,7 @@ final class T3ShellWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKU
     private let origin: T3ShellOrigin
     private let authentication: T3BrowserAuthentication
     private let actions: [ShellCapability: Action]
+    let inputCustody: ShellInputCustody?
     private let contentController: WKUserContentController
     private let ruleStore: WKContentRuleListStore
     private let downloads: T3ShellDownloads
@@ -39,12 +40,13 @@ final class T3ShellWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKU
     /// Production supplies a stable, dedicated WKWebsiteDataStore(forIdentifier:)
     /// for this account/environment, never .default(). QA uses .nonPersistent().
     init(origin: T3ShellOrigin, environmentId: String, dataStore: WKWebsiteDataStore, ruleStoreURL: URL,
-         actions: [ShellCapability: Action] = [:]) throws {
+         actions: [ShellCapability: Action] = [:], inputCustody: ShellInputCustody? = nil) throws {
         guard origin.isLoopback else { throw T3ShellError.invalidOrigin }
         guard !dataStore.isPersistent || dataStore.identifier != nil else { throw T3ShellError.invalidResponse }
         self.origin = origin
         self.authentication = T3BrowserAuthentication(origin: origin, environmentId: environmentId)
         self.actions = actions
+        self.inputCustody = inputCustody
         ruleStore = WKContentRuleListStore(url: ruleStoreURL)
         contentController = WKUserContentController()
         let configuration = WKWebViewConfiguration()
@@ -130,15 +132,18 @@ final class T3ShellWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKU
     }
 
     /// Freeze this at native capture start, not at transcription completion.
-    func freezeComposerTarget() -> ShellFrozenTarget? {
-        guard !closed, phase == .ready, window.isVisible else { return nil }
+    func freezeComposerTarget(requireKeyWindow: Bool = false) -> ShellFrozenTarget? {
+        guard !closed, phase == .ready, window.isVisible, !requireKeyWindow || window.isKeyWindow else { return nil }
         return binding.freeze()
     }
 
     func deliver(_ input: ShellInput, timeoutSeconds: Double = 10) async -> ShellInputReceipt {
         guard input.isValid else { return ShellInputReceipt(deliveryId: input.deliveryId, status: .rejected) }
         guard !closed, phase == .ready else { return ShellInputReceipt(deliveryId: input.deliveryId, status: .unavailable) }
-        guard binding.matches(input.destination) else { return ShellInputReceipt(deliveryId: input.deliveryId, status: .staleTarget) }
+        // Only an exact native-owned input may reconcile an old durable receipt
+        // after remount. The web checks that receipt before target; byte reads
+        // still require the currently frozen binding below.
+        guard inputCustody?.owns(input) == true else { return ShellInputReceipt(deliveryId: input.deliveryId, status: .rejected) }
         guard pending[input.deliveryId] == nil else { return ShellInputReceipt(deliveryId: input.deliveryId, status: .unconfirmed) }
         guard let body = try? ShellWire.object(input) else { return ShellInputReceipt(deliveryId: input.deliveryId, status: .rejected) }
         return await withCheckedContinuation { continuation in
@@ -229,6 +234,7 @@ final class T3ShellWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKU
         guard let item = pending[id], item.attempt == attempt else { return }
         pending.removeValue(forKey: id)
         item.timeout.cancel()
+        if status == .accepted { _ = inputCustody?.acknowledge(.init(deliveryId: id, status: status)) }
         item.continuation.resume(returning: ShellInputReceipt(deliveryId: id, status: status))
     }
 
@@ -255,6 +261,13 @@ final class T3ShellWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKU
             else if let decoded = try? ShellWire.decode(ShellComposerTarget.self, value) { target = decoded }
             else { reply(nil, "Invalid composer target."); return }
             reply(["accepted": binding.publish(target, documentId: documentId)], nil)
+        case "readCapture":
+            guard phase == .ready, window.isVisible, let custody = inputCustody,
+                  let value = body["request"], let request = try? ShellWire.decode(ShellCaptureReadRequest.self, value) else {
+                reply(nil, "Captured input is unavailable."); return
+            }
+            do { reply(try ShellWire.object(custody.read(request, binding: binding)), nil) }
+            catch { reply(nil, "Captured input is unavailable for this delivery and composer.") }
         case "perform":
             guard let value = body["request"], let request = try? ShellWire.decode(ShellCapabilityRequest.self, value) else { reply(nil, "Invalid capability request."); return }
             guard let action = actions[request.capability] else { reply(["status": "unavailable"], nil); return }

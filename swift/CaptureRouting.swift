@@ -34,6 +34,7 @@ enum CaptureRoute {
     case paste(PasteTarget)
     case assistant
     case session(id: String, interaction: PendingInteraction?)
+    case nativeDraft(deliveryId: String)
     case historyOnly
 }
 
@@ -144,8 +145,11 @@ enum CaptureCorrelation {
     /// Resolve final backend output to its run. Missing IDs are accepted only
     /// for one-release backend compatibility when ownership is unambiguous.
     static func resolve(requestId: String?, runs: [UUID: CaptureRun]) -> UUID? {
-        if let requestId, let id = UUID(uuidString: requestId), runs[id] != nil { return id }
-        let pending = runs.values.filter { $0.phase == .awaitingTranscription }
+        if let requestId { return UUID(uuidString: requestId).flatMap { runs[$0] != nil ? $0 : nil } }
+        let pending = runs.values.filter {
+            if case .nativeDraft = $0.route { return false }
+            return $0.phase == .awaitingTranscription
+        }
         return pending.count == 1 ? pending[0].id : nil
     }
 }

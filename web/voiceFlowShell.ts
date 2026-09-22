@@ -35,6 +35,13 @@ export interface ShellCapabilityRequest {
   readonly destination?: ShellFrozenTarget;
   readonly text?: string;
 }
+export interface ShellCaptureReadRequest {
+  readonly deliveryId: string; readonly captureId: string; readonly offset: number; readonly maxBytes: number;
+}
+export interface ShellCaptureReadReply {
+  readonly captureId: string; readonly name: string; readonly mimeType: string;
+  readonly sizeBytes: number; readonly sha256: string; readonly offset: number; readonly base64: string;
+}
 export interface VoiceFlowShell {
   readonly version: 1;
   describe(): Promise<{
@@ -44,13 +51,16 @@ export interface VoiceFlowShell {
     readonly capabilities: readonly ShellCapability[];
   }>;
   publishComposerTarget(documentId: string, target: ShellComposerTarget | null): Promise<{ accepted: boolean }>;
+  /** Owned immutable source only, exact frozen target, 1..524288-byte chunks. */
+  readCapture(request: ShellCaptureReadRequest): Promise<ShellCaptureReadReply>;
   perform(request: ShellCapabilityRequest): Promise<{
     readonly status: "completed" | "cancelled" | "unavailable" | "rejected";
   }>;
   /** One active consumer. Unsubscribe only removes that registration. On delivery,
-   * validate frozen target before mutating; deduplicate using the durable draft API.
-   * Preserve unrelated typing and selection. Capture IDs need native upload wiring;
-   * reject unsupported captures instead of accepting text and silently dropping them.
+   * reconcile an exact committed receipt before target checks; otherwise validate
+   * the frozen target before reads and mutation. Upload via readCapture, verify the
+   * full hash, and atomically commit existing draft + attachments + receipt.
+   * Preserve unrelated typing and selection; never accept dropped captures.
    */
   onInput(handler: (input: ShellInput) => Promise<ShellInputReceipt>): () => void;
   /** Renewed cookie is already installed. Wake T3's existing auth supervisor;

@@ -28,6 +28,7 @@ struct CaptureBundleMeta: Codable {
     let durationSeconds: Double
     let transcript: String
     let frames: [CaptureFrameMeta]
+    var pendingDelivery: CapturedPendingDelivery? = nil
 }
 
 struct CaptureSummary {
@@ -72,25 +73,38 @@ final class CaptureStore {
     private var startDate: Date?
     private var frames: [CaptureFrameMeta] = []
     private var frameCounter = 0
+    private var pendingDelivery: CapturedPendingDelivery?
     var onFinalized: ((CaptureSummary) -> Void)?
 
     var isCapturing: Bool { activeDir != nil }
 
     // ── Session lifecycle ───────────────────────────────
 
-    func beginSession(runId: UUID? = nil) {
+    @discardableResult
+    func beginSession(runId: UUID? = nil, pendingDelivery: CapturedPendingDelivery? = nil) -> Bool {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = formatter.string(from: Date())
         let id = runId.map { "\(timestamp)-\($0.uuidString.prefix(8))" } ?? timestamp
         let dir = Self.baseDir.appendingPathComponent(id)
+        if pendingDelivery != nil, FileManager.default.fileExists(atPath: dir.path) { return false }
         try? FileManager.default.createDirectory(
             at: dir.appendingPathComponent("frames"), withIntermediateDirectories: true)
+        if let pendingDelivery {
+            guard pendingDelivery.isValid else { return false }
+            let now = ISO8601DateFormatter().string(from: Date())
+            let meta = CaptureBundleMeta(id: id, startedAt: now, endedAt: now, durationSeconds: 0,
+                                         transcript: "", frames: [], pendingDelivery: pendingDelivery)
+            do { try Self.writeBundle(meta, in: dir) }
+            catch { vflog("capture: custody could not be saved"); return false }
+        }
+        self.pendingDelivery = pendingDelivery
         activeDir = dir
         startDate = Date()
         frames = []
         frameCounter = 0
         vflog("capture: began bundle \(id)")
+        return true
     }
 
     func addFrame(_ raw: Data) {
@@ -111,13 +125,15 @@ final class CaptureStore {
     func endSession(transcript: String?, keepEmpty: Bool = false) -> CaptureSummary? {
         guard let activeDir, let startDate else { return nil }
         let collected = frames
+        let custody = pendingDelivery
+        pendingDelivery = nil
         let started = startDate
         self.activeDir = nil
         self.startDate = nil
         self.frames = []
 
         let text = transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard keepEmpty || !collected.isEmpty || !text.isEmpty else {
+        guard custody != nil || keepEmpty || !collected.isEmpty || !text.isEmpty else {
             try? FileManager.default.removeItem(at: activeDir)
             return nil
         }
@@ -143,7 +159,7 @@ final class CaptureStore {
                 endedAt: iso.string(from: ended),
                 durationSeconds: duration,
                 transcript: text,
-                frames: written
+                frames: written, pendingDelivery: custody
             )
             do {
                 try Self.writeBundle(meta, in: activeDir)
@@ -183,7 +199,7 @@ final class CaptureStore {
                 endedAt: old.endedAt,
                 durationSeconds: old.durationSeconds,
                 transcript: text,
-                frames: old.frames)
+                frames: old.frames, pendingDelivery: old.pendingDelivery)
             do {
                 try Self.writeBundle(updated, in: directory)
             } catch {
@@ -244,6 +260,21 @@ final class CaptureStore {
         return lines.joined(separator: "\n")
     }
 
+    func whenCommitted() async {
+        await withCheckedContinuation { continuation in writeQueue.async { continuation.resume() } }
+    }
+
+    /// Native completion/receipt updates the existing source metadata only.
+    static func updatePendingDelivery(_ value: CapturedPendingDelivery?, in directory: URL, deliveryId: String) throws {
+        guard let old = readMeta(in: directory), let custody = old.pendingDelivery,
+              custody.isValid, custody.deliveryId == deliveryId, value?.isValid != false,
+              value == nil || (value?.deliveryId == deliveryId && value?.reservation == custody.reservation
+                && (custody.completedInput == nil || custody == value)) else { throw CocoaError(.fileReadCorruptFile) }
+        let next = CaptureBundleMeta(id: old.id, startedAt: old.startedAt, endedAt: old.endedAt,
+            durationSeconds: old.durationSeconds, transcript: old.transcript, frames: old.frames, pendingDelivery: value)
+        try writeBundle(next, in: directory)
+    }
+
     // ── Browsing bundles ────────────────────────────────
 
     static func readMeta(in directory: URL) -> CaptureBundleMeta? {
@@ -281,6 +312,7 @@ final class CaptureStore {
             .filter { $0.hasDirectoryPath && $0.lastPathComponent != "shots" }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
         for stale in dirs.dropFirst(keep) {
+            guard let meta = readMeta(in: stale), meta.pendingDelivery == nil else { continue }
             try? FileManager.default.removeItem(at: stale)
         }
     }
@@ -300,13 +332,14 @@ final class CaptureStore {
     }
 
     /// Resize + save a raw screenshot; returns its path and pixel size.
-    static func saveShot(_ raw: Data, on display: DisplayContext? = nil) -> (path: String, width: Int, height: Int)? {
+    static func saveShot(_ raw: Data, on display: DisplayContext? = nil, pendingDelivery: CapturedPendingDelivery? = nil) -> (path: String, width: Int, height: Int)? {
         let (width, height) = shotGeometry(for: display)
         guard let jpeg = ImageUtils.resizeExact(raw, width: width, height: height) else { return nil }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss-SSS"
-        let url = shotsDir.appendingPathComponent("shot-\(formatter.string(from: Date())).jpg")
+        let url = shotsDir.appendingPathComponent("shot-\(formatter.string(from: Date()))-\(UUID().uuidString).jpg")
         do {
+            if let pendingDelivery { try CapturedPendingFiles.write(pendingDelivery, source: url) }
             try jpeg.write(to: url, options: .atomic)
         } catch {
             vflog("capture: shot write failed: \(error)")
@@ -341,7 +374,7 @@ final class CaptureStore {
             at: shotsDir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
         // "shot-" and "pasted-" share this retention budget. Sorting their
         // names would always evict pasted attachments ahead of screenshots.
-        let dated = entries.map { url in
+        let dated = entries.filter { $0.pathExtension == "jpg" }.map { url in
             (url: url, date: (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
                 .contentModificationDate ?? .distantPast)
         }
@@ -349,6 +382,7 @@ final class CaptureStore {
             $0.date == $1.date ? $0.url.lastPathComponent > $1.url.lastPathComponent : $0.date > $1.date
         }
         for stale in sorted.dropFirst(maxStoredShots) {
+            guard !CapturedPendingFiles.isProtected(stale.url) else { continue }
             try? FileManager.default.removeItem(at: stale.url)
         }
     }

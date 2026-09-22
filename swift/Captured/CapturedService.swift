@@ -20,7 +20,7 @@ final class CapturedService {
     private let lock = NSLock()
     private var hooksInstalled = false
     private let dictations: DictationStore
-    private let root: URL
+    let root: URL
     private var sourceCommitObserver: NSObjectProtocol?
     private var storedError: String?
     var lastError: String? {
@@ -44,6 +44,13 @@ final class CapturedService {
         let pool = try CapturedDatabase.open(at: CapturedDatabase.url(configRoot: root))
         index = CapturedIndex(pool: pool)
         ingest = CapturedIngest(index: index, root: root)
+    }
+
+    /// Native input joins the existing dictation owner, preserving its lock and
+    /// observers. This does not create a draft or another history store.
+    func retainDictation(_ entry: HistoryEntry) throws {
+        dictations.upsert(entry)
+        if dictations.lastPersistenceError != nil { throw CocoaError(.fileWriteUnknown) }
     }
 
     /// The status line the Captures area shows, read without a second query.

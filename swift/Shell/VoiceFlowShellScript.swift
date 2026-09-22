@@ -16,6 +16,7 @@ enum VoiceFlowShellScript {
             describe: () => invoke('describe'),
             publishComposerTarget: (documentId, target) => invoke('composer', {documentId, target}),
             perform: request => invoke('perform', {request}),
+            readCapture: request => invoke('readCapture', {request}),
             onInput: handler => {
               if (typeof handler !== 'function') throw new TypeError('Input handler must be a function.');
               if (inputHandler !== null) throw new Error('A native input consumer is already registered.');
