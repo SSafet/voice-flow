@@ -36,6 +36,7 @@ def main() -> None:
     artifacts.mkdir()
     for port in (18793, 18794):
         with socket.socket() as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             probe.bind(('127.0.0.1', port))
     app = args.app or root / 'Voice Flow QA.app'
     expect(temporary_path(app), 'QA bundle must be under /tmp, never /Applications.')
@@ -65,7 +66,7 @@ def main() -> None:
     process = None
     token = ''
     app_log = (artifacts / 'signed-app.log').open('ab')
-    report = {'root': str(root), 'app': str(app), 'commit': subprocess.check_output(
+    report = {'root': str(root), 'app': str(app), 'bundleReused': args.app is not None, 'invocationCommit': subprocess.check_output(
         ['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip(),
         'binarySHA256': sha256(app / 'Contents/MacOS/voice-flow')}
 
@@ -94,7 +95,7 @@ def main() -> None:
     def stop():
         nonlocal process
         if process is not None and process.poll() is None:
-            request('POST', '/__qa/app/terminate', {})
+            request('POST', '/__qa/app/terminate', {}, expected=202)
             process.wait(timeout=20)
             expect(process.returncode == 0, 'Signed app did not shut down cleanly.')
         process = None
@@ -123,6 +124,13 @@ def main() -> None:
         (artifacts / 'before.json').write_text(json.dumps(before, indent=2))
         stop()
         database = root / 'threads.sqlite'
+        # The terminated app may leave a valid WAL. Consolidate it offline so
+        # replay cannot legitimately heal the deliberately damaged main page.
+        import sqlite3
+        with sqlite3.connect(database) as checkpoint:
+            checkpoint.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchall()
+            checkpoint.execute('PRAGMA journal_mode = DELETE').fetchall()
+        checkpoint.close()
         report['beforeFileSHA256'] = sha256(database)
         with database.open('r+b') as stream:
             stream.seek(4096)
@@ -174,11 +182,19 @@ def main() -> None:
         print(json.dumps(report, indent=2))
     finally:
         if process is not None and process.poll() is None:
-            process.terminate()
-            try: process.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=10)
+            # Even after a failed assertion, let the app tear down its backend
+            # and persist through the normal authenticated termination path.
+            try:
+                http_json('POST', base + '/__qa/app/terminate', {}, token=token)
+                process.wait(timeout=20)
+            except Exception:
+                import signal
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try: process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait(timeout=10)
         app_log.close()
 
 

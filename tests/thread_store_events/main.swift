@@ -414,7 +414,12 @@ require(try store.lastSeq(threadID: "t_one") == seqBeforeSettlement,
         "settlement failure rolls back events and their counters")
 require(try fixtureFileManager.contentsOfDirectory(atPath: attachmentFolder.path).sorted() == filesBeforeSettlement,
         "settlement rollback cleans only its new overflow file")
-try pool.write { db in try db.execute(sql: "DROP TRIGGER reject_settlement") }
+try pool.write { db in
+    try db.execute(sql: "DROP TRIGGER reject_settlement")
+    // The crash child opens through the production schema gate. Remove the
+    // fault-injection-only schema once its rollback assertion is complete.
+    try db.execute(sql: "DROP TABLE integrity_outbox")
+}
 store.eventSink = sink
 
 final class CommandRaceResults: @unchecked Sendable {
