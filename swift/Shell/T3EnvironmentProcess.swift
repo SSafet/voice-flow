@@ -208,8 +208,11 @@ final class T3EnvironmentProcess {
     }
 
     private func acquireHome() throws {
-        guard home.resolvingSymlinksInPath().path == home.path,
-              home.appendingPathComponent("userdata").resolvingSymlinksInPath().path == home.appendingPathComponent("userdata").path else {
+        // Foundation can spell /private/tmp as /tmp only after a previously
+        // missing directory exists. Compare both sides in the same form so a
+        // successful first launch can restart, while other symlinks still fail.
+        guard home.resolvingSymlinksInPath().path == home.standardizedFileURL.path,
+              home.appendingPathComponent("userdata").resolvingSymlinksInPath().path == home.appendingPathComponent("userdata").standardizedFileURL.path else {
             throw T3EnvironmentProcessError.invalidHome
         }
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

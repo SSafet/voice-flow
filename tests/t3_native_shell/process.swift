@@ -104,6 +104,17 @@ private func check(_ value: @autoclosure () -> Bool, _ detail: String) throws {
         do { _ = try make(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".t3")); throw NSError(domain: "live home allowed", code: 1) }
         catch T3EnvironmentProcessError.invalidHome { assertions += 1 }
 
+        // Foundation normalizes the /private/tmp spelling differently before
+        // and after creation. The real packaged server exposed this on restart.
+        let firstUseRoot = URL(fileURLWithPath: "/private/tmp/vf-process-first-use-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: firstUseRoot) }
+        let firstUse = try make(firstUseRoot.appendingPathComponent("environment"))
+        let firstConnection = try await firstUse.start()
+        await firstUse.stop()
+        let restartedConnection = try await firstUse.start()
+        try expect(firstConnection.environmentId == restartedConnection.environmentId, "first-use temporary home restarts after Foundation path normalization")
+        await firstUse.stop()
+
         // The resource seal covers every client file, not only index.html's hash.
         try Data("changed".utf8).write(to: runtime.directory.appendingPathComponent("client/app.js"))
         do { _ = try T3BundledEnvironment(bundle: bundle); throw NSError(domain: "tampered client accepted", code: 1) }
