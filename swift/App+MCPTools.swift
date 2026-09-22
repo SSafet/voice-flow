@@ -16,7 +16,7 @@ extension AppDelegate {
         "show_guide", "update_guide", "show_panel", "annotate_screen",
     ]
 
-    func handleMCPTool(_ name: String, _ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
+    func handleMCPTool(_ name: String, _ args: [String: Any], _ session: MCPSession?, _ cancellation: MCPToolCancellation = MCPToolCancellation()) -> MCPServer.ToolResult {
         if let session, Self.engagingMCPTools.contains(name),
            mcpServer.sessions.markEngaged(session.id) {
             // First engagement: surface the session. It claims the voice
@@ -31,23 +31,28 @@ extension AppDelegate {
                 self.refreshSessionIndicator()
             }
         }
-        let result = dispatchMCPTool(name, args, session)
+        let result: MCPServer.ToolResult
+        if MCPOverlayScope.toolNames.contains(name) {
+            result = MCPOverlayScope.withExclusiveAccess { dispatchMCPTool(name, args, session, cancellation) }
+        } else { result = dispatchMCPTool(name, args, session, cancellation) }
         // Queued voice messages piggyback on every tool result so they
         // can't rot in the inbox unnoticed.
         guard !result.isError, let session,
               name != "check_messages", name != "wait_for_message" else { return result }
         let pending = inbox.pendingCount(for: session.id)
         guard pending > 0 else { return result }
-        return .ok(result.text
-            + "\n\n(\(pending) voice message\(pending == 1 ? "" : "s") from the user queued — call check_messages.)")
+        return result.appending("\n\n(\(pending) voice message\(pending == 1 ? "" : "s") from the user queued — call check_messages.)")
     }
 
-    private func dispatchMCPTool(_ name: String, _ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
+    private func dispatchMCPTool(_ name: String, _ args: [String: Any], _ session: MCPSession?, _ cancellation: MCPToolCancellation) -> MCPServer.ToolResult {
+        if let operation = CapturedReadOperation(rawValue: name) {
+            return mcpCapturedRead(operation, args, session, cancellation)
+        }
         switch name {
         case "set_session_name": return mcpSetSessionName(args, session)
-        case "report_to_user": return mcpReportToUser(args, session)
+        case "report_to_user": return mcpReportToUser(args, session, cancellation)
         case "check_messages": return mcpCheckMessages(session)
-        case "wait_for_message": return mcpWaitForMessage(args, session)
+        case "wait_for_message": return mcpWaitForMessage(args, session, cancellation)
         case "get_latest_capture": return mcpLatestCapture()
         case "list_captures": return mcpListCaptures(args)
         case "take_screenshot": return mcpTakeScreenshot(session)
@@ -56,15 +61,27 @@ extension AppDelegate {
         case "show_panel": return mcpShowPanel(args, session)
         case "annotate_screen": return mcpAnnotateScreen(args, session)
         case "clear_annotations":
-            let removed = overlayManager.removeAll(annotationsOnly: true)
-            DispatchQueue.main.sync { self.annotationOverlay.clear() }
-            return .ok("Cleared \(removed) annotation overlay\(removed == 1 ? "" : "s") and the user's own marks.")
-        case "remove_overlay": return mcpRemoveOverlay(args)
-        case "list_overlays": return mcpListOverlays()
+            let owned = overlayManager.list().filter {
+                $0.type == "annotations" && MCPOverlayScope.owns(overlayManager.read(id: $0.id), sessionID: session?.id)
+            }
+            let removed = owned.filter { overlayManager.remove(id: $0.id) }.count
+            return .ok("Cleared \(removed) annotation overlays belonging to this session. The user's own marks remain.")
+        case "remove_overlay": return mcpRemoveOverlay(args, session)
+        case "list_overlays": return mcpListOverlays(session)
         case "get_recent_dictations": return mcpRecentDictations(args)
         default:
             return .fail("Unknown tool: \(name)")
         }
+    }
+
+    private func mcpCapturedRead(_ operation: CapturedReadOperation, _ args: [String: Any],
+                                 _ session: MCPSession?, _ cancellation: MCPToolCancellation) -> MCPServer.ToolResult {
+        guard let captured = CapturedService.shared else {
+            return .fail("captured_unavailable: The derived capture index is unavailable.")
+        }
+        return mcpServer.readCaptured(operation, arguments: args, session: session, cancellation: cancellation,
+                                      index: captured.index, root: VoiceFlowPaths.shared.configRoot,
+                                      progress: { captured.progress })
     }
 
     // Embedded OpenCode tools use this private bridge rather than public MCP,
@@ -225,7 +242,7 @@ extension AppDelegate {
 
     /// The one messaging tool: a receipt-backed report (summary + details),
     /// optionally blocking on a `question`.
-    private func mcpReportToUser(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
+    private func mcpReportToUser(_ args: [String: Any], _ session: MCPSession?, _ cancellation: MCPToolCancellation) -> MCPServer.ToolResult {
         let trimmed = { (key: String) in
             (args[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -256,11 +273,7 @@ extension AppDelegate {
             }
             var reply = "Delivered: the user got a one-line receipt and reads the full report when they switch onto your session (⌃⌥N) or in the panel's Agents tab; audio plays only on their demand."
             if let sessionId {
-                reply += """
-                 If they might reply, start the reply listener as a background Bash task NOW — whether you keep working or are about to finish:
-                ~/.claude/skills/communicate-with-user/scripts/vf listen --attach \(sessionId) --timeout 7200
-                The moment they talk to your session it completes with their words and you are re-invoked. Without it, a reply sits queued until you happen to call another voice-flow tool — and can never reach you once you stop. Always start it fresh: it automatically replaces any earlier listener for this session (the old task ends itself with a superseded notice — ignore it).
-                """
+                reply += MCPServer.replyListenerAdvice(sessionID: sessionId)
             }
             return .ok(reply)
         }
@@ -289,12 +302,12 @@ extension AppDelegate {
             return .fail("\(busyWith ?? "Another session") is already blocking on a question — only one can wait at a time. Send your report without `question` now and collect the answer later via check_messages / wait_for_message.")
         }
 
-        _ = interaction.semaphore.wait(timeout: .now() + timeout)
+        cancellation.wait(interaction.semaphore, timeout: timeout)
 
         var result = MCPServer.ToolResult.fail("Internal error resolving the interaction.")
         DispatchQueue.main.sync {
             interaction.resolved = true
-            self.pendingInteraction = nil
+            if self.pendingInteraction === interaction { self.pendingInteraction = nil }
             // The ask is settled either way. An ANSWERED ask stays with its
             // ↳ answer; an unanswered one (timeout / dismissed) DEGRADES to
             // a plain readable message instead of being deleted — threads
@@ -320,6 +333,8 @@ extension AppDelegate {
                     payload["note"] = "Screenshot file paths, in order — read them to see what the user showed you."
                 }
                 result = .ok(self.mcpJSON(payload))
+            } else if cancellation.isCancelled {
+                result = .fail("The requesting client cancelled this question. The report remains in the session history.")
             } else if interaction.cancelled {
                 result = .fail("The user dismissed the prompt without answering. Don't immediately re-ask; continue as best you can or try another approach.")
             } else {
@@ -456,10 +471,12 @@ extension AppDelegate {
         return .ok(inboxPayload(messages))
     }
 
-    private func mcpWaitForMessage(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
+    private func mcpWaitForMessage(_ args: [String: Any], _ session: MCPSession?, _ cancellation: MCPToolCancellation) -> MCPServer.ToolResult {
         var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 600
         timeout = min(max(timeout, 5), 3600)
-        let (messages, superseded, terminated) = inbox.wait(timeout: timeout, session: session?.id)
+        let (messages, superseded, terminated) = inbox.wait(timeout: timeout, session: session?.id, isCancelled: { cancellation.isCancelled },
+            onPark: { semaphore in cancellation.onCancel { semaphore.signal() } })
+        if cancellation.isCancelled { return .fail("Request cancelled. Queued messages remain available.") }
         if superseded {
             return .ok("A newer listener took over this session. Nothing to do: say nothing, end your turn, do not restart this task.")
         }
@@ -527,6 +544,9 @@ extension AppDelegate {
             return .fail("show_guide needs a non-empty `steps` array of {text, detail?} objects.")
         }
         let id = OverlayManager.sanitize(id: args["id"] as? String) ?? "guide"
+        if let existing = overlayManager.read(id: id), !MCPOverlayScope.owns(existing, sessionID: session?.id) {
+            return .fail("That overlay belongs to another session or to the user. Choose another id.")
+        }
         var doc: [String: Any] = [
             "type": "guide",
             "title": args["title"] as? String ?? "Guide",
@@ -547,6 +567,9 @@ extension AppDelegate {
 
     private func mcpUpdateGuide(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         let id = OverlayManager.sanitize(id: args["id"] as? String) ?? "guide"
+        if let existing = overlayManager.read(id: id), !MCPOverlayScope.owns(existing, sessionID: session?.id) {
+            return .fail("That overlay belongs to another session or to the user. Choose another id.")
+        }
         guard var doc = overlayManager.read(id: id), doc["type"] as? String == "guide" else {
             return .fail("No guide overlay \"\(id)\" exists — call show_guide first.")
         }
@@ -581,6 +604,9 @@ extension AppDelegate {
             return .fail("No valid blocks — each needs kind heading|text|code|bullets plus text (or items for bullets).")
         }
         let id = OverlayManager.sanitize(id: args["id"] as? String) ?? "panel"
+        if let existing = overlayManager.read(id: id), !MCPOverlayScope.owns(existing, sessionID: session?.id) {
+            return .fail("That overlay belongs to another session or to the user. Choose another id.")
+        }
         var doc: [String: Any] = [
             "type": "panel",
             "blocks": blocks,
@@ -620,6 +646,9 @@ extension AppDelegate {
         }
 
         let id = OverlayManager.sanitize(id: args["id"] as? String) ?? "annotations"
+        if let existing = overlayManager.read(id: id), !MCPOverlayScope.owns(existing, sessionID: session?.id) {
+            return .fail("That overlay belongs to another session or to the user. Choose another id.")
+        }
         let clearFirst = args["clear_first"] as? Bool ?? false
         var items = valid
         if !clearFirst,
@@ -655,16 +684,21 @@ extension AppDelegate {
         return .ok(text)
     }
 
-    private func mcpRemoveOverlay(_ args: [String: Any]) -> MCPServer.ToolResult {
+    private func mcpRemoveOverlay(_ args: [String: Any], _ session: MCPSession?) -> MCPServer.ToolResult {
         guard let rawId = args["id"] as? String, !rawId.isEmpty else {
             return .fail("remove_overlay needs an `id` (or \"all\").")
         }
         if rawId == "all" {
-            let removed = overlayManager.removeAll(annotationsOnly: false)
+            guard let session else { return .fail("A session is required.") }
+            let removed = overlayManager.list().filter { MCPOverlayScope.owns(overlayManager.read(id: $0.id), sessionID: session.id) }
+                .filter { overlayManager.remove(id: $0.id) }.count
             return .ok("Removed \(removed) overlay\(removed == 1 ? "" : "s") from the user's screen.")
         }
         guard let id = OverlayManager.sanitize(id: rawId) else {
             return .fail("Invalid overlay id.")
+        }
+        guard MCPOverlayScope.owns(overlayManager.read(id: id), sessionID: session?.id) else {
+            return .fail("No overlay owned by this session has that id.")
         }
         guard overlayManager.remove(id: id) else {
             return .fail("No overlay \"\(id)\" exists. list_overlays shows what's on screen.")
@@ -672,8 +706,8 @@ extension AppDelegate {
         return .ok("Overlay \"\(id)\" removed.")
     }
 
-    private func mcpListOverlays() -> MCPServer.ToolResult {
-        let overlays = overlayManager.list()
+    private func mcpListOverlays(_ session: MCPSession?) -> MCPServer.ToolResult {
+        let overlays = overlayManager.list().filter { MCPOverlayScope.owns(overlayManager.read(id: $0.id), sessionID: session?.id) }
         guard !overlays.isEmpty else {
             return .ok("No overlays on screen. Create one with show_guide / show_panel / annotate_screen, or write a JSON file into \(OverlayManager.dir.path) (schema: \(OverlayManager.schemaPath)).")
         }

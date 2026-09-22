@@ -1,4 +1,5 @@
 import Foundation
+import MCP
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  MCP sessions — one per connected Claude Code instance
@@ -30,6 +31,7 @@ struct MCPSession {
 final class MCPSessionRegistry {
     private var sessions: [String: MCPSession] = [:]
     private var counter = 0
+    private var active: [String: Int] = [:]
     private let lock = DispatchQueue(label: "voiceflow.mcp-sessions")
 
     /// Sessions silent this long are treated as gone. Claude Code DELETEs
@@ -38,12 +40,24 @@ final class MCPSessionRegistry {
     /// indefinitely. A live-but-idle session that gets pruned self-heals:
     /// its next request is silently re-adopted by touch().
     private let staleAfter: TimeInterval = 2 * 3600
+    private let now: () -> Date
+    init(now: @escaping () -> Date = Date.init) { self.now = now }
 
     /// Callers must hold `lock`.
     private func pruneStale() {
-        let cutoff = Date().addingTimeInterval(-staleAfter)
-        for (id, session) in sessions where session.lastSeen < cutoff {
+        let cutoff = now().addingTimeInterval(-staleAfter)
+        for (id, session) in sessions where session.lastSeen < cutoff && active[id, default: 0] == 0 {
             sessions.removeValue(forKey: id)
+        }
+    }
+
+    /// A held question/listener remains a voice target even beyond the idle TTL.
+    func beginActivity(_ id: String) { lock.sync { active[id, default: 0] += 1 } }
+    func endActivity(_ id: String) {
+        lock.sync {
+            if var session = sessions[id] { session.lastSeen = now(); sessions[id] = session }
+            if active[id, default: 0] <= 1 { active.removeValue(forKey: id) }
+            else { active[id, default: 0] -= 1 }
         }
     }
 
@@ -52,7 +66,7 @@ final class MCPSessionRegistry {
         lock.sync {
             counter += 1
             let session = MCPSession(id: UUID().uuidString, number: counter,
-                                     firstSeen: Date(), lastSeen: Date())
+                                     firstSeen: now(), lastSeen: now())
             sessions[session.id] = session
             return session
         }
@@ -64,13 +78,13 @@ final class MCPSessionRegistry {
         guard let id else { return (nil, false) }
         return lock.sync {
             if var session = sessions[id] {
-                session.lastSeen = Date()
+                session.lastSeen = now()
                 sessions[id] = session
                 return (session, false)
             }
             counter += 1
             let session = MCPSession(id: id, number: counter,
-                                     firstSeen: Date(), lastSeen: Date())
+                                     firstSeen: now(), lastSeen: now())
             sessions[id] = session
             return (session, true)
         }
@@ -157,11 +171,24 @@ final class MCPSessionRegistry {
 //  long time (ask_user, wait_for_message), which is exactly the point —
 //  the tool result is the user's delayed answer.
 
-final class MCPServer {
+final class MCPServer: @unchecked Sendable {
 
     /// The one-time registration command the user runs in Terminal so
     /// Claude Code knows about this server (surfaced in Settings).
     static let registerCommand = "claude mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp"
+
+    static func replyListenerAdvice(sessionID: String, executable: URL? = nil) -> String {
+        let script = executable ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/skills/communicate-with-user/scripts/vf")
+        guard FileManager.default.isExecutableFile(atPath: script.path) else {
+            return " Reply listener unavailable: the vf listener script is not installed on this Mac. Call wait_for_message while you are available to receive the user's reply. If you finish without a listener, replies remain queued; they cannot wake this external client automatically."
+        }
+        return """
+         If the user may reply, start the reply listener as a background Bash task:
+        ~/.claude/skills/communicate-with-user/scripts/vf listen --attach \(sessionID) --timeout 7200
+        A reply completes that task. Start it fresh: it replaces an older listener for this session; a superseded task should end without restarting. Without a listener, replies remain queued until your next voice-flow call.
+        """
+    }
 
     /// All tool calls that arrive WITHOUT an Mcp-Session-Id share this
     /// registry entry, so even a degraded client has a picker dot.
@@ -170,24 +197,57 @@ final class MCPServer {
     /// When a client (Claude Code) last sent any request. Main thread only —
     /// the Settings window reads it to show connection status.
     static private(set) var lastActivity: Date?
+    static func recordActivity() { lastActivity = Date() }
 
     struct ToolResult {
         let text: String
         let isError: Bool
+        var content: [Tool.Content] = []
+        var structuredContent: Value?
         static func ok(_ text: String) -> ToolResult { ToolResult(text: text, isError: false) }
         static func fail(_ text: String) -> ToolResult { ToolResult(text: text, isError: true) }
+
+        func appending(_ hint: String) -> ToolResult {
+            var copy = self
+            if content.isEmpty { return ToolResult(text: text + hint, isError: isError, structuredContent: structuredContent) }
+            copy.content.append(.text(text: hint, annotations: nil, _meta: nil))
+            return copy
+        }
+        var sdkResult: CallTool.Result {
+            CallTool.Result(content: content.isEmpty ? [.text(text: text, annotations: nil, _meta: nil)] : content,
+                            structuredContent: structuredContent, isError: isError)
+        }
     }
 
-    /// (toolName, arguments, callingSession) → result. Called on a
-    /// background thread; may block.
-    var callTool: ((String, [String: Any], MCPSession?) -> ToolResult)?
+    /// The callback runs on a worker thread. Cancellation wakes only this call.
+    var callTool: ((String, [String: Any], MCPSession?, MCPToolCancellation) -> ToolResult)?
+    /// Supplied by the authenticated device-channel grant authority. No locality,
+    /// client-provided thread ID, _meta field or assistant setting grants access.
+    /// Nil means the authority is not connected, and every captured read is denied.
+    var authorizeCapturedRead: ((MCPSession) -> Bool)?
+    private let hostLock = NSLock()
+    private var storedHost: MCPHTTPHost?
+    private var host: MCPHTTPHost {
+        hostLock.lock(); defer { hostLock.unlock() }
+        if let storedHost { return storedHost }
+        let created = MCPHTTPHost(owner: self)
+        storedHost = created
+        return created
+    }
+
+    func handleHTTP(method: String, headers: [String: String], body: Data) async -> HTTPResponse {
+        await host.handle(HTTPRequest(method: method, headers: headers, body: body, path: "/mcp"))
+    }
+
+    func stop() async { await host.stop() }
 
     let sessions = MCPSessionRegistry()
     /// A session appeared (initialize, or an unknown id re-adopted after a
     /// Voice Flow restart). Called on the HTTP thread — hop to main for UI.
+    var onSessionEnded: ((MCPSession) -> Void)?
     var onSessionConnected: ((MCPSession) -> Void)?
 
-    private let serverInstructions = """
+    let serverInstructions = """
         Voice Flow is a macOS voice + screen companion app the user is running. It is your \
         interaction layer with the user — richer than plain text, in both directions.
 
@@ -245,112 +305,7 @@ final class MCPServer {
         Screenshots, frames, and overlay files are absolute paths on this machine — read them.
         """
 
-    // ── HTTP entry point ────────────────────────────────
-
-    /// Handle one POST /mcp body. Returns (httpStatus, responseBody,
-    /// sessionIdToIssue) — the id is set only for initialize responses and
-    /// becomes the Mcp-Session-Id header. A 202 with nil body answers
-    /// notifications.
-    func handle(body: Data, sessionId: String?) -> (status: Int, payload: Data?, sessionId: String?) {
-        DispatchQueue.main.async { Self.lastActivity = Date() }
-        guard let message = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
-            return respond(error: (-32700, "Parse error"), id: NSNull())
-        }
-        guard let method = message["method"] as? String else {
-            return respond(error: (-32600, "Invalid request"), id: message["id"] ?? NSNull())
-        }
-        let id = message["id"]
-
-        // Refresh (or re-adopt) the caller's session on every request. A
-        // client calling TOOLS with no session header at all (seen from
-        // some Claude Code states after a Voice Flow restart) would
-        // otherwise be a black hole — no picker dot, unanswerable asks,
-        // nothing for the user to switch to. Fold all such traffic into
-        // one well-known "anonymous" session so it stays visible and
-        // routable (it names itself via the usual nudge).
-        var session: MCPSession?
-        if method != "initialize" {
-            var effectiveId = sessionId
-            if effectiveId == nil, method == "tools/call" {
-                effectiveId = Self.anonymousSessionId
-            }
-            let (touched, isNew) = sessions.touch(effectiveId)
-            session = touched
-            if isNew, let touched {
-                onSessionConnected?(touched)
-            }
-        }
-
-        // Notifications get no JSON-RPC response.
-        guard let id else {
-            return (202, nil, nil)
-        }
-
-        switch method {
-        case "initialize":
-            let created = sessions.begin()
-            onSessionConnected?(created)
-            let params = message["params"] as? [String: Any]
-            let requested = params?["protocolVersion"] as? String ?? "2025-06-18"
-            let supported = ["2024-11-05", "2025-03-26", "2025-06-18"]
-            let version = supported.contains(requested) ? requested : "2025-06-18"
-            let (status, payload, _) = respond(result: [
-                "protocolVersion": version,
-                "capabilities": ["tools": [String: Any]()],
-                "serverInfo": ["name": "voice-flow", "version": "2.0.0"],
-                "instructions": serverInstructions,
-            ], id: id)
-            return (status, payload, created.id)
-
-        case "ping":
-            return respond(result: [String: Any](), id: id)
-
-        case "tools/list":
-            return respond(result: ["tools": Self.toolDefinitions], id: id)
-
-        case "tools/call":
-            guard let params = message["params"] as? [String: Any],
-                  let name = params["name"] as? String else {
-                return respond(error: (-32602, "tools/call requires params.name"), id: id)
-            }
-            let arguments = params["arguments"] as? [String: Any] ?? [:]
-            guard let callTool else {
-                return respond(error: (-32603, "Voice Flow is still starting up."), id: id)
-            }
-            var result = callTool(name, arguments, session)
-            // One-time reminder: an unnamed session is hard for the user
-            // to route voice input to.
-            if !result.isError, name != "set_session_name",
-               let session, sessions.consumeNameNudge(session.id) {
-                result = ToolResult.ok(result.text
-                    + "\n\n(This session is unnamed — call set_session_name with a short project/task label so the user can tell their Claude sessions apart.)")
-            }
-            return respond(result: [
-                "content": [["type": "text", "text": result.text]],
-                "isError": result.isError,
-            ], id: id)
-
-        default:
-            return respond(error: (-32601, "Method not found: \(method)"), id: id)
-        }
-    }
-
-    private func respond(result: [String: Any], id: Any) -> (Int, Data?, String?) {
-        let envelope: [String: Any] = ["jsonrpc": "2.0", "id": id, "result": result]
-        return (200, try? JSONSerialization.data(withJSONObject: envelope), nil)
-    }
-
-    private func respond(error: (code: Int, message: String), id: Any) -> (Int, Data?, String?) {
-        let envelope: [String: Any] = [
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": ["code": error.code, "message": error.message],
-        ]
-        return (200, try? JSONSerialization.data(withJSONObject: envelope), nil)
-    }
-
-    // ── Tool catalog ────────────────────────────────────
-
+    // Domain catalog. Encoding and tool protocol behavior belong to the SDK.
     private static let positionProperty: [String: Any] = [
         "type": "string",
         "enum": ["top-left", "top-center", "top-right", "bottom-left", "bottom-right", "center-left", "center-right", "center"],
@@ -659,7 +614,7 @@ final class MCPServer {
         ],
         [
             "name": "clear_annotations",
-            "description": "Erase everything drawn on the user's screen: removes all annotation overlay files and clears the user's own pen/text marks.",
+            "description": "Remove the calling session's annotation overlay files. Other sessions, system overlays and the user's own pen/text marks remain.",
             "inputSchema": [
                 "type": "object",
                 "properties": [String: Any](),
@@ -667,7 +622,7 @@ final class MCPServer {
         ],
         [
             "name": "remove_overlay",
-            "description": "Remove an on-screen overlay (guide, panel, or annotations) by deleting its file. Pass id \"all\" to clear every overlay from the screen.",
+            "description": "Remove an on-screen overlay (guide, panel, or annotations) by deleting its file. Pass id \"all\" to remove this session's overlays.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -678,7 +633,7 @@ final class MCPServer {
         ],
         [
             "name": "list_overlays",
-            "description": "List the overlays currently defined (guides, panels, annotations) with their ids, types, visibility, and file paths. Edit those files directly to update what's on screen — the schema is documented in ~/.config/voice-flow/overlays/_schema.md.",
+            "description": "List this session's overlays (guides, panels, annotations) with their ids, types, visibility, and file paths. Edit those files directly to update what's on screen — the schema is documented in ~/.config/voice-flow/overlays/_schema.md.",
             "inputSchema": [
                 "type": "object",
                 "properties": [String: Any](),
@@ -697,5 +652,5 @@ final class MCPServer {
                 ],
             ],
         ],
-    ]
+    ] + capturedToolDefinitions
 }

@@ -155,11 +155,14 @@ final class MessageInbox {
     /// session). terminated is true when exact-session deletion ended it.
     func wait(
         timeout: TimeInterval,
-        session: String?
+        session: String?,
+        isCancelled: () -> Bool = { false },
+        onPark: ((DispatchSemaphore) -> Void)? = nil
     ) -> (messages: [InboxMessage], superseded: Bool, terminated: Bool) {
         enum Immediate { case messages([InboxMessage]), terminated, parked }
         let semaphore = DispatchSemaphore(value: 0)
         let immediate: Immediate = queue.sync {
+            if isCancelled() { return .terminated }
             if let session, closedSessions.contains(session) {
                 return .terminated
             }
@@ -184,6 +187,7 @@ final class MessageInbox {
         case .terminated: return ([], false, true)
         case .parked: break
         }
+        onPark?(semaphore)
         let deadline = DispatchTime.now() + timeout
         while true {
             let expired = semaphore.wait(timeout: deadline) == .timedOut
@@ -201,6 +205,7 @@ final class MessageInbox {
                 // A deleted session must not steal a message that raced with
                 // deletion and was queued after its waiter had been released.
                 if terminated.remove(ObjectIdentifier(semaphore)) != nil { return ([], false, true) }
+                if isCancelled() { return ([], false, true) }
                 let drained = drainLocked(session: session)
                 if !drained.isEmpty || expired { return (drained, false, false) }
                 finished = false
