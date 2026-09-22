@@ -53,6 +53,7 @@
         "overlay_contracts",
         "player",
         "qa_control",
+        "qa_launch_isolation",
         "queue_editor",
         "ripgrep_runtime",
         "sandbox_containment",
@@ -1077,6 +1078,13 @@
       "runner": "unit",
       "suites": [
         "system_agents"
+      ]
+    },
+    {
+      "id": "tests/qa_launch_isolation/test.sh",
+      "runner": "unit",
+      "suites": [
+        "qa_launch_isolation"
       ]
     },
     {
