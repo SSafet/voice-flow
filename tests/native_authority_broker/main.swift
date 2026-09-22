@@ -82,16 +82,17 @@ struct Reply {
 
 func request(_ boot: T3NativeAuthorityBootstrap, environment: String = "owned-environment",
                      headers: [String: String] = [:], expected: T3NativeAuthorityBinding? = nil,
-                     raw: Data? = nil, path: String = "/v1/authority/lease", timeout: TimeInterval = 5) async throws -> Reply {
+                     raw: Data? = nil, path: String = "/v1/authority/lease", timeout: TimeInterval = 5,
+                     method: String = "POST") async throws -> Reply {
     var input: [String: Any] = ["environmentId": environment]
     if let expected { input["expectedBinding"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(expected)) }
     var request = URLRequest(url: URL(string: boot.origin + path)!)
-    request.httpMethod = "POST"
+    request.httpMethod = method
     request.timeoutInterval = timeout
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("Bearer " + boot.credential, forHTTPHeaderField: "Authorization")
     for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
-    request.httpBody = try raw ?? JSONSerialization.data(withJSONObject: input)
+    if method != "GET" { request.httpBody = try raw ?? JSONSerialization.data(withJSONObject: input) }
     let config = URLSessionConfiguration.ephemeral
     config.httpCookieStorage = nil; config.urlCache = nil
     let session = URLSession(configuration: config)

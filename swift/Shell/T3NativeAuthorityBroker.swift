@@ -121,6 +121,12 @@ actor T3NativeAuthorityBroker {
             router.post("/v1/tools/mcp") { [self] request, context in
                 await handle(request, channel: context.channel, route: .tools)
             }
+            // Streamable HTTP clients probe GET for a server notification stream.
+            // This stateless mount has no stream and exposes no data on this route.
+            router.get("/v1/tools/mcp") { _, _ in
+                Hummingbird.Response(status: .methodNotAllowed,
+                    headers: [.allow: "POST", .cacheControl: "no-store", .connection: "close"])
+            }
         }
         let (ports, continuation) = AsyncStream<Int>.makeStream()
         // No request or service logger can print private headers, body or causes.

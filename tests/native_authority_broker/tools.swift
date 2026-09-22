@@ -119,6 +119,11 @@ enum ToolsMountProof {
         try await fixture.start()
         let broker = await make(owner, fixture, leaseTimeout: .milliseconds(20))
         let boot = try await broker.start()
+        let streamProbe = try await request(boot, path: "/v1/tools/mcp", method: "GET")
+        try expect(streamProbe.status == 405 && streamProbe.bytes.isEmpty, "stateless SDK stream probe returns405 without data")
+        try expect(streamProbe.response.value(forHTTPHeaderField: "Allow") == "POST" && streamProbe.response.value(forHTTPHeaderField: "Access-Control-Allow-Origin") == nil, "stream probe advertises only POST and no browser access")
+        try expect(await owner.counts() == (0, 0), "stream probe does not read authority")
+        try expect(await fixture.calls == 0, "stream probe does not enter SDK")
         for headers in [["Origin": "null"], ["Sec-Fetch-Site": "same-origin"], ["Host": "localhost:1234"],
                         ["Authorization": "Bearer " + String(repeating: "x", count: 43)]] {
             try expect(try await rpc(boot, list, headers: headers).status == 403, "tools use private HTTP guard")
