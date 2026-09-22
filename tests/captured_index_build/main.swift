@@ -37,8 +37,8 @@ guard VoiceFlowPaths.shared.isIsolated else {
 }
 
 private let files = FileManager.default
-private let root = VoiceFlowPaths.shared.configRoot
-    .appendingPathComponent("index-build", isDirectory: true).resolvingSymlinksInPath()
+private let root = VoiceFlowPaths.shared.configRoot.resolvingSymlinksInPath()
+    .appendingPathComponent("index-build", isDirectory: true)
 try? files.removeItem(at: root)
 try files.createDirectory(at: root, withIntermediateDirectories: true)
 
