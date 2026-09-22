@@ -237,7 +237,7 @@ compile_and_run workspace_ui -D VOICE_FLOW_QA "${APP_SUPPORT_SOURCES[@]}" tests/
     -framework Accelerate -framework Security -framework ScreenCaptureKit -lsqlite3
 compile_and_run capture_clipboard swift/CaptureClipboard.swift tests/capture_clipboard/main.swift -framework Cocoa
 compile_and_run capture_store swift/VoiceFlowPaths.swift swift/DisplayContext.swift \
-    swift/ScreenCapture.swift swift/Captured/CapturedSourceEvents.swift swift/Capture.swift tests/capture_store/main.swift \
+    swift/ImageUtils.swift swift/ScreenCapture.swift swift/Captured/CapturedSourceEvents.swift swift/Capture.swift tests/capture_store/main.swift \
     -framework Cocoa -framework ScreenCaptureKit
 compile_and_run player swift/Player.swift tests/player/main.swift
 compile_and_run speech_sanitizer swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
@@ -250,7 +250,7 @@ compile_and_run data_sources swift/VoiceFlowPaths.swift swift/DataSources.swift 
 compile_and_run data_sources_ui -D VOICE_FLOW_QA swift/VoiceFlowPaths.swift swift/DataSources.swift swift/SourceCollector.swift swift/SourcesView.swift tests/data_sources/ui/main.swift -framework Cocoa
 compile_and_run source_review swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
-    swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentJobStore.swift swift/DataSources.swift \
+    swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentJobStore.swift swift/DataSources.swift \
     swift/AgentSourceContext.swift swift/SourceReviewRuntime.swift swift/ModelGateway.swift \
     tests/source_review/main.swift -framework Security -lsqlite3
 if should_run source_review; then
@@ -271,28 +271,28 @@ compile_and_run overlay_contracts "${APP_SUPPORT_SOURCES[@]}" tests/overlay_cont
     -framework Accelerate -framework Security -framework ScreenCaptureKit -lsqlite3
 compile_and_run assistants swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift tests/assistants/main.swift
 compile_and_run agent_capabilities swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
-    swift/AgentCapabilities.swift tests/agent_capabilities/main.swift
+    swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift tests/agent_capabilities/main.swift
 compile_and_run agent_prompt swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
-    swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentCapabilities.swift \
+    swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift \
     swift/AgentPromptComposer.swift tests/agent_prompt/main.swift
 compile_and_run sandbox_containment swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
-    swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift \
+    swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift \
     swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift \
     swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
     tests/sandbox_containment/main.swift -framework Security
 compile_and_run agent_permissions swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
-    swift/AgentRuntimeTypes.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
+    swift/AgentRuntimeTypes.swift swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
     swift/Sandbox.swift tests/agent_permissions/main.swift
 compile_and_run qa_control -D VOICE_FLOW_QA swift/VoiceFlowPaths.swift \
     swift/AssistantWake.swift swift/Assistants.swift swift/AgentRuntimeTypes.swift \
-    swift/AgentCapabilities.swift swift/QAControl.swift \
+    swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/QAControl.swift \
     tests/qa_control/main.swift -framework Security
 compile_and_run agent_tools swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
-    swift/AgentRuntimeTypes.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
+    swift/AgentRuntimeTypes.swift swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
     swift/AgentTools.swift tests/agent_tools/main.swift
 compile_and_run agent_jobs swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
-    swift/AgentRuntimeTypes.swift swift/AgentCapabilities.swift swift/AgentJobStore.swift \
+    swift/AgentRuntimeTypes.swift swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/AgentJobStore.swift \
     tests/agent_jobs/main.swift -lsqlite3
 compile_and_run openrouter_models swift/VoiceFlowPaths.swift swift/OpenRouterModels.swift \
     tests/openrouter_models/main.swift
@@ -303,7 +303,7 @@ compile_and_run openrouter_model_picker swift/VoiceFlowPaths.swift swift/OpenRou
     tests/openrouter_model_picker/main.swift -framework Cocoa
 compile_and_run agent_supervisor swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
-    swift/AgentCapabilities.swift swift/AgentJobStore.swift swift/AgentSupervisor.swift \
+    swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/AgentJobStore.swift swift/AgentSupervisor.swift \
     tests/agent_supervisor/main.swift -lsqlite3
 compile_and_run assistant_history swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
     swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift tests/assistant_history/main.swift
@@ -313,7 +313,7 @@ compile_and_run assistant_continuity swift/VoiceFlowPaths.swift swift/AgentRunti
     swift/SystemAgents.swift swift/AssistantContinuity.swift swift/ContinuityAPIFallback.swift tests/assistant_continuity/main.swift
 compile_and_run codex_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift swift/Codex.swift \
-    swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/CodexAppServer.swift \
+    swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/CodexAppServer.swift \
     swift/CodexAgentRuntime.swift tests/codex_runtime/main.swift
 compile_and_run codex_appserver swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift swift/Codex.swift \
@@ -323,12 +323,12 @@ compile_and_run claude_code_runtime swift/VoiceFlowPaths.swift swift/AssistantWa
     swift/CodexAppServer.swift swift/ClaudeCode.swift tests/claude_code_runtime/main.swift
 compile_and_run opencode_runtime swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
-    swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
+    swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
     swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
     tests/opencode_runtime/main.swift -framework Security
 compile_and_run opencode_http swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
     swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
-    swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift \
+    swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift swift/AgentTools.swift \
     swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift \
     swift/OpenCodeHTTPClient.swift tests/opencode_http/main.swift -framework Security
 
@@ -346,7 +346,7 @@ case "$MODE" in
     --live|--e2e|--nightly|--release)
         "$PROJECT_DIR/scripts/prepare-opencode-runtime.sh" "$BUILD_DIR/Runtime/OpenCode"
         compile_only model_gateway swift/VoiceFlowPaths.swift swift/AssistantWake.swift \
-            swift/Assistants.swift swift/AgentRuntimeTypes.swift swift/AgentCapabilities.swift \
+            swift/Assistants.swift swift/AgentRuntimeTypes.swift swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift \
             swift/ModelGateway.swift tests/model_gateway/main.swift \
             -framework Security
         PORT_FILE="$BUILD_DIR/upstream-port"
@@ -363,7 +363,7 @@ case "$MODE" in
         kill "$UPSTREAM_PID" 2>/dev/null || true
         UPSTREAM_PID=""
         compile_and_run agent_tool_server swift/VoiceFlowPaths.swift swift/AssistantWake.swift \
-            swift/Assistants.swift swift/AgentRuntimeTypes.swift swift/AgentCapabilities.swift \
+            swift/Assistants.swift swift/AgentRuntimeTypes.swift swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift \
             swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
             tests/agent_tool_server/main.swift -framework Security
         PORT_FILE="$BUILD_DIR/opencode-upstream-port"
@@ -377,7 +377,7 @@ case "$MODE" in
         UPSTREAM_PORT="$(<"$PORT_FILE")"
         compile_only opencode_live_turn swift/VoiceFlowPaths.swift swift/AssistantWake.swift \
             swift/Assistants.swift swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift \
-            swift/AgentRuntime.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
+            swift/AgentRuntime.swift swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/AgentPermissionPolicy.swift \
             swift/AgentPromptComposer.swift swift/AgentTools.swift swift/AgentToolServer.swift swift/ModelGateway.swift swift/OpenRouterModels.swift \
             swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift swift/OpenCodeHTTPClient.swift swift/OpenCodeAgentRuntime.swift \
             tests/opencode_live_turn/main.swift -framework Security
@@ -389,12 +389,12 @@ case "$MODE" in
         UPSTREAM_PID=""
         compile_and_run opencode_supervisor swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \
             swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
-            swift/AssistantWake.swift swift/Assistants.swift swift/AgentCapabilities.swift \
+            swift/AssistantWake.swift swift/Assistants.swift swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift \
             swift/AgentPermissionPolicy.swift swift/AgentTools.swift swift/AgentToolServer.swift \
             swift/ModelGateway.swift swift/OpenRouterModels.swift swift/Sandbox.swift swift/EgressProxy.swift swift/OpenCodeUpdater.swift swift/OpenCodeSupervisor.swift tests/opencode_supervisor/main.swift -framework Security
         compile_only codex_live_turn swift/VoiceFlowPaths.swift swift/AssistantWake.swift swift/Assistants.swift \
             swift/AgentRuntimeTypes.swift swift/AssistantThreadMetadata.swift swift/AssistantHistory.swift swift/AgentRuntime.swift \
-            swift/Codex.swift swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/CodexAppServer.swift \
+            swift/Codex.swift swift/AgentSecretPolicy.swift swift/AgentCapabilities.swift swift/AgentPromptComposer.swift swift/CodexAppServer.swift \
             swift/CodexAgentRuntime.swift tests/codex_live_turn/main.swift
         run_step codex_live_turn env VOICE_FLOW_CONFIG_ROOT="$BUILD_DIR/codex-live-config" \
             VOICE_FLOW_CANARY_CODEX_REPORT="$BUILD_DIR/codex-canary.json" \
