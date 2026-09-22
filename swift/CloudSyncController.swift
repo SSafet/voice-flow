@@ -18,14 +18,20 @@ final class CloudSyncController: ObservableObject {
     var onInboxChanged: (() -> Void)?
     var onTransportChanged: ((Bool) -> Void)?
     var onContinueConversation: ((String) -> Void)?
+    /// Native runtime composition observes identity retirement; it must discard
+    /// prior leases and retain its existing environment until explicitly rebound.
+    var onIdentityChanged: (() -> Void)?
     private let bridge = CloudSyncBridge.shared
     private let vault: CloudCredentialVault
     private var client: CloudHTTPClient?
     private var clientPartition: String?
+    private var clientDeviceID: String?
+    private var clientEpoch: UUID?
     private var syncTask: Task<Void, Never>?
     private var activeRunID: UUID?
     private var timer: Timer?
     private var installed = false
+    private var identityTransition = false
     private var lastFailure: String?
 
     private init() {
@@ -53,7 +59,7 @@ final class CloudSyncController: ObservableObject {
         sync()
     }
     func setTransport(_ value: String) {
-        guard ["local", "cloud"].contains(value) else { return }
+        guard !identityTransition, ["local", "cloud"].contains(value) else { return }
         syncTask?.cancel(); syncTask = nil; activeRunID = nil; busy = false
         var saved = selection; saved.transport = value
         do { try bridge.saveSelection(saved); selection = saved; lastFailure = nil; refreshState() }
@@ -62,6 +68,7 @@ final class CloudSyncController: ObservableObject {
         if value == "cloud" { sync() }
     }
     func setExports(_ exports: CloudExportSelection) {
+        guard !identityTransition else { return }
         syncTask?.cancel(); syncTask = nil; activeRunID = nil; busy = false
         var saved = selection; saved.exports = exports
         do { try bridge.saveSelection(saved); selection = saved; lastFailure = nil; refreshState(); sync() }
@@ -69,11 +76,14 @@ final class CloudSyncController: ObservableObject {
     }
     func beginLogin() {
         guard !busy else { return }
-        busy = true; lastFailure = nil
+        busy = true; identityTransition = true; lastFailure = nil
         Task {
-            defer { busy = false; refreshState() }
+            defer { busy = false; identityTransition = false; refreshState() }
             do {
-                let transport = try CloudHTTPClient(origin: originDraft, vault: vault)
+                syncTask?.cancel(); syncTask = nil; activeRunID = nil
+                await client?.retire(); client = nil; clientPartition = nil; clientDeviceID = nil; clientEpoch = nil
+                onIdentityChanged?()
+                let transport = try makeCredentialOwner(origin: originDraft)
                 let next = try await transport.start(email: emailDraft.trimmingCharacters(in: .whitespacesAndNewlines))
                 client = transport; clientPartition = nil; challenge = next; codeDraft = ""
             } catch { lastFailure = error.localizedDescription }
@@ -81,9 +91,9 @@ final class CloudSyncController: ObservableObject {
     }
     func completeLogin() {
         guard !busy, let challenge, let client else { return }
-        busy = true; lastFailure = nil
+        busy = true; identityTransition = true; lastFailure = nil
         Task {
-            defer { busy = false; refreshState() }
+            defer { busy = false; identityTransition = false; refreshState() }
             do {
                 let credentials = try await client.complete(challenge: challenge, code: codeDraft.trimmingCharacters(in: .whitespacesAndNewlines),
                     label: Host.current().localizedName ?? "Mac")
@@ -93,33 +103,45 @@ final class CloudSyncController: ObservableObject {
                     email: credentials.email, deviceID: credentials.deviceID, transport: "cloud", signedIn: true,
                     exports: priorExports ?? selection.included)
                 try bridge.saveSelection(saved)
-                selection = saved; clientPartition = credentials.partition
+                selection = saved; clientPartition = credentials.partition; clientDeviceID = credentials.deviceID
+                onIdentityChanged?()
                 self.challenge = nil; codeDraft = ""
                 onTransportChanged?(true)
-                busy = false
+                busy = false; identityTransition = false
                 sync()
             } catch { lastFailure = error.localizedDescription }
         }
     }
     func cancelLogin() {
         guard !busy, challenge != nil else { return }
-        challenge = nil; codeDraft = ""; client = nil; clientPartition = nil
-        lastFailure = nil; refreshState()
+        let pending = client
+        busy = true; identityTransition = true
+        Task {
+            defer { busy = false; identityTransition = false; refreshState() }
+            do {
+                try await pending?.cancelLogin()
+                challenge = nil; codeDraft = ""; client = nil; clientPartition = nil; clientDeviceID = nil; clientEpoch = nil
+                lastFailure = nil
+            } catch { lastFailure = error.localizedDescription }
+        }
     }
     func signOut() {
         guard !busy else { return }
-        syncTask?.cancel(); syncTask = nil; activeRunID = nil; busy = true
+        syncTask?.cancel(); syncTask = nil; activeRunID = nil; busy = true; identityTransition = true
         Task {
-            defer { busy = false; refreshState() }
+            defer { busy = false; identityTransition = false; refreshState() }
             do {
                 var saved = selection; saved.signedIn = false
                 try bridge.saveSelection(saved); selection = saved
+                // Invalidate consumers immediately, including when later Keychain
+                // or offline revocation work fails. The actor also rejects leases.
+                onIdentityChanged?()
                 if let client { try await client.logout() }
                 else if let partition = saved.partition, let credential = try vault.load(partition: partition) {
-                    let transport = try CloudHTTPClient(origin: credential.origin, credentials: credential, vault: vault)
+                    let transport = try makeCredentialOwner(origin: credential.origin, credentials: credential)
                     try await transport.logout()
                 }
-                client = nil; clientPartition = nil; lastFailure = nil
+                client = nil; clientPartition = nil; clientDeviceID = nil; clientEpoch = nil; lastFailure = nil
             } catch { lastFailure = error.localizedDescription }
         }
     }
@@ -137,12 +159,7 @@ final class CloudSyncController: ObservableObject {
                 guard let store = bridge.store else { throw CloudSyncError.storage("unavailable") }
                 try bridge.bootstrapIfNeeded()
                 if try store.state(partition).requiresBaselineReview { throw CloudSyncError.historyChanged }
-                if client == nil || clientPartition != partition {
-                    guard let credentials = try vault.load(partition: partition) else { throw CloudSyncError.signInRequired }
-                    client = try CloudHTTPClient(origin: credentials.origin, credentials: credentials, vault: vault)
-                    clientPartition = partition
-                }
-                let transport = client!
+                let transport = try await credentialOwner()
                 try await transport.capabilities()
                 try await pullAll(transport, partition: partition)
                 var rounds = 0
@@ -171,10 +188,49 @@ final class CloudSyncController: ObservableObject {
                     originDraft = selection.origin; emailDraft = selection.email
                     challenge = nil; codeDraft = ""
                 }
+                onIdentityChanged?()
                 lastFailure = CloudSyncError.signInRequired.localizedDescription
             } catch { lastFailure = error.localizedDescription }
         }
     }
+    private func makeCredentialOwner(origin: String, credentials: CloudCredentials? = nil) throws -> CloudHTTPClient {
+        let epoch = UUID()
+        let owner = try CloudHTTPClient(origin: origin, credentials: credentials, vault: vault, onInvalidation: { [weak self] in
+            Task { @MainActor in
+                // A retired actor may have queued its notification before a
+                // new sign-in completed. It cannot invalidate the new owner.
+                guard let self, self.clientEpoch == epoch else { return }
+                self.onIdentityChanged?()
+            }
+        })
+        clientEpoch = epoch
+        return owner
+    }
+    /// The sole production credential owner for both sync and a future native
+    /// runtime broker. Local transport selection does not create a second auth
+    /// client; account selection and persisted device ID remain authoritative.
+    func credentialOwner() async throws -> CloudHTTPClient {
+        let saved = bridge.currentSelection()
+        guard !identityTransition, saved.signedIn, let partition = saved.partition, challenge == nil else { throw CloudSyncError.signInRequired }
+        if let client, clientPartition == partition, clientDeviceID == saved.deviceID { return client }
+        let previous = client
+        client = nil; clientPartition = nil; clientDeviceID = nil; clientEpoch = nil
+        if let previous { await previous.retire() }
+        // MainActor can re-enter while retirement waits. Re-check selection and
+        // reuse an owner another caller already installed during that interval.
+        let current = bridge.currentSelection()
+        guard !identityTransition, current.signedIn, current.partition == partition,
+              current.deviceID == saved.deviceID, challenge == nil else { throw CloudSyncError.identityChanged }
+        if let client, clientPartition == partition, clientDeviceID == saved.deviceID { return client }
+        onIdentityChanged?()
+        guard let credentials = try vault.load(partition: partition), credentials.deviceID == saved.deviceID else {
+            throw CloudSyncError.signInRequired
+        }
+        let owner = try makeCredentialOwner(origin: credentials.origin, credentials: credentials)
+        client = owner; clientPartition = partition; clientDeviceID = credentials.deviceID
+        return owner
+    }
+
     private func pullAll(_ transport: CloudHTTPClient, partition: String) async throws {
         guard let store = bridge.store else { throw CloudSyncError.storage("unavailable") }
         while true {

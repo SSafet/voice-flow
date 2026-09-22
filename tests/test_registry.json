@@ -30,6 +30,7 @@
         "captured_query_service",
         "captured_store",
         "claude_code_runtime",
+        "cloud_device_auth",
         "cloud_sync",
         "cloud_sync_bridge",
         "codex_appserver",
@@ -68,6 +69,7 @@
         "speech_speed",
         "spm_build",
         "system_agents",
+        "t3_native_shell",
         "thread_protocol_sync",
         "thread_store",
         "thread_store_events",
@@ -1363,6 +1365,13 @@
       "runner": "unit",
       "suites": [
         "workspace_ui"
+      ]
+    },
+    {
+      "id": "tests/cloud_device_auth/main.swift",
+      "runner": "unit",
+      "suites": [
+        "cloud_device_auth"
       ]
     },
     {
