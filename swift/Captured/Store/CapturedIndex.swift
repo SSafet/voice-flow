@@ -167,7 +167,7 @@ final class CapturedIndex {
 
     // MARK: - Row mapping
 
-    private static func makeRow(_ row: Row) throws -> CapturedItemRow {
+    static func makeRow(_ row: Row) throws -> CapturedItemRow {
         CapturedItemRow(
             id: row["id"],
             kind: try kind(row["kind"]),
