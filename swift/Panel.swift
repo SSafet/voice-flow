@@ -41,6 +41,14 @@ final class ChatPanel {
     var onTTSSeek: ((Double) -> Void)?
     var onTTSStop: (() -> Void)?
 
+    private var openThreadEnvironment: (() -> Void)?
+    func useNativeServicesOnly(openThreads: @escaping () -> Void) {
+        openThreadEnvironment = openThreads
+        agentsDataSource = nil
+        workspaceSidebar.showOnly([.inbox, .threads, .sources, .speech, .settings])
+        showWorkspaceDestination(.inbox)
+    }
+
     private var width: CGFloat = 920
     // One hardcoded panel size for every view — no adaptive growing or
     // shrinking per destination.
@@ -102,6 +110,7 @@ final class ChatPanel {
     func showSources() { showWorkspaceDestination(.sources) }
 
     func showSourceConsumer(_ object: AgentsObjectID) {
+        if let openThreadEnvironment { openThreadEnvironment(); return }
         speechOpen = false
         currentTab = .agents
         switch object {
@@ -114,6 +123,9 @@ final class ChatPanel {
     }
 
     func showWorkspaceDestination(_ destination: WorkspaceDestination) {
+        if let openThreadEnvironment, ![WorkspaceDestination.inbox, .sources, .speech, .settings].contains(destination) {
+            openThreadEnvironment(); return
+        }
         if destination == .settings, settingsView == nil { onOpenSettings?(); return }
         if destination == .speech, workspaceDestination != .speech {
             destinationBeforeSpeech = workspaceDestination
@@ -205,6 +217,7 @@ final class ChatPanel {
     // ── Show / hide ─────────────────────────────────────
 
     func show(focusInput: Bool = true) {
+        if focusInput, let openThreadEnvironment { openThreadEnvironment(); return }
         position()
         if panel.isVisible {
             panel.orderFront(nil)          // already up — don't re-fade
@@ -364,6 +377,7 @@ final class ChatPanel {
     }
 
     func openAssistantConversation(_ id: String) {
+        if let openThreadEnvironment { openThreadEnvironment(); return }
         speechOpen = false
         agentsView.openThread(AgentsThreadID(source: .assistant, value: id))
         applyTab(.agents)
@@ -482,6 +496,7 @@ final class ChatPanel {
     }
 
     private func applyTab(_ tab: ChatTab) {
+        if tab == .agents, !speechOpen, let openThreadEnvironment { openThreadEnvironment(); return }
         currentTab = tab
         if speechOpen {
             workspaceDestination = .speech
@@ -535,12 +550,14 @@ final class ChatPanel {
     /// ⌃⌥N while the panel is open: deep-link straight into that session's
     /// thread instead of growing the pill behind the panel.
     func openAgentThread(_ sessionId: String) {
+        if let openThreadEnvironment { openThreadEnvironment(); return }
         speechOpen = false
         applyTab(.agents)
         agentsView.openThread(sessionId)
     }
 
     func openAgentThread(_ id: AgentsThreadID) {
+        if let openThreadEnvironment { openThreadEnvironment(); return }
         speechOpen = false
         applyTab(.agents)
         agentsView.openThread(id)

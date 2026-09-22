@@ -8,6 +8,7 @@ struct CloudAccountSelection: Codable {
     var deviceID: String?
     var transport: String = "local"
     var signedIn: Bool = false
+    var nativeHome: CloudNativeHomeSelection?
     var exports: CloudExportSelection?
     var included: CloudExportSelection { exports ?? CloudExportSelection() }
     var partition: String? { userID.map { CloudSyncStore.partition(origin: origin, userID: $0) } }

@@ -43,6 +43,17 @@
       ]
     },
     {
+      "id": "SHELL-05",
+      "area": "native_shell",
+      "name": "Keep native T3 home selection and browser drafts stable while asynchronous shutdown drains one owned child",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/t3_application_host/main.swift",
+        "tests/t3_application_host/test.sh"
+      ]
+    },
+    {
       "id": "AST-01",
       "area": "assistant",
       "name": "Create, select, and delete Assistant conversations",

@@ -4,6 +4,11 @@ import MCP
 /// Mounted only behind the owned-child broker's capability/Host/origin guard.
 /// HTTP/MCP session IDs are not authorization and create no app session objects.
 actor T3NativeToolMCP {
+    enum Configuration: MCP.Method {
+        static let name = "atika/native/configuration"
+        struct Parameters: Codable, Hashable, Sendable { let version: Int }
+        typealias Result = T3NativeConfiguration
+    }
     enum Preflight: MCP.Method {
         static let name = "voiceflow/native/preflight"
         struct Parameters: Codable, Hashable, Sendable { let version: Int; let call: T3NativeToolCall }
@@ -30,6 +35,7 @@ actor T3NativeToolMCP {
         typealias Parameters = Value
         typealias Result = Value
     }
+    private let configuration: (@Sendable () async throws -> T3NativeConfiguration)?
     private let service: T3NativeToolService
     private let environment: T3NativeToolEnvironment
     private let onTurnClosed: @Sendable (String, String) async -> Void
@@ -40,7 +46,9 @@ actor T3NativeToolMCP {
     private var active: [String: T3NativeToolLifetime] = [:]
     nonisolated let lifetime: T3NativeToolLifetime
     init(service: T3NativeToolService, environment: T3NativeToolEnvironment,
+         configuration: (@Sendable () async throws -> T3NativeConfiguration)? = nil,
          onTurnClosed: @escaping @Sendable (String, String) async -> Void) {
+        self.configuration = configuration
         self.service = service; self.environment = environment; self.onTurnClosed = onTurnClosed; lifetime = service.lifetime
     }
     nonisolated func revoke() { lifetime.revoke() }
@@ -79,6 +87,16 @@ actor T3NativeToolMCP {
             await server.withMethodHandler(ListTools.self) { _ in
                 let value = try JSONDecoder().decode(Value.self, from: JSONEncoder().encode(manifest))
                 return ListTools.Result(tools: manifest.tools, _meta: Metadata(additionalFields: ["ai.atika/nativeManifest": value]))
+            }
+            await server.withMethodHandler(Configuration.self) { [configuration] params in
+                guard params.version == 1, let configuration else { throw MCPError.invalidParams("native_configuration_unavailable") }
+                try service.lifetime.check()
+                let result = try await configuration()
+                try service.lifetime.check()
+                guard result.binding == manifest.binding, result.policyRevision == manifest.policyRevision else {
+                    throw MCPError.invalidParams("native_configuration_changed")
+                }
+                return result
             }
             await server.withMethodHandler(Preflight.self) { params in
                 guard params.version == 1 else { throw MCPError.invalidParams("Unsupported native version") }

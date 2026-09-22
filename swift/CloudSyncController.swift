@@ -20,6 +20,10 @@ final class CloudSyncController: ObservableObject {
     var onContinueConversation: ((String) -> Void)?
     /// Native runtime composition observes identity retirement; it must discard
     /// prior leases and retain its existing environment until explicitly rebound.
+    var onNativeHomeChanged: (() -> Void)?
+    @Published private(set) var nativeServingHome: CloudNativeHomeSelection?
+    @Published var nativeEnvironmentStatus = "Local history and drafts are available without an account."
+    @Published var nativeEnvironmentEnabled = false
     var onIdentityChanged: (() -> Void)?
     private let bridge = CloudSyncBridge.shared
     private let vault: CloudCredentialVault
@@ -57,6 +61,47 @@ final class CloudSyncController: ObservableObject {
         refreshState()
         onTransportChanged?(selection.transport == "cloud")
         sync()
+    }
+    /// Selection is explicit and checked against the currently authenticated Mac.
+    func refreshNativeHome() {
+        guard !busy else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let owner = try await credentialOwner()
+                let identity = try await owner.identity()
+                let offer = try await owner.homes()
+                guard selection.signedIn, selection.origin == identity.origin,
+                      selection.userID == identity.ownerID, selection.deviceID == identity.deviceID else { throw CloudNativeHomeSelection.Failure.changed }
+                nativeServingHome = offer.serving.map { .init(origin: identity.origin, ownerId: identity.ownerID, deviceId: identity.deviceID, homeId: $0.homeId, label: $0.label) }
+                nativeEnvironmentStatus = offer.serving == nil
+                    ? "This Mac is not serving a home. Use Atika’s home setup before connecting native execution."
+                    : "Select the verified home below to connect native execution. Other local histories are kept separately."
+            } catch { nativeServingHome = nil; nativeEnvironmentStatus = "Home verification unavailable. Local history and drafts remain available." }
+        }
+    }
+    func selectNativeHome() {
+        guard !busy, let candidate = nativeServingHome, candidate.matches(selection) else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let owner = try await credentialOwner()
+                let identity = try await owner.identity()
+                let offer = try await owner.homes()
+                guard candidate.matches(selection), identity.origin == candidate.origin,
+                      identity.ownerID == candidate.ownerId, identity.deviceID == candidate.deviceId,
+                      offer.serving?.homeId == candidate.homeId else { throw CloudNativeHomeSelection.Failure.changed }
+                var saved = selection; saved.nativeHome = candidate
+                try bridge.saveSelection(saved); selection = saved
+                onNativeHomeChanged?()
+            } catch { nativeEnvironmentStatus = "The verified home changed or is unavailable. No selection was changed." }
+        }
+    }
+    func reconnectNativeHome() {
+        guard !busy, let selected = selection.nativeHome, selected.matches(selection) else { return }
+        onNativeHomeChanged?()
     }
     func setTransport(_ value: String) {
         guard !identityTransition, ["local", "cloud"].contains(value) else { return }
@@ -101,7 +146,7 @@ final class CloudSyncController: ObservableObject {
                 let priorExports = try bridge.store?.state(credentials.partition).exports
                 let saved = CloudAccountSelection(origin: credentials.origin, userID: credentials.userID,
                     email: credentials.email, deviceID: credentials.deviceID, transport: "cloud", signedIn: true,
-                    exports: priorExports ?? selection.included)
+                    nativeHome: selection.nativeHome, exports: priorExports ?? selection.included)
                 try bridge.saveSelection(saved)
                 selection = saved; clientPartition = credentials.partition; clientDeviceID = credentials.deviceID
                 onIdentityChanged?()

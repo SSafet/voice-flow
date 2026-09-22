@@ -193,6 +193,7 @@ run_unit_command t3_native_input bash tests/t3_native_input/test.sh
 run_unit_command native_authority_broker bash tests/native_authority_broker/test.sh
 run_unit_command native_account_authority bash tests/native_account_authority/test.sh
 run_unit_command t3_native_tools bash tests/t3_native_tools/test.sh
+run_unit_command t3_application_host bash tests/t3_application_host/test.sh
 run_unit_command thread_store bash tests/thread_store/test.sh
 run_unit_command captured_store bash tests/captured_store/test.sh
 run_unit_command captured_context bash tests/captured_context/test.sh

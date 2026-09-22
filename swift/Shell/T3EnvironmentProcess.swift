@@ -25,6 +25,7 @@ enum T3EnvironmentProcessError: Error, LocalizedError {
 /// Neither a downloaded page nor a user-edited settings path selects executable code.
 struct T3BundledEnvironment {
     let directory: URL
+    let supportsNativeAuthorityRevocation: Bool
     var executable: URL { directory.appendingPathComponent("t3") }
 
     init(bundle: Bundle = .main) throws {
@@ -39,7 +40,7 @@ struct T3BundledEnvironment {
         guard root.resolvingSymlinksInPath().path == root.standardizedFileURL.path else {
             throw T3EnvironmentProcessError.invalidArtifact
         }
-        struct Receipt: Decodable { let archiveSha256: String; let executableSha256: String; let clientIndexSha256: String }
+        struct Receipt: Decodable { let archiveSha256: String; let executableSha256: String; let clientIndexSha256: String; let nativeAuthorityRevocation: String? }
         let receiptURL = root.appendingPathComponent("voiceflow-archive-receipt.json")
         guard let bytes = try? Self.smallFile(receiptURL, limit: 8192),
               let receipt = try? JSONDecoder().decode(Receipt.self, from: bytes),
@@ -65,6 +66,7 @@ struct T3BundledEnvironment {
             throw T3EnvironmentProcessError.invalidArtifact
         }
         directory = root
+        supportsNativeAuthorityRevocation = receipt.nativeAuthorityRevocation == "sigusr2-v1"
     }
 
     fileprivate static func smallFile(_ url: URL, limit: Int) throws -> Data {
@@ -105,6 +107,8 @@ final class T3EnvironmentProcess {
     private var launchGeneration: UUID?
     private var authorityIdentity: T3AuthorityEnvironmentIdentity?
     private var starting = false
+    private var nativeAuthorityConfigured = false
+    private var runtimeAuthorityRevoked = false
     var onExit: ((Int32) -> Void)?
 
     init(runtime: T3BundledEnvironment, home: URL, workingDirectory: URL, port: UInt16) throws {
@@ -129,6 +133,7 @@ final class T3EnvironmentProcess {
     }
 
     func start(timeout: TimeInterval = 30, nativeAuthority: T3NativeAuthorityBootstrap? = nil) async throws -> T3EnvironmentConnection {
+        guard nativeAuthority == nil || runtime.supportsNativeAuthorityRevocation else { throw T3EnvironmentProcessError.invalidArtifact }
         guard !starting, process == nil, connection == nil else { throw T3EnvironmentProcessError.alreadyStarted }
         starting = true
         defer { starting = false }
@@ -171,6 +176,8 @@ final class T3EnvironmentProcess {
             }
             try child.run()
             process = child
+            nativeAuthorityConfigured = nativeAuthority != nil
+            runtimeAuthorityRevoked = false
             launchGeneration = UUID()
             authorityIdentity = nil
             try pipe.fileHandleForWriting.write(contentsOf: input)
@@ -192,8 +199,20 @@ final class T3EnvironmentProcess {
         }
     }
 
+    /// The matching native-bootstrap server reserves SIGUSR2 to revoke admitted
+    /// turns while preserving its local history server. Never read a PID from disk.
+    @discardableResult
+    func revokeRuntimeAuthority() -> Bool {
+        guard connection != nil, nativeAuthorityConfigured, !runtimeAuthorityRevoked,
+              runtime.supportsNativeAuthorityRevocation, let child = process, child.isRunning else { return false }
+        guard Darwin.kill(child.processIdentifier, SIGUSR2) == 0 else { return false }
+        runtimeAuthorityRevoked = true
+        return true
+    }
+
     func stop() async {
         connection = nil
+        nativeAuthorityConfigured = false
         launchGeneration = nil
         authorityIdentity = nil
         guard let child = process else { releaseHome(); return }
@@ -213,6 +232,7 @@ final class T3EnvironmentProcess {
         guard process === child else { return }
         process = nil
         connection = nil
+        nativeAuthorityConfigured = false
         launchGeneration = nil
         authorityIdentity = nil
         releaseHome()

@@ -152,6 +152,7 @@ enum DictationProvider: String, CaseIterable {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class UserSettings {
+    static var onNativeSettingsWillSave: (() -> Void)?
     static var onPortableSave: (() -> Void)?
 
     static let shared = UserSettings()
@@ -355,6 +356,7 @@ class UserSettings {
     }
 
     func save() {
+        Self.onNativeSettingsWillSave?()
         Self.onPortableSave?()
         let dict: [String: Any] = [
             "dictation_provider": dictationProvider.rawValue,

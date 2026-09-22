@@ -150,6 +150,7 @@ func image(_ width: Int, _ height: Int) -> CGImage {
         expiring.revoke()
         try await proof.refuses("native_revoked") { _ = try await expiring.preflight(expiredCall) }
         try await primitives(proof, binding, state, tools)
+        try await configuration(proof, binding, tools)
         try await http(proof, binding, state, tools)
         try computerEvents(proof)
         print("PASS \(proof.assertions) isolated native tool assertions")
@@ -255,6 +256,48 @@ func image(_ width: Int, _ height: Int) -> CGImage {
         let unsafe = try await invoke("unsafe",["id":"shot:unsafe","picture":true],tool:"captured_get")
         try proof.check(!unsafe.content.contains { if case .image = $0 { true } else { false } }, "real no-follow captured owner never delivers symlink bytes")
         print("SOURCE SHA256 \(sourceHash)")
+    }
+    static func configuration(_ proof: Proof, _ binding: T3NativeToolBinding, _ tools: [Tool]) async throws {
+        func settings(_ budget: Double = 5, model: String = "deepseek/deepseek-v4.1-flash", roots: [String] = ["~/projects"]) -> T3NativeSettings {
+            .init(runCommands: true, reachNetwork: false, assistantComputerUse: false, workspaceRoots: roots,
+                  egressAllow: [], egressBlock: ["blocked.example"], dailyBudgetUSD: budget, model: model, reasoningEffort: "")
+        }
+        let config = try T3NativeConfiguration(binding: binding, settings: settings(), decisions: .init(contextRead: .allow, editWorkspace: .ask, shell: .ask))
+        try proof.check(config.revision.count == 64 && config.policyRevision.count == 64 && config.settings.reasoningEffort == "", "configuration preserves unset effort and exact tilde root")
+        try proof.check(try T3NativeConfiguration(binding: binding, settings: settings(), decisions: .init(contextRead: .allow, editWorkspace: .ask, shell: .ask)).revision == config.revision, "configuration encoding yields stable revision")
+        try proof.check(try T3NativeConfiguration(binding: binding, settings: settings(6), decisions: .init(contextRead: .allow, editWorkspace: .ask, shell: .ask)).revision != config.revision, "budget participates in configuration revision")
+        for invalid in [settings(.nan), settings(-1), settings(10_001), settings(model: "invalid model"), settings(roots: ["/tmp/secret\npath"])] {
+            do { try invalid.validate(); throw ProofFailure(message: "invalid configuration accepted") }
+            catch let error as T3NativeToolFailure { try proof.check(error.code == "native_settings_invalid", "invalid settings refused") }
+        }
+        let life = T3NativeToolLifetime()
+        let service = try T3NativeToolService(binding: binding, backendRevision: "native-v1", policyRevision: config.policyRevision, tools: tools,
+            backend: .init(authority: { _,_ in nil }, perform: { _,_,_ in throw ProofFailure(message: "unexpected effect") }))
+        let host = T3NativeToolMCP(service: service, environment: binding.environment, configuration: {
+            try life.check(); return config
+        }, onTurnClosed: { _,_ in })
+        func request(_ version: Int) throws -> HTTPRequest {
+            .init(method: "POST", headers: ["Accept":"application/json, text/event-stream", "Content-Type":"application/json"],
+                  body: try JSONSerialization.data(withJSONObject: ["jsonrpc":"2.0", "id":1, "method":"atika/native/configuration", "params":["version":version]]), path:"/v1/tools/mcp")
+        }
+        func result(_ host: T3NativeToolMCP, version: Int = 1) async throws -> [String:Any] {
+            let response = await host.handle(try request(version), ownedEnvironment: binding.environment)
+            return try JSONSerialization.jsonObject(with: response.bodyData!) as! [String:Any]
+        }
+        let wire = try await result(host)
+        let value = wire["result"] as! [String:Any]
+        try proof.check(value["revision"] as? String == config.revision && (value["settings"] as? [String:Any])?["reachNetwork"] as? Bool == false, "actual SDK custom method returns native configuration and binding")
+        try proof.check(try await result(host, version: 2)["error"] != nil, "unsupported configuration version refuses")
+        life.revoke()
+        try proof.check(try await result(host)["error"] != nil, "configuration revocation refuses before publication")
+        await host.stop()
+        let absent = T3NativeToolMCP(service: service, environment: binding.environment, onTurnClosed: { _,_ in })
+        // A fresh service is needed because stopping a host revokes its shared launch.
+        let fresh = try T3NativeToolService(binding: binding, backendRevision: "native-v1", policyRevision: config.policyRevision, tools: tools,
+            backend: .init(authority: { _,_ in nil }, perform: { _,_,_ in throw ProofFailure(message: "unexpected effect") }))
+        let absentFresh = T3NativeToolMCP(service: fresh, environment: binding.environment, onTurnClosed: { _,_ in })
+        try proof.check(try await result(absentFresh)["error"] != nil, "unconfigured services explicitly refuse configuration method")
+        await absentFresh.stop(); await absent.stop()
     }
     static func http(_ proof: Proof, _ binding: T3NativeToolBinding, _ state: State, _ tools: [Tool]) async throws {
         let gate = Gate(), cancellationObserved = State()

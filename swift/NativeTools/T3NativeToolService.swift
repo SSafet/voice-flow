@@ -2,11 +2,11 @@ import Foundation
 import CryptoKit
 import MCP
 
-struct T3NativeToolEnvironment: Codable, Equatable, Sendable {
+struct T3NativeToolEnvironment: Codable, Hashable, Sendable {
     let environmentId: String
     let launchGeneration: UUID
 }
-struct T3NativeToolBinding: Codable, Equatable, Sendable {
+struct T3NativeToolBinding: Codable, Hashable, Sendable {
     let environment: T3NativeToolEnvironment
     let ownerId: String
     let deviceId: String

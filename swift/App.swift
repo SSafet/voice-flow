@@ -269,12 +269,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Frames collected during a session, waiting for the end-of-session send.
     private var pendingSessionShots: [Data] = []
     private var escapeMonitor: Any?
+    private var escapeLocalMonitor: Any?
 
     /// One microphone capture is active, but several stopped runs may wait on
     /// transcription. Every async callback addresses a UUID instead of shared
     /// mutable purpose/context slots.
     var activeRunId: UUID?
     var captureRuns: [UUID: CaptureRun] = [:]
+    var t3Host: T3ApplicationHost?
+    var t3LaunchTask: Task<Void, Never>?
+    var terminationTask: Task<Void, Never>?
+    var terminationFinished = false
     var shellInputWindow: T3ShellWindow?
     var shellCapturedInput: ShellCapturedInput?
     var shellDeliveriesInFlight: Set<UUID> = []
@@ -314,6 +319,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupAgent()
         setupHotkeys()
         setupCapturedDataIndex()
+        configureT3NativeUI()
+        startT3Environment()
 
         requestInitialPermissionsIfNeeded()
         startHotkeyWithAccessibilityCheck()
@@ -328,49 +335,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // VF-60: a previous session that died without applicationWillTerminate
         // (crash, force-quit, rebuild-under-a-running-app) leaves its runtime
         // orphaned on launchd, still serving. Sweep before we start our own.
-        Task { await OpenCodeSupervisor.shared.reapOrphanedRuntimes() }
+        if !usesT3Environment { Task { await OpenCodeSupervisor.shared.reapOrphanedRuntimes() } }
 
         // VF-44: recordings whose transcription never delivered survive as
         // WAVs — say so once per launch instead of losing them silently.
         let pendingAudio = PendingAudioStore.pendingFiles()
         if !pendingAudio.isEmpty {
             vflog("pending-audio: \(pendingAudio.count) unprocessed recording(s) from earlier runs")
-            agent.note("\(pendingAudio.count) unprocessed recording(s) kept in \(PendingAudioStore.directory().path)")
+            agent?.note("\(pendingAudio.count) unprocessed recording(s) kept in \(PendingAudioStore.directory().path)")
         }
-        scheduleOpenCodeUpdates()
+        if !usesT3Environment { scheduleOpenCodeUpdates() }
         vflog("app started")
         let contract = ContractSelfCheck.bundled()
         vflog("contract: \(contract.aboutLine)")
-        do { vflog(try ThreadDatabase.describe(ThreadDatabase.shared())) }
-        catch { vflog("threads.sqlite: could not be opened: \(error)") }
+        if !usesT3Environment {
+            do { vflog(try ThreadDatabase.describe(ThreadDatabase.shared())) }
+            catch { vflog("threads.sqlite: could not be opened: \(error)") }
+        }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if terminationFinished { return .terminateNow }
+        if terminationTask != nil { return .terminateLater }
         flushPushSave()
-        sourceCollector?.stop()
-        ttsController?.shutdown()
-        localAPIServer?.stop()
-        syncServer?.stop()
-        // AppKit does not wait for unstructured Tasks launched from this
-        // callback. Join runtime teardown on a detached executor before the
-        // process exits so Codex/OpenCode and their tool children cannot be
-        // reparented as orphans.
-        let teardown = DispatchSemaphore(value: 0)
-        let nativeMCP = mcpServer
-        let foregroundAgent = agent
-        let backgroundSupervisor = agentSupervisor
-        Task.detached {
+        sourceCollector?.stop(); ttsController?.shutdown()
+        localAPIServer?.stop(); syncServer?.stop()
+        t3LaunchTask?.cancel()
+        let nativeMCP = mcpServer, foregroundAgent = agent, backgroundSupervisor = agentSupervisor
+        let selectedT3 = usesT3Environment
+        terminationTask = Task { @MainActor [weak self] in
+            guard let self else { NSApp.reply(toApplicationShouldTerminate: true); return }
+            self.t3Host?.invalidate(message: "Stopping the local environment…")
+            await self.t3LaunchTask?.value
+            await self.t3Host?.stop()
             await nativeMCP?.stop()
-            await foregroundAgent?.shutdown()
-            await backgroundSupervisor?.shutdown()
-            await AgentPermissionBroker.shared.rejectAll()
-            await OpenCodeSupervisor.shared.stopAll()
-            teardown.signal()
+            if !selectedT3 {
+                await foregroundAgent?.shutdown()
+                await backgroundSupervisor?.shutdown()
+                await AgentPermissionBroker.shared.rejectAll()
+                await OpenCodeSupervisor.shared.stopAll()
+            }
+            self.terminationFinished = true
+            NSApp.reply(toApplicationShouldTerminate: true)
         }
-        _ = teardown.wait(timeout: .now() + 8)
-        if let escapeMonitor {
-            NSEvent.removeMonitor(escapeMonitor)
-        }
+        return .terminateLater
+    }
+    func applicationWillTerminate(_ notification: Notification) {
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        if let escapeLocalMonitor { NSEvent.removeMonitor(escapeLocalMonitor) }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -745,6 +757,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.onSettingsChanged = { [weak self] in
             self?.syncWorkflowWatcher()
             self?.nextQueue?.applySettings()
+            if let self, self.usesT3Environment { Task { @MainActor in self.t3Host?.settingsChanged() } }
             self?.chatPanel?.setControlAllowed(UserSettings.shared.assistantComputerUse)
         }
         settingsWindow.onHotkeyChanged = { [weak self] spec in
@@ -819,50 +832,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupCore() {
-        ContinuityAPIFallback.configuration = {
-            let settings = UserSettings.shared
-            return ContinuityAPIFallback.Configuration(
-                key: KeychainStore.shared.loadAgentAPIKey(),
-                baseURL: URL(string: settings.agentBaseURL) ?? URL(string: DefaultAgentBaseURL)!,
-                model: settings.agentModel)
-        }
-        // The sandbox reads the granted roots and dial the same just-in-time
-        // way the model gateway reads credentials, so a settings change applies
-        // to the next runtime start without restarting the app (VF-59).
-        AgentSandboxSettings.shared.configure {
-            let settings = UserSettings.shared
-            return AgentSandboxSnapshot(
-                workspaceRoots: settings.agentWorkspaceRoots,
-                dial: settings.agentCapabilityDial,
-                egressAllowedHosts: settings.agentEgressAllowedHosts,
-                egressBlockedHosts: settings.agentEgressBlockedHosts)
-        }
-        ModelGatewayCredentials.shared.configure { [weak self] in
-            let configured = UserSettings.shared.agentBaseURL
-            let baseURL = URL(string: configured) ?? URL(string: DefaultAgentBaseURL)!
-            let globalModel = UserSettings.shared.agentModel
-            let catalogModels = OpenRouterModelCatalog.shared.cachedModels(
-                including: [globalModel])
-            var allowed = Set(catalogModels.map(\.id))
-            if let store = self?.agentJobStore,
-               let jobs = try? store.jobs(limit: 500) {
-                allowed.formUnion(jobs.compactMap(\.modelID))
+        if !usesT3Environment {
+            ContinuityAPIFallback.configuration = {
+                let settings = UserSettings.shared
+                return ContinuityAPIFallback.Configuration(
+                    key: KeychainStore.shared.loadAgentAPIKey(),
+                    baseURL: URL(string: settings.agentBaseURL) ?? URL(string: DefaultAgentBaseURL)!,
+                    model: settings.agentModel)
             }
-            if let agent = self?.agent {
-                allowed.formUnion(agent.conversationPreferredModels(for: .opencode))
+            // The sandbox reads the granted roots and dial the same just-in-time
+            // way the model gateway reads credentials, so a settings change applies
+            // to the next runtime start without restarting the app (VF-59).
+            AgentSandboxSettings.shared.configure {
+                let settings = UserSettings.shared
+                return AgentSandboxSnapshot(
+                    workspaceRoots: settings.agentWorkspaceRoots,
+                    dial: settings.agentCapabilityDial,
+                    egressAllowedHosts: settings.agentEgressAllowedHosts,
+                    egressBlockedHosts: settings.agentEgressBlockedHosts)
             }
-            return ModelGatewayCredentialSnapshot(
-                apiKey: KeychainStore.shared.loadAgentAPIKey(),
-                upstreamBaseURL: baseURL,
-                allowedModels: allowed,
-                modelOutputTokenLimits: Dictionary(uniqueKeysWithValues:
-                    catalogModels.map { ($0.id, $0.openCodeOutputLimit) }),
-                dailyBudgetUSD: UserSettings.shared.agentDailyBudgetUSD)
-        }
-        AgentJobRuntimeConfiguration.shared.configure {
-            AgentModelSelection(
-                provider: "openrouter", model: UserSettings.shared.agentModel,
-                reasoningEffort: UserSettings.shared.agentReasoningEffort)
+            ModelGatewayCredentials.shared.configure { [weak self] in
+                let configured = UserSettings.shared.agentBaseURL
+                let baseURL = URL(string: configured) ?? URL(string: DefaultAgentBaseURL)!
+                let globalModel = UserSettings.shared.agentModel
+                let catalogModels = OpenRouterModelCatalog.shared.cachedModels(
+                    including: [globalModel])
+                var allowed = Set(catalogModels.map(\.id))
+                if let store = self?.agentJobStore,
+                   let jobs = try? store.jobs(limit: 500) {
+                    allowed.formUnion(jobs.compactMap(\.modelID))
+                }
+                if let agent = self?.agent {
+                    allowed.formUnion(agent.conversationPreferredModels(for: .opencode))
+                }
+                return ModelGatewayCredentialSnapshot(
+                    apiKey: KeychainStore.shared.loadAgentAPIKey(),
+                    upstreamBaseURL: baseURL,
+                    allowedModels: allowed,
+                    modelOutputTokenLimits: Dictionary(uniqueKeysWithValues:
+                        catalogModels.map { ($0.id, $0.openCodeOutputLimit) }),
+                    dailyBudgetUSD: UserSettings.shared.agentDailyBudgetUSD)
+            }
+            AgentJobRuntimeConfiguration.shared.configure {
+                AgentModelSelection(
+                    provider: "openrouter", model: UserSettings.shared.agentModel,
+                    reasoningEffort: UserSettings.shared.agentReasoningEffort)
+            }
         }
         recorder = AudioRecorder()
         paster = Paster()
@@ -1006,7 +1021,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if useCloud { self?.syncServer.stop() }
                 else { self?.syncServer.start() }
             }
-            cloud.onContinueConversation = { [weak self] id in self?.chatPanel.openAssistantConversation(id) }
+            cloud.onContinueConversation = { [weak self] id in
+                guard let self, !self.usesT3Environment else { return }; self.chatPanel.openAssistantConversation(id)
+            }
             cloud.start()
         }
     }
@@ -1018,14 +1035,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             workflowWatcher.start()
         }
         indicator.setWatcherActive(workflowWatcher.isRunning)
-        nextQueue = NextQueue(isBusy: { [weak self] in self?.surfaceBusy ?? false })
-        chatPanel.setQueueView(nextQueue.editorView)
-        nextQueue.onShowEditor = { [weak self] in
-            guard let self else { return }
-            self.chatPanel.show()
-            self.chatPanel.showWorkspaceDestination(.queue)
-        }
-        nextQueue.applySettings()
         captureScheduler = CaptureScheduler(
             screenCapture: screenCapture,
             interval: TimeInterval(UserSettings.shared.captureIntervalSeconds)
@@ -1036,6 +1045,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.handleAmbientCapture(imageData)
             }
         }
+
+        if usesT3Environment {
+            escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard event.keyCode == 53 else { return }
+                self?.t3Host?.stopComputerIfActive()
+            }
+            escapeLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                if event.keyCode == 53, self?.t3Host?.stopComputerIfActive() == true { return nil }
+                return event
+            }
+            return
+        }
+        nextQueue = NextQueue(isBusy: { [weak self] in self?.surfaceBusy ?? false })
+        chatPanel.setQueueView(nextQueue.editorView)
+        nextQueue.onShowEditor = { [weak self] in
+            guard let self else { return }
+            self.chatPanel.show()
+            self.chatPanel.showWorkspaceDestination(.queue)
+        }
+        nextQueue.applySettings()
 
         agent = AgentSession(screenCapture: screenCapture)
         agent.setActiveAssistant(AssistantsStore.shared.base)
@@ -1590,6 +1619,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Menu bar / pill context menu: surface the next queue on demand.
     private func showNextQueueNow() {
+        guard !usesT3Environment else { showT3Environment(); return }
         if UserSettings.shared.queueEnabled {
             nextQueue?.showNow()
         } else {
@@ -1599,6 +1629,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Kick the nightly-review LaunchAgent by hand — same run as 21:37.
     private func runWatcherReviewNow() {
+        guard !usesT3Environment else {
+            replyBubble.showTransient("Watcher sources remain available. Start reviews from the thread environment.", seconds: 6); return
+        }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         proc.arguments = ["kickstart", "gui/\(getuid())/com.voiceflow.watcher-analyze"]
@@ -1816,6 +1849,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Eligible sessions beyond nine hold no number yet — they are the
     /// queue, and enter as numbers free up. Main thread.
     func slottedSessions() -> [(slot: Int, id: String, label: String)] {
+        guard !usesT3Environment else { return [] }
         let eligible = pickerSessions()
         let eligibleIds = Set(eligible.map { $0.id })
         var slots = sessionSlots.filter { eligibleIds.contains($0.key) }
@@ -2073,6 +2107,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// static while any session holds unseen pushes, pulsing only while a
     /// blocking ask waits for an answer. Main thread.
     func refreshUnreadIndicator() {
+        guard !usesT3Environment else { indicator.setUnreadIndicator(unread: false, asking: false); return }
         indicator.setUnreadIndicator(unread: unseenSessions() > 0, asking: hasUnansweredAsk)
     }
 
@@ -2228,6 +2263,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// A grown Assistant response is a compact doorway back into that exact
     /// conversation. MCP/session pushes retain their close-and-keep contract.
     private func handleGrownPillClick() {
+        guard !usesT3Environment else { showT3Environment(); return }
         if let sid = currentPushSessionId {
             // Clicking the shown stack opens its full thread in the panel
             // (Safet QA: "it definitely should") — ✕ stays the close.
@@ -2297,6 +2333,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         screenshots: [Data],
         attachmentNote: String?
     ) {
+        guard !usesT3Environment else { return }
         assistantPickerDismissed = false
         assistantWakeInFlight = true
         pendingAssistantWakeTurns.append(PendingAssistantWakeTurn(
@@ -2398,6 +2435,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func sendTypedMessage(_ text: String, images: [String] = []) {
+        guard !usesT3Environment else { showT3Environment(); return }
         if let interaction = pendingInteraction {
             chatPanel.addNote("Sent to Claude.")
             fulfillInteraction(interaction, text: text, includeScreenshot: false,
@@ -2532,6 +2570,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// The agent may still be finishing an earlier turn when the session
     /// bundle is ready — interrupt it and retry briefly rather than lose it.
     private func deliverToAgent(_ text: String, screenshots: [Data], retriesLeft: Int) {
+        guard !usesT3Environment else { return }
         if agent.isRunning, retriesLeft > 0 {
             agent.interrupt()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
@@ -2556,6 +2595,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     private func visibleConversationFocus() -> ConversationFocus {
+        guard !usesT3Environment else { return .none }
         if chatPanel.isVisible { return chatPanel.conversationFocus }
         guard indicator.isGrownVisible else { return .none }
         return GrownConversationFocus.resolve(
@@ -2949,7 +2989,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             run.phase = .failed
             captureRuns[id] = run
             chatPanel.addNote(message)
-            agent.note("\(message) Raw audio kept in \(PendingAudioStore.directory().path)")
+            agent?.note("\(message) Raw audio kept in \(PendingAudioStore.directory().path)")
             let audioURL = PendingAudioStore.directory().appendingPathComponent("\(id.uuidString).wav")
             let recoveryMessage = FileManager.default.fileExists(atPath: audioURL.path)
                 ? "couldn't transcribe — recording saved for recovery"
@@ -2964,6 +3004,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// keeps answering to the Settings wake word exactly as before; folder
     /// variants answer to their own names, longest match first.
     private func assistantWakeCandidates() -> [AssistantWakeCandidate] {
+        guard !usesT3Environment else { return [] }
         let store = AssistantsStore.shared
         let settingsWord = UserSettings.shared.assistantWakeWord
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3433,6 +3474,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func showSettings() {
         showDock()
         settingsWindow.prepareForPresentation()
+        if usesT3Environment {
+            settingsWindow.showWindow(nil); settingsWindow.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true); return
+        }
         chatPanel.show(focusInput: false)
         chatPanel.showWorkspaceDestination(.settings)
         NSApp.activate(ignoringOtherApps: true)
@@ -3538,6 +3583,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         localAPIServer.onPanelShow = { [weak self] tab in
             guard let self else { return LocalAPIResponse.error(503, "App not ready.") }
             DispatchQueue.main.sync {
+                if self.usesT3Environment, tab == nil || tab == "agents" { self.showT3Environment(); return }
                 self.chatPanel.show(focusInput: false)
                 switch tab {
                 case "inbox": self.chatPanel.selectTab(.inbox)
@@ -3562,6 +3608,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         mcpServer = MCPServer()
+        if usesT3Environment {
+            localAPIServer.onMCP = { _, _, _ in .error(statusCode: 503, .internalError("Use the owned T3 environment")) }
+            localAPIServer.start()
+            return // No legacy session/overlay-pruning loop may own T3 overlays.
+        }
         mcpServer.callTool = { [weak self] name, arguments, session, cancellation in
             guard let self else {
                 return MCPServer.ToolResult.fail("Voice Flow is shutting down.")

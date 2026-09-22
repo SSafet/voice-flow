@@ -88,3 +88,28 @@ No native questions, reports, inbox, queues, memory, scheduler, TTS auto-play or
 Use one shared official MCP client per owned launch, with its increasing request IDs for all parallel turns. The stateless endpoint has one request-ID namespace; concurrently reused IDs (including numeric/string aliases) refuse409. There is no multi-client session multiplexing.
 
 HTTP envelope <=96KiB; broker response <=7MiB. Broker default native deadline120s (configurable up to10min), separate from lease deadline. The service exposes no listener, credentials or generic file access.
+
+## Native execution configuration
+
+`atika/native/configuration` accepts `{version:1}` on the same authenticated MCP connection. An unconfigured service refuses this method. Production verifies the current owned child/account checkpoint before and after creating the response; a revoked launch cannot publish an old snapshot.
+
+```ts
+interface NativeConfiguration {
+  version: 1;
+  revision: string; // SHA256 of sorted-key JSON below, without this field
+  binding: NativeManifest['binding'];
+  policyRevision: string; // SHA256 of {settings, decisions}
+  settings: {
+    runCommands: boolean; reachNetwork: boolean; assistantComputerUse: boolean;
+    workspaceRoots: string[]; egressAllow: string[]; egressBlock: string[];
+    dailyBudgetUSD: number; model: string; reasoningEffort: string;
+  };
+  decisions: {
+    contextRead: 'allow'|'ask'|'deny';
+    editWorkspace: 'allow'|'ask'|'deny';
+    shell: 'allow'|'ask'|'deny';
+  };
+}
+```
+
+The configuration revision covers `{version,binding,policyRevision,settings,decisions}` using sorted keys and unescaped slashes. Values are exact native settings, including `~` roots and empty/unset effort. Arrays have at most256 entries; entries are nonempty, at most4096 UTF-8 bytes, without control characters. Model is nonempty, at most256 UTF-8 bytes, without whitespace; effort is at most64 UTF-8 bytes. Budget is finite0...10000. Native decisions come from existing `AgentPermissionPolicy`, with the actual capability dial and no permissive overrides. The signed native executable hash is the backend revision. Settings changes invalidate the launch before settings persistence, so cached approvals/configuration cannot outlive a changed restriction.
