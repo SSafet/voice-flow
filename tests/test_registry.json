@@ -68,6 +68,7 @@
         "speech_speed",
         "spm_build",
         "system_agents",
+        "t3_application_host",
         "t3_native_input",
         "t3_native_shell",
         "t3_native_tools",
@@ -1527,6 +1528,20 @@
       "runner": "unit",
       "suites": [
         "t3_native_tools"
+      ]
+    },
+    {
+      "id": "tests/t3_application_host/main.swift",
+      "runner": "unit",
+      "suites": [
+        "t3_application_host"
+      ]
+    },
+    {
+      "id": "tests/t3_application_host/test.sh",
+      "runner": "unit",
+      "suites": [
+        "t3_application_host"
       ]
     }
   ]

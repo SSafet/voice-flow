@@ -88,6 +88,9 @@ final class WorkspaceSidebar: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    func showOnly(_ destinations: Set<WorkspaceDestination>) {
+        for (destination, button) in buttons { button.isHidden = !destinations.contains(destination) }
+    }
     func select(_ destination: WorkspaceDestination, inboxCount: Int = 0, attentionCount: Int = 0) {
         for (item, button) in buttons {
             let count = item == .inbox ? inboxCount : item == .now ? attentionCount : 0

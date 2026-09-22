@@ -10,6 +10,7 @@ final class T3ShellWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKU
 
     enum Phase: Equatable { case idle, authenticating, loading, ready, failed(String), closed }
     private(set) var phase: Phase = .idle { didSet { onPhaseChanged?(phase) } }
+    var onComposerTargetChanged: ((ShellComposerTarget?) -> Void)?
     var onPhaseChanged: ((Phase) -> Void)?
     let window: NSWindow
     let webView: WKWebView
@@ -240,6 +241,7 @@ final class T3ShellWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKU
 
     private func invalidateDocument() {
         binding.invalidate()
+        onComposerTargetChanged?(nil)
         for (id, item) in Array(pending) { finish(id, attempt: item.attempt, status: .unconfirmed) }
     }
 
@@ -260,7 +262,9 @@ final class T3ShellWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKU
             if value is NSNull { target = nil }
             else if let decoded = try? ShellWire.decode(ShellComposerTarget.self, value) { target = decoded }
             else { reply(nil, "Invalid composer target."); return }
-            reply(["accepted": binding.publish(target, documentId: documentId)], nil)
+            let accepted = binding.publish(target, documentId: documentId)
+            if accepted { onComposerTargetChanged?(target) }
+            reply(["accepted": accepted], nil)
         case "readCapture":
             guard phase == .ready, window.isVisible, let custody = inputCustody,
                   let value = body["request"], let request = try? ShellWire.decode(ShellCaptureReadRequest.self, value) else {

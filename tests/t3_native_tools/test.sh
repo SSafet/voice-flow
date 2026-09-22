@@ -30,7 +30,7 @@ swiftc -parse-as-library -swift-version 5 -suppress-warnings -I "$BIN" -Xcc "-fm
   swift/Inbox.swift swift/MCP.swift swift/MCPHTTPHost.swift swift/MCPToolCancellation.swift \
   swift/MCPCapturedCatalog.swift swift/MCPCapturedReader.swift swift/MCPOverlayScope.swift \
   swift/NativeTools/T3NativeToolService.swift swift/NativeTools/T3NativeToolCatalog.swift \
-  swift/NativeTools/T3NativeToolMCP.swift swift/NativeTools/T3NativeToolPrimitives.swift \
+  swift/NativeTools/T3NativeConfiguration.swift swift/NativeTools/T3NativeToolMCP.swift swift/NativeTools/T3NativeToolPrimitives.swift \
   "$WORK/ComputerControl.swift" tests/t3_native_tools/main.swift \
   -framework Cocoa -framework CoreGraphics -o "$WORK/proof"
 "$WORK/proof"

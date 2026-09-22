@@ -43,6 +43,13 @@ private func check(_ value: @autoclosure () -> Bool, _ detail: String) throws {
         do { _ = try primary.authorityEnvironmentIdentity(); throw NSError(domain: "authority before launch", code: 1) }
         catch T3NativeAuthorityError.unavailable { assertions += 1 }
         let nativeAuthority = T3NativeAuthorityBootstrap(origin: "http://127.0.0.1:12345", credential: String(repeating: "a", count: 43))
+        try expect(!primary.revokeRuntimeAuthority(), "no runtime signal before child readiness")
+        let unmarkedRuntime = try T3BundledEnvironment(bundle: Bundle(url: root.appendingPathComponent("Unmarked.app"))!)
+        let unmarkedHome = root.appendingPathComponent("must-not-create-unmarked-home")
+        let unmarked = try T3EnvironmentProcess(runtime: unmarkedRuntime, home: unmarkedHome, workingDirectory: root, port: 29472)
+        do { _ = try await unmarked.start(nativeAuthority: nativeAuthority); throw NSError(domain: "unmarked native runtime admitted", code: 1) }
+        catch T3EnvironmentProcessError.invalidArtifact { assertions += 1 }
+        try expect(!FileManager.default.fileExists(atPath: unmarkedHome.path), "unmarked archive refuses native launch before home creation or process spawn")
         let connected = try await primary.start(nativeAuthority: nativeAuthority)
         let firstIdentity = try primary.authorityEnvironmentIdentity()
         try expect(firstIdentity.environmentID == connected.environmentId, "authority is bound to owned environment identity")
@@ -50,6 +57,14 @@ private func check(_ value: @autoclosure () -> Bool, _ detail: String) throws {
         try expect(connected.origin.url.absoluteString == "http://127.0.0.1:29471", "read exact owned process origin")
         try expect(connected.credential.count == 64, "generated private credential")
         try expect(!String(describing: connected).contains(connected.credential), "redacted connection description")
+        try expect(primary.revokeRuntimeAuthority(), "ready owned native child accepts runtime revocation signal")
+        let revokeReceipt = primaryHome.appendingPathComponent("revocation-receipt")
+        let revokeDeadline = Date().addingTimeInterval(3)
+        while !FileManager.default.fileExists(atPath: revokeReceipt.path), Date() < revokeDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        try expect(FileManager.default.fileExists(atPath: revokeReceipt.path), "real child receives SIGUSR2 through owned Process")
+        let identityAfterRevocation = try primary.authorityEnvironmentIdentity()
+        try expect(identityAfterRevocation == firstIdentity, "runtime revocation leaves local history process alive")
+        try expect(!primary.revokeRuntimeAuthority(), "runtime revocation is consumed once per launch")
         let firstAudit = try audit(primaryHome)
         try expect(firstAudit["argvContainsCredential"] as? Bool == false, "credential absent from argv")
         try expect(firstAudit["ambientOverridePresent"] as? Bool == false, "ambient overrides and provider key absent")
@@ -90,6 +105,7 @@ private func check(_ value: @autoclosure () -> Bool, _ detail: String) throws {
         _ = try await contender.start()
         let secondIdentity = try contender.authorityEnvironmentIdentity()
         try expect(secondIdentity.environmentID == firstIdentity.environmentID && secondIdentity.generation != firstIdentity.generation, "restart changes launch generation while preserving environment ID")
+        try expect(!contender.revokeRuntimeAuthority(), "ordinary non-native child never receives runtime signal")
         let unconfiguredAudit = try audit(primaryHome)
         try expect(unconfiguredAudit["authorityConfigured"] as? Bool == false, "ordinary launch remains unconfigured")
         await contender.stop()
@@ -106,6 +122,7 @@ private func check(_ value: @autoclosure () -> Bool, _ detail: String) throws {
             earlyIdentity = try? early.authorityEnvironmentIdentity()
             if earlyIdentity == nil { try await Task.sleep(for: .milliseconds(10)) }
         }
+        try expect(!early.revokeRuntimeAuthority(), "pre-ready identity does not permit signal delivery")
         try expect(earlyIdentity?.environmentID == "fixture-environment", "owned identity is available before HTTP readiness")
         try expect(!FileManager.default.fileExists(atPath: earlyHome.appendingPathComponent("userdata/server-runtime.json").path), "authority lookup does not wait for HTTP server runtime state")
         try Data().write(to: earlyHome.appendingPathComponent("continue-startup"))

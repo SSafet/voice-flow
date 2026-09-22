@@ -42,7 +42,7 @@ args += [str(path.relative_to(root)) for path in sorted((root/'swift/Captured').
 args += ['swift/Inbox.swift','swift/MCP.swift','swift/MCPHTTPHost.swift','swift/MCPToolCancellation.swift',
          'swift/MCPCapturedCatalog.swift','swift/MCPCapturedReader.swift','swift/MCPOverlayScope.swift',
          'swift/NativeTools/T3NativeToolService.swift','swift/NativeTools/T3NativeToolCatalog.swift',
-         'swift/NativeTools/T3NativeToolMCP.swift','swift/NativeTools/T3NativeToolPrimitives.swift',
+         'swift/NativeTools/T3NativeConfiguration.swift','swift/NativeTools/T3NativeToolMCP.swift','swift/NativeTools/T3NativeToolPrimitives.swift',
          'swift/Shell/T3NativeAuthority.swift','swift/Shell/T3NativeAuthorityBroker.swift',
          'tests/t3_native_tools_fixture/main.swift','-framework','Cocoa','-framework','CoreGraphics','-o',str(output)]
 subprocess.run(args, check=True)

@@ -26,7 +26,27 @@ struct CloudSyncSettingsView: View {
             } footer: {
                 Text("Cloud keeps Inbox text, completed conversation messages, vocabulary, model choice and cleanup preference. Attachments remain on their device. Selecting cloud pauses local network sync.")
             }
-            if model.selection.transport == "cloud" {
+            if model.nativeEnvironmentEnabled {
+                Section("Native execution home") {
+                    if let selected = model.selection.nativeHome {
+                        LabeledContent("Local environment", value: selected.label)
+                        Text("History is kept separately for this home, including while signed out.").font(.caption)
+                    }
+                    Text(model.nativeEnvironmentStatus).font(.callout).textSelection(.enabled)
+                    if model.selection.signedIn {
+                        Button("Check this Mac’s serving home") { model.refreshNativeHome() }.disabled(model.busy)
+                        if let home = model.nativeServingHome {
+                            Button("Use \(home.label)") { model.selectNativeHome() }.disabled(model.busy)
+                        }
+                        if model.selection.nativeHome?.matches(model.selection) == true {
+                            Button("Reconnect selected environment") { model.reconnectNativeHome() }.disabled(model.busy)
+                        }
+                    } else {
+                        Text("Sign in below to verify this Mac’s existing home. Local history and drafts remain available.")
+                    }
+                }
+            }
+            if model.selection.transport == "cloud" || model.nativeEnvironmentEnabled {
                 Section("Share from this Mac") {
                     Toggle("Inbox text", isOn: exportBinding(\.dictations))
                     Toggle("Completed conversations", isOn: exportBinding(\.conversations))
@@ -171,7 +191,9 @@ private struct CloudThreadRow: View {
                             Text(message.payload?.text ?? "").textSelection(.enabled)
                         }.padding(.vertical, 5)
                     }
-                    Button("Continue this branch on this Mac") { model.continueBranch(thread: row, leafID: leaf.recordId) }
+                    if !model.nativeEnvironmentEnabled {
+                        Button("Continue this branch on this Mac") { model.continueBranch(thread: row, leafID: leaf.recordId) }
+                    }
                 }
             }
             Text("Continuing creates a new local conversation from this branch’s words.")

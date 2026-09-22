@@ -14,6 +14,7 @@ extension AppDelegate {
     /// Visual proof with no loopback HTTP round trip — the QA control
     /// endpoints need a working TCP stack; this needs only a file.
     func qaRunLaunchSnapshotIfRequested() {
+        guard !usesT3Environment else { return } // Legacy Assistant paint fixture has no authority on the T3 path.
         let environment = ProcessInfo.processInfo.environment
         guard let destination = environment["VOICE_FLOW_QA_LAUNCH_SNAPSHOT"], !destination.isEmpty else { return }
         let runtime = environment["VOICE_FLOW_QA_LAUNCH_RUNTIME"].flatMap(AgentRuntimeKind.init(rawValue:))
@@ -55,6 +56,28 @@ extension AppDelegate {
                                  body: Data) -> LocalAPIResponse {
         guard let payload = qaObject(body) else {
             return .error(400, "Request body must be a JSON object.")
+        }
+        if usesT3Environment {
+            if method == "GET", path == "/__qa/state" {
+                var result: [String: Any] = [:]
+                DispatchQueue.main.sync {
+                    MainActor.assumeIsolated {
+                        result = ["execution_owner": "t3", "isolated": VoiceFlowPaths.shared.isIsolated,
+                                  "status": CloudSyncController.shared.nativeEnvironmentStatus,
+                                  "shell_phase": self.shellInputWindow.map { String(describing: $0.phase) } ?? "unavailable",
+                                  "shell_visible": self.shellInputWindow?.window.isVisible ?? false,
+                                  "legacy_agent_started": self.agent != nil,
+                                  "legacy_jobs_started": self.agentSupervisor != nil]
+                    }
+                }
+                return .ok(result)
+            }
+            if method == "GET", path == "/__qa/capabilities" {
+                return .ok(["execution_owner": "t3", "qa_routes": ["state", "events", "events/reset", "app/terminate"]])
+            }
+            guard [("GET", "/__qa/events"), ("POST", "/__qa/events/reset"), ("POST", "/__qa/app/terminate")].contains(where: { $0.0 == method && $0.1 == path }) else {
+                return .error(409, "Legacy execution controls are unavailable on the T3 application path.")
+            }
         }
         switch (method, path) {
         case ("POST", "/__qa/workspace"):

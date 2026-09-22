@@ -14,6 +14,12 @@ import Darwin
               boot["noBrowser"] as? Bool == true,
               boot["tailscaleServeEnabled"] as? Bool == false else { exit(65) }
         let root = URL(fileURLWithPath: home)
+        signal(SIGUSR2, SIG_IGN)
+        let revokeSignal = DispatchSource.makeSignalSource(signal: SIGUSR2, queue: .main)
+        revokeSignal.setEventHandler {
+            try? Data("revoked-owned-runtime".utf8).write(to: root.appendingPathComponent("revocation-receipt"), options: .atomic)
+        }
+        revokeSignal.resume()
         let mode = (try? String(contentsOf: root.appendingPathComponent("fixture-mode"), encoding: .utf8)) ?? "ready"
         let authority = boot["atikaNativeAuthority"] as? [String: String]
         let cap = authority?["credential"]
@@ -39,6 +45,6 @@ import Darwin
             let snapshot: [String: Any] = ["version": 1, "pid": Int(getpid()), "port": port, "host": "127.0.0.1", "origin": mode == "wrong-origin" ? "http://example.invalid" : "http://127.0.0.1:\(port)"]
             try JSONSerialization.data(withJSONObject: snapshot).write(to: state.appendingPathComponent("server-runtime.json"), options: .atomic)
         }
-        RunLoop.main.run()
+        withExtendedLifetime(revokeSignal) { RunLoop.main.run() }
     }
 }

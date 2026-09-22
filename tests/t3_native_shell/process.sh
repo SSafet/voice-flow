@@ -19,9 +19,17 @@ runtime = bundle / 'Contents/Resources/T3'
 (runtime / 'node_modules/fixture').write_text('fixture')
 (runtime / 'resource-monitor/fixture').write_text('fixture')
 digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-(runtime / 'voiceflow-archive-receipt.json').write_text(json.dumps({'archiveSha256': 'a'*64, 'executableSha256': digest(runtime/'t3'), 'clientIndexSha256': digest(runtime/'client/index.html')}))
+(runtime / 'voiceflow-archive-receipt.json').write_text(json.dumps({'archiveSha256': 'a'*64, 'executableSha256': digest(runtime/'t3'), 'clientIndexSha256': digest(runtime/'client/index.html'), 'nativeAuthorityRevocation': 'sigusr2-v1'}))
 PY
 codesign --force --sign - "$bundle"
 codesign --verify --deep --strict "$bundle"
+# A valid but unmarked older archive must never receive the new native signal.
+cp -R "$bundle" "$test_dir/Unmarked.app"
+python3 - "$test_dir/Unmarked.app/Contents/Resources/T3/voiceflow-archive-receipt.json" <<'PYMARK'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]); value=json.loads(p.read_text()); value.pop('nativeAuthorityRevocation'); p.write_text(json.dumps(value))
+PYMARK
+codesign --force --sign - "$test_dir/Unmarked.app"
 swiftc -target "$(uname -m)-apple-macos14" -swift-version 5 -parse-as-library swift/Shell/T3ShellPolicy.swift swift/Shell/T3NativeAuthority.swift swift/Shell/T3EnvironmentProcess.swift tests/t3_native_shell/process.swift -o "$test_dir/process-tests"
 T3CODE_HOME=/invalid-ambient-test-home VITE_DEV_SERVER_URL=https://invalid.example NODE_OPTIONS=--invalid-fixture-option OPENROUTER_API_KEY=synthetic-fixture-key "$test_dir/process-tests" "$test_dir"
