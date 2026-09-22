@@ -5,6 +5,8 @@ import Hummingbird
 import HummingbirdCore
 import NIOCore
 import Logging
+import MCP
+import HTTPTypes
 
 /// One capability and one native-owned child per lifetime. Hummingbird owns HTTP
 /// parsing, connections and cancellation; the existing native actor owns credentials.
@@ -13,12 +15,48 @@ actor T3NativeAuthorityBroker {
     typealias LeaseProvider = @Sendable (T3AuthorityEnvironmentIdentity) async throws -> T3NativeAuthorityLease
     typealias IsCurrent = @Sendable (T3NativeAuthorityLease) async -> Bool
 
-    private struct Context: RequestContext {
+    /// The official SDK and the native tool service own MCP/policy. This mount
+    /// only adapts authenticated HTTP on the already-owned listener.
+    struct ToolsMount: Sendable {
+        let handle: @Sendable (MCP.HTTPRequest, T3AuthorityEnvironmentIdentity) async -> MCP.HTTPResponse
+        let revoke: @Sendable () -> Void
+        let stop: @Sendable () async -> Void
+        let requestTimeout: Duration
+
+        init(handle: @escaping @Sendable (MCP.HTTPRequest, T3AuthorityEnvironmentIdentity) async -> MCP.HTTPResponse,
+             revoke: @escaping @Sendable () -> Void,
+             stop: @escaping @Sendable () async -> Void,
+             requestTimeout: Duration = .seconds(120)) {
+            self.handle = handle
+            self.revoke = revoke
+            self.stop = stop
+            self.requestTimeout = min(.seconds(600), max(.milliseconds(1), requestTimeout))
+        }
+    }
+
+    private enum Route {
+        case lease, tools
+        var path: String { self == .lease ? "/v1/authority/lease" : "/v1/tools/mcp" }
+    }
+
+    private struct Context: Hummingbird.RequestContext {
         var coreContext: CoreRequestContextStorage
         let channel: any Channel
         init(source: ApplicationRequestContextSource) {
             coreContext = .init(source: source)
             channel = source.channel
+        }
+    }
+    /// Hummingbird permits remote half-close. This private request/reply channel
+    /// treats input EOF as disconnect, so cancelled fetches cannot leave native
+    /// work parked until its much longer execution deadline.
+    private final class CloseOnInputEOF: ChannelInboundHandler, RemovableChannelHandler {
+        typealias InboundIn = NIOAny
+        func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+            if let event = event as? ChannelEvent, case .inputClosed = event {
+                context.close(promise: nil)
+            }
+            context.fireUserInboundEventTriggered(event)
         }
     }
     private struct LeaseRequest: Decodable {
@@ -33,7 +71,7 @@ actor T3NativeAuthorityBroker {
         let accessTokenExpiresAt: String
     }
     private struct Pending {
-        let continuation: CheckedContinuation<Response, Never>
+        let continuation: CheckedContinuation<Hummingbird.Response, Never>
         let work: Task<Void, Never>
         let timeout: Task<Void, Never>
     }
@@ -41,6 +79,8 @@ actor T3NativeAuthorityBroker {
     private let leaseProvider: LeaseProvider
     private let isCurrent: IsCurrent
     private let requestTimeout: Duration
+    private let tools: ToolsMount?
+    private var toolsStopped = false
     private var server: Task<Void, Never>?
     private var started = false
     private var revoked = false
@@ -53,11 +93,13 @@ actor T3NativeAuthorityBroker {
     init(ownedEnvironment: @escaping OwnedEnvironment,
          leaseProvider: @escaping LeaseProvider,
          isCurrent: @escaping IsCurrent,
-         requestTimeout: Duration = .seconds(10)) {
+         requestTimeout: Duration = .seconds(10),
+         tools: ToolsMount? = nil) {
         self.ownedEnvironment = ownedEnvironment
         self.leaseProvider = leaseProvider
         self.isCurrent = isCurrent
         self.requestTimeout = min(.seconds(60), max(.milliseconds(1), requestTimeout))
+        self.tools = tools
     }
 
     func start() async throws -> T3NativeAuthorityBootstrap {
@@ -73,7 +115,12 @@ actor T3NativeAuthorityBroker {
         capabilityDigest = SHA256.hash(data: Data(capability.utf8))
         let router = Router(context: Context.self)
         router.post("/v1/authority/lease") { [self] request, context in
-            await handle(request, channel: context.channel)
+            await handle(request, channel: context.channel, route: .lease)
+        }
+        if tools != nil {
+            router.post("/v1/tools/mcp") { [self] request, context in
+                await handle(request, channel: context.channel, route: .tools)
+            }
         }
         let (ports, continuation) = AsyncStream<Int>.makeStream()
         // No request or service logger can print private headers, body or causes.
@@ -81,6 +128,7 @@ actor T3NativeAuthorityBroker {
         let app = Application(
             router: router,
             server: .http1(configuration: .init(
+                additionalChannelHandlers: [CloseOnInputEOF()],
                 idleTimeout: .seconds(15),
                 httpDecoderConfiguration: .init(maxHeaderFieldSize: 1024, maxHeaderListSize: 4096, maxHeaderFieldCount: 24))),
             configuration: .init(address: .hostname("127.0.0.1", port: 0), backlog: 16,
@@ -112,8 +160,11 @@ actor T3NativeAuthorityBroker {
     /// Native account/home/generation changes must call this before reusing the
     /// owner. An invalidated launch cannot be restarted or transparently rebound.
     func invalidate() {
+        guard !revoked else { return }
         revoked = true
         capabilityDigest = nil
+        // Revoke primitive execution synchronously before releasing HTTP waiters.
+        tools?.revoke()
         for id in Array(pending.keys) { finish(id, response: Self.failure(.serviceUnavailable)) }
     }
 
@@ -122,14 +173,18 @@ actor T3NativeAuthorityBroker {
         let task = server
         server = nil
         task?.cancel()
+        if !toolsStopped {
+            toolsStopped = true
+            await tools?.stop()
+        }
         await task?.value
     }
 
-    private func handle(_ request: Request, channel: any Channel) async -> Response {
+    private func handle(_ request: Hummingbird.Request, channel: any Channel, route: Route) async -> Hummingbird.Response {
         guard !revoked, let host, let capabilityDigest else { return Self.failure(.serviceUnavailable) }
         // Browsers always supply fetch metadata and/or Origin for this cross-port
         // POST. Reject them, Host aliases, duplicate auth, and ambient cookies.
-        guard request.head.authority == host, request.uri.path == "/v1/authority/lease",
+        guard request.head.authority == host, request.uri.path == route.path,
               request.uri.query == nil,
               !request.headers.contains(where: { field in
                   let name = field.name.canonicalName
@@ -146,11 +201,15 @@ actor T3NativeAuthorityBroker {
         guard difference == 0 else { return Self.failure(.forbidden) }
         guard pending.count < 16 else { return Self.failure(.serviceUnavailable) }
         let id = UUID()
+        let timeoutDuration = route == .tools ? tools!.requestTimeout : requestTimeout
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                let work = Task { [self] in await perform(request, id: id) }
-                let timeout = Task { [self, requestTimeout] in
-                    do { try await Task.sleep(for: requestTimeout) } catch { return }
+                let work = Task { [self] in
+                    if route == .lease { await performLease(request, id: id) }
+                    else { await performTools(request, id: id) }
+                }
+                let timeout = Task { [self] in
+                    do { try await Task.sleep(for: timeoutDuration) } catch { return }
                     finish(id, response: Self.failure(.serviceUnavailable))
                 }
                 pending[id] = .init(continuation: continuation, work: work, timeout: timeout)
@@ -161,7 +220,7 @@ actor T3NativeAuthorityBroker {
     }
 
     private func cancel(_ id: UUID) { finish(id, response: Self.failure(.serviceUnavailable)) }
-    private func finish(_ id: UUID, response: Response) {
+    private func finish(_ id: UUID, response: Hummingbird.Response) {
         guard let request = pending.removeValue(forKey: id) else { return }
         request.work.cancel()
         request.timeout.cancel()
@@ -181,7 +240,7 @@ actor T3NativeAuthorityBroker {
         }
     }
 
-    private func perform(_ request: Request, id: UUID) async {
+    private func performLease(_ request: Hummingbird.Request, id: UUID) async {
         do {
             let body = try await request.body.collect(upTo: 4096)
             try active(id)
@@ -222,7 +281,7 @@ actor T3NativeAuthorityBroker {
                                        accessToken: lease.accessToken, accessTokenExpiresAt: formatter.string(from: lease.expiresAt))
             let bytes = try JSONEncoder().encode(output)
             guard bytes.count <= 32768, lease.expiresAt > Date() else { throw T3NativeAuthorityError.unavailable }
-            finish(id, response: Response(status: .ok,
+            finish(id, response: Hummingbird.Response(status: .ok,
                 headers: [.contentType: "application/json", .cacheControl: "no-store", .connection: "close"],
                 body: .init(byteBuffer: ByteBuffer(bytes: bytes))))
         } catch {
@@ -230,8 +289,50 @@ actor T3NativeAuthorityBroker {
         }
     }
 
-    private static func failure(_ status: HTTPResponse.Status) -> Response {
-        Response(status: status, headers: [.contentType: "application/json", .cacheControl: "no-store", .connection: "close"],
+    private func performTools(_ request: Hummingbird.Request, id: UUID) async {
+        guard let tools else { finish(id, response: Self.failure(.serviceUnavailable)); return }
+        do {
+            let body = try await request.body.collect(upTo: 96 * 1024)
+            try active(id)
+            // The launch capability terminates here. Only protocol headers enter
+            // the SDK, so native tools cannot accidentally log or return it.
+            var headers: [String: String] = [:]
+            for name in ["accept", "content-type", "mcp-protocol-version", "mcp-session-id", "last-event-id"] {
+                let values = request.headers[values: HTTPField.Name(name)!]
+                guard values.count <= 1 else { finish(id, response: Self.failure(.forbidden)); return }
+                if let value = values.first { headers[name] = value }
+            }
+            let environment = try await currentEnvironment()
+            try active(id)
+            guard Self.identifier(environment.environmentID) else { throw T3NativeAuthorityError.unavailable }
+            if let pinnedEnvironment, pinnedEnvironment != environment { invalidate(); return }
+            pinnedEnvironment = environment
+            let sdkRequest = MCP.HTTPRequest(method: "POST", headers: headers, body: Data(body.readableBytesView), path: Route.tools.path)
+            let response = await tools.handle(sdkRequest, environment)
+            try active(id)
+            let stillOwned = try await currentEnvironment()
+            try active(id)
+            guard stillOwned == environment else { invalidate(); return }
+            // The mounted native service uses StatelessHTTPServerTransport. SSE
+            // would bypass bounded JSON image output and is explicitly unavailable.
+            if case .stream = response { finish(id, response: Self.failure(.notImplemented)); return }
+            let bytes = response.bodyData ?? Data()
+            guard bytes.count <= 7 * 1024 * 1024,
+                  (200...599).contains(response.statusCode), !(300...399).contains(response.statusCode) else {
+                throw T3NativeAuthorityError.unavailable
+            }
+            // Strip SDK/service extras (cookies, CORS, redirects or credentials).
+            // Stateless JSON has no transport session cookie/header to propagate.
+            finish(id, response: Hummingbird.Response(status: .init(code: response.statusCode),
+                headers: [.contentType: "application/json", .cacheControl: "no-store", .connection: "close"],
+                body: .init(byteBuffer: ByteBuffer(bytes: bytes))))
+        } catch {
+            finish(id, response: Self.failure(.serviceUnavailable))
+        }
+    }
+
+    private static func failure(_ status: HTTPTypes.HTTPResponse.Status) -> Hummingbird.Response {
+        Hummingbird.Response(status: status, headers: [.contentType: "application/json", .cacheControl: "no-store", .connection: "close"],
                  body: .init(byteBuffer: ByteBuffer(string: "{\"error\":\"Native Atika authority is unavailable.\"}")))
     }
     private static func identifier(_ value: String) -> Bool {
