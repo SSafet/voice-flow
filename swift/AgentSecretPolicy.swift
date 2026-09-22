@@ -2,7 +2,8 @@ import Foundation
 
 enum AgentSecretPolicy {
     private static let expressions: [NSRegularExpression] = [
-        try! NSRegularExpression(pattern: #"(?i)-----BEGIN [A-Z ]*PRIVATE KEY-----"#),
+        // A capture can end mid-key. Redact through the matching footer, or end of input.
+        try! NSRegularExpression(pattern: #"(?is)-----BEGIN ([A-Z ]*PRIVATE KEY)-----.*?(?:-----END \1-----|\z)"#),
         try! NSRegularExpression(pattern: #"(?i)\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*['\"]?[A-Za-z0-9_./+=-]{12,}"#),
         try! NSRegularExpression(pattern: #"\b(?:sk|pk|rk)-(?:live-)?[A-Za-z0-9_-]{16,}"#),
         try! NSRegularExpression(pattern: #"\bgh[pousr]_[A-Za-z0-9]{20,}\b"#),

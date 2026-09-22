@@ -49,6 +49,19 @@ expectThrows(.secretDetected, "secret-looking memory was accepted") {
         expectedRevision: first.revision)
 }
 
+let pem = "-----BEGIN RSA PRIVATE KEY-----\nPRIVATE_BODY_8421\n-----END RSA PRIVATE KEY-----"
+expect(AgentSecretPolicy.containsSecret(pem), "private key was not detected")
+expect(AgentSecretPolicy.redacted("Before 🗝️\n\(pem)\nAfter") == "Before 🗝️\n[REDACTED]\nAfter",
+       "private-key body/footer leaked or surrounding capture text was removed")
+expect(AgentSecretPolicy.redacted("Before\n-----BEGIN PRIVATE KEY-----\nTRUNCATED_BODY")
+       == "Before\n[REDACTED]", "truncated private-key body leaked")
+let secondPem = "-----BEGIN OPENSSH PRIVATE KEY-----\r\nSECOND_BODY\r\n-----END OPENSSH PRIVATE KEY-----"
+expect(AgentSecretPolicy.redacted("\(pem)\nBetween\n\(secondPem)\nAfter")
+       == "[REDACTED]\nBetween\n[REDACTED]\nAfter", "multiple private keys were not bounded separately")
+let certificate = "-----BEGIN CERTIFICATE-----\nPUBLIC_BODY\n-----END CERTIFICATE-----"
+expect(AgentSecretPolicy.redacted(certificate) == certificate,
+       "public certificate was mistaken for a private key")
+
 let inside = try AgentPathBoundary.resolve("memory/new.md", within: assistantDirectory)
 expect(inside.path.hasPrefix(assistantDirectory.path), "inside path escaped")
 expectThrows(.invalidPath, "parent traversal was accepted") {
