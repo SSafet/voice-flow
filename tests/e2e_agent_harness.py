@@ -990,7 +990,7 @@ class SignedAppGate:
                "MCP initialize did not issue a session")
         listed, _ = request("tools/list", session=session_a)
         tool_names = [tool["name"] for tool in listed["tools"]]
-        expect(len(tool_names) == 15 and len(set(tool_names)) == 15,
+        expect(len(tool_names) == 20 and len(set(tool_names)) == 20,
                f"MCP tool catalog changed: {tool_names}")
 
         def call(name: str, arguments: dict[str, Any] | None = None,
@@ -1002,9 +1002,9 @@ class SignedAppGate:
             expect(result_value.get("isError") is should_error,
                    f"MCP {name} error contract changed: {result_value}")
             content = result_value.get("content", [])
-            expect(len(content) == 1 and content[0].get("type") == "text",
+            expect(content and all(block.get("type") == "text" for block in content),
                    f"MCP {name} returned an invalid content envelope")
-            return content[0].get("text", "")
+            return "".join(block.get("text", "") for block in content)
 
         call("set_session_name", {"name": "MCP contract A"})
         sessions = self.state()["mcp"]["sessions"]

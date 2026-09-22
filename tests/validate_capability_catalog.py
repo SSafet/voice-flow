@@ -75,6 +75,8 @@ def main() -> None:
 
     source = (ROOT / "swift" / "MCP.swift").read_text()
     source_tools = set(re.findall(r'^\s+"name":\s+"([a-z][a-z0-9_]+)",\s*$', source, re.MULTILINE))
+    captured = (ROOT / "swift" / "MCPCapturedCatalog.swift").read_text()
+    source_tools.update(re.findall(r'^\s+tool\("([a-z][a-z0-9_]+)"', captured, re.MULTILINE))
     catalog_tools = {surface.removeprefix("mcp:") for surface in surfaces if surface.startswith("mcp:")}
     if source_tools != catalog_tools:
         missing = sorted(source_tools - catalog_tools)
@@ -116,7 +118,7 @@ def main() -> None:
     areas = len({capability["area"] for capability in capabilities})
     print(
         f"capability catalog: {len(capabilities)} capabilities across {areas} areas; "
-        f"MCP {len(source_tools)}/15; registry {len(registered)}/{len(referenced)}"
+        f"MCP {len(source_tools)}/{len(catalog_tools)}; registry {len(registered)}/{len(referenced)}"
     )
 
 

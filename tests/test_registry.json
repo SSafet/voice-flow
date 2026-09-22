@@ -46,6 +46,8 @@
         "harness_cli",
         "hotkey_precedence",
         "inbox",
+        "native_mcp_captured",
+        "native_mcp_sdk",
         "opencode_http",
         "opencode_runtime",
         "opencode_updater",
@@ -1457,6 +1459,34 @@
       "runner": "unit",
       "suites": [
         "captured_query_service"
+      ]
+    },
+    {
+      "id": "tests/native_mcp_sdk/main.swift",
+      "runner": "unit",
+      "suites": [
+        "native_mcp_sdk"
+      ]
+    },
+    {
+      "id": "tests/native_mcp_sdk/test.sh",
+      "runner": "unit",
+      "suites": [
+        "native_mcp_sdk"
+      ]
+    },
+    {
+      "id": "tests/native_mcp_sdk/captured.sh",
+      "runner": "unit",
+      "suites": [
+        "native_mcp_captured"
+      ]
+    },
+    {
+      "id": "tests/native_mcp_sdk/captured-assertions.swift",
+      "runner": "unit",
+      "suites": [
+        "native_mcp_captured"
       ]
     }
   ]

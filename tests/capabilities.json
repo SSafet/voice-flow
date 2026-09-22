@@ -1835,6 +1835,77 @@
         "tests/captured_query_service/main.swift",
         "tests/captured_query_service/test.sh"
       ]
+    },
+    {
+      "id": "MCP-16",
+      "area": "mcp",
+      "name": "Search captured data through scoped MCP",
+      "kind": "new",
+      "risk": "critical",
+      "surface": "mcp:captured_search",
+      "tests": [
+        "tests/native_mcp_sdk/captured.sh",
+        "tests/native_mcp_sdk/captured-assertions.swift"
+      ]
+    },
+    {
+      "id": "MCP-17",
+      "area": "mcp",
+      "name": "Read captured text and bounded images through scoped MCP",
+      "kind": "new",
+      "risk": "critical",
+      "surface": "mcp:captured_get",
+      "tests": [
+        "tests/native_mcp_sdk/captured.sh",
+        "tests/native_mcp_sdk/captured-assertions.swift"
+      ]
+    },
+    {
+      "id": "MCP-18",
+      "area": "mcp",
+      "name": "Read bounded capture frames through scoped MCP",
+      "kind": "new",
+      "risk": "critical",
+      "surface": "mcp:captured_frames",
+      "tests": [
+        "tests/native_mcp_sdk/captured.sh",
+        "tests/native_mcp_sdk/captured-assertions.swift"
+      ]
+    },
+    {
+      "id": "MCP-19",
+      "area": "mcp",
+      "name": "Read capture context through scoped MCP",
+      "kind": "new",
+      "risk": "critical",
+      "surface": "mcp:captured_around",
+      "tests": [
+        "tests/native_mcp_sdk/captured.sh",
+        "tests/native_mcp_sdk/captured-assertions.swift"
+      ]
+    },
+    {
+      "id": "MCP-20",
+      "area": "mcp",
+      "name": "Summarize captured activity through scoped MCP",
+      "kind": "new",
+      "risk": "critical",
+      "surface": "mcp:captured_summary",
+      "tests": [
+        "tests/native_mcp_sdk/captured.sh",
+        "tests/native_mcp_sdk/captured-assertions.swift"
+      ]
+    },
+    {
+      "id": "MCP-21",
+      "area": "mcp",
+      "name": "SDK HTTP lifecycle and cancellation",
+      "kind": "existing",
+      "risk": "critical",
+      "tests": [
+        "tests/native_mcp_sdk/main.swift",
+        "tests/native_mcp_sdk/test.sh"
+      ]
     }
   ]
 }
