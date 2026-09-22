@@ -1,0 +1,5 @@
+activity	none	1
+dictation	none	1
+frame	present	1
+watcher days: 1/1; ready
+remote dictation: dictation:proof-phone	qa-phone

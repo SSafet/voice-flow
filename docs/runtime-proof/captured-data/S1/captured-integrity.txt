@@ -1,0 +1,1 @@
+captured integrity: passed rollback, cursor tail/rewrite, duplicate live replay, path boundary, privacy join, tombstones, failed-import retry, source SHA256 and rebuild checks
