@@ -30,16 +30,31 @@ func until(_ test: () -> Bool) async throws {
         try check(registry.count == 0, "idle completed session still prunes after two hours")
         let mcp = MCPServer(), http = LocalAPIServer(), inbox = MessageInbox()
         let questionStarted = DispatchSemaphore(value: 0), question = DispatchSemaphore(value: 0)
+        let afterDrain = DispatchSemaphore(value: 0), releaseResult = DispatchSemaphore(value: 0)
+        let beforeClaim = DispatchSemaphore(value: 0), releaseClaim = DispatchSemaphore(value: 0)
+        let cancelledAtClaim = DispatchSemaphore(value: 0)
         mcp.callTool = { name, args, session, cancellation in
+            let claim: () -> Bool = {
+                if args["pause_before_claim"] as? Bool == true {
+                    cancellation.onCancel { cancelledAtClaim.signal() }
+                    beforeClaim.signal()
+                    releaseClaim.wait()
+                }
+                return cancellation.claimConsumption()
+            }
+            let finish: ([InboxMessage]) -> MCPServer.ToolResult = { messages in
+                if args["pause_after_drain"] as? Bool == true { afterDrain.signal(); releaseResult.wait() }
+                return .ok(messages.map(\.text).joined(separator: ","))
+            }
             switch name {
             case "set_session_name":
                 _ = mcp.sessions.rename(session!.id, to: args["name"] as? String ?? ""); return .ok("named")
             case "wait_for_message":
                 _ = mcp.sessions.markEngaged(session!.id)
-                let result = inbox.wait(timeout: 3600, session: session?.id, isCancelled: { cancellation.isCancelled },
+                let result = inbox.wait(timeout: 3600, session: session?.id, isCancelled: { cancellation.isCancelled }, beforeConsume: claim,
                     onPark: { parked in cancellation.onCancel { parked.signal() } })
-                return .ok(result.messages.map(\.text).joined(separator: ","))
-            case "check_messages": return .ok(inbox.drain(session: session?.id).map(\.text).joined(separator: ","))
+                return finish(result.messages)
+            case "check_messages": return finish(inbox.drain(session: session?.id, beforeConsume: claim))
             case "report_to_user":
                 _ = mcp.sessions.markEngaged(session!.id)
                 if args["question"] != nil { questionStarted.signal(); cancellation.wait(question, timeout: 14_400) }
@@ -106,6 +121,49 @@ func until(_ test: () -> Bool) async throws {
         inbox.add(text:"A retained",attachments:[],session:a)
         let retained = try await call("check_messages",id:42,session:a)
         try check(String(describing:retained.1).contains("A retained"),"cancelled waiter cannot consume later message")
+        // Deterministic cancellation AFTER the queue has removed a message and
+        // BEFORE the native handler returns. Both SDK and app post-checks must
+        // preserve this committed result, including the immediate wait path.
+        for (offset, kind) in ["immediate", "parked", "check"].enumerated() {
+            let requestID = 100 + offset
+            let text = "consumed-\(kind)"
+            if kind != "parked" { inbox.add(text: text, attachments: [], session: a) }
+            let consuming = Task { try await call(kind == "check" ? "check_messages" : "wait_for_message", id: requestID, session: a, args: ["pause_after_drain": true]) }
+            if kind == "parked" {
+                try await until { inbox.hasWaiter(exactSession: a) }
+                inbox.add(text: text, attachments: [], session: a)
+            }
+            try await until { afterDrain.wait(timeout: .now()) == .success }
+            _ = try await raw(["jsonrpc":"2.0", "method":"notifications/cancelled", "params":["requestId":requestID]], session:a)
+            // SDK's receive loop awaits notification handlers before accepting
+            // the later ping. Its response is a deterministic processing barrier.
+            let barrier = try await raw(["jsonrpc":"2.0", "id":200+offset, "method":"ping"], session:a)
+            try check(barrier.0 == 200, "SDK processed late cancel before result release: \(kind)")
+            releaseResult.signal()
+            let completed = try await consuming.value
+            try check((completed.1["result"] as? [String:Any])?["isError"] as? Bool == false && String(describing:completed.1).contains(text), "consumption wins late cancellation: \(kind)")
+            try check(inbox.pendingCount(for: a) == 0, "successful \(kind) response does not duplicate consumed message")
+        }
+        for (offset, kind) in ["immediate", "parked", "check"].enumerated() {
+            let requestID = 110 + offset
+            var original: InboxMessage?
+            inbox.onAdded = { original = $0 }
+            if kind != "parked" { inbox.add(text: "preserved-\(kind)", attachments: ["synthetic-attachment"], session: a) }
+            let consuming = Task { try await call(kind == "check" ? "check_messages" : "wait_for_message", id:requestID, session:a, args:["pause_before_claim":true]) }
+            if kind == "parked" {
+                try await until { inbox.hasWaiter(exactSession:a) }
+                inbox.add(text:"preserved-\(kind)",attachments:["synthetic-attachment"],session:a)
+            }
+            try await until { beforeClaim.wait(timeout:.now()) == .success }
+            _ = try await raw(["jsonrpc":"2.0","method":"notifications/cancelled","params":["requestId":requestID]],session:a)
+            try await until { cancelledAtClaim.wait(timeout:.now()) == .success }
+            releaseClaim.signal()
+            let refused = try await consuming.value
+            try check((refused.1["result"] as? [String:Any])?["isError"] as? Bool == true, "cancellation wins before consumption: \(kind)")
+            let queued = inbox.drain(session:a)
+            try check(queued.count == 1 && queued[0].id == original?.id && queued[0].time == original?.time && queued[0].attachments == original?.attachments, "cancel-before-claim preserves exact message id/time/attachments: \(kind)")
+            inbox.onAdded = nil
+        }
         let asking = Task { try await call("report_to_user",id:43,session:a,args:["question":"fixture"]) }
         try await until { questionStarted.wait(timeout:.now()) == .success }
         _ = try await raw(["jsonrpc":"2.0","method":"notifications/cancelled","params":["requestId":43]],session:a)

@@ -51,7 +51,7 @@ extension AppDelegate {
         switch name {
         case "set_session_name": return mcpSetSessionName(args, session)
         case "report_to_user": return mcpReportToUser(args, session, cancellation)
-        case "check_messages": return mcpCheckMessages(session)
+        case "check_messages": return mcpCheckMessages(session, cancellation)
         case "wait_for_message": return mcpWaitForMessage(args, session, cancellation)
         case "get_latest_capture": return mcpLatestCapture()
         case "list_captures": return mcpListCaptures(args)
@@ -463,8 +463,8 @@ extension AppDelegate {
         ])
     }
 
-    private func mcpCheckMessages(_ session: MCPSession?) -> MCPServer.ToolResult {
-        let messages = inbox.drain(session: session?.id)
+    private func mcpCheckMessages(_ session: MCPSession?, _ cancellation: MCPToolCancellation) -> MCPServer.ToolResult {
+        let messages = inbox.drain(session: session?.id, beforeConsume: { cancellation.claimConsumption() })
         guard !messages.isEmpty else {
             return .ok("No messages from the user.")
         }
@@ -475,6 +475,7 @@ extension AppDelegate {
         var timeout = (args["timeout_seconds"] as? NSNumber)?.doubleValue ?? 600
         timeout = min(max(timeout, 5), 3600)
         let (messages, superseded, terminated) = inbox.wait(timeout: timeout, session: session?.id, isCancelled: { cancellation.isCancelled },
+            beforeConsume: { cancellation.claimConsumption() },
             onPark: { semaphore in cancellation.onCancel { semaphore.signal() } })
         if cancellation.isCancelled { return .fail("Request cancelled. Queued messages remain available.") }
         if superseded {

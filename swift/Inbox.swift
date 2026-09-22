@@ -102,8 +102,8 @@ final class MessageInbox {
 
     /// Return the messages visible to `session` and remove them from the
     /// queue (other sessions' messages stay).
-    func drain(session: String?) -> [InboxMessage] {
-        queue.sync { drainLocked(session: session) }
+    func drain(session: String?, beforeConsume: () -> Bool = { true }) -> [InboxMessage] {
+        queue.sync { drainLocked(session: session, beforeConsume: beforeConsume) }
     }
 
     /// Remove only messages targeted to this exact session. Unscoped and
@@ -157,6 +157,7 @@ final class MessageInbox {
         timeout: TimeInterval,
         session: String?,
         isCancelled: () -> Bool = { false },
+        beforeConsume: () -> Bool = { true },
         onPark: ((DispatchSemaphore) -> Void)? = nil
     ) -> (messages: [InboxMessage], superseded: Bool, terminated: Bool) {
         enum Immediate { case messages([InboxMessage]), terminated, parked }
@@ -166,7 +167,7 @@ final class MessageInbox {
             if let session, closedSessions.contains(session) {
                 return .terminated
             }
-            let drained = drainLocked(session: session)
+            let drained = drainLocked(session: session, beforeConsume: beforeConsume)
             if drained.isEmpty {
                 // One live listener per session: release any older waiter
                 // parked on this exact id before taking its place.
@@ -206,7 +207,7 @@ final class MessageInbox {
                 // deletion and was queued after its waiter had been released.
                 if terminated.remove(ObjectIdentifier(semaphore)) != nil { return ([], false, true) }
                 if isCancelled() { return ([], false, true) }
-                let drained = drainLocked(session: session)
+                let drained = drainLocked(session: session, beforeConsume: beforeConsume)
                 if !drained.isEmpty || expired { return (drained, false, false) }
                 finished = false
                 return nil
@@ -216,9 +217,9 @@ final class MessageInbox {
     }
 
     /// Must be called on `queue`.
-    private func drainLocked(session: String?) -> [InboxMessage] {
+    private func drainLocked(session: String?, beforeConsume: () -> Bool = { true }) -> [InboxMessage] {
         let drained = messages.filter { Self.isVisible(messageSession: $0.session, to: session) }
-        guard !drained.isEmpty else { return [] }
+        guard !drained.isEmpty, beforeConsume() else { return [] }
         messages.removeAll { Self.isVisible(messageSession: $0.session, to: session) }
         persistLocked()
         return drained
