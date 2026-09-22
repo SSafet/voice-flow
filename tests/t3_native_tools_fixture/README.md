@@ -24,6 +24,12 @@ Without the dependency path, build.py builds only pinned MCP/Hummingbird/GRDB ta
 
 Do not print, persist, expose to the renderer, or include this bootstrap in failure messages. Use the exact credential only as the broker Authorization header through the real TS client. It is scoped to this fixture lifetime. The lease endpoint returns a clearly synthetic token and localhost port1 gateway origin; there is no gateway/provider behind it.
 
+For the packaged conversation test, set `ATIKA_FIXTURE_GATEWAY_ORIGIN` to an
+explicit `http://127.0.0.1:<port>` synthetic gateway and
+`ATIKA_FIXTURE_WORKSPACE_ROOT` to that test's fresh absolute workspace path.
+The default closed gateway and `~/isolated-workspace` grant remain in place
+for the standalone broker tests.
+
 Every stdin line is one JSON command. Read exactly one stdout ACK per command:
 
 | Command | Response |

@@ -55,6 +55,30 @@ private func syntheticImage() -> CGImage {
             FileHandle.standardError.write(Data("Native tools fixture requires an isolated configuration root.\n".utf8))
             exit(78)
         }
+        // The packaged-conversation test supplies its own synthetic gateway.
+        // Keep the default closed port for the standalone broker tests.
+        let gatewayOrigin: String
+        if let candidate = ProcessInfo.processInfo.environment["ATIKA_FIXTURE_GATEWAY_ORIGIN"] {
+            guard let url = URLComponents(string: candidate), url.scheme == "http",
+                  url.host == "127.0.0.1", let port = url.port, port > 0,
+                  url.user == nil, url.password == nil, url.path.isEmpty,
+                  url.query == nil, url.fragment == nil else {
+                throw T3NativeAuthorityError.unavailable
+            }
+            gatewayOrigin = candidate
+        } else {
+            gatewayOrigin = "http://127.0.0.1:1"
+        }
+        let workspaceRoot: String
+        if let candidate = ProcessInfo.processInfo.environment["ATIKA_FIXTURE_WORKSPACE_ROOT"] {
+            guard candidate.hasPrefix("/"),
+                  !candidate.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+                throw T3NativeAuthorityError.unavailable
+            }
+            workspaceRoot = candidate
+        } else {
+            workspaceRoot = "~/isolated-workspace"
+        }
         let state = FixtureState(), gate = EffectGate()
         let environment = T3AuthorityEnvironmentIdentity(environmentID:"fixture-native-environment",generation:UUID())
         let leaseBinding = T3NativeAuthorityBinding(ownerId:"fixture-native-owner",deviceId:"fixture-native-device",
@@ -73,7 +97,7 @@ private func syntheticImage() -> CGImage {
         let tools = try T3NativeToolCatalog.tools(computer:true,captured:false,overlay:false)
         let configuration = try T3NativeConfiguration(binding:binding, settings:.init(
             runCommands:false, reachNetwork:false, assistantComputerUse:true,
-            workspaceRoots:["~/isolated-workspace"], egressAllow:[], egressBlock:["blocked.example"],
+            workspaceRoots:[workspaceRoot], egressAllow:[], egressBlock:["blocked.example"],
             dailyBudgetUSD:0.25, model:"deepseek/deepseek-v4.1-flash", reasoningEffort:""),
             decisions:.init(contextRead:.allow, editWorkspace:.deny, shell:.deny))
         let service = try T3NativeToolService(binding:binding,backendRevision:"synthetic-native-fixture-v1",policyRevision:configuration.policyRevision,tools:tools,
@@ -97,7 +121,7 @@ private func syntheticImage() -> CGImage {
             guard state.current else { throw T3NativeAuthorityError.unavailable }; return environment
         },leaseProvider:{ owned in
             guard state.current, owned == environment else { throw T3NativeAuthorityError.unavailable }
-            return .init(environment:environment,binding:leaseBinding,gatewayOrigin:"http://127.0.0.1:1",
+            return .init(environment:environment,binding:leaseBinding,gatewayOrigin:gatewayOrigin,
                          accessToken:"synthetic-fixture-token-never-production",expiresAt:Date().addingTimeInterval(3600))
         },isCurrent:{ lease in state.current && lease.environment == environment && lease.binding == leaseBinding },
         tools:.init(handle:{ request,owned in
