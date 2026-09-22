@@ -100,7 +100,10 @@ final class T3EnvironmentProcess {
     private let port: UInt16
     private var process: Process?
     private var lease: Int32 = -1
+    private var ownedHome: (device: dev_t, inode: ino_t)?
     private var connection: T3EnvironmentConnection?
+    private var launchGeneration: UUID?
+    private var authorityIdentity: T3AuthorityEnvironmentIdentity?
     private var starting = false
     var onExit: ((Int32) -> Void)?
 
@@ -125,7 +128,7 @@ final class T3EnvironmentProcess {
         if lease >= 0 { Darwin.close(lease) }
     }
 
-    func start(timeout: TimeInterval = 30) async throws -> T3EnvironmentConnection {
+    func start(timeout: TimeInterval = 30, nativeAuthority: T3NativeAuthorityBootstrap? = nil) async throws -> T3EnvironmentConnection {
         guard !starting, process == nil, connection == nil else { throw T3EnvironmentProcessError.alreadyStarted }
         starting = true
         defer { starting = false }
@@ -137,11 +140,14 @@ final class T3EnvironmentProcess {
             let credential = random.map { String(format: "%02x", $0) }.joined()
             // This is the upstream contracts/src/desktopBootstrap.ts envelope.
             // Explicit flags prevent ambient T3CODE_* settings overriding its home.
-            let bootstrap: [String: Any] = [
+            var bootstrap: [String: Any] = [
                 "mode": "desktop", "noBrowser": true, "port": Int(port),
                 "t3Home": home.path, "host": "127.0.0.1", "desktopBootstrapToken": credential,
                 "tailscaleServeEnabled": false, "tailscaleServePort": 443,
             ]
+            if let nativeAuthority {
+                bootstrap["atikaNativeAuthority"] = ["origin": nativeAuthority.origin, "credential": nativeAuthority.credential]
+            }
             var input = try JSONSerialization.data(withJSONObject: bootstrap)
             input.append(10)
             let pipe = Pipe()
@@ -165,6 +171,8 @@ final class T3EnvironmentProcess {
             }
             try child.run()
             process = child
+            launchGeneration = UUID()
+            authorityIdentity = nil
             try pipe.fileHandleForWriting.write(contentsOf: input)
             try pipe.fileHandleForWriting.close()
             let deadline = Date().addingTimeInterval(max(0.1, min(timeout, 120)))
@@ -186,6 +194,8 @@ final class T3EnvironmentProcess {
 
     func stop() async {
         connection = nil
+        launchGeneration = nil
+        authorityIdentity = nil
         guard let child = process else { releaseHome(); return }
         // waitUntilExit runs away from the main actor; the exact owned Process
         // remains retained until reaped, including cancellation of the caller.
@@ -203,8 +213,61 @@ final class T3EnvironmentProcess {
         guard process === child else { return }
         process = nil
         connection = nil
+        launchGeneration = nil
+        authorityIdentity = nil
         releaseHome()
         onExit?(status)
+    }
+
+    /// Available once the owned child's ServerEnvironmentIdentity has established
+    /// its file, even while provider hydration is waiting for the native broker.
+    /// The request's environment ID is deliberately not an input to this method.
+    func authorityEnvironmentIdentity() throws -> T3AuthorityEnvironmentIdentity {
+        guard lease >= 0, let child = process, child.isRunning, let launchGeneration else {
+            throw T3NativeAuthorityError.unavailable
+        }
+        // Open each component relative to an owned directory descriptor. A symlink,
+        // FIFO, wrong owner, or replaced directory cannot redirect this read.
+        let rootFD = open(home.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard rootFD >= 0 else { throw T3NativeAuthorityError.unavailable }
+        defer { Darwin.close(rootFD) }
+        let dataFD = openat(rootFD, "userdata", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard dataFD >= 0 else { throw T3NativeAuthorityError.unavailable }
+        defer { Darwin.close(dataFD) }
+        for descriptor in [rootFD, dataFD] {
+            var info = stat()
+            guard fstat(descriptor, &info) == 0, info.st_uid == getuid(), info.st_mode & 0o022 == 0 else {
+                throw T3NativeAuthorityError.unavailable
+            }
+        }
+        var rootInfo = stat()
+        var lockedInfo = stat()
+        var namedLock = stat()
+        guard let ownedHome, fstat(rootFD, &rootInfo) == 0,
+              rootInfo.st_dev == ownedHome.device, rootInfo.st_ino == ownedHome.inode,
+              fstat(lease, &lockedInfo) == 0,
+              fstatat(rootFD, ".voiceflow-owner.lock", &namedLock, AT_SYMLINK_NOFOLLOW) == 0,
+              namedLock.st_dev == lockedInfo.st_dev, namedLock.st_ino == lockedInfo.st_ino else {
+            throw T3NativeAuthorityError.unavailable
+        }
+        let identityFD = openat(dataFD, "environment-id", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard identityFD >= 0 else { throw T3NativeAuthorityError.unavailable }
+        let handle = FileHandle(fileDescriptor: identityFD, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var info = stat()
+        guard fstat(identityFD, &info) == 0, info.st_uid == getuid(), info.st_mode & S_IFMT == S_IFREG,
+              info.st_mode & 0o022 == 0, (1...512).contains(info.st_size),
+              let bytes = try handle.read(upToCount: 513), bytes.count <= 512,
+              let raw = String(data: bytes, encoding: .utf8) else { throw T3NativeAuthorityError.unavailable }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.utf8.count <= 256,
+              !value.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) }),
+              child.isRunning, self.process === child else { throw T3NativeAuthorityError.unavailable }
+        let identity = T3AuthorityEnvironmentIdentity(environmentID: value, generation: launchGeneration)
+        guard authorityIdentity == nil || authorityIdentity == identity,
+              connection == nil || connection?.environmentId == value else { throw T3NativeAuthorityError.unavailable }
+        authorityIdentity = identity
+        return identity
     }
 
     private func acquireHome() throws {
@@ -227,10 +290,12 @@ final class T3EnvironmentProcess {
         }
         guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { Darwin.close(fd); throw T3EnvironmentProcessError.homeInUse }
         lease = fd
+        ownedHome = (info.st_dev, info.st_ino)
     }
 
     private func releaseHome() {
         if lease >= 0 { Darwin.close(lease); lease = -1 }
+        ownedHome = nil
     }
 
     private struct RuntimeState: Decodable {
@@ -258,11 +323,7 @@ final class T3EnvironmentProcess {
               let state = try? JSONDecoder().decode(RuntimeState.self, from: bytes), state.pid == child.processIdentifier else { return nil }
         guard state.version == 1, state.port == Int(port), state.host == "127.0.0.1", state.devUrl == nil,
               state.origin == "http://127.0.0.1:\(port)", let url = URL(string: state.origin) else { throw T3EnvironmentProcessError.invalidRuntimeState }
-        let identityURL = home.appendingPathComponent("userdata/environment-id")
-        let identity = String(decoding: try T3BundledEnvironment.smallFile(identityURL, limit: 512), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !identity.isEmpty, identity.utf8.count <= 256, !identity.contains(where: { $0.isWhitespace || $0.isNewline }) else {
-            throw T3EnvironmentProcessError.invalidRuntimeState
-        }
-        return T3EnvironmentConnection(origin: try T3ShellOrigin(url), environmentId: identity, credential: credential)
+        guard let identity = try? authorityEnvironmentIdentity() else { throw T3EnvironmentProcessError.invalidRuntimeState }
+        return T3EnvironmentConnection(origin: try T3ShellOrigin(url), environmentId: identity.environmentID, credential: credential)
     }
 }

@@ -40,7 +40,12 @@ private func check(_ value: @autoclosure () -> Bool, _ detail: String) throws {
         let preserved = Data("saved thread fixture\0🧭".utf8)
         try preserved.write(to: primaryHome.appendingPathComponent("preserved-source"))
         let primary = try make(primaryHome)
-        let connected = try await primary.start()
+        do { _ = try primary.authorityEnvironmentIdentity(); throw NSError(domain: "authority before launch", code: 1) }
+        catch T3NativeAuthorityError.unavailable { assertions += 1 }
+        let nativeAuthority = T3NativeAuthorityBootstrap(origin: "http://127.0.0.1:12345", credential: String(repeating: "a", count: 43))
+        let connected = try await primary.start(nativeAuthority: nativeAuthority)
+        let firstIdentity = try primary.authorityEnvironmentIdentity()
+        try expect(firstIdentity.environmentID == connected.environmentId, "authority is bound to owned environment identity")
         try expect(connected.environmentId == "fixture-environment", "read environment identity from explicit home")
         try expect(connected.origin.url.absoluteString == "http://127.0.0.1:29471", "read exact owned process origin")
         try expect(connected.credential.count == 64, "generated private credential")
@@ -48,18 +53,64 @@ private func check(_ value: @autoclosure () -> Bool, _ detail: String) throws {
         let firstAudit = try audit(primaryHome)
         try expect(firstAudit["argvContainsCredential"] as? Bool == false, "credential absent from argv")
         try expect(firstAudit["ambientOverridePresent"] as? Bool == false, "ambient overrides and provider key absent")
+        try expect(firstAudit["authorityConfigured"] as? Bool == true && firstAudit["authorityShapeValid"] as? Bool == true, "private authority envelope reached only child stdin")
+        try expect(firstAudit["authorityInArgv"] as? Bool == false && firstAudit["authorityInEnvironment"] as? Bool == false, "native capability absent from args and environment")
+        let identityFile = primaryHome.appendingPathComponent("userdata/environment-id")
+        let identityBytes = try Data(contentsOf: identityFile)
+        try FileManager.default.removeItem(at: identityFile)
+        try FileManager.default.createSymbolicLink(at: identityFile, withDestinationURL: primaryHome.appendingPathComponent("preserved-source"))
+        do { _ = try primary.authorityEnvironmentIdentity(); throw NSError(domain: "symlink identity accepted", code: 1) }
+        catch T3NativeAuthorityError.unavailable { assertions += 1 }
+        try FileManager.default.removeItem(at: identityFile)
+        guard mkfifo(identityFile.path, 0o600) == 0 else { throw NSError(domain: "fixture fifo", code: 1) }
+        do { _ = try primary.authorityEnvironmentIdentity(); throw NSError(domain: "fifo identity accepted", code: 1) }
+        catch T3NativeAuthorityError.unavailable { assertions += 1 }
+        try FileManager.default.removeItem(at: identityFile)
+        try Data("different-environment\n".utf8).write(to: identityFile)
+        do { _ = try primary.authorityEnvironmentIdentity(); throw NSError(domain: "replacement identity accepted", code: 1) }
+        catch T3NativeAuthorityError.unavailable { assertions += 1 }
+        try identityBytes.write(to: identityFile)
+        let lock = primaryHome.appendingPathComponent(".voiceflow-owner.lock")
+        let movedLock = primaryHome.appendingPathComponent("original-lock")
+        try FileManager.default.moveItem(at: lock, to: movedLock)
+        try Data().write(to: lock)
+        do { _ = try primary.authorityEnvironmentIdentity(); throw NSError(domain: "replacement lock accepted", code: 1) }
+        catch T3NativeAuthorityError.unavailable { assertions += 1 }
+        try FileManager.default.removeItem(at: lock)
+        try FileManager.default.moveItem(at: movedLock, to: lock)
         let originalPID = firstAudit["pid"] as! Int32
         let contender = try make(primaryHome)
         do { _ = try await contender.start(); throw NSError(domain: "unexpected second owner", code: 1) }
         catch T3EnvironmentProcessError.homeInUse { assertions += 1 }
         try expect(kill(originalPID, 0) == 0, "a refused contender leaves owner alive")
         await primary.stop()
+        do { _ = try primary.authorityEnvironmentIdentity(); throw NSError(domain: "authority after stop", code: 1) }
+        catch T3NativeAuthorityError.unavailable { assertions += 1 }
         try expect(kill(originalPID, 0) != 0 && errno == ESRCH, "owned child reaped on stop")
         _ = try await contender.start()
+        let secondIdentity = try contender.authorityEnvironmentIdentity()
+        try expect(secondIdentity.environmentID == firstIdentity.environmentID && secondIdentity.generation != firstIdentity.generation, "restart changes launch generation while preserving environment ID")
+        let unconfiguredAudit = try audit(primaryHome)
+        try expect(unconfiguredAudit["authorityConfigured"] as? Bool == false, "ordinary launch remains unconfigured")
         await contender.stop()
         assertions += 1
         let restored = try Data(contentsOf: primaryHome.appendingPathComponent("preserved-source"))
         try expect(restored == preserved, "restart preserves source bytes")
+
+        let earlyHome = try home("identity-before-ready", mode: "identity-before-ready")
+        let early = try make(earlyHome)
+        let earlyStart = Task { try await early.start() }
+        var earlyIdentity: T3AuthorityEnvironmentIdentity?
+        let earlyDeadline = Date().addingTimeInterval(5)
+        while earlyIdentity == nil && Date() < earlyDeadline {
+            earlyIdentity = try? early.authorityEnvironmentIdentity()
+            if earlyIdentity == nil { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        try expect(earlyIdentity?.environmentID == "fixture-environment", "owned identity is available before HTTP readiness")
+        try expect(!FileManager.default.fileExists(atPath: earlyHome.appendingPathComponent("userdata/server-runtime.json").path), "authority lookup does not wait for HTTP server runtime state")
+        try Data().write(to: earlyHome.appendingPathComponent("continue-startup"))
+        _ = try await earlyStart.value
+        await early.stop()
 
         for mode in ["exit", "wrong-origin", "timeout"] {
             let target = try home(mode, mode: mode)
