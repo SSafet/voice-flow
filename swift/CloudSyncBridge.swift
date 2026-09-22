@@ -61,7 +61,7 @@ final class CloudSyncBridge {
     }
     func installHooks() {
         lastPreferences = Dictionary(uniqueKeysWithValues: preferenceEdits().map { ($0.recordId, $0.payload!) })
-        DictationsView.onPersist = { [weak self] in self?.captureDictations($0) }
+        DictationStore.shared.addPersistObserver { [weak self] in self?.captureDictations($0) }
         AssistantHistoryStore.shared.onPersist = { [weak self] in self?.captureConversations($0) }
         AssistantHistoryStore.shared.onDelete = { [weak self] id in
             self?.capture([CloudLocalEdit(collection: .threads, recordId: id, payload: nil)])
@@ -277,30 +277,32 @@ final class CloudSyncBridge {
         try lock.withLock {
             guard selection.included.dictations, let partition = selection.partition, let store else { return }
             let state = try store.state(partition)
-            var local = DictationsView.recentEntries(limit: Int.max)
+            let thisDevice = selection.deviceID
+            projecting = true
+            defer { projecting = false }
+            var local = DictationStore.shared.all()
             for row in state.records.values where row.collection == .dictations {
                 guard try store.sourceBelongsTo(partition, collection: row.collection, id: row.recordId) else { continue }
+                guard var record = row.remote else { continue }
+                // The sync store's effective payload preserves pending edits
+                // and unresolved conflicts; the remote record alone does not.
+                record.payload = row.payload
+                if row.payload != nil { record.deletedAt = nil }
                 let index = local.firstIndex { $0.id == row.recordId }
-                if let payload = row.payload, let text = payload.text {
-                    let timestamp = payload.modifiedAt ?? payload.createdAt ?? payload.legacyTimestamp
-                    if let index {
-                        if local[index].text != text { local[index].seen = false }
-                        local[index].text = text
-                        local[index].destination = CaptureDestination(rawValue: payload.destination ?? "kept")
-                        local[index].timestamp = timestamp
-                    } else {
-                        local.append(HistoryEntry(text: text, time: timestamp.map { String($0.suffix(8)) } ?? "",
-                            timestamp: timestamp, id: row.recordId,
-                            destination: CaptureDestination(rawValue: payload.destination ?? "kept"), seen: false))
-                    }
-                } else if row.remote?.deletedAt != nil, row.pending.isEmpty, row.conflicts.isEmpty, let index {
-                    local.remove(at: index)
+                let existing = index.map { local[$0] }
+                if let entry = RemoteDictation.entry(from: record, actorDeviceID: row.actor?.deviceId,
+                                                     thisDeviceID: thisDevice, existing: existing) {
+                    if let index { local[index] = entry } else { local.insert(entry, at: 0) }
+                } else if record.deletedAt != nil, row.pending.isEmpty, row.conflicts.isEmpty {
+                    DictationStore.shared.remove(id: row.recordId)
+                    if let error = DictationStore.shared.lastPersistenceError { throw CloudSyncError.storage(error) }
+                    if let index { local.remove(at: index) }
                 }
             }
             local.sort { ($0.timestamp ?? $0.time) > ($1.timestamp ?? $1.time) }
-            projecting = true
-            defer { projecting = false }
-            DictationsView.projectPortableEntries(local)
+            guard DictationStore.shared.save(local) else {
+                throw CloudSyncError.storage(DictationStore.shared.lastPersistenceError ?? "dictation persistence")
+            }
         }
     }
 

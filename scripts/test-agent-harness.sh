@@ -188,6 +188,12 @@ run_unit_command thread_protocol_sync bash tests/thread_protocol_sync/test.sh
 run_unit_command spm_build bash tests/spm_build/test.sh
 run_unit_command ripgrep_runtime bash tests/ripgrep_runtime/test.sh
 run_unit_command thread_store bash tests/thread_store/test.sh
+run_unit_command captured_store bash tests/captured_store/test.sh
+run_unit_command captured_context bash tests/captured_context/test.sh
+run_unit_command dictation_store bash tests/dictation_store/test.sh
+run_unit_command captured_ingest bash tests/captured_ingest/test.sh
+run_unit_command captured_index_build bash tests/captured_index_build/test.sh
+run_unit_command captured_integrity bash tests/captured_integrity/test.sh
 run_unit_command thread_store_records bash tests/thread_store_records/test.sh
 run_unit_command thread_store_events bash tests/thread_store_events/test.sh
 run_unit_command thread_store_projects bash tests/thread_store_projects/test.sh

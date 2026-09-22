@@ -23,6 +23,11 @@
         "capture_clipboard",
         "capture_routing",
         "capture_store",
+        "captured_context",
+        "captured_index_build",
+        "captured_ingest",
+        "captured_integrity",
+        "captured_store",
         "claude_code_runtime",
         "cloud_sync",
         "cloud_sync_bridge",
@@ -33,6 +38,7 @@
         "daily_focus",
         "data_sources",
         "data_sources_ui",
+        "dictation_store",
         "display_context",
         "evidence",
         "fake_openai_server",
@@ -1073,17 +1079,83 @@
         "system_agents"
       ]
     },
-    { "id": "tests/spm_build/test.sh", "runner": "unit", "suites": ["spm_build"] },
-    { "id": "tests/ripgrep_runtime/test.sh", "runner": "unit", "suites": ["ripgrep_runtime"] },
-    { "id": "tests/thread_protocol_sync/test.sh", "runner": "unit", "suites": ["thread_protocol_sync"] },
-    { "id": "tests/thread_store/main.swift", "runner": "unit", "suites": ["thread_store"] },
-    { "id": "tests/thread_store_records/test.sh", "runner": "unit", "suites": ["thread_store_records"] },
-    { "id": "tests/test_thread_store_runner.py", "runner": "unit", "suites": ["thread_store_records"] },
-    { "id": "tests/thread_store_events/test.sh", "runner": "unit", "suites": ["thread_store_events"] },
-    { "id": "tests/thread_store_projects/test.sh", "runner": "unit", "suites": ["thread_store_projects"] },
-    { "id": "tests/thread_store_recovery/test.sh", "runner": "unit", "suites": ["thread_store_recovery"] },
-    { "id": "tests/contract_rules/main.swift", "runner": "unit", "suites": ["contract_rules"] },
-    { "id": "tests/contract_self_check/main.swift", "runner": "unit", "suites": ["contract_self_check"] },
+    {
+      "id": "tests/spm_build/test.sh",
+      "runner": "unit",
+      "suites": [
+        "spm_build"
+      ]
+    },
+    {
+      "id": "tests/ripgrep_runtime/test.sh",
+      "runner": "unit",
+      "suites": [
+        "ripgrep_runtime"
+      ]
+    },
+    {
+      "id": "tests/thread_protocol_sync/test.sh",
+      "runner": "unit",
+      "suites": [
+        "thread_protocol_sync"
+      ]
+    },
+    {
+      "id": "tests/thread_store/main.swift",
+      "runner": "unit",
+      "suites": [
+        "thread_store"
+      ]
+    },
+    {
+      "id": "tests/thread_store_records/test.sh",
+      "runner": "unit",
+      "suites": [
+        "thread_store_records"
+      ]
+    },
+    {
+      "id": "tests/test_thread_store_runner.py",
+      "runner": "unit",
+      "suites": [
+        "thread_store_records"
+      ]
+    },
+    {
+      "id": "tests/thread_store_events/test.sh",
+      "runner": "unit",
+      "suites": [
+        "thread_store_events"
+      ]
+    },
+    {
+      "id": "tests/thread_store_projects/test.sh",
+      "runner": "unit",
+      "suites": [
+        "thread_store_projects"
+      ]
+    },
+    {
+      "id": "tests/thread_store_recovery/test.sh",
+      "runner": "unit",
+      "suites": [
+        "thread_store_recovery"
+      ]
+    },
+    {
+      "id": "tests/contract_rules/main.swift",
+      "runner": "unit",
+      "suites": [
+        "contract_rules"
+      ]
+    },
+    {
+      "id": "tests/contract_self_check/main.swift",
+      "runner": "unit",
+      "suites": [
+        "contract_self_check"
+      ]
+    },
     {
       "id": "tests/test_backend_protocol.py",
       "runner": "unit",
@@ -1278,6 +1350,90 @@
       "runner": "unit",
       "suites": [
         "cloud_sync_bridge"
+      ]
+    },
+    {
+      "id": "tests/captured_store/main.swift",
+      "runner": "unit",
+      "suites": [
+        "captured_store"
+      ]
+    },
+    {
+      "id": "tests/captured_store/test.sh",
+      "runner": "unit",
+      "suites": [
+        "captured_store"
+      ]
+    },
+    {
+      "id": "tests/captured_context/main.swift",
+      "runner": "unit",
+      "suites": [
+        "captured_context"
+      ]
+    },
+    {
+      "id": "tests/captured_context/test.sh",
+      "runner": "unit",
+      "suites": [
+        "captured_context"
+      ]
+    },
+    {
+      "id": "tests/dictation_store/main.swift",
+      "runner": "unit",
+      "suites": [
+        "dictation_store"
+      ]
+    },
+    {
+      "id": "tests/dictation_store/test.sh",
+      "runner": "unit",
+      "suites": [
+        "dictation_store"
+      ]
+    },
+    {
+      "id": "tests/captured_ingest/main.swift",
+      "runner": "unit",
+      "suites": [
+        "captured_ingest"
+      ]
+    },
+    {
+      "id": "tests/captured_ingest/test.sh",
+      "runner": "unit",
+      "suites": [
+        "captured_ingest"
+      ]
+    },
+    {
+      "id": "tests/captured_index_build/main.swift",
+      "runner": "unit",
+      "suites": [
+        "captured_index_build"
+      ]
+    },
+    {
+      "id": "tests/captured_index_build/test.sh",
+      "runner": "unit",
+      "suites": [
+        "captured_index_build"
+      ]
+    },
+    {
+      "id": "tests/captured_integrity/main.swift",
+      "runner": "unit",
+      "suites": [
+        "captured_integrity"
+      ]
+    },
+    {
+      "id": "tests/captured_integrity/test.sh",
+      "runner": "unit",
+      "suites": [
+        "captured_integrity"
       ]
     }
   ]

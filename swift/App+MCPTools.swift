@@ -687,7 +687,7 @@ extension AppDelegate {
 
     private func mcpRecentDictations(_ args: [String: Any]) -> MCPServer.ToolResult {
         let limit = min(max((args["limit"] as? NSNumber)?.intValue ?? 10, 1), 50)
-        let entries = DictationsView.recentEntries(limit: limit)
+        let entries = DictationStore.shared.recent(limit: limit)
         guard !entries.isEmpty else {
             return .ok("No dictations recorded yet.")
         }

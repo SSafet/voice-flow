@@ -37,7 +37,23 @@ final class DayBus {
 
     private let writeQueue = DispatchQueue(label: "voiceflow.watcher.bus", qos: .utility)
     private var currentDay = ""
-    var onAppend: ((String, [String: Any], Date) -> Void)?
+
+    /// Called with every appended line. A list, not one slot: the captured
+    /// index and the job triggers both hear every line, and registering a
+    /// second observer must not silently unsubscribe the first.
+    private var committedObservers: [(String, [String: Any], Date) -> Void] = []
+
+    // Main-thread registration; callback is delivered after the source bytes
+    // are written, in the same order as the recorder commits them.
+    func addCommittedObserver(_ observer: @escaping (String, [String: Any], Date) -> Void) {
+        committedObservers.append(observer)
+    }
+
+    private var appendObservers: [(String, [String: Any], Date) -> Void] = []
+
+    func addAppendObserver(_ observer: @escaping (String, [String: Any], Date) -> Void) {
+        appendObservers.append(observer)
+    }
 
     private static let dayFormatter: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
@@ -76,17 +92,22 @@ final class DayBus {
         line["e"] = Int(date.timeIntervalSince1970)
         let url = dayDir(at: date).appendingPathComponent("\(stream).jsonl")
         guard let json = try? JSONSerialization.data(withJSONObject: line) else { return }
+        let committed = committedObservers
         writeQueue.async {
             let entry = json + Data("\n".utf8)
-            if let handle = try? FileHandle(forWritingTo: url) {
+            do {
+                if !FileManager.default.fileExists(atPath: url.path) {
+                    try Data().write(to: url, options: .atomic)
+                }
+                let handle = try FileHandle(forWritingTo: url)
                 defer { try? handle.close() }
-                _ = try? handle.seekToEnd()
-                try? handle.write(contentsOf: entry)
-            } else {
-                try? entry.write(to: url)
-            }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: entry)
+                for observer in committed { observer(stream, line, date) }
+            } catch { vflog("watcher append failed: \(error)") }
+
         }
-        onAppend?(stream, line, date)
+        for observer in appendObservers { observer(stream, line, date) }
     }
 
     /// Write a timestamped artifact and return the filename the stream should
