@@ -188,6 +188,7 @@ run_unit_command thread_protocol_sync bash tests/thread_protocol_sync/test.sh
 run_unit_command spm_build bash tests/spm_build/test.sh
 run_unit_command ripgrep_runtime bash tests/ripgrep_runtime/test.sh
 run_unit_command qa_launch_isolation bash tests/qa_launch_isolation/test.sh
+run_unit_command t3_native_shell bash tests/t3_native_shell/test.sh
 run_unit_command thread_store bash tests/thread_store/test.sh
 run_unit_command captured_store bash tests/captured_store/test.sh
 run_unit_command captured_context bash tests/captured_context/test.sh

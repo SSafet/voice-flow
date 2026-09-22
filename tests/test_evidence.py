@@ -133,6 +133,14 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(evidence["source"]["dirty"])
         validate_evidence(evidence, self.registry, "unit", self.root)
 
+    def test_native_bridge_and_host_fixture_are_fingerprinted(self) -> None:
+        for directory, filename in [("web", "voiceFlowShell.ts"), ("proofs", "fixture.swift")]:
+            journal = self.journal()
+            (self.root / directory).mkdir()
+            (self.root / directory / filename).write_text("changed executable input")
+            with self.subTest(directory=directory), self.assertRaisesRegex(ValueError, "source checkout changed"):
+                validate_journal(journal, self.registry, "unit", self.root)
+
     def test_new_untracked_test_fixture_invalidates_evidence(self) -> None:
         journal = self.journal()
         (self.root / "tests").mkdir()

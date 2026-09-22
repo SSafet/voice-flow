@@ -2,6 +2,16 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "SHELL-01",
+      "area": "native_shell",
+      "name": "Validate the T3 native shell authentication, preview isolation and frozen input contracts before integration",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/t3_native_shell/test.sh"
+      ]
+    },
+    {
       "id": "AST-01",
       "area": "assistant",
       "name": "Create, select, and delete Assistant conversations",
