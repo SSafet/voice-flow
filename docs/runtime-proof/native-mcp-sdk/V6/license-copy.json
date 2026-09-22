@@ -1,0 +1,8 @@
+{
+  "template_copy_preserves_notices": true,
+  "sha256": {
+    "EventSource.txt": "2f9b695627d569a3ce452b2c03fdd34310df78c8ea94edfafd9ce38381e5b502",
+    "MCP-Swift-SDK.txt": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a",
+    "README.txt": "e0ef36d4389c5863077b38c81b1d7f41d544b04f70ee2e7e6fbc8a77bdc558c0"
+  }
+}
