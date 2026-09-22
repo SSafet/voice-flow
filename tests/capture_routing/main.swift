@@ -93,4 +93,13 @@ expect(GrownConversationFocus.resolve(routesToAssistant: false, sessionId: "sess
 expect(GrownConversationFocus.resolve(routesToAssistant: false, sessionId: nil) == .none,
        "an unrelated grown notice must not become Assistant context")
 
+expect(CaptureCorrelation.resolve(requestId: UUID().uuidString, runs: [r1: run1]) == nil,
+       "unknown explicit callback must not be assigned to an unrelated run")
+run1 = CaptureRun(id: r1, capability: .dictate, route: .nativeDraft(deliveryId: r1.uuidString),
+                 startedAt: Date(), snapshot: .notNeeded)
+run1.phase = .awaitingTranscription
+expect(CaptureCorrelation.resolve(requestId: nil, runs: [r1: run1]) == nil,
+       "native input never accepts an uncorrelated legacy callback")
+expect(CaptureCorrelation.resolve(requestId: r1.uuidString, runs: [r1: run1]) == r1,
+       "native input accepts only its exact run ID")
 print("capture routing tests passed")

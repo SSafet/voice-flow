@@ -22,7 +22,7 @@ bundle="$output/Voice Flow T3 Shell QA.app"
 mkdir -p "$bundle/Contents/MacOS"
 cp proofs/t3-native-shell/Info.plist "$bundle/Contents/Info.plist"
 swiftc -target "$(uname -m)-apple-macos14" -swift-version 5 -DVOICE_FLOW_QA \
-  -parse-as-library swift/QALaunchIsolation.swift swift/Shell/*.swift \
+  -parse-as-library swift/QALaunchIsolation.swift swift/VoiceFlowPaths.swift swift/Captured/CapturedSourceEvents.swift swift/Shell/*.swift \
   proofs/t3-native-shell/main.swift -o "$bundle/Contents/MacOS/t3-shell-fixture"
 codesign --force --sign - "$bundle"
 codesign --verify --deep --strict "$bundle"

@@ -275,6 +275,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// mutable purpose/context slots.
     var activeRunId: UUID?
     var captureRuns: [UUID: CaptureRun] = [:]
+    var shellInputWindow: T3ShellWindow?
+    var shellCapturedInput: ShellCapturedInput?
+    var shellDeliveriesInFlight: Set<UUID> = []
     /// Last screenshot display per MCP session. Annotation coordinates from
     /// that session stay coupled to the image the agent actually inspected.
     var lastMCPDisplay: [String: CGDirectDisplayID] = [:]
@@ -2584,10 +2587,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func beginCapture(capability: CaptureCapability,
-                              deliveryPolicy: CaptureDeliveryPolicy,
-                              handsFree: Bool,
-                              appendToEntryId: String? = nil) {
+    @discardableResult
+    func beginCapture(capability: CaptureCapability,
+                      deliveryPolicy: CaptureDeliveryPolicy,
+                      handsFree: Bool,
+                      appendToEntryId: String? = nil,
+                      nativeDestination: ShellFrozenTarget? = nil) -> Bool {
+        // Existing AppKit/hotkey callbacks are synchronous on main. Do not
+        // defer target selection to a later task or accept an off-main caller.
+        guard Thread.isMainThread else { return false }
+        return MainActor.assumeIsolated {
+            beginCaptureOnMain(capability: capability, deliveryPolicy: deliveryPolicy, handsFree: handsFree,
+                appendToEntryId: appendToEntryId, nativeDestination: nativeDestination)
+        }
+    }
+
+    @MainActor
+    private func beginCaptureOnMain(capability: CaptureCapability,
+                                   deliveryPolicy: CaptureDeliveryPolicy, handsFree: Bool,
+                                   appendToEntryId: String?, nativeDestination: ShellFrozenTarget?) -> Bool {
+        let nativeRequested = nativeDestination != nil || (deliveryPolicy == .contextual
+            && appendToEntryId == nil && shellInputWindow?.window.isKeyWindow == true)
         // A normal Dictate press while toggle-Dictate is active commits the
         // existing run; the next press starts the contextual one. isBusy (not
         // isRecording) so a press landing inside the stop's drain window is a
@@ -2595,25 +2615,45 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // (VF-44).
         if recorder.isBusy,
            let id = activeRunId, let run = captureRuns[id],
-           case .historyOnly = run.route, deliveryPolicy == .contextual {
+           case .historyOnly = run.route, deliveryPolicy == .contextual, !nativeRequested {
             stopCapture()
             replyBubble.showTransient(run.appendEntryId != nil
                                         ? "continuation captured — press again to dictate"
                                         : "kept in Inbox — press again to dictate", seconds: 5)
-            return
+            return false
         }
-        guard !recorder.isBusy else { return }
+        guard !recorder.isBusy else { return false }
 
         // Snapshot intent before collapsing the pill/panel-adjacent UI.
         let focus = visibleConversationFocus()
         let pasteTarget = deliveryPolicy == .contextual && focus == .none
             ? paster.captureTarget() : nil
-        let route = CaptureRouter.resolve(
+        let legacyRoute = CaptureRouter.resolve(
             policy: deliveryPolicy,
             focus: focus,
             pasteTarget: pasteTarget,
             pendingInteraction: pendingInteraction)
         let id = UUID()
+        let route: CaptureRoute
+        var custody: CapturedPendingDelivery?
+        if nativeRequested {
+            guard let shell = shellInputWindow, let source = shellCapturedInput,
+                  let destination = nativeDestination ?? shell.freezeComposerTarget(requireKeyWindow: true),
+                  shell.freezeComposerTarget() == destination else {
+                replyBubble.showTransient("Choose a composer before dictating.", seconds: 5, isError: true)
+                return false
+            }
+            do {
+                _ = try source.custody.reserve(destination, deliveryId: id.uuidString)
+                try source.retainAudio(deliveryId: id.uuidString)
+                custody = try source.custody.reservation(id.uuidString)
+                route = .nativeDraft(deliveryId: id.uuidString)
+            } catch {
+                source.custody.abandonEmpty(id.uuidString)
+                replyBubble.showTransient("Could not retain dictation safely. Review pending input.", seconds: 7, isError: true)
+                return false
+            }
+        } else { route = legacyRoute }
         let snapshot: SnapshotState = capability == .snapshot ? .pending : .notNeeded
         let display = DisplayTopology.underMouse ?? DisplayTopology.primary
         let run = CaptureRun(
@@ -2632,7 +2672,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ambientScreenshots.removeAll()
             pendingSessionShots.removeAll()
             lastCaptureData = nil
-            captureStore.beginSession(runId: id)
+            guard captureStore.beginSession(runId: id, pendingDelivery: custody) else {
+                captureRuns[id]?.phase = .failed
+                activeRunId = nil; sessionActive = false
+                replyBubble.showTransient("Could not retain screen capture safely.", seconds: 7, isError: true)
+                return false
+            }
             captureScheduler.interval = TimeInterval(max(1, UserSettings.shared.captureIntervalSeconds))
             captureScheduler.targetDisplay = display
             captureScheduler.start()
@@ -2658,12 +2703,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             state = .idle
             replyBubble.showTransient("microphone unavailable — restart Voice Flow", seconds: 8, isError: true)
-            return
+            return false
         }
         vflog("capture \(id) started capability=\(capability.rawValue) focus=\(focus)")
+        return true
     }
 
-    private func stopCapture(expectedCapability: CaptureCapability? = nil) {
+    func stopCapture(expectedCapability: CaptureCapability? = nil) {
         guard recorder.isRecording, let id = activeRunId,
               let run = captureRuns[id],
               CaptureStopPolicy.permits(
@@ -2681,7 +2727,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 let raw = try? await screenCapture.captureScreen(on: run.display)
                 guard var current = captureRuns[id], current.phase != .delivered else { return }
-                if let raw, let shot = CaptureStore.saveShot(raw, on: run.display) {
+                let custody: CapturedPendingDelivery?
+                if case .nativeDraft(let deliveryId) = run.route {
+                    custody = try? shellCapturedInput?.custody.reservation(deliveryId)
+                    guard custody != nil else {
+                        current.snapshot = .unavailable; captureRuns[id] = current
+                        maybeDeliverCapture(id); return
+                    }
+                } else { custody = nil }
+                if let raw, let shot = CaptureStore.saveShot(raw, on: run.display, pendingDelivery: custody) {
                     current.snapshot = .captured(path: shot.path, data: raw)
                 } else {
                     current.snapshot = .unavailable
@@ -2723,7 +2777,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // VF-44: keep the raw audio recoverable until the transcript is
             // delivered — a transcription failure, crash, or quit mid-
             // processing must not lose recorded speech.
-            PendingAudioStore.save(pcm: pcmData, runId: id, sampleRate: 16000)
+            let savedAudio = PendingAudioStore.save(pcm: pcmData, runId: id, sampleRate: 16000)
+            if case .nativeDraft = current.route, savedAudio == nil {
+                self.handleTranscriptionError(requestId: id.uuidString, message: "Could not save recorded audio. Transcription was not started.")
+                return
+            }
             let settings = UserSettings.shared
             let provider = settings.dictationProvider
             let openAIAPIKey = provider == .openai ? KeychainStore.shared.loadOpenAIAPIKey() : nil
@@ -2754,6 +2812,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         partialTimer?.invalidate()
         partialTimer = nil
         transcriptPanel.hide()
+        if case .nativeDraft = captureRuns[id]?.route {
+            // Supersession cancels delivery, not the recorded source. Drain into
+            // the existing WAV safety net; never transcribe/replay this run.
+            if capability == .continuous {
+                captureScheduler.stop(); sessionActive = false
+                _ = captureStore.endSession(transcript: nil, keepEmpty: true)
+                indicator.setSessionActive(false); menuBar.setSessionActive(false); chatPanel.setSessionActive(false)
+            }
+            captureRuns[id]?.phase = .failed
+            activeRunId = nil
+            recorder.stop { pcm in
+                if let pcm { PendingAudioStore.save(pcm: pcm, runId: id, sampleRate: 16000) }
+            }
+            state = .idle
+            return
+        }
         recorder.cancel()
         if captureRuns[id]?.appendEntryId != nil {
             chatPanel.setContinuationActive(entryId: nil)
@@ -2859,6 +2933,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        if case .nativeDraft = run.route {
+            run.phase = .failed; captureRuns[id] = run
+            replyBubble.showTransient("Could not transcribe — native sources retained for recovery.", seconds: 7, isError: true)
+            if activeRunId == nil { state = .idle }
+            return
+        }
         if run.capability == .continuous, let summary = run.continuousSummary {
             run.transcript = ""
             run.continuousSummary = captureStore.updateTranscript("", in: summary)
@@ -2897,6 +2977,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func maybeDeliverCapture(_ id: UUID) {
         guard var run = captureRuns[id], run.phase != .delivered,
               run.phase != .failed, run.isReadyToDeliver else { return }
+        if case .nativeDraft = run.route {
+            guard Thread.isMainThread else { return }
+            MainActor.assumeIsolated { deliverCaptureToShell(run) }
+            return // Draft only: no wake routing, paste, legacy agent or model send.
+        }
         let note = run.transcript ?? ""
         let hasFrames = (run.continuousSummary?.frameCount ?? 0) > 0
         guard !note.isEmpty || hasFrames else {
@@ -2951,6 +3036,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             : nil
         let effectiveRoute: CaptureRoute = wakeMatch == nil ? run.route : .assistant
         switch effectiveRoute {
+        case .nativeDraft: return // Handled before legacy routing above.
         case .historyOnly:
             destination = .kept
             seen = false
@@ -3029,7 +3115,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pruneFinishedCaptureRuns()
     }
 
-    private func pruneFinishedCaptureRuns() {
+    func pruneFinishedCaptureRuns() {
         let finished = captureRuns.values
             .filter { $0.phase == .delivered || $0.phase == .failed }
             .sorted { $0.startedAt > $1.startedAt }

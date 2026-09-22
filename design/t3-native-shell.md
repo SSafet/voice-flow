@@ -41,11 +41,12 @@ loss returns `unconfirmed` because an effect could already have committed. Never
 discard the original, retarget it, or auto-send a turn on any failure. Reuse the
 ID on a deliberate retry; the shared draft owner must deduplicate it durably.
 
-Capture IDs are opaque references, never native file paths. Until root connects
-the existing capture lookup/upload flow, the shared consumer must reject any
-input with capture IDs rather than accepting only its text. Native callbacks
-drive the existing dictation, capture, speech and settings services. The host
-advertises no callback absent from its constructor.
+Capture IDs are opaque references, never native file paths. The source-owned
+`readCapture` adapter and explicit App callbacks below connect native input to
+the shared client's existing upload/draft flow. Root still owns activating and
+measuring that complete integration. The consumer must reject any unsupported
+capture rather than accept only its text. The host advertises no callback absent
+from its constructor.
 
 `renewCredentials` is explicit auth renewal, not the socket-retry path. It
 installs the replacement cookie then invokes the registered credentials-changed
@@ -100,3 +101,82 @@ App wiring has been exercised by these checks. The root coordinator owns the
 one guarded run against its final shared-client bundle. Live cookie/WS behavior,
 renewal/offline preservation, actual native services and model/budget authority
 remain unproved until that run and their separate integration gates finish.
+
+## Native input integration (source implemented; cutover not activated)
+
+The production adapters are in `App+ShellInput.swift` and `ShellCapturedInput`.
+After existing recorder/backend/capture/TTS startup and CapturedService startup,
+the app coordinator performs this explicit sequence on the main actor:
+
+1. `configureShellInput(service:)` uses that exact existing CapturedService/root.
+2. Construct `T3ShellWindow` with `inputCustody: adapter.custody` and
+   `actions: shellInputActions()`, alongside the approved origin/auth arguments.
+3. `installShellInputWindow(window)` checks that same custody owner. Bootstrap,
+   trusted artifact selection, environment lifecycle and showing the window
+   remain the coordinator's responsibility.
+
+Contextual native hotkeys use a published T3 composer only when its window is
+key. No target means refusal, not a paste into the shell. Explicit history-only
+recording retains its old route. The UUID and complete target freeze before the
+recorder starts; the WAV reservation persists first. The web Dictate action
+starts recording or stops only its own exact current recording. Newer targets
+cannot stop an unrelated run. Existing hotkey stop/pill controls remain usable.
+Snapshot and continuous capture use the same existing stores and ImageIO
+encoders. Native results enter `.nativeDraft` before wake-word, paste or agent
+routing; they never send a model turn. STT uses existing user provider/settings;
+TTS and settings actions use the existing services.
+
+Each shot/WAV owns `<exact filename>.pending-delivery.json`; each bundle owns
+optional `meta.pendingDelivery`. Version 1 contains the stable UUID, bounded
+encoded frozen target, and, once complete, exact encoded `ShellInput` plus image
+MIME/name/size/full SHA-256 metadata. The source store treats the payload as
+opaque retention metadata, not permission. Completion precedes web delivery.
+Pending custody protects every existing automatic prune/removal path, including
+empty bundle cleanup. Malformed markers also retain sources but cannot authorize
+reads or cleanup. No new database, execution queue, native draft, send/replay or
+retarget mechanism is introduced. A normal accepted receipt removes custody;
+it never deletes the JPEG/bundle frames. Existing WAV cleanup runs only when its
+marker has been removed successfully.
+
+`readCapture` accepts only an ID explicitly attached by a native source owner to
+that delivery. Every chunk checks the exact current document/composer binding,
+source availability/privacy and the existing main-frame/origin gate. Bytes come
+from `CapturedQuery.originalPicture` / the no-follow `CapturedFiles` reader.
+The admitted immutable byte snapshot is bounded to 128 MB total with one active
+preparation; pending admission is capped at 32 including disk custody. Failure
+keeps sources and returns refusal, never evicting an older pending delivery.
+Chunks are 1–524,288 bytes; offset equal to size returns empty base64, larger or
+negative offsets fail. Image metadata and lowercase full-file SHA-256 remain
+identical across chunks. WAVs are retention/recovery sources, not web byte
+capabilities.
+
+The native coordinator can list `adapter.pendingSources(limit:)` (maximum 129)
+and explicitly call `reconcileShellInput(deliveryId:receiptOnly:)`. Startup only
+lists; it does not replay. Ordinary rehydration requires matching source-owned
+metadata and original image hashes. Partial ACK cleanup may leave just a WAV
+marker; receipt-only rehydration still verifies every saved image hash through
+the existing query but grants **no image byte access**. The web may reconcile an
+exact prior committed receipt before its target check; otherwise the old frozen
+document/composer yields stale-target. Missing/changed/private image sources or
+malformed metadata remain unavailable for recovery and stay retained. Incomplete
+recordings remain existing WAV/bundle/shot sources for explicit recovery; they
+are not automatically transcribed or converted into a new delivery.
+
+The visible recovery-list/reconcile UI is still an app integration gate. This
+branch exposes native hooks and existing pill notices; it does not claim the
+user can browse every pending marker through the final T3 interface yet.
+Source deletion by a deliberate user action is separate from accepted-receipt
+cleanup; this branch adds no destructive recovery action. The existing headless
+host fixture has no native source adapter, so it advertises no native input
+capabilities and rejects unowned `deliver` calls. Real App/WebKit acceptance must
+use the installed adapters above and the matching shared client.
+
+`tests/t3_native_input/test.sh` exercises real isolated CapturedService/SQLite,
+CapturedReadService, ImageIO, original JPEG/WAV/frame hashes, >512 KiB multipart
+byte reads, source-owned markers, count pruning, empty close, restart, stale
+binding, changed source, privacy/symlink refusal, partial ACK cleanup,
+receipt-only recovery, immutable payloads, failed metadata writes and cache /
+admission bounds. It performs no screen/mic capture, app/GUI launch, provider
+request or daily-root access. A full source typecheck additionally covers App
+callbacks; actual recording/TTS/WebKit behavior remains the coordinator's live
+acceptance gate.

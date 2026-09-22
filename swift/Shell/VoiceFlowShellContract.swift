@@ -17,6 +17,7 @@ struct ShellComposerTarget: Codable, Equatable {
 struct ShellFrozenTarget: Codable, Equatable {
     let documentId: String
     let target: ShellComposerTarget
+    var isValid: Bool { !documentId.isEmpty && documentId.utf8.count <= 128 && target.isValid }
 }
 
 struct ShellInput: Codable, Equatable {
@@ -28,8 +29,8 @@ struct ShellInput: Codable, Equatable {
     let captureIds: [String]
 
     var isValid: Bool {
-        !deliveryId.isEmpty && deliveryId.utf8.count <= 128 && destination.target.isValid
-            && text.utf8.count <= 1_048_576 && captureIds.count <= 32
+        !deliveryId.isEmpty && deliveryId.utf8.count <= 128 && destination.isValid
+            && text.utf8.count <= 1_048_576 && captureIds.count <= 32 && Set(captureIds).count == captureIds.count
             && captureIds.allSatisfy { !$0.isEmpty && $0.utf8.count <= 128 }
     }
 }
