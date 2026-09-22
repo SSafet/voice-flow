@@ -299,6 +299,39 @@ let deniedFileError = try JSONDecoder().decode(TPCapturedErrorResult.self, from:
 expect(deniedFileError.error.code == .permissionDenied && deniedFileReply.pictures.isEmpty, "tool preserves named filesystem denial")
 try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: root.appendingPathComponent(forbidden).path)
 
+// The same website groups together whether legacy ingestion stored a full
+// URL or its already-sanitized host/path form.
+try seed(.init(id: "activity:host-full", kind: .activity, source: .watcher, tStart: oldTime - 120, tEnd: oldTime - 90,
+    app: "Browser", url: "https://person:pass@example.com/first?token=hidden#fragment"))
+try seed(.init(id: "activity:host-stored", kind: .activity, source: .watcher, tStart: oldTime - 90, tEnd: oldTime - 60,
+    app: "Browser", url: "example.com/second?token=hidden"))
+let hostSummary = try query.summary(.init(from: query.stamp(oldTime - 120), groupBy: .urlHost, to: query.stamp(oldTime)), limits: .agent)
+expect(hostSummary.groups.count == 1 && hostSummary.groups[0].key == "example.com" && hostSummary.groups[0].seconds == 60,
+       "urlHost grouping accepts full URLs and stored host/path without a scheme or query")
+
+// Exercise the central PEM scrubber through real wire replies. A block longer
+// than the text window must be removed before pagination, including its body
+// and footer; indexed search must not expose that body in a snippet either.
+let pemBody = "SYNTHETICPEMBODY" + String(repeating: "QUJD", count: 3_000)
+let pem = "before PEM\n-----BEGIN PRIVATE KEY-----\n" + pemBody + "\n-----END PRIVATE KEY-----\nafter PEM"
+try seed(.init(id: "dictation:pem", kind: .dictation, source: .dictation, tStart: oldTime, tEnd: oldTime, body: pem))
+let pemReply = try service.read(.get, arguments: Data(#"{"id":"dictation:pem"}"#.utf8))
+let pemResult = try JSONDecoder().decode(TPCapturedGetOutput.self, from: pemReply.json)
+expect(pemResult.item.text?.contains("before PEM") == true && pemResult.item.text?.contains("after PEM") == true
+    && pemResult.item.text?.contains("SYNTHETICPEMBODY") == false && pemResult.item.text?.contains("QUJD") == false
+    && pemResult.item.text?.contains("PRIVATE KEY") == false, "query get redacts complete PEM before the 8,000-character text window")
+let pemSearch = try service.read(.search, arguments: Data(#"{"text":"SYNTHETICPEMBODY"}"#.utf8))
+let pemHits = try JSONDecoder().decode(TPCapturedSearchOutput.self, from: pemSearch.json)
+expect(pemHits.hits.map(\.id) == ["dictation:pem"] && !String(decoding: pemSearch.json, as: UTF8.self).contains("SYNTHETICPEMBODY")
+    && !String(decoding: pemSearch.json, as: UTF8.self).contains("QUJD"), "search reply does not disclose the indexed PEM body")
+try seed(.init(id: "dictation:pem-incomplete", kind: .dictation, source: .dictation, tStart: oldTime, tEnd: oldTime,
+    body: "before incomplete\n-----BEGIN RSA PRIVATE KEY-----\nSYNTHETICINCOMPLETEPEM"))
+let incompleteReply = try service.read(.get, arguments: Data(#"{"id":"dictation:pem-incomplete"}"#.utf8))
+let incompleteResult = try JSONDecoder().decode(TPCapturedGetOutput.self, from: incompleteReply.json)
+expect(incompleteResult.item.text?.contains("before incomplete") == true
+    && incompleteResult.item.text?.contains("SYNTHETICINCOMPLETEPEM") == false
+    && incompleteResult.item.text?.contains("PRIVATE KEY") == false, "query get redacts an incomplete PEM block")
+
 if let path = ProcessInfo.processInfo.environment["VF_CAPTURED_QUERY_FIXTURE"] {
     guard path.hasPrefix("/tmp/") || path.hasPrefix("/private/tmp/") else { fatalError("fixture output must be temporary") }
     let fixture: [String: Any] = ["json": String(decoding: remote.json, as: UTF8.self),

@@ -1,0 +1,23 @@
+{
+  "querySourceBaseCommit": "dc1132d",
+  "queryImplementationUnchanged": true,
+  "centralPolicyCommit": "fa6c381",
+  "localCentralPolicyCherryPick": "6eb4074",
+  "recordedAt": "2026-09-22T14:44:54.756455+00:00",
+  "command": "VF_CAPTURED_QUERY_FIXTURE=/tmp/vf-s2-sdk-fixture.json bash tests/captured_query_service/test.sh",
+  "exitCode": 0,
+  "assertions": 119,
+  "additionalCases": [
+    "complete PEM longer than text window through captured_get",
+    "PEM body cannot escape through captured_search snippet",
+    "incomplete PEM through captured_get",
+    "urlHost groups full URL and stored host/path identically"
+  ],
+  "testFileSHA256": "cb8dd192a6e044380b435333f8fcf0efef188d5f1c914bd0ead3e9bc6d748124",
+  "manifestSHA256": "80e61fce425df74a3d01595f2d74edd435abef37c3e23c48e77662955f3d05c4",
+  "SDKTestedFixtureSHA256": "10d7279b11c862226800fad65e57cb17d27b199560b387c01f47c1c29e9af82d",
+  "finalFixtureMatchesExistingSDKProof": true,
+  "dailyAppTouched": false,
+  "realUserFilesReadOrWritten": false,
+  "fullAppBuildRun": false
+}
