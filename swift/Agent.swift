@@ -1225,9 +1225,12 @@ final class ComputerControl {
     }
 
     private func post(_ event: CGEvent?) {
+        // Existing callers do not participate in the owned-turn checkpoint.
+        // Preserve their optional-event behavior without latching a new failure.
+        guard let checkpoint else { if let event { eventPoster(event) }; return }
         guard lastFailure == nil else { return }
         do {
-            try checkpoint?()
+            try checkpoint()
             guard let event else { throw NSError(domain: "VoiceFlow.ComputerControl", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Input event could not be created."]) }
             eventPoster(event)
