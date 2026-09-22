@@ -16,6 +16,10 @@ private final class StubProtocol: URLProtocol {
     private static var value: Mode = .normal
     private static var lastMessageBody: [String: Any] = [:]
     private static var messageRequests = 0
+    private static var instructionBody: [String: Any] = [:]
+    private static var modelBody: [String: Any] = [:]
+    static func instructions() -> [String: Any] { lock.withLock { instructionBody } }
+    static func model() -> [String: Any] { lock.withLock { modelBody } }
 
     static func set(_ mode: Mode) { lock.withLock { value = mode } }
     private static func mode() -> Mode { lock.withLock { value } }
@@ -46,11 +50,17 @@ private final class StubProtocol: URLProtocol {
 
     override func startLoading() {
         let path = request.url?.path ?? ""
-        if path.hasSuffix("/message"), let body = Self.bodyObject(of: request) {
+        if path.hasSuffix("/prompt"), let body = Self.bodyObject(of: request) {
             Self.lock.withLock {
                 Self.lastMessageBody = body
                 Self.messageRequests += 1
             }
+        }
+        if path.hasSuffix("/entries/voiceflow"), let body = Self.bodyObject(of: request) {
+            Self.lock.withLock { Self.instructionBody = body }
+        }
+        if path.hasSuffix("/model"), let body = Self.bodyObject(of: request) {
+            Self.lock.withLock { Self.modelBody = body }
         }
         switch Self.mode() {
         case .stall:
@@ -58,34 +68,17 @@ private final class StubProtocol: URLProtocol {
         case .status(let status, let body):
             send(status: status, body: body, contentType: "application/json")
         case .normal:
-            if path == "/event" {
+            if path == "/api/event" {
                 let events: [[String: Any]] = [
-                    ["type": "message.part.updated", "properties": ["part": [
-                        "id": "part", "sessionID": "session-a", "messageID": "assistant-a",
-                        "type": "text", "text": "prompt leak",
-                    ]]],
-                    ["type": "message.updated", "properties": ["info": [
-                        "id": "assistant-a", "sessionID": "session-a", "role": "assistant",
-                    ]]],
-                    ["type": "message.part.updated", "properties": [
-                        "delta": "Hi", "part": [
-                            "id": "part", "sessionID": "session-a", "messageID": "assistant-a",
-                            "type": "text", "text": "Hi",
-                        ],
-                    ]],
-                    ["type": "message.part.updated", "properties": [
-                        "delta": "Hi", "part": [
-                            "id": "part", "sessionID": "session-a", "messageID": "assistant-a",
-                            "type": "text", "text": "Hi",
-                        ],
-                    ]],
-                    ["type": "message.part.updated", "properties": ["part": [
-                        "id": "part", "sessionID": "session-a", "messageID": "assistant-a",
-                        "type": "text", "text": "H",
-                    ]]],
-                    ["type": "session.error", "properties": [
-                        "sessionID": "session-a", "message": "injected SSE failure",
-                    ]],
+                    ["type": "server.connected", "data": [:]],
+                    ["id": "delta-a", "type": "session.text.delta", "data": [
+                        "sessionID": "session-a", "assistantMessageID": "assistant-a", "ordinal": 0, "delta": "Hi"]],
+                    ["id": "delta-a", "type": "session.text.delta", "data": [
+                        "sessionID": "session-a", "assistantMessageID": "assistant-a", "ordinal": 0, "delta": "Hi"]],
+                    ["id": "end-a", "type": "session.text.ended", "data": [
+                        "sessionID": "session-a", "assistantMessageID": "assistant-a", "ordinal": 0, "text": "Hi"]],
+                    ["type": "session.execution.failed", "data": [
+                        "sessionID": "session-a", "error": ["message": "injected SSE failure"]]],
                 ]
                 let body = events.compactMap { event -> String? in
                     guard let data = try? JSONSerialization.data(withJSONObject: event),
@@ -93,22 +86,43 @@ private final class StubProtocol: URLProtocol {
                     return "data: \(text)\n\n"
                 }.joined().data(using: .utf8)!
                 send(status: 200, body: body, contentType: "text/event-stream")
-            } else if path == "/session/status" {
-                send(status: 200, body: Data("{}".utf8), contentType: "application/json")
+            } else if path == "/api/model" {
+                send(status: 200, body: Data(#"{"data":[{"providerID":"test","id":"model","variants":[{"id":"low"}]}]}"#.utf8), contentType: "application/json")
+            } else if path == "/api/session/active" {
+                send(status: 200, body: Data("{\"data\":{}}".utf8), contentType: "application/json")
+            } else if path.hasSuffix("/prompt") {
+                send(status: 200, body: Data("{\"data\":{\"id\":\"msg_prompt\"}}".utf8), contentType: "application/json")
+            } else if path.hasSuffix("/permission") {
+                send(status: 200, body: Data(#"{"data":[{"id":"missed-approval","sessionID":"session-a","action":"shell","resources":["echo pending"]}]}"#.utf8), contentType: "application/json")
             } else if path.hasSuffix("/message") {
-                Thread.sleep(forTimeInterval: 0.2)
-                let body = try! JSONSerialization.data(withJSONObject: [
-                    "parts": [["type": "text", "text": "authoritative final"]],
-                    "info": ["tokens": ["input": 3, "output": 2, "reasoning": 500,
-                                        "cache": ["read": 90_000, "write": 5_000]], "cost": 0.01],
-                ])
+                let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                let after = query.first { $0.name == "cursor" }?.value
+                let page: [String: Any]
+                if after == "older" {
+                    expect(!query.contains { $0.name == "order" }, "cursor page resent initial order")
+                    page = ["data": [
+                        ["id": "msg_prompt", "type": "user", "text": "task"],
+                        ["id": "prior_answer", "type": "assistant", "content": [["type": "text", "text": "wrong prior turn"]]],
+                    ], "cursor": [:]]
+                } else {
+                    page = ["data": [
+                        ["id": "msg_assistant", "type": "assistant",
+                         "content": [["type": "text", "text": "authoritative final"]],
+                         "tokens": ["input": 3, "output": 2, "reasoning": 500,
+                                    "cache": ["read": 90_000, "write": 5_000]], "cost": 0.01],
+                    ], "cursor": ["next": "older"]]
+                }
+                let body = try! JSONSerialization.data(withJSONObject: page)
                 send(status: 200, body: body, contentType: "application/json")
-            } else if path.contains("/permissions/") || path.hasSuffix("/abort") {
-                send(status: 200, body: Data("{}".utf8), contentType: "application/json")
-            } else if request.httpMethod == "GET", path.hasPrefix("/session/") {
+            } else if path == "/api/session/session-a", request.httpMethod == "GET" {
+                send(status: 200, body: Data("{\"data\":{\"id\":\"session-a\",\"outcome\":\"succeeded\"}}".utf8), contentType: "application/json")
+            } else if path == "/api/session/missing" {
                 send(status: 404, body: Data("missing".utf8), contentType: "text/plain")
+            } else if path.hasSuffix("/wait") {
+                Thread.sleep(forTimeInterval: 0.2)
+                send(status: 204, body: Data(), contentType: "application/json")
             } else {
-                send(status: 200, body: Data("{\"id\":\"session-a\"}".utf8),
+                send(status: 200, body: Data("{\"data\":{\"id\":\"session-a\"}}".utf8),
                      contentType: "application/json")
             }
         }
@@ -132,7 +146,7 @@ private func makeClient() -> OpenCodeHTTPClient {
     return OpenCodeHTTPClient(
         connection: OpenCodeConnection(
             baseURL: URL(string: "http://127.0.0.1:1")!,
-            username: "voice-flow", password: "secret", version: "1.17.11"),
+            username: "opencode", password: "secret", version: "2.0.12"),
         session: URLSession(configuration: configuration))
 }
 
@@ -151,13 +165,13 @@ let directory = FileManager.default.temporaryDirectory
 let permissionReducer = OpenCodeEventReducer()
 let permissionCommand = "printf PERMISSION_OK > permission-deny.txt"
 let permissionEvents = permissionReducer.reduce([
-    "type": "permission.asked", "properties": [
-        "id": "permission-a", "sessionID": "session-a", "permission": "bash",
-        "patterns": [permissionCommand], "metadata": [:], "always": ["printf *"],
+    "type": "permission.asked", "data": [
+        "id": "permission-a", "sessionID": "session-a", "action": "shell",
+        "resources": [permissionCommand], "metadata": [:], "always": ["printf *"],
     ],
 ], sessionID: "session-a")
 if case .permission(let permission)? = permissionEvents.first {
-    expect(permission.title == "bash requested" && permission.detail == permissionCommand,
+    expect(permission.title == "shell requested" && permission.detail == permissionCommand,
            "pinned OpenCode approval lost the capability or command being requested")
 } else { expect(false, "pinned OpenCode approval event was dropped") }
 
@@ -179,6 +193,13 @@ do {
 } catch OpenCodeClientError.invalidResponse { }
 catch { expect(false, "invalid session JSON produced wrong error \(error)") }
 
+// Existing v2 sessions remain bound to their real working directory.
+let sessionLocation = try JSONSerialization.data(withJSONObject: ["data": ["location": ["directory": directory.path]]])
+StubProtocol.set(.status(200, sessionLocation))
+let matching = try await makeClient().sessionExists(sessionID: "same", directory: directory)
+expect(matching, "same-directory v2 session was discarded")
+let wrongDirectory = try await makeClient().sessionExists(sessionID: "same", directory: directory.appendingPathComponent("different"))
+expect(!wrongDirectory, "a v2 session was reused in another directory")
 StubProtocol.set(.normal)
 let client = makeClient()
 let missingExists = try await client.sessionExists(sessionID: "missing", directory: directory)
@@ -189,6 +210,7 @@ try await client.respondPermission(
     permissionID: "permission-a", response: .once)
 var deltas: [String] = []
 var failures: [String] = []
+var recoveredPermissions: [String] = []
 let request = AgentTurnRequest(
     turnID: UUID(), conversationID: "conversation-a", assistant: nil,
     priorMessages: [], prompt: "task", screenshots: [],
@@ -196,8 +218,8 @@ let request = AgentTurnRequest(
     model: AgentModelSelection(provider: "test", model: "model"), instructions: "SYSTEM_PERSONA")
 // Missing sessions are idle, but malformed entries must never authorize a
 // new POST: the previous turn may still be running in the server.
-for malformed in [#"{"session-a":42}"#, #"{"session-a":{}}"#,
-                  #"{"session-a":{"type":false}}"#] {
+for malformed in [#"{"data":{"session-a":42}}"#, #"{"data":{"session-a":{}}}"#,
+                  #"{"data":{"session-a":{"type":false}}}"#] {
     StubProtocol.set(.status(200, Data(malformed.utf8)))
     let sentBefore = StubProtocol.sentMessageCount()
     do {
@@ -215,9 +237,12 @@ let result = try await client.sendMessage(
         switch event {
         case .textDelta(_, let delta): deltas.append(delta)
         case .failed(let failure): failures.append(failure.message)
-        case .activity, .permission: break
+        case .permission(let permission): recoveredPermissions.append(permission.id)
+        case .activity: break
         }
     }
+expect(recoveredPermissions == ["missed-approval"],
+       "a permission omitted by the closed SSE stream was not recovered exactly once")
 expect(result.text == "authoritative final",
        "SSE provisional events changed the authoritative final")
 expect(result.usage?.inputTokens == 3 && result.usage?.outputTokens == 2,
@@ -229,12 +254,12 @@ expect(failures == ["injected SSE failure"],
 expect(result.usage?.contextUsage?.tokens == 95_505,
        "OpenCode context must include cached input and reasoning without changing billing fields")
 let plainBody = StubProtocol.sentMessageBody()
-expect(plainBody["system"] as? String == "SYSTEM_PERSONA"
-       && (plainBody["parts"] as? [[String: Any]])?.first?["text"] as? String == "task",
-       "OpenCode must receive authored instructions in system and only task/context in text parts")
-expect((plainBody["model"] as? [String: Any])?["modelID"] as? String == "model",
+expect(StubProtocol.instructions()["value"] as? String == "SYSTEM_PERSONA"
+       && plainBody["text"] as? String == "task",
+       "OpenCode must receive durable instructions separately from task text")
+expect((StubProtocol.model()["model"] as? [String: Any])?["id"] as? String == "model",
        "the model selection was not sent to OpenCode")
-expect(plainBody["variant"] == nil,
+expect((StubProtocol.model()["model"] as? [String: Any])?["variant"] == nil,
        "an unset reasoning effort must not be sent as a variant")
 
 // Reasoning effort travels as OpenCode's per-message model variant.
@@ -246,8 +271,21 @@ let effortRequest = AgentTurnRequest(
         provider: "test", model: "model", reasoningEffort: "low"))
 _ = try await client.sendMessage(
     sessionID: "session-a", directory: directory, request: effortRequest) { _ in }
-expect(StubProtocol.sentMessageBody()["variant"] as? String == "low",
+expect((StubProtocol.model()["model"] as? [String: Any])?["variant"] as? String == "low",
        "the shared reasoning-effort config should reach OpenCode as the model variant")
+
+let unavailableEffort = AgentTurnRequest(
+    turnID: UUID(), conversationID: "conversation-a", assistant: nil,
+    priorMessages: [], prompt: "task", screenshots: [],
+    workingDirectory: directory, extraWritableRoots: [], trustProfile: .workspace,
+    model: AgentModelSelection(provider: "test", model: "model", reasoningEffort: "max"))
+var effortActivities: [String] = []
+_ = try await client.sendMessage(sessionID: "session-a", directory: directory, request: unavailableEffort) {
+    if case .activity(let label) = $0 { effortActivities.append(label) }
+}
+expect((StubProtocol.model()["model"] as? [String: Any])?["variant"] == nil
+       && effortActivities.contains { $0.contains("Max reasoning is unavailable") && $0.contains("provider default") },
+       "unavailable v2 variant must fall back visibly instead of failing or misreporting effort")
 
 StubProtocol.set(.stall)
 let stalledClient = makeClient()

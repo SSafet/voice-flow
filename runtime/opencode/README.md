@@ -1,40 +1,87 @@
-# Bundled OpenCode runtime and tools
+# OpenCode v2 runtime
 
-`versions.json` pins the native binaries. `tool-sdk.json` pins the npm package
-integrities and the SHA-256 of `tool-sdk.tar.gz`. The archive contains the
-unmodified `@opencode-ai/plugin` 1.17.11 package and Zod 4.1.8, including their
-tool entry points and licenses. Only the plugin's root/tool exports are used;
-its optional Effect/TUI APIs are outside this tool-only distribution.
+Voice Flow targets the exact **2.0.12** server and native plugin contracts.
+`versions.json` pins the official `@opencode/cli-darwin-arm64` and
+`@opencode/cli-darwin-x64` npm tarballs. Both published SHA-512 integrities were
+verified before recording the archive and executable SHA-256 hashes. These are
+v2 packages; the old GitHub `releases/latest` channel still advertises v1.
 
-The first real cold-start test on 12 September 2026 failed before a provider
-call: OpenCode tried to install the SDK inside its sandbox, registry downloads
-failed, and the custom tool import failed after 169 seconds. The app now
-verifies and extracts its bundled SDK once and links the actual package into
-each generated config/assistant tree before starting or using the runtime.
-Unrelated npm packages and manifest entries are preserved. The local link and
-lock metadata let the pinned runtime recognize that the dependency is ready.
-Voice Flow also disables OpenCode's separate models.dev fetch because the app
-already supplies the selected model's OpenRouter catalog metadata.
+`prepare-opencode-runtime.sh` verifies the tarball and executable before copying
+into a staging bundle. It extracts only `package/bin/opencode`, runs no npm
+lifecycle scripts, and accepts the v2 `opencode v2.0.12` version output. Signing
+seals the installed executable as before. Developer fallback binaries must match
+the same reviewed hash. Legacy staged v1 and unreviewed newer binaries cannot
+replace the pin. V2 updates ship with Voice Flow until a newer pair of runtime and
+integration contracts has been reviewed.
 
-Reproduce the archive from the integrity-checked upstream tarballs:
+## Isolation and native integration
 
-```sh
-python3 scripts/vendor-opencode-tool-sdk.py
-python3 tests/validate_runtime_manifest.py
-```
+The supervised process retains a real project/assistant working directory and
+kernel-enforced filesystem/network restrictions. Its home, config, XDG data,
+cache, state and temporary paths are private under `runtime/opencode/<profile>/v2`.
+The legacy v1 native database is left untouched. It receives only rotating local
+model-gateway/tool tokens, never provider credentials from Keychain.
 
-The reproducible build runs no npm lifecycle scripts and refuses output that
-differs from the reviewed archive hash. The archive has no native binaries and
-works with both supported Mac architectures. Installation carries the archive
-inside the signed app; missing or altered SDK assets fail explicitly.
+V2 removed `--pure`. The checksum-verified 2.0.12 CLI maps
+`OPENCODE_CONFIG_PROJECT_DISABLE=true` to the official server's
+`config.project=false`. `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`, private
+`HOME` and `OPENCODE_TEST_HOME` supply the app-owned configuration. This suppresses
+ambient project configuration/plugins while keeping native filesystem and shell
+tools in the selected directory. This behavior is covered by a real hostile
+project config and executable plugin fixture in `opencode_live_turn`.
 
-`opencode_runtime` tests preservation, idempotent setup, corrupt-archive
-rejection, cache repair, and refusal to follow an unrelated dependency-directory
-symlink. The real `opencode_live_turn` probe starts from empty state with all
-external runtime network access disabled, then checks text, private tools,
-skills, images, approval rejection/acceptance and child-process cancellation.
+V2 Basic authentication uses the fixed username `opencode`. `/api/info` reports
+identity/version, not plugin readiness. The adapter waits separately for the
+private plugin and configured-provider plugin to become active.
 
-The pinned upstream implementation is the compatibility authority:
-[dependency reconciliation](https://github.com/anomalyco/opencode/blob/v1.17.11/packages/core/src/npm.ts),
-[custom tool loading](https://github.com/anomalyco/opencode/blob/v1.17.11/packages/opencode/src/tool/registry.ts),
-and [tool SDK entry point](https://github.com/anomalyco/opencode/blob/v1.17.11/packages/plugin/src/tool.ts).
+`AgentToolProjection` writes one dependency-free Promise plugin into the private
+config's `plugins/voiceflow.js`. V2 accepts a plugin object and JSON Schema tool
+inputs directly, so the old plugin/Zod SDK archive and npm dependency links are
+removed. Six first-party tools remain native tools (`codemode:false`); requests
+forward cancellation and return the v2 `{content}` result. No tool token is
+written to a project or persona folder.
+
+Selected skills come from the app's validated skill store through an authenticated
+plugin RPC. Native skill IDs are scoped to the runtime session, and session
+permissions deny every other skill ID. Cleanup removes them after each turn;
+generation checks prevent a late cleanup from deleting a newer turn's catalog.
+Unrelated session permissions are preserved.
+
+## Transcript, stream and approvals
+
+The Swift client uses v2 `/api` routes. A prompt response is durable admission,
+not completion: the client waits for execution, checks the terminal outcome, then
+reconciles the paginated native transcript back to that exact prompt ID. User
+instructions use a separate API-managed instruction entry. Model selection uses
+v2 `Model.Ref` (`providerID`, `id`, optional `variant`). Model readiness is checked
+against the native catalog; an unsupported effort falls back to provider default
+with an explicit activity message. Images use data-URI
+file attachments.
+
+SSE is volatile in v2. Explicit text deltas are reconciled with full-text boundaries,
+and pending approvals are polled while the turn waits so a lost stream cannot
+hide a permission request. Approvals use v2 action/resource fields and the native
+session permission reply API. Stop interrupts execution and retains supervised
+process-tree cleanup. Old v1 runtime bindings reseed from Voice Flow's canonical
+history. A native session in another directory is also reseeded.
+
+## Verification
+
+Focused suites: `agent_tools`, `opencode_http`, `opencode_runtime`,
+`opencode_updater`, and `fake_openai_server` via
+`./scripts/test-agent-harness.sh --unit --only SUITE`.
+
+The `opencode_live_turn` and `opencode_supervisor` probes run the actual pinned
+binary in an isolated configuration root, with a local deterministic provider.
+They assert all six native Voice Flow tools and native shell/skill on the first
+cold provider request, plus real text/native-tool/selected-skill/image turns,
+approval reject and allow-once, hostile ambient discovery, skill cleanup,
+private credentials, concurrent startup, restarts and child-process cancellation.
+The full live gate also runs the other product tests; focused results are not
+full-gate evidence. Actual OpenRouter paid-model calls and installed-app UI QA
+remain separate acceptance checks.
+
+Contract sources: [migration guide](https://opencode.ai/v2/docs/migrate-v1),
+[plugin API migration](https://opencode.ai/v2/docs/build/plugins/migrate-v1),
+[HTTP API](https://opencode.ai/v2/docs/api), and the integrity-verified published
+`@opencode/{client,server,protocol,schema,plugin}` **2.0.12** package sources.

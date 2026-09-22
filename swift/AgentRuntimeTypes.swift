@@ -75,11 +75,9 @@ struct RuntimeBinding: Codable, Equatable {
 /// The effort ladder both backends understand — OpenCode passes the raw
 /// string on as the model *variant*, codex as `model_reasoning_effort` — with
 /// "" meaning *the provider decides*, which is what every model did before
-/// this setting existed. The levels are read from the shipping binaries:
-/// OpenCode 1.17.11 stores per-model variant sets whose richest is
-/// minimal…max, and codex carries the same ladder plus a codex-only `ultra`,
-/// which is left out because no OpenCode variant set contains it. A model
-/// without a given level falls back to its own default.
+/// this setting existed. OpenCode v2 advertises per-model variants; the
+/// adapter validates the selected level against that catalog and reports a
+/// visible fallback to provider default when the level is unavailable.
 enum AgentReasoningEffort {
     static let unset = ""
     static let choices: [(value: String, label: String)] = [

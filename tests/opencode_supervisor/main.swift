@@ -10,7 +10,7 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 
 func health(_ connection: OpenCodeConnection, authenticated: Bool) async -> Int? {
-    var request = URLRequest(url: connection.baseURL.appendingPathComponent("global/health"))
+    var request = URLRequest(url: connection.baseURL.appendingPathComponent("api/info"))
     request.timeoutInterval = 2
     if authenticated {
         request.setValue(connection.authorizationHeader, forHTTPHeaderField: "Authorization")
@@ -24,6 +24,10 @@ func health(_ connection: OpenCodeConnection, authenticated: Bool) async -> Int?
 }
 
 let supervisor = OpenCodeSupervisor()
+let legacyStore = VoiceFlowPaths.shared.directory("runtime/opencode/workspace/data/opencode")
+    .appendingPathComponent("opencode.db")
+let legacyBytes = Data("LEGACY_V1_STORE_MUST_REMAIN_UNOPENED".utf8)
+try legacyBytes.write(to: legacyStore)
 let fallbackModelID = "voice-flow/fallback-limit-fixture"
 ModelGatewayCredentials.shared.configure {
     ModelGatewayCredentialSnapshot(
@@ -42,7 +46,7 @@ Task {
         let first = cold[0]
         expect(cold.allSatisfy { $0 == first },
                "concurrent cold starts did not coalesce onto one supervised process")
-        expect(first.version == "1.17.11", "supervisor accepted an unpinned version")
+        expect(first.version == "2.0.12", "supervisor accepted an unpinned version")
         let unauthorizedStatus = await health(first, authenticated: false)
         expect(unauthorizedStatus == 401,
                "OpenCode health must reject unauthenticated requests")
@@ -56,14 +60,17 @@ Task {
         let pidFile = root.appendingPathComponent("process.pid")
         expect(FileManager.default.fileExists(atPath: pidFile.path),
                "supervisor did not record its owned runtime PID")
-        for child in ["config", "data", "cache", "state"] {
-            expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(child).path),
+        let nativeRoot = root.appendingPathComponent("v2")
+        for child in ["config", "data", "cache", "state", "home", "tmp"] {
+            expect(FileManager.default.fileExists(atPath: nativeRoot.appendingPathComponent(child).path),
                    "missing isolated XDG \(child) directory")
         }
-        let configData = try Data(contentsOf: root.appendingPathComponent(
+        expect((try? Data(contentsOf: legacyStore)) == legacyBytes,
+               "v2 startup touched the legacy native v1 store")
+        let configData = try Data(contentsOf: nativeRoot.appendingPathComponent(
             "voice-flow-opencode.json"))
         let config = try JSONSerialization.jsonObject(with: configData) as! [String: Any]
-        let provider = config["provider"] as! [String: Any]
+        let provider = config["providers"] as! [String: Any]
         let openRouter = provider["openrouter"] as! [String: Any]
         let models = openRouter["models"] as! [String: Any]
         let configuredModel = models[fallbackModelID] as! [String: Any]

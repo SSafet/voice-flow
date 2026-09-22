@@ -125,6 +125,10 @@ final class OpenCodeUpdater {
         architecture == "arm64" ? "opencode-darwin-arm64.zip" : "opencode-darwin-x64.zip"
     }
 
+    static func supportsAutomaticUpdates(_ version: String) -> Bool {
+        OpenCodeVersion.components(version)?.first == 1
+    }
+
     // ── Feed ────────────────────────────────────────────
 
     static func parseLatestRelease(_ data: Data, architecture: String) throws -> OpenCodeReleaseAsset {
@@ -220,6 +224,9 @@ final class OpenCodeUpdater {
     /// binary on its next acquire, once in-flight turns have drained.
     @discardableResult
     func updateIfAvailable(currentVersion: String) async throws -> StagedOpenCodeRuntime? {
+        // The v2 server/plugin contracts are reviewed against the bundled pin.
+        // Never follow the legacy v1 GitHub feed or activate an untested v2.
+        guard Self.supportsAutomaticUpdates(currentVersion) else { return nil }
         let claimed = lock.withLock { () -> Bool in
             if inFlight { return false }
             inFlight = true

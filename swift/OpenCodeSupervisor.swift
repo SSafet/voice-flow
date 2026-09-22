@@ -3,140 +3,6 @@ import Darwin
 import Security
 import CryptoKit
 
-/// App-owned tools must load on a cold, offline runtime. OpenCode otherwise
-/// installs its plugin SDK while resolving the first tool, inside the sandbox.
-/// Keep the exact tool entry points in a verified app asset and link that SDK
-/// into generated config trees without replacing unrelated npm dependencies.
-enum OpenCodeToolDependencies {
-    private static let lock = NSLock()
-
-    static func source(bundleRoot: URL? = nil) throws -> URL {
-        lock.lock(); defer { lock.unlock() }
-        let candidates = bundleRoot.map { [$0] } ?? [
-            Bundle.main.resourceURL?.appendingPathComponent("Runtime/OpenCode"),
-            URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-                .appendingPathComponent("runtime/opencode"),
-        ].compactMap { $0 }
-        guard let root = candidates.first(where: {
-            FileManager.default.fileExists(atPath: $0.appendingPathComponent("tool-sdk.json").path)
-        }) else { throw failure("the bundled tool SDK is missing; reinstall Voice Flow") }
-        let manifest = try object(root.appendingPathComponent("tool-sdk.json"))
-        guard let expected = manifest["archiveSHA256"] as? String,
-              expected.count == 64,
-              let pluginVersion = manifest["pluginVersion"] as? String,
-              let zodVersion = manifest["zodVersion"] as? String else {
-            throw failure("the tool SDK manifest is invalid")
-        }
-        let archive = root.appendingPathComponent("tool-sdk.tar.gz")
-        let digest = SHA256.hash(data: try Data(contentsOf: archive))
-            .map { String(format: "%02x", $0) }.joined()
-        guard digest == expected else { throw failure("the tool SDK checksum does not match") }
-        let destination = VoiceFlowPaths.shared.directory("runtime/opencode/tool-sdk-\(expected)")
-        func valid() -> Bool {
-            let modules = destination.appendingPathComponent("node_modules")
-            return (try? object(modules.appendingPathComponent("@opencode-ai/plugin/package.json"))["version"] as? String) == pluginVersion
-                && (try? object(modules.appendingPathComponent("zod/package.json"))["version"] as? String) == zodVersion
-                && FileManager.default.fileExists(atPath: modules.appendingPathComponent("@opencode-ai/plugin/dist/tool.js").path)
-                && FileManager.default.fileExists(atPath: modules.appendingPathComponent("zod/index.js").path)
-        }
-        if valid() { return destination }
-        let staging = destination.deletingLastPathComponent()
-            .appendingPathComponent(".tool-sdk-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: staging) }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        process.arguments = ["-xzf", archive.path, "-C", staging.path]
-        let output = Pipe(); process.standardOutput = output; process.standardError = output
-        try process.run(); process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw failure("the tool SDK could not be unpacked") }
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
-        }
-        try FileManager.default.moveItem(at: staging.appendingPathComponent("ToolSDK"), to: destination)
-        guard valid() else { throw failure("the unpacked tool SDK is incomplete") }
-        return destination
-    }
-
-    static func install(from source: URL, into requestedDirectory: URL) throws {
-        lock.lock(); defer { lock.unlock() }
-        let manager = FileManager.default
-        try manager.createDirectory(at: requestedDirectory, withIntermediateDirectories: true)
-        // Resolve the existing root before deriving missing children. Foundation
-        // can normalize /private/tmp to /tmp only for paths that already exist;
-        // comparing that root with an unresolved child rejects a valid cold tree.
-        let directory = requestedDirectory.resolvingSymlinksInPath()
-        let package = source.appendingPathComponent("node_modules/@opencode-ai/plugin")
-            .resolvingSymlinksInPath()
-        guard manager.fileExists(atPath: package.appendingPathComponent("dist/tool.js").path) else {
-            throw failure("the tool SDK entry point is missing")
-        }
-        let modules = directory.appendingPathComponent("node_modules/@opencode-ai")
-        let canonicalRoot = directory.resolvingSymlinksInPath().path + "/"
-        // Resolving a path whose final component does not exist can retain
-        // its unresolved spelling. Inspect existing parent links directly.
-        for parent in [directory.appendingPathComponent("node_modules"), modules] {
-            if (try? manager.attributesOfItem(atPath: parent.path)[.type] as? FileAttributeType) == .typeSymbolicLink {
-                throw failure("the generated dependency directory is a symbolic link")
-            }
-        }
-        guard modules.resolvingSymlinksInPath().path.hasPrefix(canonicalRoot) else {
-            throw failure("the generated dependency directory points outside its config tree")
-        }
-        try manager.createDirectory(at: modules, withIntermediateDirectories: true)
-        let link = modules.appendingPathComponent("plugin")
-        if link.resolvingSymlinksInPath().path != package.path {
-            let previous = modules.appendingPathComponent(".voiceflow-plugin-\(UUID().uuidString)")
-            let existed = (try? manager.attributesOfItem(atPath: link.path)) != nil
-            if existed { try manager.moveItem(at: link, to: previous) }
-            do { try manager.createSymbolicLink(at: link, withDestinationURL: package) }
-            catch {
-                if existed { try? manager.moveItem(at: previous, to: link) }
-                throw error
-            }
-            if existed { try manager.removeItem(at: previous) }
-        }
-        let localReference = "file:\(package.path)"
-        let packageURL = directory.appendingPathComponent("package.json")
-        var packageJSON = try object(packageURL, allowMissing: true)
-        var dependencies = packageJSON["dependencies"] as? [String: Any] ?? [:]
-        dependencies["@opencode-ai/plugin"] = localReference
-        packageJSON["dependencies"] = dependencies
-        try write(packageJSON, to: packageURL)
-
-        // The pinned runtime checks declared names against this root lock
-        // before deciding whether npm is needed. Describe the real local link;
-        // retain every unrelated package and locked dependency.
-        let lockURL = directory.appendingPathComponent("package-lock.json")
-        var lockJSON = try object(lockURL, allowMissing: true)
-        var packages = lockJSON["packages"] as? [String: Any] ?? [:]
-        var root = packages[""] as? [String: Any] ?? [:]
-        var locked = root["dependencies"] as? [String: Any] ?? [:]
-        locked["@opencode-ai/plugin"] = localReference
-        root["dependencies"] = locked; packages[""] = root
-        packages["node_modules/@opencode-ai/plugin"] = ["resolved": package.path, "link": true]
-        lockJSON["lockfileVersion"] = 3; lockJSON["packages"] = packages
-        try write(lockJSON, to: lockURL)
-    }
-
-    private static func object(_ url: URL, allowMissing: Bool = false) throws -> [String: Any] {
-        if allowMissing && !FileManager.default.fileExists(atPath: url.path) { return [:] }
-        guard let value = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
-            throw failure("invalid dependency metadata at \(url.lastPathComponent)")
-        }
-        return value
-    }
-
-    private static func write(_ value: [String: Any], to url: URL) throws {
-        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
-        if (try? Data(contentsOf: url)) != data { try data.write(to: url, options: .atomic) }
-    }
-
-    private static func failure(_ detail: String) -> OpenCodeSupervisorError {
-        .launchFailed("OpenCode tools: \(detail)")
-    }
-}
-
 private final class OpenCodeProcessLog {
     private static let maxBytes = 512 * 1_024
     private let lock = NSLock()
@@ -197,18 +63,15 @@ struct OpenCodeConnection: Equatable {
     let version: String
     let toolEndpoint: URL?
     let toolToken: String?
-    let toolDependencySource: URL?
 
     init(baseURL: URL, username: String, password: String, version: String,
-         toolEndpoint: URL? = nil, toolToken: String? = nil,
-         toolDependencySource: URL? = nil) {
+         toolEndpoint: URL? = nil, toolToken: String? = nil) {
         self.baseURL = baseURL
         self.username = username
         self.password = password
         self.version = version
         self.toolEndpoint = toolEndpoint
         self.toolToken = toolToken
-        self.toolDependencySource = toolDependencySource
     }
 
     var authorizationHeader: String {
@@ -529,7 +392,7 @@ actor OpenCodeSupervisor: OpenCodeServing {
                 fallbackIDs: allowedModels)
         }
 
-        let username = "voice-flow"
+        let username = "opencode"
         let password = try Self.randomSecret()
         let gateway = ModelGatewayServer()
         let gatewayConnection = try gateway.start()
@@ -542,25 +405,27 @@ actor OpenCodeSupervisor: OpenCodeServing {
             throw error
         }
         let root = VoiceFlowPaths.shared.directory("runtime/opencode/\(profile.rawValue)")
-        let configRoot = root.appendingPathComponent("config", isDirectory: true)
-        let dataRoot = root.appendingPathComponent("data", isDirectory: true)
-        let cacheRoot = root.appendingPathComponent("cache", isDirectory: true)
-        let stateRoot = root.appendingPathComponent("state", isDirectory: true)
-        for directory in [configRoot, dataRoot, cacheRoot, stateRoot] {
+        // V1 and V2 use the same native database filename but incompatible
+        // contracts. Keep the old native store intact; canonical app history
+        // reseeds new v2 sessions instead of relying on implicit DB migration.
+        let nativeRoot = root.appendingPathComponent("v2", isDirectory: true)
+        let configRoot = nativeRoot.appendingPathComponent("config", isDirectory: true)
+        let dataRoot = nativeRoot.appendingPathComponent("data", isDirectory: true)
+        let cacheRoot = nativeRoot.appendingPathComponent("cache", isDirectory: true)
+        let stateRoot = nativeRoot.appendingPathComponent("state", isDirectory: true)
+        let temporaryRoot = nativeRoot.appendingPathComponent("tmp", isDirectory: true)
+        for directory in [configRoot, dataRoot, cacheRoot, stateRoot, temporaryRoot] {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
-        let toolDependencies: URL
         do {
-            toolDependencies = try OpenCodeToolDependencies.source()
-            try OpenCodeToolDependencies.install(from: toolDependencies, into: configRoot)
-            try OpenCodeToolDependencies.install(from: toolDependencies, into: configRoot.appendingPathComponent("opencode"))
+            _ = try AgentToolProjection(endpoint: toolConnection.endpoint,
+                token: toolConnection.token).project(into: configRoot)
         } catch {
             gateway.stop(); toolServer.stop()
             throw error
         }
 
-        // Custom OpenAI-compatible models default to text-only in OpenCode's
-        // v1 API unless their input modalities are declared explicitly. Voice
+        // Custom OpenAI-compatible models need explicit V2 capabilities. Voice
         // Flow screenshots are JPEG data URLs, so advertise the capability in
         // the generated, process-private provider catalog.
         let catalog = Dictionary(uniqueKeysWithValues:
@@ -569,7 +434,8 @@ actor OpenCodeSupervisor: OpenCodeServing {
             let model = catalog[id] ?? .fallback(id: id)
             return (id, [
                 "name": model.name,
-                "modalities": [
+                "capabilities": [
+                    "tools": true,
                     "input": model.supportsImages ? ["text", "image"] : ["text"],
                     "output": ["text"],
                 ],
@@ -582,21 +448,21 @@ actor OpenCodeSupervisor: OpenCodeServing {
         let dial = AgentSandboxSettings.shared.snapshot().dial
         var permission = AgentPermissionPolicy(profile: profile, dial: dial)
             .openCodeConfiguration(selectedSkills: [], readableExternalRoots: [])
-        // The server is rooted in an empty XDG home and every Assistant turn
-        // atomically replaces that Assistant's .opencode/skills projection.
-        // OpenCode permission rules are process-wide, so discovery isolation—not
-        // a stale global name list—is the enforceable selected-skill boundary.
+        // The private plugin registers session-scoped skills. Every prompt
+        // replaces its session's skill rules with deny-all plus selected IDs.
+        // Keep discovery available here; the session owns final authorization.
         permission["skill"] = "allow"
         let config: [String: Any] = [
             "$schema": "https://opencode.ai/config.json",
             "share": "disabled",
-            "permission": permission,
-            "provider": [
+            "permissions": Self.v2Permissions(permission),
+            "update": "disable",
+            "providers": [
                 "openrouter": [
                     "name": "OpenRouter via Voice Flow",
-                    "npm": "@ai-sdk/openai-compatible",
+                    "package": "aisdk:@ai-sdk/openai-compatible",
                     "models": models,
-                    "options": [
+                    "settings": [
                         "baseURL": gatewayConnection.baseURL.absoluteString,
                         "apiKey": gatewayConnection.token,
                     ],
@@ -605,10 +471,10 @@ actor OpenCodeSupervisor: OpenCodeServing {
         ]
         let configData = try JSONSerialization.data(withJSONObject: config, options: [.sortedKeys])
         let configText = String(data: configData, encoding: .utf8) ?? "{}"
-        let configURL = root.appendingPathComponent("voice-flow-opencode.json")
+        let configURL = nativeRoot.appendingPathComponent("voice-flow-opencode.json")
         try configData.write(to: configURL, options: .atomic)
 
-        let homeRoot = root.appendingPathComponent("home", isDirectory: true)
+        let homeRoot = nativeRoot.appendingPathComponent("home", isDirectory: true)
         try FileManager.default.createDirectory(at: homeRoot, withIntermediateDirectories: true)
 
         // Egress: the sandbox denies every non-loopback connection, so this
@@ -657,8 +523,8 @@ actor OpenCodeSupervisor: OpenCodeServing {
 
         let process = Process()
         let serveArguments = [
-            binary, "--pure", "serve", "--hostname", "127.0.0.1",
-            "--port", String(port), "--print-logs", "--log-level", "WARN",
+            binary, "serve", "--hostname", "127.0.0.1",
+            "--port", String(port), "--print-logs", "--log-level", "warn",
         ]
         // argv[0] is sandbox-exec; the runtime binary becomes its argument, so
         // the profile is applied by the kernel before opencode's first
@@ -668,6 +534,9 @@ actor OpenCodeSupervisor: OpenCodeServing {
         process.currentDirectoryURL = root
         var environment = Self.sanitizedEnvironment()
         environment["HOME"] = homeRoot.path
+        environment["TMPDIR"] = temporaryRoot.path + "/"
+        environment["OPENCODE_TEST_HOME"] = homeRoot.path
+        environment["OPENCODE_CONFIG_PROJECT_DISABLE"] = "true"
         if let proxyConnection {
             environment["HTTPS_PROXY"] = proxyConnection.proxyURL
             environment["HTTP_PROXY"] = proxyConnection.proxyURL
@@ -740,8 +609,7 @@ actor OpenCodeSupervisor: OpenCodeServing {
         let connection = OpenCodeConnection(
             baseURL: URL(string: "http://127.0.0.1:\(port)")!,
             username: username, password: password, version: actualVersion,
-            toolEndpoint: toolConnection.endpoint, toolToken: toolConnection.token,
-            toolDependencySource: toolDependencies)
+            toolEndpoint: toolConnection.endpoint, toolToken: toolConnection.token)
         instances[profile] = Instance(
             process: process, connection: connection, root: root,
             output: output, log: log,
@@ -774,15 +642,14 @@ actor OpenCodeSupervisor: OpenCodeServing {
     }
 
     private func isHealthy(_ connection: OpenCodeConnection) async -> Bool {
-        var request = URLRequest(url: connection.baseURL.appendingPathComponent("global/health"))
+        var request = URLRequest(url: connection.baseURL.appendingPathComponent("api/info"))
         request.timeoutInterval = 2
         request.setValue(connection.authorizationHeader, forHTTPHeaderField: "Authorization")
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
-            return json["healthy"] as? Bool == true
-                && json["version"] as? String == connection.version
+            return json["version"] as? String == connection.version
         } catch {
             return false
         }
@@ -827,20 +694,19 @@ actor OpenCodeSupervisor: OpenCodeServing {
         let source: String
     }
 
-    /// What the next launch would run, without hashing anything: the staged
-    /// update's manifest when present, else the vendored pin.
+    /// V2 uses the reviewed protocol/runtime pair until a Voice Flow release
+    /// updates both. Legacy staged v1 and unreviewed newer binaries cannot win.
     private func targetVersion(manifest: Manifest) -> String {
-        OpenCodeUpdater.stagedVersion().flatMap {
-            OpenCodeVersion.isNewer($0, than: manifest.version) ? $0 : nil
-        } ?? manifest.version
+        manifest.version
     }
 
     private func resolveBinary(manifest: Manifest) throws -> ResolvedRuntime {
-        // An app-side update wins over the bundled pin, but only while its
-        // seal holds: verifiedStagedBinary re-hashes it on every launch, so a
-        // staged file edited afterwards silently loses to the bundle.
+        // A staged copy is usable only when it is the exact reviewed native
+        // binary. Its own mutable manifest is not a substitute for the pin.
         if let staged = OpenCodeUpdater.verifiedStagedBinary(),
-           OpenCodeVersion.isNewer(staged.version, than: manifest.version) {
+           staged.version == manifest.version,
+           let expected = manifest.assets[Self.architecture]?.binarySHA256,
+           Self.sha256(path: staged.path) == expected {
             return ResolvedRuntime(
                 path: staged.path, expectedVersion: staged.version, source: "staged update")
         }
@@ -894,12 +760,28 @@ actor OpenCodeSupervisor: OpenCodeServing {
         }
         process.waitUntilExit()
         let data = output.fileHandleForReading.readDataToEndOfFile()
-        let version = String(data: data, encoding: .utf8)?
+        let rawVersion = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let version = rawVersion.hasPrefix("opencode v") ? String(rawVersion.dropFirst(10)) : rawVersion
         guard process.terminationStatus == 0, !version.isEmpty else {
             throw OpenCodeSupervisorError.launchFailed("could not read runtime version")
         }
         return version
+    }
+
+    /// V2 evaluates ordered action/resource rules; the general rule must
+    /// precede every specific capability so it cannot override the dial.
+    static func v2Permissions(_ legacy: [String: Any]) -> [[String: Any]] {
+        let aliases = ["bash": "shell", "task": "subagent", "write": "edit", "patch": "edit"]
+        return legacy.keys.sorted { a, b in a == "*" ? b != "*" : (b == "*" ? false : a < b) }
+            .flatMap { action -> [[String: Any]] in
+                let name = aliases[action] ?? action
+                if let effect = legacy[action] as? String {
+                    return [["action": name, "resource": "*", "effect": effect]]
+                }
+                let rules = legacy[action] as? [String: String] ?? [:]
+                return rules.keys.sorted().map { ["action": name, "resource": $0, "effect": rules[$0]!] }
+            }
     }
 
     private static var architecture: String {

@@ -1551,7 +1551,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkForOpenCodeUpdate() {
-        guard UserSettings.shared.openCodeAutoUpdate else { return }
+        guard UserSettings.shared.openCodeAutoUpdate,
+              let version = OpenCodeSupervisor.vendoredVersion(),
+              OpenCodeUpdater.supportsAutomaticUpdates(version) else { return }
         Task.detached(priority: .background) {
             let current = OpenCodeUpdater.stagedVersion()
                 ?? OpenCodeSupervisor.vendoredVersion()
