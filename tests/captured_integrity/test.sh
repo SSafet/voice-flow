@@ -25,6 +25,7 @@ BIN="$(swift build -c debug --show-bin-path)"
 swiftc -o "$WORK/captured_integrity" -sdk "$SDK" -suppress-warnings \
     "${GRDB_LINK[@]}" \
     swift/VoiceFlowPaths.swift \
+    swift/AgentSecretPolicy.swift swift/ImageUtils.swift \
     swift/PendingAudio.swift \
     swift/DisplayContext.swift \
     swift/CaptureRouting.swift \

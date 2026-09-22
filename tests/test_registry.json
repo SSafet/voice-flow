@@ -27,6 +27,7 @@
         "captured_index_build",
         "captured_ingest",
         "captured_integrity",
+        "captured_query_service",
         "captured_store",
         "claude_code_runtime",
         "cloud_sync",
@@ -1442,6 +1443,20 @@
       "runner": "unit",
       "suites": [
         "captured_integrity"
+      ]
+    },
+    {
+      "id": "tests/captured_query_service/main.swift",
+      "runner": "unit",
+      "suites": [
+        "captured_query_service"
+      ]
+    },
+    {
+      "id": "tests/captured_query_service/test.sh",
+      "runner": "unit",
+      "suites": [
+        "captured_query_service"
       ]
     }
   ]

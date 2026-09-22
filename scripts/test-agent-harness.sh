@@ -195,6 +195,7 @@ run_unit_command dictation_store bash tests/dictation_store/test.sh
 run_unit_command captured_ingest bash tests/captured_ingest/test.sh
 run_unit_command captured_index_build bash tests/captured_index_build/test.sh
 run_unit_command captured_integrity bash tests/captured_integrity/test.sh
+run_unit_command captured_query_service bash tests/captured_query_service/test.sh
 run_unit_command thread_store_records bash tests/thread_store_records/test.sh
 run_unit_command thread_store_events bash tests/thread_store_events/test.sh
 run_unit_command thread_store_projects bash tests/thread_store_projects/test.sh

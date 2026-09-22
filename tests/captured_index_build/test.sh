@@ -26,6 +26,7 @@ BIN="$(swift build -c debug --show-bin-path)"
 swiftc -o "$WORK/captured_index_build" -sdk "$SDK" -suppress-warnings \
     "${GRDB_LINK[@]}" \
     swift/VoiceFlowPaths.swift \
+    swift/AgentSecretPolicy.swift swift/ImageUtils.swift \
     swift/DisplayContext.swift \
     swift/CaptureRouting.swift \
     swift/CloudSyncModels.swift \
