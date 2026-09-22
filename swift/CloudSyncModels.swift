@@ -157,8 +157,12 @@ struct CloudLocalEdit: Codable {
 enum CloudSyncError: LocalizedError {
     case invalidRecord, storage(String), invalidResponse, signInRequired, updateRequired, insecureOrigin, historyChanged
     case server(Int, String)
+    case loginUncertain, identityChanged, homeSelectionRequired
     var errorDescription: String? {
         switch self {
+        case .loginUncertain: return "Sign-in or migration may have completed. Start sign-in again; the pending device key is retained until you start a new sign-in or cancel."
+        case .identityChanged: return "The account, device or home changed. Reconnect explicitly; the existing environment is retained."
+        case .homeSelectionRequired: return "Choose or set up your Mac home before starting its environment."
         case .invalidRecord: return "This record needs review before cloud sync. Your local copy is retained."
         case .storage: return "Cloud sync could not save locally. Your existing files are retained."
         case .invalidResponse: return "The cloud response could not be verified. Changes remain queued."

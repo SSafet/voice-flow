@@ -3,6 +3,10 @@ import Foundation
 final class FixtureVault: CloudCredentialVault {
     private let lock = NSLock()
     private var values: [String: CloudCredentials] = [:]
+    private var pending: [String: CloudPendingLogin] = [:]
+    func loadPending(origin: String) throws -> CloudPendingLogin? { lock.withLock { pending[origin] } }
+    func savePending(_ value: CloudPendingLogin) throws { lock.withLock { pending[value.origin] = value } }
+    func removePending(origin: String) throws { _ = lock.withLock { pending.removeValue(forKey: origin) } }
     func load(partition: String) throws -> CloudCredentials? { lock.withLock { values[partition] } }
     func save(_ value: CloudCredentials) throws { lock.withLock { values[value.partition] = value } }
     func remove(partition: String) throws { _ = lock.withLock { values.removeValue(forKey: partition) } }

@@ -1770,6 +1770,16 @@
       ]
     },
     {
+      "id": "SYNC-03",
+      "area": "sync",
+      "name": "Share enrolled P-256 identity across native sync and home-bound runtime leases with durable migration and revocation",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/cloud_device_auth/main.swift"
+      ]
+    },
+    {
       "id": "CIX-01",
       "area": "captured_data",
       "name": "Store captured records with transactional FTS indexing",
