@@ -191,6 +191,24 @@ private struct CloudErrorResponse: Decodable { struct Detail: Decodable { var co
 /// Sync and native runtime share THIS actor. A runtime broker must obtain the
 /// controller's owner, never instantiate a second client from Keychain bytes.
 actor CloudHTTPClient {
+    /// Token-free, monotonic native checkpoint for synchronous primitive guards.
+    /// Async MainActor notification delivery must not extend a retired identity.
+    private final class NativeAuthorityCheckpoint: @unchecked Sendable {
+        private let lock = NSLock()
+        private var revision: UInt64 = 0
+        private var retired = false
+        var current: UInt64? { lock.withLock { retired ? nil : revision } }
+        func invalidate(retiring: Bool) {
+            lock.withLock {
+                retired = retired || retiring || revision == UInt64.max
+                if !retired { revision += 1 }
+            }
+        }
+    }
+    private nonisolated let authorityCheckpoint = NativeAuthorityCheckpoint()
+    /// A value is meaningful only with this exact actor object. Renewal leaves it
+    /// unchanged; home-generation change advances it; retirement is permanent nil.
+    nonisolated var nativeAuthorityCheckpoint: UInt64? { authorityCheckpoint.current }
     let origin: String
     private let session: URLSession
     private let vault: CloudCredentialVault
@@ -298,6 +316,7 @@ actor CloudHTTPClient {
     /// Stop this actor without erasing offline account data or another identity.
     func retire() {
         guard !stopped else { return }
+        authorityCheckpoint.invalidate(retiring: true)
         stopped = true; generation = UUID(); access = nil; refreshing?.cancel(); refreshing = nil
         observedHome = nil; hasObservedHome = false
         onInvalidation?()
@@ -316,6 +335,7 @@ actor CloudHTTPClient {
               offer.continuable.allSatisfy({ CloudWire.validID($0.homeId) && $0.projectCount >= 0 && $0.threadCount >= 0 }),
               offer.notOffered.allSatisfy({ CloudWire.validID($0.homeId) }) else { throw CloudSyncError.invalidResponse }
         if hasObservedHome, observedHome != offer.serving?.homeId {
+            authorityCheckpoint.invalidate(retiring: false)
             generation = UUID(); onInvalidation?()
         }
         observedHome = offer.serving?.homeId; hasObservedHome = true
