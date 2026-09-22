@@ -4,7 +4,7 @@ private func check(_ value: Bool, _ detail: String) throws {
     if !value { throw NSError(domain: "AuthorityBrokerProof", code: 1, userInfo: [NSLocalizedDescriptionKey: detail]) }
 }
 
-private actor Fixture {
+actor Fixture {
     var environment = T3AuthorityEnvironmentIdentity(environmentID: "owned-environment", generation: UUID())
     var binding = T3NativeAuthorityBinding(ownerId: "owner", deviceId: "device", homeId: "home", identityGeneration: "00000000-0000-4000-8000-000000000ABC")
     var origin = "https://gateway.example"
@@ -73,21 +73,21 @@ private actor Fixture {
     }
 }
 
-private struct Reply {
+struct Reply {
     let status: Int
     let bytes: Data
     let response: HTTPURLResponse
     var json: [String: Any] { (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] ?? [:] }
 }
 
-private func request(_ boot: T3NativeAuthorityBootstrap, environment: String = "owned-environment",
+func request(_ boot: T3NativeAuthorityBootstrap, environment: String = "owned-environment",
                      headers: [String: String] = [:], expected: T3NativeAuthorityBinding? = nil,
-                     raw: Data? = nil, path: String = "/v1/authority/lease") async throws -> Reply {
+                     raw: Data? = nil, path: String = "/v1/authority/lease", timeout: TimeInterval = 5) async throws -> Reply {
     var input: [String: Any] = ["environmentId": environment]
     if let expected { input["expectedBinding"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(expected)) }
     var request = URLRequest(url: URL(string: boot.origin + path)!)
     request.httpMethod = "POST"
-    request.timeoutInterval = 5
+    request.timeoutInterval = timeout
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("Bearer " + boot.credential, forHTTPHeaderField: "Authorization")
     for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
@@ -103,8 +103,9 @@ private func request(_ boot: T3NativeAuthorityBootstrap, environment: String = "
 
 @main private struct BrokerProof {
     static func main() async throws {
+        setbuf(stdout, nil)
         // A fixture failure must not leave a hanging waiter or listener behind.
-        let watchdog = Task { try await Task.sleep(for: .seconds(45)); fatalError("broker proof timed out") }
+        let watchdog = Task { try await Task.sleep(for: .seconds(75)); fatalError("broker proof timed out") }
         defer { watchdog.cancel() }
         var assertions = 0
         func expect(_ value: Bool, _ detail: String) throws { try check(value, detail); assertions += 1 }
@@ -191,9 +192,11 @@ private func request(_ boot: T3NativeAuthorityBootstrap, environment: String = "
         let cancellationBoot = try await cancellationBroker.start()
         let cancelled = Task { try await request(cancellationBoot) }
         await cancellation.waitForCalls(1)
+        let cancelledAt = Date()
         cancelled.cancel()
         do { _ = try await cancelled.value; throw NSError(domain: "request not cancelled", code: 1) } catch is URLError { assertions += 1 }
         await cancellation.waitForCancellation()
+        try expect(Date().timeIntervalSince(cancelledAt) < 2, "disconnected lease cancels before request deadline")
         await cancellation.configure()
         try expect(try await request(cancellationBoot).status == 200, "HTTP cancellation does not revoke another request")
         await cancellationBroker.stop()
@@ -256,5 +259,6 @@ private func request(_ boot: T3NativeAuthorityBootstrap, environment: String = "
             await invalidBroker.stop()
         }
         print("ok - \(assertions) native authority real HTTP assertions")
+        try await ToolsMountProof.run()
     }
 }
