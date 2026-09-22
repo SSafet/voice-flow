@@ -39,8 +39,18 @@ The app's release owner still verifies provenance, architecture, nested signing,
 the matching client, and the final app signature. Synthetic staging tests are
 not a signed real-runtime packaging proof.
 
-No child environment launcher is added in this boundary. Existing-environment
-attachment is implemented first. If app-owned launch is later needed, reuse
-the selected upstream CLI's `--bootstrap-fd` envelope and lifecycle rather than
-inventing a server or putting the bootstrap secret in argv/environment. The
-native window never stops an environment it merely attached to.
+`T3EnvironmentProcess` launches this complete archive from `Contents/Resources/T3`
+after verifying the enclosing app's signature/resource seal and staging hashes.
+It uses the upstream `--bootstrap-fd 0` envelope, explicit app-owned data home,
+loopback binding and captured process handle. The bootstrap credential crosses
+only the anonymous stdin pipe; native authentication subsequently exchanges it
+for the shared client's cookie. Ambient T3/Vite/Node overrides and provider keys
+are excluded from the child environment.
+
+The native window never stops an environment it merely attached to. The app
+owner separately stops its launched process on shutdown. Startup refuses another
+live owner, malformed ownership state, aliases and the daily T3 home; it does
+not delete data or kill a PID discovered in a file. Reattachment after an app
+crash while its environment survives still needs explicit recovery integration.
+The signed process-fixture tests cover this adapter, not a packaged T3 runtime
+or the final app wiring; both remain release acceptance gates.

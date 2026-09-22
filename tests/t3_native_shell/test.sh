@@ -10,6 +10,7 @@ swiftc -target "$(uname -m)-apple-macos14" -swift-version 5 -parse-as-library \
 SHELL_TEST_SCRIPT_OUTPUT="$test_dir/bridge.js" "$test_dir/contracts"
 node tests/t3_native_shell/bridge.mjs "$test_dir/bridge.js"
 "${VOICE_FLOW_TEST_PYTHON:-.venv/bin/python}" tests/t3_native_shell/test_package.py
+bash tests/t3_native_shell/process.sh
 swiftc -target "$(uname -m)-apple-macos14" -swift-version 5 -parse-as-library \
   -emit-module -module-name VoiceFlowT3Shell swift/Shell/*.swift \
   -o "$test_dir/VoiceFlowT3Shell.swiftmodule"
