@@ -47,13 +47,9 @@ final class InputCoalescer {
     private(set) var health: String?
 
     // Bundle identifiers whose keystrokes are never recorded verbatim, no
-    // matter what the focused element claims to be.
-    private static let neverVerbatim: Set<String> = [
-        "com.1password.1password", "com.agilebits.onepassword7",
-        "com.bitwarden.desktop", "com.apple.keychainaccess",
-        "com.dashlane.Dashlane", "com.lastpass.LastPass",
-        "org.keepassxc.keepassxc", "com.apple.SecurityAgent",
-    ]
+    // matter what the focused element claims to be. The one owner of the
+    // password-manager list is ContextRules.
+    private static let neverVerbatim: Set<String> = ContextRules.privateBundleIDs
 
     // Terminals are the one place none of the guards can work. A remote
     // `ssh`/`sudo` prompt is drawn by the far end, so nothing asserts secure

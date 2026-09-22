@@ -121,12 +121,17 @@ struct CloudConflict: Codable, Equatable {
     var createdAt: String
     var resolvedAt: String?
 }
+struct CloudChangeActor: Codable, Equatable {
+    var kind: String?
+    var deviceId: String?
+}
 struct CloudChange: Codable {
     var seq: String
     var kind: String
     var record: CloudRecord?
     var conflict: CloudConflict?
     var resolvedConflictId: String?
+    var actor: CloudChangeActor?
 }
 struct CloudReceipt: Codable {
     var operationId: String
