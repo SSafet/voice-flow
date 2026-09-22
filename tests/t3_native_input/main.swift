@@ -136,6 +136,16 @@ struct NativeInputTests {
         // verifies originals but cannot grant bytes for an uncommitted replay.
         let audioMarker = CapturedPendingFiles.marker(for: audio)
         let markerBytes = try Data(contentsOf: audioMarker)
+        let alteredInput = ShellInput(deliveryId: id, destination: input.destination, text: "altered payload", captureIds: input.captureIds)
+        let altered = CapturedPendingDelivery(deliveryId: id, reservation: saved.reservation,
+            completedInput: try JSONEncoder().encode(alteredInput), pictures: saved.pictures)
+        try JSONEncoder().encode(altered).write(to: audioMarker)
+        try check(!native.custody.acknowledge(.init(deliveryId: id, status: .accepted)) && CapturedPendingFiles.isProtected(audio),
+                  "same UUID with different completed payload never authorizes cleanup")
+        try markerBytes.write(to: audioMarker)
+        // Restore the successfully cleaned shot marker to exercise a second,
+        // syntactically malformed partial cleanup independently.
+        try CapturedPendingFiles.write(saved, source: shotURL)
         try Data("broken".utf8).write(to: audioMarker)
         try check(!native.custody.acknowledge(.init(deliveryId: id, status: .accepted)), "partial cleanup is not falsely complete")
         try check(CapturedPendingFiles.isProtected(audio) && !CapturedPendingFiles.isProtected(shotURL), "failed marker retained while clean marker released")
@@ -245,7 +255,7 @@ struct NativeInputTests {
         try Data("not JSON".utf8).write(to: malformed)
         try check(CapturedPendingFiles.isProtected(wav), "malformed marker still retains source")
         try refuses("malformed metadata cannot be adopted or overwritten") { try CapturedPendingFiles.write(reservation, source: wav) }
-        try refuses("malformed metadata cannot authorize cleanup") { try CapturedPendingFiles.clear(source: wav, deliveryId: id) }
+        try refuses("malformed metadata cannot authorize cleanup") { try CapturedPendingFiles.clear(source: wav, expected: reservation) }
         try fm.removeItem(at: malformed)
         try fm.createSymbolicLink(at: malformed, withDestinationURL: paths.file("absent"))
         try check(CapturedPendingFiles.isProtected(wav), "dangling marker symlink is conservative retention")

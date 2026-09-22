@@ -22,9 +22,9 @@ final class ShellCapturedInput {
         }, persist: { [weak self] sources, metadata in
             guard let self else { throw ShellInputFailure.unavailable }
             try self.persist(metadata, sources: sources)
-        }, release: { [weak self] sources, id in
+        }, release: { [weak self] sources, metadata in
             guard let self else { throw ShellInputFailure.unavailable }
-            try self.release(sources, id: id)
+            try self.release(sources, metadata: metadata)
         })
 
     init(paths: VoiceFlowPaths, service: CapturedService) { self.paths = paths; self.service = service }
@@ -159,16 +159,16 @@ final class ShellCapturedInput {
             }
         }
     }
-    private func release(_ sources: [ShellInputSource], id: String) throws {
+    private func release(_ sources: [ShellInputSource], metadata: CapturedPendingDelivery) throws {
         var failure: Error?
         for source in sources {
             do {
                 switch source {
                 case .file(let url):
-                    if CapturedPendingFiles.isProtected(url) { try CapturedPendingFiles.clear(source: url, deliveryId: id) }
+                    if CapturedPendingFiles.isProtected(url) { try CapturedPendingFiles.clear(source: url, expected: metadata) }
                 case .bundle(let directory):
                     guard let meta = try? readBundle(directory) else { throw ShellInputFailure.unavailable }
-                    if meta.pendingDelivery != nil { try CaptureStore.updatePendingDelivery(nil, in: directory, deliveryId: id) }
+                    if meta.pendingDelivery != nil { try CaptureStore.updatePendingDelivery(nil, in: directory, deliveryId: metadata.deliveryId, expected: metadata) }
                 }
             } catch { failure = error }
         }

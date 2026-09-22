@@ -39,6 +39,7 @@ final class ShellInputCustody {
         var sources: [ShellInputSource] = []
         var captureIds: Set<String> = []
         var input: ShellInput?
+        var metadata: CapturedPendingDelivery?
         var pictures: [String: (CapturedDeliveryPicture, Data)] = [:]
         var completing = false
     }
@@ -47,7 +48,7 @@ final class ShellInputCustody {
     private let load: Load
     private let mayRead: (String) -> Bool
     private let persist: Persist
-    private let release: ([ShellInputSource], String) throws -> Void
+    private let release: ([ShellInputSource], CapturedPendingDelivery) throws -> Void
     private let pendingOnDisk: () -> Int
     let maxPending: Int
     let maxCachedBytes: Int
@@ -57,7 +58,7 @@ final class ShellInputCustody {
     init(maxPending: Int = 32, maxCachedBytes: Int = 128_000_000,
          pendingOnDisk: @escaping () -> Int = { 0 }, load: @escaping Load,
          mayRead: @escaping (String) -> Bool, persist: @escaping Persist,
-         release: @escaping ([ShellInputSource], String) throws -> Void) {
+         release: @escaping ([ShellInputSource], CapturedPendingDelivery) throws -> Void) {
         self.maxPending = maxPending; self.maxCachedBytes = maxCachedBytes
         self.pendingOnDisk = pendingOnDisk; self.load = load; self.mayRead = mayRead
         self.persist = persist; self.release = release
@@ -104,7 +105,7 @@ final class ShellInputCustody {
         let metadata = CapturedPendingDelivery(deliveryId: id, reservation: try Self.encode(entry.destination),
             completedInput: try Self.encode(input), pictures: captureIds.compactMap { pictures[$0]?.0 })
         try persist(entry.sources, metadata) // fail closed before first attempted web mutation
-        entries[id]?.pictures = pictures; entries[id]?.input = input
+        entries[id]?.pictures = pictures; entries[id]?.input = input; entries[id]?.metadata = metadata
         return input
     }
 
@@ -130,7 +131,7 @@ final class ShellInputCustody {
         for saved in metadata.pictures {
             guard pictures[saved.captureId]?.0 == saved else { throw ShellInputFailure.changedSource }
         }
-        entries[input.deliveryId] = Entry(destination: input.destination, sources: sources, captureIds: Set(input.captureIds), input: input, pictures: receiptOnly ? [:] : pictures)
+        entries[input.deliveryId] = Entry(destination: input.destination, sources: sources, captureIds: Set(input.captureIds), input: input, metadata: metadata, pictures: receiptOnly ? [:] : pictures)
         return input
     }
 
@@ -148,8 +149,9 @@ final class ShellInputCustody {
     }
     @discardableResult
     func acknowledge(_ receipt: ShellInputReceipt) -> Bool {
-        guard receipt.status == .accepted, let entry = entries[receipt.deliveryId], entry.input != nil else { return false }
-        do { try release(entry.sources, receipt.deliveryId) }
+        guard receipt.status == .accepted, let entry = entries[receipt.deliveryId], entry.input != nil,
+              let metadata = entry.metadata else { return false }
+        do { try release(entry.sources, metadata) }
         catch { return false } // retain custody; the same receipt can reconcile cleanup later
         entries.removeValue(forKey: receipt.deliveryId)
         return true
