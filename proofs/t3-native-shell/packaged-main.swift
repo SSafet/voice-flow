@@ -25,6 +25,20 @@ import WebKit
             let owner = try T3EnvironmentProcess(runtime: T3BundledEnvironment(), home: root.appendingPathComponent("environment"), workingDirectory: workspace, port: input.port)
             let application = NSApplication.shared
             application.setActivationPolicy(.regular)
+            // The production AppDelegate supplies these standard responder
+            // menus. Include them in this minimal host for real paste/undo QA.
+            let menu = NSMenu()
+            let appItem = NSMenuItem()
+            let appMenu = NSMenu()
+            appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+            appItem.submenu = appMenu; menu.addItem(appItem)
+            let editItem = NSMenuItem()
+            let editMenu = NSMenu(title: "Edit")
+            for (title, selector, key) in [("Undo", "undo:", "z"), ("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] {
+                editMenu.addItem(withTitle: title, action: Selector(selector), keyEquivalent: key)
+            }
+            editItem.submenu = editMenu; menu.addItem(editItem)
+            application.mainMenu = menu
             let controller = PackagedShellController(owner: owner, rules: rules)
             application.delegate = controller
             signal(SIGTERM, SIG_IGN)
@@ -46,6 +60,7 @@ import WebKit
     var host: T3ShellWindow?
     var startup: Task<Void, Never>?
     var terminating = false
+    var readyToTerminate = false
 
     init(owner: T3EnvironmentProcess, rules: URL) { self.owner = owner; self.rules = rules }
 
@@ -80,7 +95,8 @@ import WebKit
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !terminating else { return .terminateLater }
+        if readyToTerminate { return .terminateNow }
+        guard !terminating else { return .terminateCancel }
         terminating = true
         startup?.cancel()
         host?.shutdown()
@@ -88,8 +104,11 @@ import WebKit
             await startup?.value
             await owner.stop()
             FileHandle.standardOutput.write(Data("{\"shutdown\":\"owned-environment-stopped\"}\n".utf8))
-            sender.reply(toApplicationShouldTerminate: true)
+            readyToTerminate = true
+            sender.terminate(nil)
         }
-        return .terminateLater
+        // terminateLater enters AppKit's termination loop, which does not drain
+        // the main-actor work scheduled by this minimal NSApplication host.
+        return .terminateCancel
     }
 }
