@@ -70,6 +70,7 @@
         "system_agents",
         "t3_native_input",
         "t3_native_shell",
+        "t3_native_tools",
         "thread_protocol_sync",
         "thread_store",
         "thread_store_events",
@@ -1519,6 +1520,13 @@
       "runner": "unit",
       "suites": [
         "native_mcp_captured"
+      ]
+    },
+    {
+      "id": "tests/t3_native_tools/test.sh",
+      "runner": "unit",
+      "suites": [
+        "t3_native_tools"
       ]
     }
   ]

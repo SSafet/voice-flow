@@ -32,6 +32,16 @@
       ]
     },
     {
+      "id": "SHELL-04",
+      "area": "native_shell",
+      "name": "Bind native actions and captured reads to the current T3 turn with one-use approvals and immediate revocation",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/t3_native_tools/test.sh"
+      ]
+    },
+    {
       "id": "AST-01",
       "area": "assistant",
       "name": "Create, select, and delete Assistant conversations",
