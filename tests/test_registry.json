@@ -47,6 +47,7 @@
         "overlay_contracts",
         "player",
         "qa_control",
+        "qa_launch_isolation",
         "queue_editor",
         "ripgrep_runtime",
         "sandbox_containment",
@@ -1074,6 +1075,7 @@
       ]
     },
     { "id": "tests/spm_build/test.sh", "runner": "unit", "suites": ["spm_build"] },
+    { "id": "tests/qa_launch_isolation/test.sh", "runner": "unit", "suites": ["qa_launch_isolation"] },
     { "id": "tests/ripgrep_runtime/test.sh", "runner": "unit", "suites": ["ripgrep_runtime"] },
     { "id": "tests/thread_protocol_sync/test.sh", "runner": "unit", "suites": ["thread_protocol_sync"] },
     { "id": "tests/thread_store/main.swift", "runner": "unit", "suites": ["thread_store"] },

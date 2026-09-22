@@ -125,11 +125,12 @@
     {
       "id": "BLD-04",
       "area": "build",
-      "name": "Redirect every writable store to an isolated absolute QA root",
+      "name": "Refuse unsafe QA launches before initialization and redirect stores to an isolated absolute root",
       "kind": "new",
       "risk": "critical",
       "tests": [
-        "tests/voice_flow_paths/main.swift"
+        "tests/voice_flow_paths/main.swift",
+        "tests/qa_launch_isolation/test.sh"
       ]
     },
     {
