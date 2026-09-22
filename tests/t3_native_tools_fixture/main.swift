@@ -71,10 +71,15 @@ private func syntheticImage() -> CGImage {
         })
         let primitives = T3NativeToolPrimitives(binding:binding,computer:computer,overlays:nil,captured:nil)
         let tools = try T3NativeToolCatalog.tools(computer:true,captured:false,overlay:false)
-        let service = try T3NativeToolService(binding:binding,backendRevision:"synthetic-native-fixture-v1",policyRevision:"synthetic-policy-v1",tools:tools,
+        let configuration = try T3NativeConfiguration(binding:binding, settings:.init(
+            runCommands:false, reachNetwork:false, assistantComputerUse:true,
+            workspaceRoots:["~/isolated-workspace"], egressAllow:[], egressBlock:["blocked.example"],
+            dailyBudgetUSD:0.25, model:"deepseek/deepseek-v4.1-flash", reasoningEffort:""),
+            decisions:.init(contextRead:.allow, editWorkspace:.deny, shell:.deny))
+        let service = try T3NativeToolService(binding:binding,backendRevision:"synthetic-native-fixture-v1",policyRevision:configuration.policyRevision,tools:tools,
             backend:.init(authority:{ _,action in
                 guard state.current else { return nil }
-                return .init(binding:binding,backendRevision:"synthetic-native-fixture-v1",policyRevision:"synthetic-policy-v1",
+                return .init(binding:binding,backendRevision:"synthetic-native-fixture-v1",policyRevision:configuration.policyRevision,
                              decision:action == .control ? .ask : .allow)
             },perform:{ call,operation,checkpoint in
                 state.start()
@@ -83,7 +88,9 @@ private func syntheticImage() -> CGImage {
                     state.finish(result.isError != true); return result
                 } catch { state.finish(false); throw error }
             }))
-        let sdk = T3NativeToolMCP(service:service,environment:nativeEnvironment,onTurnClosed:{ thread,turn in
+        let sdk = T3NativeToolMCP(service:service,environment:nativeEnvironment,configuration:{
+            guard state.current else { throw T3NativeAuthorityError.unavailable }; return configuration
+        },onTurnClosed:{ thread,turn in
             await primitives.closeTurn(threadId:thread,turnId:turn)
         })
         let broker = T3NativeAuthorityBroker(ownedEnvironment:{
