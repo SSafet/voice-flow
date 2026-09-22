@@ -23,5 +23,5 @@ digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
 PY
 codesign --force --sign - "$bundle"
 codesign --verify --deep --strict "$bundle"
-swiftc -target "$(uname -m)-apple-macos14" -swift-version 5 -parse-as-library swift/Shell/T3ShellPolicy.swift swift/Shell/T3EnvironmentProcess.swift tests/t3_native_shell/process.swift -o "$test_dir/process-tests"
+swiftc -target "$(uname -m)-apple-macos14" -swift-version 5 -parse-as-library swift/Shell/T3ShellPolicy.swift swift/Shell/T3NativeAuthority.swift swift/Shell/T3EnvironmentProcess.swift tests/t3_native_shell/process.swift -o "$test_dir/process-tests"
 T3CODE_HOME=/invalid-ambient-test-home VITE_DEV_SERVER_URL=https://invalid.example NODE_OPTIONS=--invalid-fixture-option OPENROUTER_API_KEY=synthetic-fixture-key "$test_dir/process-tests" "$test_dir"
