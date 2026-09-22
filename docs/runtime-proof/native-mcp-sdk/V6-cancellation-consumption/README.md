@@ -1,0 +1,13 @@
+# V6 cancellation/consumption preservation follow-up
+
+Source `ac87a146c07330005410f959595bddcb2a4bf736`, after V6 source `22c5c69` and evidence/notices `17d68c5`. Executed in the isolated V6 worktree, with temporary inbox/config roots and a temporary loopback port. The real HTTP/SDK suite now passes **61 checks**; existing inbox tests and App+MCPTools parsing also pass. Logs and exact source hashes are retained beside this receipt. No installed app or native UI was controlled.
+
+Review exposed a real race: `Inbox.wait` could dequeue a voice message, then a cancellation arriving before the handler/host post-check could replace the successful result with a cancellation error. The message had already disappeared from the inbox.
+
+The inbox now calls `claimConsumption()` under its queue, immediately before removing a nonempty batch. The request token serializes this claim against cancellation. If cancellation wins, removal never happens, preserving original message IDs, time and attachments. If consumption wins, later cancellation is advisory and neither native handler nor SDK host suppresses the consumed result. Empty reads do not claim consumption. Existing non-MCP consumers keep their behavior through default hooks.
+
+The regression fixes scheduling explicitly in all three paths: immediately available `wait_for_message`, a parked wait awakened by a message, and `check_messages`. For the late-cancel case, the handler pauses **after drain and before return**; the test sends SDK cancellation and then a ping. The SDK receive loop awaits notification handlers before dispatching that ping, so its response is a processing barrier before the paused handler is released. The successful consumed response must survive. For cancellation-before-claim, the hook pauses before claiming and waits until the token's cancel handler ran; each test then verifies the original ID/time/attachments remain queued.
+
+This is a server-side consumption boundary, **not exactly-once network delivery**. A client can disconnect or discard responses after requesting cancellation; preserving/acknowledging delivery across that boundary would require an application delivery/replay protocol. This patch prevents the server from replacing its own consumed response with an error, without inventing such a protocol or creating replacement message IDs.
+
+Other V6 open gates remain as listed in the base receipt: integrated signed UI/current external clients/long-duration acceptance, authenticated observe-grant channel and shared registry wiring. Captured query/image source behavior is unchanged by this follow-up; the prior 132-assertion receipt remains scoped to that code.

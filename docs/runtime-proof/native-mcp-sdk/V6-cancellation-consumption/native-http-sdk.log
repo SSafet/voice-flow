@@ -1,0 +1,61 @@
+PASS absent listener reports unavailable wake-up
+PASS installed listener keeps existing attach command
+PASS four-hour in-flight session survives idle pruning
+PASS completed held call refreshes identity idle lease
+PASS idle completed session still prunes after two hours
+PASS JSON initialization returns 200 for 2024-11-05
+PASS supported revision preserved 2024-11-05
+PASS JSON initialization returns 200 for 2025-03-26
+PASS supported revision preserved 2025-03-26
+PASS JSON initialization returns 200 for 2025-06-18
+PASS supported revision preserved 2025-06-18
+PASS JSON initialization returns 200 for 2099-01-01
+PASS unknown revision follows SDK negotiation
+PASS JSON initialization returns 200 for 2025-06-18
+PASS JSON initialization returns 200 for 2025-06-18
+PASS initialize is distinct and unengaged
+PASS naming stays invisible
+PASS 15 preserved and 5 captured tools listed
+PASS external captured authority defaults unconnected
+PASS held calls do not block TTS
+PASS duplicate active ID cannot overwrite SDK waiter
+PASS SDK accepts cancellation notification
+PASS cancellation releases held HTTP call
+PASS same request ID in other session remains waiting
+PASS targeted wait receives correct message
+PASS cancelled waiter cannot consume later message
+PASS SDK processed late cancel before result release: immediate
+PASS consumption wins late cancellation: immediate
+PASS successful immediate response does not duplicate consumed message
+PASS SDK processed late cancel before result release: parked
+PASS consumption wins late cancellation: parked
+PASS successful parked response does not duplicate consumed message
+PASS SDK processed late cancel before result release: check
+PASS consumption wins late cancellation: check
+PASS successful check response does not duplicate consumed message
+PASS cancellation wins before consumption: immediate
+PASS cancel-before-claim preserves exact message id/time/attachments: immediate
+PASS cancellation wins before consumption: parked
+PASS cancel-before-claim preserves exact message id/time/attachments: parked
+PASS cancellation wins before consumption: check
+PASS cancel-before-claim preserves exact message id/time/attachments: check
+PASS four-hour question releases on cancellation
+PASS DELETE closes exact voice identity
+PASS old client ID re-adopts after DELETE
+PASS headerless calls retain anonymous voice target
+PASS SDK rejects hostile Origin
+PASS malformed ID-bearing RPC fails without hanging
+PASS JSON endpoint visibly rejects SSE GET
+PASS preserved TTS set route
+PASS preserved TTS speak route
+PASS preserved TTS seek route
+PASS preserved TTS stop route
+PASS overlay ownership is exact-session
+PASS system/user marks excluded from agent scope
+PASS official SDK client initializes production route
+PASS official SDK client decodes catalog
+PASS official SDK client observes cancellation
+PASS socket disconnect releases native waiter without DELETE
+PASS refreshed JSON client retains session after disconnect
+PASS hostile origin cannot DELETE another session
+PASS native MCP production transport proof complete

@@ -1,0 +1,19 @@
+{
+  "swift/MCPToolCancellation.swift": "4748777a3074ba2f31246d4e1673d98f055146a33d950324141a7b55c7558cec",
+  "swift/MCPHTTPHost.swift": "ea4d066adab73e515cc59e083fa9bbe65bcbeb3b42116ac77ef2fbcec981d8a3",
+  "swift/MCP.swift": "2ff71a63dc924e84429058f23f80795609e4d6659ac59e8568546206a2fdc793",
+  "swift/MCPCapturedCatalog.swift": "4a36c3f92773ae78527493d548965bcc44bdc7171558503105780874338c38cc",
+  "swift/MCPOverlayScope.swift": "af3830d647969ff28ec7310e1a2ed6bf9d2bd044c8e4c198243e68db2f49c0ea",
+  "swift/Inbox.swift": "a99b1fd9529c0d32ceffdf7e678d6f82226cf493ce8698339d62cdcb2cd7c53b",
+  "swift/App+MCPTools.swift": "2f4336a1745a21cce7a0847fd5e2e0679fe2f369e4c9429d368729ea24d13ea0",
+  "swift/LocalAPI.swift": "6c4516bf86e278000bf78b31098dff2505f43a345625f0eba8407a9bd1472276",
+  "swift/VoiceFlowPaths.swift": "572135d92031123912b24e709b03f6d123a98afd06b3d223744cf94aab92c174",
+  "swift/QAControl.swift": "0caac3c0844ff13954bb026a2cea738963d7dc34b8b79f53ce36f59c0cf0a4bb",
+  "swift/AgentSecretPolicy.swift": "d0164e21387bb9db12d847e1052e0ee69e5abef09d7df56ea8bc829081df2286",
+  "tests/native_mcp_sdk/main.swift": "9f63d01ae7d8fae431ea3987aaf23bb6b5b460983da3506edd94b0afbf6796bc",
+  "tests/native_mcp_sdk/test.sh": "5194e9bf7757a6cec48240090596ed1a341cba7ce249c10b79974c2e7e487864",
+  "Package.swift": "c1e5b0894d9f5439e10d042512362d0759acf6a93196916e6020ce45be461952",
+  "Package.resolved": "78ed75c16b8edce6f561636163fda582fec4c37badb12ddd296ba4e8b36cf519",
+  "tests/inbox/main.swift": "0d25446104f2123d94ff3df23cee1d6f3bc2892ce2e0f106aacbfe43dc076ab0",
+  "scripts/test-agent-harness.sh": "08782d5644dd87e2dc9fcee9849dd1badbb06e6464350cd3f9dc9076580d64f5"
+}
