@@ -1,4 +1,5 @@
 import Foundation
+import WebKit
 
 func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
     if !condition() { throw NSError(domain: "T3ShellTest", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
@@ -53,7 +54,7 @@ final class AuthFixture: URLProtocol {
 
 @main
 enum ShellContractTests {
-    static func main() async throws {
+    @MainActor static func main() async throws {
         let origin = try T3ShellOrigin(URL(string: "http://127.0.0.1:28471")!)
         for bad in ["http://remote.example", "file:///tmp/app", "https://name:password@example.test", "https://example.test/path", "https://example.test?token=x"] {
             do { _ = try T3ShellOrigin(URL(string: bad)!); throw NSError(domain: "accepted unsafe origin", code: 1) }
@@ -78,11 +79,25 @@ enum ShellContractTests {
         try require(origin.permitsFrameResponse(url: preview, mimeType: "application/pdf", contentSecurityPolicy: nil), "real PDF preview works")
         try require(!origin.permitsFrameResponse(url: URL(string: "http://127.0.0.1:28472/preview")!, mimeType: "text/html", contentSecurityPolicy: "sandbox"), "external frame refused")
         let rules = try JSONSerialization.jsonObject(with: Data(origin.cookieRulesJSON().utf8)) as! [[String: Any]]
-        let pattern = (rules[1]["trigger"] as! [String: String])["url-filter"]!
-        let regex = try NSRegularExpression(pattern: pattern)
-        func matches(_ input: String) -> Bool { regex.firstMatch(in: input, range: NSRange(input.startIndex..., in: input)) != nil }
+        let patterns = rules.dropFirst().map { ($0["trigger"] as! [String: String])["url-filter"]! }
+        let regexes = try patterns.map { try NSRegularExpression(pattern: $0) }
+        func matches(_ input: String) -> Bool { regexes.contains { $0.firstMatch(in: input, range: NSRange(input.startIndex..., in: input)) != nil } }
         try require(matches("http://127.0.0.1:28471/api/auth/session") && matches("ws://127.0.0.1:28471/"), "HTTP and WS cookies only for exact origin")
         try require(!matches("http://127.0.0.1:28472/") && !matches("http://127.0.0.1:284710/") && !matches("http://127.0.0.1:28471.evil.test/"), "cookie exception has strict origin boundary")
+        let ruleDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("vf-cookie-rule-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: ruleDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: ruleDirectory) }
+        let ruleStore = WKContentRuleListStore(url: ruleDirectory)!
+        for value in [origin, canonical] {
+            let encoded = try value.cookieRulesJSON()
+            let compiled: WKContentRuleList = try await withCheckedThrowingContinuation { continuation in
+                ruleStore.compileContentRuleList(forIdentifier: UUID().uuidString, encodedContentRuleList: encoded) { list, error in
+                    if let list { continuation.resume(returning: list) }
+                    else { continuation.resume(throwing: error ?? T3ShellError.invalidResponse) }
+                }
+            }
+            try require(!compiled.identifier.isEmpty, "actual WebKit compiles cookie rules for exact and default ports")
+        }
         var binding = ShellComposerBinding()
         let target = ShellComposerTarget(environmentId: "e", kind: .thread, id: "t", composerId: "mounted-a")
         try require(binding.publish(target, documentId: binding.documentId), "publish current composer")

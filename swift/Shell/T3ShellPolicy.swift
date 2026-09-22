@@ -81,14 +81,18 @@ struct T3ShellOrigin: Equatable {
     /// Keep WS handshakes for this origin authenticated too. Compile before load.
     func cookieRulesJSON() throws -> String {
         let hosts = NSRegularExpression.escapedPattern(for: host)
-        let schemes = scheme == "https" ? "(https|wss)" : "(http|ws)"
+        let schemes = scheme == "https" ? ["https", "wss"] : ["http", "ws"]
         let defaultPort = scheme == "https" ? 443 : 80
-        let ports = port == defaultPort ? "(:\(port))?" : ":\(port)"
-        let filter = "^\(schemes)://\(hosts)\(ports)/"
-        let rules: [[String: Any]] = [
-            ["trigger": ["url-filter": ".*"], "action": ["type": "block-cookies"]],
-            ["trigger": ["url-filter": filter], "action": ["type": "ignore-previous-rules"]]
-        ]
+        let ports = port == defaultPort ? ["", ":\(port)"] : [":\(port)"]
+        // WebKit content blockers reject regexp disjunctions. Each exact
+        // scheme/port gets its own exception after the universal cookie block.
+        var rules: [[String: Any]] = [["trigger": ["url-filter": ".*"], "action": ["type": "block-cookies"]]]
+        for allowedScheme in schemes {
+            for allowedPort in ports {
+                rules.append(["trigger": ["url-filter": "^\(allowedScheme)://\(hosts)\(allowedPort)/"],
+                              "action": ["type": "ignore-previous-rules"]])
+            }
+        }
         return String(decoding: try JSONSerialization.data(withJSONObject: rules), as: UTF8.self)
     }
 }

@@ -73,7 +73,8 @@ import WebKit
                 try await host.attach(credential: connection.credential)
             } catch {
                 fputs("Packaged shell fixture could not attach.\n", stderr)
-                NSApp.terminate(nil)
+                // Finish this task before the quit delegate awaits it.
+                DispatchQueue.main.async { NSApp.terminate(nil) }
             }
         }
     }
