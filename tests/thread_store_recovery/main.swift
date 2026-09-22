@@ -1,6 +1,144 @@
 import Foundation
 import GRDB
 
+func proveSameDaySchemaBackup() throws {
+    let root = makeConfigRoot("upgrade-backup")
+    defer { try? fixtureFileManager.removeItem(at: root) }
+    let url = ThreadDatabase.url(configRoot: root)
+    let pool = try DatabasePool(path: url.path)
+    try StoreMigrations.migrator().migrate(pool, upTo: "0001 store meta")
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    let daily = try ThreadStoreHealth.backup(pool: pool, into: root.appendingPathComponent("backups"), now: now)
+    try pool.write { db in
+        try db.execute(sql: "INSERT INTO store_meta VALUES ('after_daily_backup', 'keep me')")
+    }
+    try pool.close()
+    guard case .ready(let migrated, let report) = try ThreadStoreLaunch.open(configRoot: root, now: now) else {
+        require(false, "valid old schema upgrades after a verified backup")
+        return
+    }
+    defer { try? migrated.close() }
+    require(report.backup != nil && report.backup != daily,
+            "same-day schema upgrade takes a distinct pre-upgrade backup")
+    let backup = try DatabaseQueue(path: report.backup!.path)
+    defer { try? backup.close() }
+    try backup.read { db in
+        require(try String.fetchOne(db, sql: "SELECT value FROM store_meta WHERE key = 'after_daily_backup'") == "keep me",
+                "pre-upgrade backup includes writes after the daily backup")
+        require(!(try db.tableExists("threads")), "pre-upgrade backup retains the old schema")
+    }
+    ok("each schema upgrade has a verified backup even after today's daily backup")
+}
+
+func proveIncompleteRepairRefused() throws {
+    let root = makeConfigRoot("repair-schema")
+    defer { try? fixtureFileManager.removeItem(at: root) }
+    let source = root.appendingPathComponent("damaged.sqlite")
+    let pool = try ThreadDatabase.open(at: source)
+    try pool.write { db in try db.execute(sql: "DROP INDEX threads_project_activity") }
+    try pool.close()
+    let destination = root.appendingPathComponent("repaired.sqlite")
+    var refused = false
+    do { _ = try ThreadStoreHealth.repair(from: source, to: destination) }
+    catch { refused = true }
+    require(refused, "repair never marks an incomplete recovered schema current")
+    require(!fixtureFileManager.fileExists(atPath: destination.path), "unproved repair is never published as the active database")
+    ok("a recovered schema missing a required index is refused before publication")
+}
+
+func proveRecoveryFailurePreservesFiles() throws {
+    let root = makeConfigRoot("recovery-failures")
+    defer { try? fixtureFileManager.removeItem(at: root) }
+    let destination = root.appendingPathComponent("existing.sqlite")
+    let live = try ThreadDatabase.open(at: destination)
+    try live.close()
+    let before = try Data(contentsOf: destination)
+    let badBackup = root.appendingPathComponent("invalid.sqlite")
+    try Data("not a database".utf8).write(to: badBackup)
+    var refused = false
+    do { try ThreadStoreHealth.restore(badBackup, to: destination, now: Date()) } catch { refused = true }
+    require(try refused && Data(contentsOf: destination) == before,
+            "invalid restore cannot truncate or overwrite an existing active database")
+    require(try Data(contentsOf: badBackup) == Data("not a database".utf8), "restore leaves its source unchanged")
+
+    let oldRoot = makeConfigRoot("upgrade-backup-failure")
+    defer { try? fixtureFileManager.removeItem(at: oldRoot) }
+    let oldURL = ThreadDatabase.url(configRoot: oldRoot)
+    let old = try DatabaseQueue(path: oldURL.path)
+    try StoreMigrations.migrator().migrate(old, upTo: "0001 store meta")
+    try old.close()
+    try Data("blocks the backup directory".utf8).write(to: oldRoot.appendingPathComponent("backups"))
+    refused = false
+    do { _ = try ThreadStoreLaunch.open(configRoot: oldRoot, now: Date()) } catch { refused = true }
+    require(refused, "schema migration cannot proceed when its backup cannot be published")
+    let unchanged = try DatabaseQueue(path: oldURL.path)
+    try unchanged.read { db in
+        require(!(try db.tableExists("threads")), "failed backup leaves the original schema unchanged")
+        require(try StoreMigrations.migrator().completedMigrations(db) == ["0001 store meta"], "failed backup never advances the ledger")
+    }
+    try unchanged.close()
+    ok("failed backup and restore preserve the committed database")
+}
+
+func proveRecoveredLedgerNeedsExactSchema() throws {
+    let root = makeConfigRoot("repair-proof")
+    defer { try? fixtureFileManager.removeItem(at: root) }
+    let source = root.appendingPathComponent("ledger-lost.sqlite")
+    let original = try ThreadDatabase.open(at: source)
+    try original.write { db in try db.execute(sql: "DELETE FROM grdb_migrations") }
+    try original.close()
+    let bytes = try Data(contentsOf: source)
+    let destination = root.appendingPathComponent("proved.sqlite")
+    _ = try ThreadStoreHealth.repair(from: source, to: destination)
+    require(ThreadStoreHealth.check(at: destination) == .ok, "an exactly matching schema proves its lost DDL ledger")
+    require(try Data(contentsOf: source) == bytes, "repair never changes the preserved source")
+    let unknown = try DatabaseQueue(path: source.path)
+    try unknown.write { db in try db.execute(sql: "INSERT INTO grdb_migrations VALUES ('9999 unknown future migration')") }
+    try unknown.close()
+    let activeBytes = try Data(contentsOf: destination)
+    var refused = false
+    do { _ = try ThreadStoreHealth.repair(from: source, to: destination) } catch { refused = true }
+    require(try refused && Data(contentsOf: destination) == activeBytes, "unknown migrations are never rewritten or published over an existing database")
+    ok("repair reconstructs only a provable known schema and preserves future migration history")
+}
+
+func proveInterruptedPreservationResumes() throws {
+    let root = makeConfigRoot("recovery-interrupted")
+    defer { try? fixtureFileManager.removeItem(at: root) }
+    let url = ThreadDatabase.url(configRoot: root)
+    let original = Data("damaged main database bytes".utf8)
+    let wal = Data("preserved WAL bytes".utf8)
+    try original.write(to: url)
+    try wal.write(to: URL(fileURLWithPath: url.path + "-wal"))
+    let target = ThreadStoreHealth.preservationURL(for: url, now: Date())
+    let report = DamageReport(reason: "interrupted rename", setAside: target, newestBackup: nil)
+    try ThreadStoreLaunch.writePending(.init(report: report, preserved: false), configRoot: root)
+    // Crash after renaming the main file but before moving its WAL.
+    try fixtureFileManager.moveItem(at: url, to: target)
+    guard case .damaged(let recoveredReport) = try ThreadStoreLaunch.open(configRoot: root, now: Date()) else {
+        fatalError("interrupted preservation must remain blocked")
+    }
+    require(recoveredReport == report, "interrupted rename resumes the same recovery")
+    require(try Data(contentsOf: target) == original, "interrupted rename keeps main bytes")
+    require(try Data(contentsOf: URL(fileURLWithPath: target.path + "-wal")) == wal, "interrupted rename keeps WAL bytes")
+    require(!(fixtureFileManager.fileExists(atPath: url.path)), "interrupted rename cannot create a fresh database")
+    // Even an unreadable intent record is not permission to start empty.
+    try Data("invalid pending report".utf8).write(to: ThreadStoreLaunch.pendingURL(configRoot: root))
+    var refused = false
+    do { _ = try ThreadStoreLaunch.open(configRoot: root, now: Date()) } catch { refused = true }
+    require(refused && !fixtureFileManager.fileExists(atPath: url.path), "unreadable pending recovery fails closed")
+    ok("interrupted file preservation and malformed recovery intent fail closed")
+}
+
+if let regression = ProcessInfo.processInfo.environment["VF_RECOVERY_REGRESSION"] {
+    switch regression {
+    case "upgrade": try proveSameDaySchemaBackup()
+    case "repair": try proveIncompleteRepairRefused()
+    default: fatalError("unknown recovery regression")
+    }
+    exit(0)
+}
+
 // V1, task 4 — backups, the launch check, damage set aside without overwriting
 // anything, and the four ways out (06 §3.2 "Backups", "Damage is surfaced and
 // recoverable"; 06 §7; the drill of 06 §8 item 5).
@@ -125,7 +263,14 @@ let sizeAfter = try fixtureFileManager.attributesOfItem(atPath: damageReport.set
 require(sizeAfter == sizeBefore, "nothing was overwritten: the damaged file is kept whole")
 require(damageReport.newestBackup != nil, "the report names the newest backup, for the window's date")
 require(!damageReport.reason.isEmpty, "the report carries the reason for the window to show")
-ok("a damaged store is set aside untouched and the launch reports it")
+let preservedBytes = try Data(contentsOf: damageReport.setAside)
+guard case .damaged(let restartedReport) = try ThreadStoreLaunch.open(configRoot: root, now: nextDay()) else {
+    fatalError("restart must stay in recovery instead of creating empty history")
+}
+require(restartedReport == damageReport, "restart retains the same damage report")
+require(!fixtureFileManager.fileExists(atPath: storeURL.path), "restart while blocked never creates an active database")
+require(try Data(contentsOf: damageReport.setAside) == preservedBytes, "restart keeps damaged bytes unchanged")
+ok("a damaged store stays gated across restart with its exact bytes kept")
 
 // ----------------------------------------------------------- the ways out
 
@@ -146,7 +291,8 @@ require(try repairReport.items == countRows(repairedURL, "items"), "and the item
 ok("repair produces a file that opens and a report measured from it")
 
 // Restore: the threads come back.
-try ThreadStoreHealth.restore(damageReport.newestBackup!, to: storeURL, now: day)
+let recovered = try ThreadStoreRecovery.apply(.restoreBackup(damageReport.newestBackup!), report: damageReport, configRoot: root, now: day)
+try recovered?.close()
 guard case .ready(let restoredPool, _) = try ThreadStoreLaunch.open(configRoot: root, now: day) else {
     FileHandle.standardError.write(Data("not ok - the restored store must open\n".utf8))
     exit(1)
@@ -185,5 +331,11 @@ require(try startedStore.threads(includeArchived: true).isEmpty, "the new store 
 require(fixtureFileManager.fileExists(atPath: emptyDamage.setAside.path),
         "the damaged file stays, so nothing is lost by choosing this")
 ok("starting empty makes a new store and keeps the damaged one")
+
+try proveSameDaySchemaBackup()
+try proveIncompleteRepairRefused()
+try proveRecoveryFailurePreservesFiles()
+try proveRecoveredLedgerNeedsExactSchema()
+try proveInterruptedPreservationResumes()
 
 print("thread store recovery: backups, the launch check, damage set aside, repair, restore, start empty")

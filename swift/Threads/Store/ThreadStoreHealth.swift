@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Darwin
 
 /// What a repair recovered, measured from the file it made and not asserted
 /// (06 §3.2 "Damage is surfaced and recoverable").
@@ -26,10 +27,7 @@ enum ThreadStoreHealth {
         case damaged(String)
     }
 
-    /// `.absent` when there is no file, `.ok` when it opens and `PRAGMA
-    /// quick_check` answers `ok`, `.damaged(reason)` otherwise — including when
-    /// SQLite refuses the file as not a database. Read-only, so a check can
-    /// never change what it is checking.
+    /// Read-only: all quick-check results and the migration schema must agree.
     static func check(at url: URL) -> State {
         guard FileManager.default.fileExists(atPath: url.path) else { return .absent }
         do {
@@ -37,183 +35,210 @@ enum ThreadStoreHealth {
             configuration.readonly = true
             let queue = try DatabaseQueue(path: url.path, configuration: configuration)
             defer { try? queue.close() }
-            let answer = try queue.read { db in
-                try String.fetchOne(db, sql: "PRAGMA quick_check") ?? ""
+            try queue.read { db in
+                let answers = try String.fetchAll(db, sql: "PRAGMA quick_check")
+                guard answers == ["ok"] else { throw failure(answers.joined(separator: "; ")) }
+                try ThreadStoreSchemaProof.validate(db)
+                guard try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty else {
+                    throw failure("Thread history contains broken references and needs recovery.")
+                }
             }
-            if answer == "ok" { return .ok }
-            return .damaged(answer.isEmpty ? "quick_check gave no answer" : answer)
-        } catch {
-            return .damaged(String(describing: error))
-        }
+            return .ok
+        } catch { return .damaged(String(describing: error)) }
     }
 
-    /// Renames `threads.sqlite` to `threads.sqlite.damaged-<timestamp>` and
-    /// moves the `-wal` and `-shm` files beside it under the same stem. The
-    /// damaged bytes are moved, never rewritten.
+    static func preservationURL(for url: URL, now: Date) -> URL {
+        url.deletingLastPathComponent().appendingPathComponent(
+            "\(url.lastPathComponent).damaged-\(stamp(now))-\(UUID().uuidString)")
+    }
+
     static func setAside(at url: URL, now: Date) throws -> URL {
-        let manager = FileManager.default
-        let target = url.deletingLastPathComponent()
-            .appendingPathComponent("\(url.lastPathComponent).damaged-\(stamp(now))",
-                                    isDirectory: false)
-        try manager.moveItem(at: url, to: target)
-        for suffix in ["-wal", "-shm"] {
-            let side = URL(fileURLWithPath: url.path + suffix)
-            if manager.fileExists(atPath: side.path) {
-                try manager.moveItem(
-                    at: side, to: URL(fileURLWithPath: target.path + suffix))
-            }
-        }
+        let target = preservationURL(for: url, now: now)
+        try finishPreserving(at: url, to: target)
         return target
     }
 
-    /// SQLite's own online backup into `<folder>/threads-<yyyy-MM-dd in
-    /// UTC>.sqlite`, then `now` into `store_meta` under `lastBackupKey`, then
-    /// every backup but the newest `keep` removed.
+    /// Idempotently finishes a journaled rename, including WAL/SHM after a crash.
+    static func finishPreserving(at url: URL, to target: URL) throws {
+        let manager = FileManager.default
+        for suffix in ["", "-wal", "-shm"] {
+            let source = URL(fileURLWithPath: url.path + suffix)
+            let destination = URL(fileURLWithPath: target.path + suffix)
+            if manager.fileExists(atPath: source.path) {
+                guard !manager.fileExists(atPath: destination.path) else {
+                    throw failure("Both recovery files exist; neither was overwritten: \(source.path)")
+                }
+                try manager.moveItem(at: source, to: destination)
+            }
+        }
+        try synchronizeDirectory(url.deletingLastPathComponent())
+        guard manager.fileExists(atPath: target.path) else {
+            throw failure("The preserved database is missing. Recovery remains required.")
+        }
+    }
+
+    /// Publish only a verified SQLite online snapshot. Upgrade snapshots have
+    /// independent retention: daily rotation cannot delete the rollback point.
     static func backup(pool: DatabasePool, into folder: URL, now: Date,
-                       keep: Int = keep) throws -> URL {
+                       keep: Int = keep, beforeSchemaUpgrade: Bool = false) throws -> URL {
         let manager = FileManager.default
         try manager.createDirectory(at: folder, withIntermediateDirectories: true)
-        let destination = folder.appendingPathComponent("threads-\(utcDay(now)).sqlite",
-                                                        isDirectory: false)
-        let target = try DatabaseQueue(path: destination.path)
+        let kind = beforeSchemaUpgrade ? "schema" : "daily"
+        let destination = folder.appendingPathComponent(
+            "threads-\(stamp(now))-\(kind)-\(UUID().uuidString).sqlite")
+        let candidate = stagingURL(for: destination)
+        defer { removeCandidate(candidate) }
+        let expected = try pool.read { try ThreadStoreSchemaProof.validate($0) }
+        let target = try DatabaseQueue(path: candidate.path)
         do {
             try pool.backup(to: target)
+            try target.read { db in
+                try ThreadStoreSchemaProof.verifyIntegrity(db)
+                guard try ThreadStoreSchemaProof.validate(db) == expected else {
+                    throw failure("Backup schema changed while taking the snapshot.")
+                }
+            }
             try target.close()
-        } catch {
-            try? target.close()
-            throw error
-        }
-        try pool.write { db in
-            try db.execute(
-                sql: "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
-                arguments: [lastBackupKey, iso(now)])
-        }
-        for old in try backups(in: folder).dropFirst(keep) {
-            try manager.removeItem(at: old)
+        } catch { try? target.close(); throw error }
+        try makeStandalone(candidate)
+        try manager.moveItem(at: candidate, to: destination)
+        try synchronizeDirectory(folder)
+        if !beforeSchemaUpgrade {
+            try pool.write { db in
+                try db.execute(sql: "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
+                               arguments: [lastBackupKey, iso(now)])
+            }
+            for old in try backups(in: folder).filter({ !$0.lastPathComponent.contains("-schema-") }).dropFirst(max(1, keep)) {
+                try manager.removeItem(at: old)
+            }
         }
         return destination
     }
 
-    /// `nil` when `store_meta`'s `last_backup_at` falls on the same calendar
-    /// day (UTC) as `now`; otherwise the new backup's path.
     static func backupIfDue(pool: DatabasePool, into folder: URL, now: Date,
                             keep: Int = keep) throws -> URL? {
         let last = try pool.read { db in
-            try String.fetchOne(
-                db, sql: "SELECT value FROM store_meta WHERE key = ?",
-                arguments: [lastBackupKey])
+            try String.fetchOne(db, sql: "SELECT value FROM store_meta WHERE key = ?", arguments: [lastBackupKey])
         }
         if let last, let lastDate = ISO8601DateFormatter().date(from: last),
-           utcDay(lastDate) == utcDay(now) {
-            return nil
-        }
+           utcDay(lastDate) == utcDay(now) { return nil }
         return try backup(pool: pool, into: folder, now: now, keep: keep)
     }
 
-    /// The `threads-*.sqlite` files newest first, by name, which sorts by date
-    /// because the name is the date. A folder that is not there reads as none.
     static func backups(in folder: URL) throws -> [URL] {
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else {
-            return []
-        }
-        return names
+        guard FileManager.default.fileExists(atPath: folder.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(atPath: folder.path)
             .filter { $0.hasPrefix("threads-") && $0.hasSuffix(".sqlite") }
-            .sorted(by: >)
-            .map { folder.appendingPathComponent($0, isDirectory: false) }
+            .sorted(by: >).map { folder.appendingPathComponent($0) }
     }
 
-    /// Replaces `threads.sqlite` with a copy of the backup, leaving any
-    /// `.damaged-` file where it is. The copy is brought out of write-ahead
-    /// logging so it stands alone without sidecar files; a backup that was
-    /// opened once has left `-wal`/`-shm` beside it, and the read-only check
-    /// cannot open a WAL file that has none.
+    /// A restore is built beside the live file. Never truncate the destination
+    /// (or the backup) to discover afterwards that the source was unusable.
     static func restore(_ backup: URL, to url: URL, now: Date) throws {
-        let manager = FileManager.default
-        try? manager.removeItem(at: url)
-        for suffix in ["-wal", "-shm"] {
-            try? manager.removeItem(at: URL(fileURLWithPath: url.path + suffix))
-        }
-        try manager.copyItem(at: backup, to: url)
-        let queue = try DatabaseQueue(path: url.path)
+        let candidate = stagingURL(for: url)
+        defer { removeCandidate(candidate) }
+        var configuration = Configuration()
+        configuration.readonly = true
+        let source = try DatabaseQueue(path: backup.path, configuration: configuration)
+        let target = try DatabaseQueue(path: candidate.path)
         do {
-            try queue.writeWithoutTransaction { db in
-                try db.execute(sql: "PRAGMA journal_mode = DELETE")
+            try source.read { db in
+                try ThreadStoreSchemaProof.verifyIntegrity(db)
+                try ThreadStoreSchemaProof.validate(db)
             }
-            try queue.close()
-        } catch {
-            try? queue.close()
-            throw error
-        }
+            try source.backup(to: target)
+            try source.close()
+            try target.close()
+        } catch { try? source.close(); try? target.close(); throw error }
+        _ = try finishCandidate(candidate)
+        try publish(candidate, to: url, now: now)
     }
 
-    /// Runs the system `sqlite3` `.recover` of the damaged file into
-    /// `destination`, then opens that file through `ThreadDatabase` and counts
-    /// the rows in `threads` and `items` so the report is measured. When
-    /// `sqlite3` is missing or fails it refuses with `not_supported` and the
-    /// program's own message.
     static func repair(from damaged: URL, to destination: URL) throws -> RepairReport {
         let manager = FileManager.default
-        try? manager.removeItem(at: destination)
-        for suffix in ["-wal", "-shm"] {
-            try? manager.removeItem(at: URL(fileURLWithPath: destination.path + suffix))
-        }
-        let dump = try runSQLite([damaged.path, ".recover"])
-        let dumpFile = manager.temporaryDirectory
-            .appendingPathComponent("v1-thread-repair-\(UUID().uuidString).sql", isDirectory: false)
+        let candidate = stagingURL(for: destination)
+        defer { removeCandidate(candidate) }
+        // A repair must not resurrect deleted records from SQLite's freelist.
+        let dump = try runSQLite(["-readonly", damaged.path, ".recover --ignore-freelist"])
+        let dumpFile = manager.temporaryDirectory.appendingPathComponent("v1-thread-repair-\(UUID().uuidString).sql")
         try dump.write(to: dumpFile)
         defer { try? manager.removeItem(at: dumpFile) }
-        _ = try runSQLite([destination.path], inputFile: dumpFile)
-        guard manager.fileExists(atPath: destination.path) else {
-            throw ThreadStoreError(code: .notSupported,
-                                   message: "sqlite3 wrote no repaired file")
-        }
-        try markMigrationsApplied(at: destination)
-        let pool = try ThreadDatabase.open(at: destination)
-        defer { try? pool.close() }
-        let threads = try pool.read { db in
-            try Int.fetchOne(db, sql: "SELECT count(*) FROM threads") ?? 0
-        }
-        let items = try pool.read { db in
-            try Int.fetchOne(db, sql: "SELECT count(*) FROM items") ?? 0
-        }
-        return RepairReport(threads: threads, items: items)
+        _ = try runSQLite(["-bail", candidate.path], inputFile: dumpFile)
+        guard manager.fileExists(atPath: candidate.path) else { throw failure("sqlite3 wrote no repaired file") }
+        let queue = try DatabaseQueue(path: candidate.path)
+        do {
+            try ThreadStoreSchemaProof.reconstructRecoveredLedger(queue)
+            try queue.close()
+        } catch { try? queue.close(); throw error }
+        let report = try finishCandidate(candidate)
+        try publish(candidate, to: destination, now: Date())
+        return report
     }
 
-    // MARK: - the recovered schema and the migration ledger
+    static func startEmpty(at destination: URL, now: Date) throws {
+        let candidate = stagingURL(for: destination)
+        defer { removeCandidate(candidate) }
+        _ = try finishCandidate(candidate)
+        try publish(candidate, to: destination, now: now)
+    }
 
-    /// The schema `sqlite3 .recover` writes keeps every table, but the rows of
-    /// GRDB's migration ledger can sit on the page that was damaged, so the
-    /// recovered file would fail to migrate for a step whose table is already
-    /// there. This puts back the identifiers the migrator applies — learned by
-    /// applying the same migrator to an empty database — so
-    /// `ThreadDatabase.open` finds the schema already recorded and does not try
-    /// to create a table that survived.
-    private static func markMigrationsApplied(at destination: URL) throws {
-        let probe = try DatabaseQueue(path: ":memory:")
-        try StoreMigrations.migrator().migrate(probe)
-        let identifiers = try probe.read { db in
-            try String.fetchAll(
-                db, sql: "SELECT identifier FROM grdb_migrations ORDER BY rowid")
-        }
-        try probe.close()
-        let queue = try DatabaseQueue(path: destination.path)
+    private static func finishCandidate(_ url: URL) throws -> RepairReport {
+        let pool = try ThreadDatabase.open(at: url)
+        let report: RepairReport
         do {
-            try queue.write { db in
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS grdb_migrations
-                        (identifier TEXT NOT NULL PRIMARY KEY)
-                    """)
-                for identifier in identifiers {
-                    try db.execute(
-                        sql: "INSERT OR IGNORE INTO grdb_migrations (identifier) VALUES (?)",
-                        arguments: [identifier])
-                }
+            report = try pool.read { db in
+                try ThreadStoreSchemaProof.verifyIntegrity(db)
+                try ThreadStoreSchemaProof.validate(db)
+                return RepairReport(threads: try Int.fetchOne(db, sql: "SELECT count(*) FROM threads") ?? 0,
+                                    items: try Int.fetchOne(db, sql: "SELECT count(*) FROM items") ?? 0)
             }
-            try queue.close()
-        } catch {
-            try? queue.close()
-            throw error
+            try pool.close()
+        } catch { try? pool.close(); throw error }
+        try makeStandalone(url)
+        return report
+    }
+
+    private static func makeStandalone(_ url: URL) throws {
+        let queue = try DatabaseQueue(path: url.path)
+        defer { try? queue.close() }
+        try queue.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA journal_mode = DELETE")
         }
+    }
+
+    private static func publish(_ candidate: URL, to destination: URL, now: Date) throws {
+        if FileManager.default.fileExists(atPath: destination.path) {
+            _ = try setAside(at: destination, now: now)
+        }
+        // A stale WAL may never be paired with the replacement main file.
+        for suffix in ["-wal", "-shm"] {
+            guard !FileManager.default.fileExists(atPath: destination.path + suffix) else {
+                throw failure("Unpaired database sidecar remains; the replacement was not activated.")
+            }
+        }
+        try FileManager.default.moveItem(at: candidate, to: destination)
+        try synchronizeDirectory(destination.deletingLastPathComponent())
+    }
+
+    static func synchronizeDirectory(_ directory: URL) throws {
+        let descriptor = Darwin.open(directory.path, O_RDONLY)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { Darwin.close(descriptor) }
+        guard Darwin.fsync(descriptor) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    }
+
+    private static func stagingURL(for url: URL) -> URL {
+        url.deletingLastPathComponent().appendingPathComponent(".thread-store-\(UUID().uuidString).sqlite")
+    }
+
+    private static func removeCandidate(_ url: URL) {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            try? FileManager.default.removeItem(atPath: url.path + suffix)
+        }
+    }
+
+    private static func failure(_ message: String) -> ThreadStoreError {
+        ThreadStoreError(code: .notSupported, message: message)
     }
 
     // MARK: - the one thing here that starts a process
@@ -233,7 +258,10 @@ enum ThreadStoreHealth {
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         let stdout = Pipe()
-        let stderr = Pipe()
+        let errorURL = FileManager.default.temporaryDirectory.appendingPathComponent("vf-sqlite-\(UUID().uuidString).stderr")
+        FileManager.default.createFile(atPath: errorURL.path, contents: nil)
+        let stderr = try FileHandle(forWritingTo: errorURL)
+        defer { try? stderr.close(); try? FileManager.default.removeItem(at: errorURL) }
         process.standardOutput = stdout
         process.standardError = stderr
         if let inputFile {
@@ -246,8 +274,8 @@ enum ThreadStoreHealth {
                                    message: "sqlite3 could not start: \(error)")
         }
         let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errors = stderr.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        let errors = (try? Data(contentsOf: errorURL)) ?? Data()
         guard process.terminationStatus == 0 else {
             let message = String(decoding: errors, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -280,7 +308,7 @@ enum ThreadStoreHealth {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        formatter.dateFormat = "yyyy-MM-dd'T'HHmmssSSS"
         return formatter.string(from: date)
     }
 }

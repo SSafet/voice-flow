@@ -56,6 +56,14 @@ extension AppDelegate {
         guard let payload = qaObject(body) else {
             return .error(400, "Request body must be a JSON object.")
         }
+        if path.hasPrefix("/__qa/thread-store") {
+            return handleThreadStoreQA(method: method, path: path, payload: payload)
+        }
+        var ready = false
+        DispatchQueue.main.sync { ready = self.canonicalStoreReady }
+        guard ready || (method == "POST" && path == "/__qa/app/terminate") else {
+            return .error(503, "Thread history recovery must finish before normal app controls are available.")
+        }
         switch (method, path) {
         case ("POST", "/__qa/workspace"):
             DispatchQueue.main.sync {

@@ -24,21 +24,42 @@ enum ThreadDatabase {
             try db.execute(sql: "PRAGMA foreign_keys = ON")
         }
         let pool = try DatabasePool(path: url.path, configuration: configuration)
-        try StoreMigrations.migrator().migrate(pool)
-        return pool
+        do {
+            try pool.read { try ThreadStoreSchemaProof.validate($0) }
+            try StoreMigrations.migrator().migrate(pool)
+            try pool.read { try ThreadStoreSchemaProof.validate($0) }
+            return pool
+        } catch { try? pool.close(); throw error }
     }
 
     private static let lock = NSLock()
     private static var opened: DatabasePool?
 
-    /// The app's one pool, opened the first time it is asked for.
+    /// Canonical reads and sends cannot implicitly open an unverified store.
+    /// Only the launch/recovery path may install the app's pool.
     static func shared() throws -> DatabasePool {
         lock.lock()
         defer { lock.unlock() }
         if let opened { return opened }
-        let pool = try open(at: url(configRoot: VoiceFlowPaths.shared.configRoot))
+        throw ThreadStoreError(code: .notSupported, message: "Thread history is unavailable until store recovery completes.")
+    }
+
+    static func install(_ pool: DatabasePool, configRoot: URL) throws {
+        guard URL(fileURLWithPath: pool.path).standardizedFileURL == url(configRoot: configRoot).standardizedFileURL else {
+            throw ThreadStoreError(code: .notSupported, message: "The verified store is outside this app's configuration root.")
+        }
+        try pool.read { db in
+            try ThreadStoreSchemaProof.validate(db)
+            guard try StoreMigrations.migrator().hasCompletedMigrations(db) else {
+                throw ThreadStoreError(code: .notSupported, message: "The thread store still requires migration.")
+            }
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        guard opened == nil || opened === pool else {
+            throw ThreadStoreError(code: .notSupported, message: "The thread store is already open.")
+        }
         opened = pool
-        return pool
     }
 
     /// One line for the launch log and the About window. It reports what was

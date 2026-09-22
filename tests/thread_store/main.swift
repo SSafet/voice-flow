@@ -106,6 +106,15 @@ guard VoiceFlowPaths.shared.isIsolated else {
         Data("not ok - this check must run with VOICE_FLOW_CONFIG_ROOT set to a throwaway directory\n".utf8))
     exit(1)
 }
+var blocked = false
+do { _ = try ThreadDatabase.shared() } catch { blocked = true }
+require(blocked, "shared() refuses access before a verified launch")
+require(!FileManager.default.fileExists(atPath: ThreadDatabase.url(configRoot: VoiceFlowPaths.shared.configRoot).path),
+        "blocked access cannot silently create a database")
+guard case .ready(let verified, _) = try ThreadStoreLaunch.open(configRoot: VoiceFlowPaths.shared.configRoot, now: Date()) else {
+    fatalError("isolated empty launch must be ready")
+}
+try ThreadDatabase.install(verified, configRoot: VoiceFlowPaths.shared.configRoot)
 let sharedPool = try ThreadDatabase.shared()
 let sharedFile = URL(fileURLWithPath: sharedPool.path).standardizedFileURL
 guard VoiceFlowPaths.shared.contains(sharedFile),

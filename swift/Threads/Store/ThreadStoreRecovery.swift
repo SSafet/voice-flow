@@ -36,21 +36,27 @@ enum ThreadStoreRecovery {
     static func apply(_ choice: Choice, report: DamageReport, configRoot: URL,
                       now: Date) throws -> DatabasePool? {
         let storeURL = ThreadDatabase.url(configRoot: configRoot)
+        let pool: DatabasePool
         switch choice {
         case .restoreBackup(let backup):
             try ThreadStoreHealth.restore(backup, to: storeURL, now: now)
-            return try ThreadDatabase.open(at: storeURL)
+            pool = try ThreadDatabase.open(at: storeURL)
 
         case .repair:
             _ = try ThreadStoreHealth.repair(from: report.setAside, to: storeURL)
-            return try ThreadDatabase.open(at: storeURL)
+            pool = try ThreadDatabase.open(at: storeURL)
 
         case .startEmpty:
-            return try ThreadDatabase.open(at: storeURL)
+            try ThreadStoreHealth.startEmpty(at: storeURL, now: now)
+            pool = try ThreadDatabase.open(at: storeURL)
 
         case .showInFinder:
             ThreadStoreRecoveryWindow.revealInFinder(report.setAside)
             return nil
         }
+        do {
+            try ThreadStoreLaunch.completeRecovery(configRoot: configRoot)
+            return pool
+        } catch { try? pool.close(); throw error }
     }
 }

@@ -301,8 +301,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    var canonicalStoreReady = false
+    var threadStoreDamage: DamageReport?
+    var threadStoreLaunchError: String?
+    var threadStoreRecoveryWindow: ThreadStoreRecoveryWindow?
+    var threadStoreRecovering = false
+    let threadStoreRecoveryQueue = DispatchQueue(label: "voice-flow.thread-store-recovery", qos: .userInitiated)
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+#if VOICE_FLOW_QA
+        setupStoreQAControl()
+#endif
+        beginThreadStoreLaunch()
+    }
+
+    func finishApplicationLaunch() {
+        guard !canonicalStoreReady else { return }
+        canonicalStoreReady = true
         UserSettings.shared.load()
 
         setupUIComponents()
@@ -342,6 +358,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        guard canonicalStoreReady else {
+            localAPIServer?.stop()
+            return
+        }
         flushPushSave()
         sourceCollector?.stop()
         ttsController?.shutdown()
@@ -3396,17 +3416,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 
     private func setupLocalAPIServer() {
-        localAPIServer = LocalAPIServer()
+        if localAPIServer == nil { localAPIServer = LocalAPIServer() }
 #if VOICE_FLOW_QA
-        do {
-            localAPIServer.qaToken = try QAControlSecurity.installToken()
-            localAPIServer.onQA = { [weak self] method, path, body in
-                self?.handleQAControl(method: method, path: path, body: body)
-                    ?? LocalAPIResponse.error(503, "App not ready.")
-            }
-        } catch {
-            vflog("QA control disabled: \(error.localizedDescription)")
-        }
+        setupStoreQAControl()
 #endif
         localAPIServer.onServerMessage = { [weak self] message in
             DispatchQueue.main.async {
