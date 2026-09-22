@@ -1084,6 +1084,17 @@ final class ComputerControl {
     /// Multiply model (image) coordinates by this to get screen points.
     var imageToScreenScale: CGFloat = 1.0
 
+    /// Optional current-authority/cancellation boundary for the owned T3 host.
+    /// Existing callers keep the default nil checkpoint and normal CGEvent sink.
+    var checkpoint: (() throws -> Void)? { didSet { lastFailure = nil } }
+    private(set) var lastFailure: Error?
+    private let eventPoster: (CGEvent) -> Void
+    private var heldMouse: [CGMouseButton: CGPoint] = [:]
+    private var heldKeys: Set<CGKeyCode> = []
+    init(eventPoster: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) }) {
+        self.eventPoster = eventPoster
+    }
+
     private func screenPoint(_ imagePoint: CGPoint) -> CGPoint {
         CGPoint(x: imagePoint.x * imageToScreenScale, y: imagePoint.y * imageToScreenScale)
     }
@@ -1120,6 +1131,7 @@ final class ComputerControl {
         move(to: imagePoint)
         usleep(60_000)
         for clickState in 1...clicks {
+            guard lastFailure == nil else { break }
             let downEvent = CGEvent(mouseEventSource: source(), mouseType: down, mouseCursorPosition: point, mouseButton: button)
             let upEvent = CGEvent(mouseEventSource: source(), mouseType: up, mouseCursorPosition: point, mouseButton: button)
             downEvent?.setIntegerValueField(.mouseEventClickState, value: clickState)
@@ -1142,6 +1154,7 @@ final class ComputerControl {
 
         let steps = 12
         for step in 1...steps {
+            guard lastFailure == nil else { break }
             let t = CGFloat(step) / CGFloat(steps)
             let point = CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)
             post(CGEvent(mouseEventSource: source(), mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left))
@@ -1179,7 +1192,7 @@ final class ComputerControl {
         // Post unicode strings in small chunks — reliable across layouts.
         let characters = Array(text.utf16)
         var index = 0
-        while index < characters.count {
+        while index < characters.count && lastFailure == nil {
             let chunk = Array(characters[index..<min(index + 16, characters.count)])
             let down = CGEvent(keyboardEventSource: source(), virtualKey: 0, keyDown: true)
             down?.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
@@ -1212,7 +1225,37 @@ final class ComputerControl {
     }
 
     private func post(_ event: CGEvent?) {
-        event?.post(tap: .cghidEventTap)
+        guard lastFailure == nil else { return }
+        do {
+            try checkpoint?()
+            guard let event else { throw NSError(domain: "VoiceFlow.ComputerControl", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Input event could not be created."]) }
+            eventPoster(event)
+            switch event.type {
+            case .leftMouseDown: heldMouse[.left] = event.location
+            case .rightMouseDown: heldMouse[.right] = event.location
+            case .otherMouseDown: heldMouse[.center] = event.location
+            case .leftMouseUp: heldMouse.removeValue(forKey: .left)
+            case .rightMouseUp: heldMouse.removeValue(forKey: .right)
+            case .otherMouseUp: heldMouse.removeValue(forKey: .center)
+            case .leftMouseDragged: if heldMouse[.left] != nil { heldMouse[.left] = event.location }
+            case .keyDown: heldKeys.insert(CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode)))
+            case .keyUp: heldKeys.remove(CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode)))
+            default: break
+            }
+        } catch {
+            lastFailure = error
+            // Only release already-held inputs. Cancellation must never leave
+            // a mouse/key down, nor permit a later click/type/drag step.
+            for (button, point) in heldMouse {
+                let type: CGEventType = button == .left ? .leftMouseUp : button == .right ? .rightMouseUp : .otherMouseUp
+                if let release = CGEvent(mouseEventSource: source(), mouseType: type, mouseCursorPosition: point, mouseButton: button) { eventPoster(release) }
+            }
+            for key in heldKeys {
+                if let release = CGEvent(keyboardEventSource: source(), virtualKey: key, keyDown: false) { eventPoster(release) }
+            }
+            heldMouse.removeAll(); heldKeys.removeAll()
+        }
     }
 
     private func modifierFlags(from text: String?) -> CGEventFlags? {
