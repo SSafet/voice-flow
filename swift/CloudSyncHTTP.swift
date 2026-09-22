@@ -250,6 +250,16 @@ actor CloudHTTPClient {
         var pending = try vault.loadPending(origin: origin) ?? CloudPendingLogin(version: 1, origin: origin,
             state: challenge.state, email: challenge.email, privateKey: P256.Signing.PrivateKey().rawRepresentation, dispatched: false)
         guard pending.state == challenge.state, pending.email == challenge.email, !pending.dispatched else { throw CloudSyncError.loginUncertain }
+        // Gateway bounds strings by JavaScript UTF-16 length. Preserve whole
+        // characters while keeping a Unicode machine name within that limit.
+        var deviceLabel = ""
+        for character in label {
+            let candidate = deviceLabel + String(character)
+            guard candidate.utf16.count <= 100 else { break }
+            deviceLabel = candidate
+        }
+        guard !deviceLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !deviceLabel.contains("\0") else { throw CloudSyncError.invalidRecord }
         let key = try P256.Signing.PrivateKey(rawRepresentation: pending.privateKey)
         let publicKey = key.publicKey.derRepresentation.base64EncodedString()
         let proof = try key.signature(for: Data("\(challenge.state)|\(challenge.email)|\(publicKey)".utf8)).rawRepresentation.base64EncodedString()
@@ -258,7 +268,7 @@ actor CloudHTTPClient {
         let requestedAt = Date()
         do {
             let response: CloudAuthResponse = try await send("/api/v1/auth/native/login/complete", body: Body(state: challenge.state,
-                email: challenge.email, code: code, device: Device(label: String(label.prefix(100)), publicKey: publicKey, keyProof: proof)))
+                email: challenge.email, code: code, device: Device(label: deviceLabel, publicKey: publicKey, keyProof: proof)))
             try requireCurrent(expected)
             try validateResponse(response)
             guard let deviceID = response.deviceId, CloudWire.validID(deviceID), deviceID.count == 26,

@@ -43,6 +43,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (path === '/api/v1/auth/native/login/complete') {
       if (!exact(body, ['state', 'email', 'code', 'device']) || !exact(body.device, ['kind', 'label', 'publicKey', 'keyProof']) || body.device.kind !== 'desktop') throw Error('login shape');
+      if (!body.device.label.trim() || body.device.label.length > 100 || body.device.label.includes('\0')) throw Error('label bound');
       proof(body.device.publicKey, body.device.keyProof, `${body.state}|${body.email}|${body.device.publicKey}`);
       if (body.code !== '123456') { fail(res, 'auth.code_invalid'); return; }
       if (enrolled) { fail(res, 'validation.conflict', 409); return; }

@@ -58,7 +58,7 @@ private struct Fixture: Decodable {
     func fresh(_ vault: CloudCredentialVault, callback: (@Sendable () -> Void)? = nil) async throws -> (CloudHTTPClient, CloudCredentials) {
         let client = try CloudHTTPClient(origin: origin, vault: vault, allowLoopback: true, onInvalidation: callback)
         let challenge = try await client.start(email: "FIXTURE@example.invalid")
-        let credential = try await client.complete(challenge: challenge, code: "123456", label: "Isolated test")
+        let credential = try await client.complete(challenge: challenge, code: "123456", label: String(repeating: "🎙️", count: 100))
         return (client, credential)
     }
     func restart(_ credential: CloudCredentials, _ vault: CloudCredentialVault, callback: (@Sendable () -> Void)? = nil) throws -> CloudHTTPClient {
