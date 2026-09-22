@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 
 /// Where a thread's turns will run: the project's own folder, or a worktree
 /// under the configuration root named by the contract's one branch-name
@@ -77,7 +78,7 @@ final class ProjectRegistry {
                 gitRemote: String?) throws -> TPProject {
         try settled(commandID: commandID, method: "project/create",
                     params: ["name": name, "path": path,
-                             "gitRemote": jsonOrNull(gitRemote)]) {
+                             "gitRemote": jsonOrNull(gitRemote)]) { db in
             guard self.folderExists(at: path) else {
                 throw ThreadStoreError(code: .notFound, message: "folder not found: \(path)")
             }
@@ -89,7 +90,7 @@ final class ProjectRegistry {
                 gitRemote: probedRemote ?? gitRemote, homeID: StoreHome.marker,
                 id: self.newID(), isGeneral: false, name: name, path: path,
                 remoteAccess: .readWrite, version: 1)
-            try self.store.upsertProject(project)
+            try self.store.upsertProject(project, in: db)
             return project
         }
     }
@@ -101,8 +102,8 @@ final class ProjectRegistry {
         try settled(commandID: commandID, method: "project/update",
                     params: ["projectID": projectID, "name": jsonOrNull(name),
                              "archived": jsonOrNull(archived),
-                             "remoteAccess": jsonOrNull(remoteAccess)]) {
-            let current = try self.project(projectID)
+                             "remoteAccess": jsonOrNull(remoteAccess)]) { db in
+            let current = try self.project(projectID, in: db)
             let archivedAt: String?
             if let archived {
                 archivedAt = archived ? self.timestamp() : nil
@@ -113,7 +114,7 @@ final class ProjectRegistry {
                                     name: name ?? current.name,
                                     remoteAccess: remoteAccess ?? current.remoteAccess,
                                     version: current.version + 1)
-            try self.store.upsertProject(updated)
+            try self.store.upsertProject(updated, in: db)
             return updated
         }
     }
@@ -122,11 +123,11 @@ final class ProjectRegistry {
     /// `deletedAt` and never touches the folder. Its threads stay readable.
     func remove(commandID: String, projectID: String) throws -> TPProject {
         try settled(commandID: commandID, method: "project/remove",
-                    params: ["projectID": projectID]) {
-            let current = try self.project(projectID)
+                    params: ["projectID": projectID]) { db in
+            let current = try self.project(projectID, in: db)
             let removed = self.copy(current, archivedAt: .some(self.timestamp()),
                                     version: current.version + 1)
-            try self.store.upsertProject(removed)
+            try self.store.upsertProject(removed, in: db)
             return removed
         }
     }
@@ -138,8 +139,8 @@ final class ProjectRegistry {
     /// path under the new one, keeping its kind, branch, baseCommit and rootId.
     func relocate(commandID: String, projectID: String, path: String) throws -> TPProject {
         try settled(commandID: commandID, method: "project/relocate",
-                    params: ["projectID": projectID, "path": path]) {
-            let current = try self.project(projectID)
+                    params: ["projectID": projectID, "path": path]) { db in
+            let current = try self.project(projectID, in: db)
             guard self.folderExists(at: path) else {
                 throw ThreadStoreError(code: .notFound, message: "folder not found: \(path)")
             }
@@ -149,9 +150,9 @@ final class ProjectRegistry {
                                         self.git.defaultBranch(at: folder)),
                                       gitRemote: .some(self.git.remote(at: folder)),
                                       path: path, version: current.version + 1)
-            try self.store.upsertProject(relocated)
+            try self.store.upsertProject(relocated, in: db)
             try self.rewriteWorkspaces(projectID: projectID,
-                                       from: current.path, to: path)
+                                       from: current.path, to: path, in: db)
             return relocated
         }
     }
@@ -162,6 +163,13 @@ final class ProjectRegistry {
     /// unknown id. A read writes nothing and raises no version.
     func project(_ id: String) throws -> TPProject {
         guard let stored = try store.project(id) else {
+            throw ThreadStoreError(code: .notFound, message: "no project \(id)")
+        }
+        return measured(stored)
+    }
+
+    private func project(_ id: String, in db: Database) throws -> TPProject {
+        guard let stored = try store.project(id, in: db) else {
             throw ThreadStoreError(code: .notFound, message: "no project \(id)")
         }
         return measured(stored)
@@ -217,19 +225,15 @@ final class ProjectRegistry {
     /// answers the project the ledger holds. The work encodes the project it
     /// wrote; a repeat is answered from that record without running again.
     private func settled(commandID: String, method: String, params: [String: Any],
-                         work: () throws -> TPProject) throws -> TPProject {
+                         work: (Database) throws -> TPProject) throws -> TPProject {
         let data = try JSONSerialization.data(withJSONObject: params, options: [.sortedKeys])
         let settlement = try store.settle(
             commandID: commandID, threadID: nil, method: method, params: data,
-            run: { Data(try ThreadRecords.encode(work()).utf8) })
-        guard let object = try JSONSerialization.jsonObject(with: settlement.result)
-                as? [String: Any],
-              let id = object["id"] as? String else {
-            throw ThreadStoreError(
-                code: .invalidParams,
-                message: "project command \(commandID) recorded no project id")
-        }
-        return try project(id)
+            run: { db in Data(try ThreadRecords.encode(work(db)).utf8) })
+        // Return the result this command committed, even when a later command
+        // has changed the project. Only folder availability is measured anew.
+        return measured(try ThreadRecords.decodeProject(
+            String(decoding: settlement.result, as: UTF8.self), homeID: store.homeID))
     }
 
     // MARK: - thread workspaces
@@ -238,8 +242,8 @@ final class ProjectRegistry {
     /// `oldPath` under `newPath` in one batch, keeping its kind, branch,
     /// baseCommit and rootId. A thread outside the old path is left alone.
     private func rewriteWorkspaces(projectID: String, from oldPath: String,
-                                   to newPath: String) throws {
-        let threads = try store.threads(includeArchived: true)
+                                   to newPath: String, in db: Database) throws {
+        let threads = try store.threads(in: db, includeArchived: true)
         var writes: [ThreadWrite] = []
         for thread in threads where thread.projectID == projectID {
             guard let movedPath = moved(thread.workspaceRoot.path,
@@ -254,7 +258,7 @@ final class ProjectRegistry {
             writes.append(.thread(copy(thread, workspaceRoot: root)))
         }
         guard !writes.isEmpty else { return }
-        try store.apply(writes)
+        try store.apply(writes, in: db)
     }
 
     /// The same path under the new root, or nothing when it was not under the

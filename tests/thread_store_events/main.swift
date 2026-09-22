@@ -1,9 +1,27 @@
 import Foundation
 import GRDB
+import CryptoKit
+import Darwin
 
 // V1, task 2 — the per-thread event log, the two sequence numbers, the one
 // transaction, adoption of cloud turns, the text rules, search, deletion and
 // the command ledger (06 §3.2; 06 §4 "Provides to 01").
+
+// Exit without unwinding to simulate process death after a canonical write
+// but before settlement. The parent created the isolated store and checks it.
+if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--crash-command" {
+    let crashRoot = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+    let (_, crashingStore) = try openStore(configRoot: crashRoot)
+    _ = try crashingStore.settle(commandID: "cmd_crash", threadID: "t_one",
+                                method: "thread/send", params: Data("{}".utf8)) { db in
+        try crashingStore.apply([
+            .itemCompleted(makeItem(id: "i_crash", turnID: "turn_1", threadID: "t_one",
+                                    text: String(repeating: "c", count: 220_000)))
+        ], in: db)
+        _exit(73)
+    }
+    fatalError("crash probe unexpectedly returned")
+}
 
 let root = makeConfigRoot("v1-events")
 defer { try? fixtureFileManager.removeItem(at: root) }
@@ -199,6 +217,92 @@ require(cleaned[0].payload.item?.text == "before\u{FFFD}after",
         "cleanText replaces it with the replacement character and changes nothing else")
 ok("long text is cut and kept whole, and every text is cleaned after the cut")
 
+// The filesystem is not transactional. A failed replacement must leave the
+// bytes the original row/event names unchanged, not just roll back SQL.
+func fileHash(_ path: String) throws -> String {
+    SHA256.hash(data: try Data(contentsOf: URL(fileURLWithPath: path)))
+        .map { String(format: "%02x", $0) }.joined()
+}
+let originalAttachment = longAttachments[0]
+let originalPath = originalAttachment.localPath!
+let originalHash = try fileHash(originalPath)
+require(originalHash == originalAttachment.attachment.sha256, "original full text has its recorded hash")
+let attachmentFolder = URL(fileURLWithPath: originalPath).deletingLastPathComponent()
+let filesBeforeEdit = try fixtureFileManager.contentsOfDirectory(atPath: attachmentFolder.path).sorted()
+let textBeforeEdit = try store.open(threadID: "t_one", sinceSeq: nil).items.first { $0.id == "i_long" }
+let seqBeforeEdit = try store.lastSeq(threadID: "t_one")
+let replacementText = String(repeating: "z", count: long.utf8.count)
+sink.failNext = true
+requireRefusal(.invalidParams, "failed overflow edit rolls back") {
+    try store.apply([.itemUpdated(makeItem(id: "i_long", turnID: "turn_1", threadID: "t_one",
+                                         kind: .assistantMessage, text: replacementText))])
+}
+try pool.write { _ in } // Drain cleanup queued after the failed transaction.
+require(try fileHash(originalPath) == originalHash, "rollback never overwrites the original file")
+require(try store.lastSeq(threadID: "t_one") == seqBeforeEdit, "overflow rollback preserves the event counter")
+require(try store.open(threadID: "t_one", sinceSeq: nil).items.first { $0.id == "i_long" } == textBeforeEdit,
+        "overflow rollback preserves the canonical item")
+require(try fixtureFileManager.contentsOfDirectory(atPath: attachmentFolder.path).sorted() == filesBeforeEdit,
+        "rollback removes only the new unpublished overflow file")
+let replaced = try store.apply([.itemUpdated(makeItem(
+    id: "i_long", turnID: "turn_1", threadID: "t_one", kind: .assistantMessage, text: replacementText))])
+let replacementID = replaced[0].payload.item!.fullTextAttachmentID!
+require(replacementID != fullID, "each changed overflow revision has a distinct attachment identity")
+let replacement = try store.attachments(threadID: "t_one").first { $0.attachment.id == replacementID }!
+require(try fileHash(replacement.localPath!) == replacement.attachment.sha256,
+        "the replacement file matches its committed SHA-256")
+require(try fileHash(originalPath) == originalHash, "successful edit retains old event attachment bytes")
+require(try store.events(threadID: "t_one", afterSeq: 0).contains {
+    $0.payload.item?.fullTextAttachmentID == fullID
+}, "the old committed event still resolves its immutable full text")
+
+// A separate store handle reusing committed bytes must not delete them if its
+// transaction fails. Both handles publish under the same SQLite writer lock.
+let (secondPool, secondStore) = try openStore(configRoot: root)
+let secondSink = RecordingEventSink()
+secondStore.eventSink = secondSink
+secondSink.failNext = true
+requireRefusal(.invalidParams, "failed same-content write from another store handle") {
+    try secondStore.apply([.itemUpdated(makeItem(id: "i_long", turnID: "turn_1", threadID: "t_one",
+                                               kind: .assistantMessage, text: replacementText))])
+}
+require(try fileHash(replacement.localPath!) == replacement.attachment.sha256,
+        "rollback on another handle does not delete shared committed bytes")
+require(try fileHash(originalPath) == originalHash, "all committed revisions retain their hashes")
+
+// Force the exact cross-pool cleanup race: the failed writer releases its
+// SQLite lock, a second writer commits the same bytes, then rollback cleanup
+// resumes. Cleanup must recheck references under a new writer transaction.
+let rollbackUnlocked = DispatchSemaphore(value: 0)
+let publicationCommitted = DispatchSemaphore(value: 0)
+let publicationDone = DispatchSemaphore(value: 0)
+let publicationItem = makeItem(id: "i_publication_race", turnID: "turn_1", threadID: "t_one",
+                               text: String(repeating: "p", count: 220_000))
+DispatchQueue.global().async {
+    defer { publicationDone.signal() }
+    do {
+        try pool.write { db in
+            db.afterNextTransaction(onCommit: { _ in }, onRollback: { _ in
+                rollbackUnlocked.signal()
+                require(publicationCommitted.wait(timeout: .now() + 5) == .success,
+                        "another pool committed while rollback cleanup was paused")
+            })
+            try store.apply([.itemCompleted(publicationItem)], in: db)
+            throw ThreadStoreError(code: .invalidParams, message: "injected publication rollback")
+        }
+        require(false, "publication failure must propagate")
+    } catch { }
+}
+require(rollbackUnlocked.wait(timeout: .now() + 5) == .success, "rollback released writer lock before cleanup")
+try secondStore.apply([.itemCompleted(publicationItem)])
+publicationCommitted.signal()
+require(publicationDone.wait(timeout: .now() + 5) == .success, "rollback cleanup completed")
+try pool.write { _ in }
+let sharedPublication = try secondStore.attachments(threadID: "t_one").first { $0.itemID == publicationItem.id }!
+require(try fileHash(sharedPublication.localPath!) == sharedPublication.attachment.sha256,
+        "rollback cleanup cannot delete bytes another pool committed while the lock was released")
+ok("overflow edit failure preserves original SHA-256, and committed revisions remain immutable")
+
 // ---------------------------------------------------------------- search
 
 _ = try store.apply([
@@ -223,11 +327,11 @@ ok("the full-text index answers index/search and its threadId filter")
 // first result, whichever door it came through.
 var ran = 0
 let params = Data(#"{"threadId":"t_one","text":"go"}"#.utf8)
-let first = try store.settle(commandID: "cmd_1", threadID: "t_one", method: "thread/send", params: params) {
+let first = try store.settle(commandID: "cmd_1", threadID: "t_one", method: "thread/send", params: params) { _ in
     ran += 1
     return Data(#"{"turnId":"turn_9"}"#.utf8)
 }
-let second = try store.settle(commandID: "cmd_1", threadID: "t_one", method: "thread/send", params: params) {
+let second = try store.settle(commandID: "cmd_1", threadID: "t_one", method: "thread/send", params: params) { _ in
     ran += 1
     return Data(#"{"turnId":"turn_DIFFERENT"}"#.utf8)
 }
@@ -238,7 +342,7 @@ require(second.result == first.result, "the second call answers with the first r
 // The same command id with different parameters is a mistake, not a repeat.
 requireRefusal(.invalidParams, "the same commandId with different parameters") {
     _ = try store.settle(commandID: "cmd_1", threadID: "t_one", method: "thread/send",
-                         params: Data(#"{"threadId":"t_one","text":"something else"}"#.utf8)) {
+                         params: Data(#"{"threadId":"t_one","text":"something else"}"#.utf8)) { _ in
         Data("{}".utf8)
     }
 }
@@ -246,16 +350,149 @@ requireRefusal(.invalidParams, "the same commandId with different parameters") {
 // A command whose work fails is not remembered, so it can be sent again.
 var failed = false
 do {
-    _ = try store.settle(commandID: "cmd_2", threadID: "t_one", method: "thread/stop", params: params) {
+    _ = try store.settle(commandID: "cmd_2", threadID: "t_one", method: "thread/stop", params: params) { _ in
         throw ThreadStoreError(code: .runtimeUnavailable, message: "OpenCode is not running")
     }
 } catch { failed = true }
 require(failed, "the failure reached the caller")
-let retried = try store.settle(commandID: "cmd_2", threadID: "t_one", method: "thread/stop", params: params) {
+let retried = try store.settle(commandID: "cmd_2", threadID: "t_one", method: "thread/stop", params: params) { _ in
     Data(#"{"stopped":true}"#.utf8)
 }
 require(retried.repeated == false, "a command whose work failed is not settled and can be sent again")
 ok("each command takes effect once per commandId and a repeat returns the first result")
+
+for (method, threadID) in [("thread/stop", "t_one"), ("thread/send", "t_two")] {
+    requireRefusal(.invalidParams, "command identity includes method and thread") {
+        _ = try store.settle(commandID: "cmd_1", threadID: threadID, method: method, params: params) { _ in
+            fatalError("a mismatched command identity must never execute")
+        }
+    }
+}
+
+// Fail the last SQL statement, after rows, files, events and an actual outbox
+// row have been written. All canonical effects must roll back with settlement.
+final class TransactionalTestSink: ThreadEventSink {
+    func append(_ events: [StoredEvent], in db: Database) throws {
+        for event in events {
+            try db.execute(sql: "INSERT INTO integrity_outbox (thread_id, seq) VALUES (?, ?)",
+                           arguments: [event.threadID, event.seq])
+        }
+    }
+}
+try pool.write { db in
+    try db.execute(sql: "CREATE TABLE integrity_outbox (thread_id TEXT, seq INTEGER)")
+    try db.execute(sql: """
+        CREATE TRIGGER reject_settlement BEFORE INSERT ON thread_commands
+        WHEN NEW.command_id = 'cmd_rollback' BEGIN
+            SELECT RAISE(ABORT, 'injected settlement failure');
+        END
+        """)
+}
+store.eventSink = TransactionalTestSink()
+let seqBeforeSettlement = try store.lastSeq(threadID: "t_one")
+let filesBeforeSettlement = try fixtureFileManager.contentsOfDirectory(atPath: attachmentFolder.path).sorted()
+var settlementFailed = false
+do {
+    _ = try store.settle(commandID: "cmd_rollback", threadID: "t_one",
+                         method: "thread/send", params: Data("{}".utf8)) { db in
+        try store.apply([.itemCompleted(makeItem(id: "i_rollback", turnID: "turn_1", threadID: "t_one",
+                                                text: replacementText))], in: db)
+        return Data("{}".utf8)
+    }
+} catch { settlementFailed = true }
+require(settlementFailed, "injected late settlement failure is reported")
+try pool.write { _ in }
+try pool.read { db in
+    require(try Int.fetchOne(db, sql: "SELECT count(*) FROM items WHERE id = 'i_rollback'") == 0,
+            "settlement failure rolls back canonical rows")
+    require(try Int.fetchOne(db, sql: "SELECT count(*) FROM thread_commands WHERE command_id = 'cmd_rollback'") == 0,
+            "failed command is not settled")
+    require(try Int.fetchOne(db, sql: "SELECT count(*) FROM integrity_outbox") == 0,
+            "settlement failure rolls back the outbox")
+}
+require(try store.lastSeq(threadID: "t_one") == seqBeforeSettlement,
+        "settlement failure rolls back events and their counters")
+require(try fixtureFileManager.contentsOfDirectory(atPath: attachmentFolder.path).sorted() == filesBeforeSettlement,
+        "settlement rollback cleans only its new overflow file")
+try pool.write { db in try db.execute(sql: "DROP TRIGGER reject_settlement") }
+store.eventSink = sink
+
+final class CommandRaceResults: @unchecked Sendable {
+    let lock = NSLock()
+    private(set) var workCount = 0
+    private(set) var results: [CommandSettlement] = []
+    private(set) var failures: [String] = []
+    func ran() { lock.lock(); defer { lock.unlock() }; workCount += 1 }
+    func record(_ result: CommandSettlement) { lock.lock(); defer { lock.unlock() }; results.append(result) }
+    func record(_ error: Error) { lock.lock(); defer { lock.unlock() }; failures.append(String(describing: error)) }
+}
+let race = CommandRaceResults()
+let firstEntered = DispatchSemaphore(value: 0)
+let releaseFirst = DispatchSemaphore(value: 0)
+let secondStarted = DispatchSemaphore(value: 0)
+let bothDone = DispatchGroup()
+bothDone.enter()
+DispatchQueue.global().async {
+    defer { bothDone.leave() }
+    do {
+        race.record(try store.settle(commandID: "cmd_concurrent", threadID: "t_one",
+                                    method: "thread/send", params: Data("{}".utf8)) { db in
+            race.ran()
+            firstEntered.signal()
+            guard releaseFirst.wait(timeout: .now() + 5) == .success else {
+                throw ThreadStoreError(code: .invalidParams, message: "concurrency probe timed out")
+            }
+            try store.apply([.itemCompleted(makeItem(id: "i_concurrent", turnID: "turn_1", threadID: "t_one"))], in: db)
+            return Data(#"{"accepted":true}"#.utf8)
+        })
+    } catch { race.record(error) }
+}
+require(firstEntered.wait(timeout: .now() + 5) == .success, "first command holds writer transaction")
+bothDone.enter()
+DispatchQueue.global().async {
+    defer { bothDone.leave() }
+    secondStarted.signal()
+    do {
+        race.record(try secondStore.settle(commandID: "cmd_concurrent", threadID: "t_one",
+                                          method: "thread/send", params: Data("{}".utf8)) { _ in
+            race.ran()
+            return Data(#"{"wrong":true}"#.utf8)
+        })
+    } catch { race.record(error) }
+}
+require(secondStarted.wait(timeout: .now() + 5) == .success, "duplicate attempts settlement concurrently")
+Thread.sleep(forTimeInterval: 0.1)
+releaseFirst.signal()
+require(bothDone.wait(timeout: .now() + 10) == .success, "both concurrent callers complete")
+require(race.failures.isEmpty, "concurrent duplicate waits rather than fails: \(race.failures)")
+require(race.workCount == 1, "concurrent duplicate work executes once across two store handles")
+require(race.results.count == 2 && race.results.filter(\.repeated).count == 1,
+        "one caller executes and one replays its settlement")
+require(Set(race.results.map(\.result)).count == 1, "concurrent callers receive identical original results")
+
+let seqBeforeCrash = try store.lastSeq(threadID: "t_one")
+let crash = Process()
+crash.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+crash.arguments = ["--crash-command", root.path]
+try crash.run()
+crash.waitUntilExit()
+require(crash.terminationStatus == 73, "child died at the pre-settlement failure boundary")
+require(try store.lastSeq(threadID: "t_one") == seqBeforeCrash, "process death cannot commit only the mutation")
+try pool.read { db in
+    require(try Int.fetchOne(db, sql: "SELECT count(*) FROM items WHERE id = 'i_crash'") == 0,
+            "process death rolls back the accepted item")
+    require(try Int.fetchOne(db, sql: "SELECT count(*) FROM thread_commands WHERE command_id = 'cmd_crash'") == 0,
+            "process death leaves no false settlement")
+}
+let afterCrash = try store.settle(commandID: "cmd_crash", threadID: "t_one",
+                                method: "thread/send", params: Data("{}".utf8)) { db in
+    try store.apply([.itemCompleted(makeItem(id: "i_crash", turnID: "turn_1", threadID: "t_one",
+                                            text: String(repeating: "c", count: 220_000)))], in: db)
+    return Data("{}".utf8)
+}
+require(!afterCrash.repeated, "a process-death rollback can be retried")
+require(try fileHash(originalPath) == originalHash, "process death and retry preserve original attachment hash")
+ok("late failure and process death roll back commands; concurrent duplicates execute once across pools")
 
 // --------------------------------------------------------------- deletion
 

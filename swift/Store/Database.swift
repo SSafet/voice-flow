@@ -17,6 +17,9 @@ enum ThreadDatabase {
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         var configuration = Configuration()
+        // A second store handle waits for the canonical writer transaction,
+        // then reads its settlement instead of racing or failing immediately.
+        configuration.busyMode = .timeout(5)
         configuration.prepareDatabase { db in
             try db.execute(sql: "PRAGMA foreign_keys = ON")
         }

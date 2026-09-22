@@ -1078,6 +1078,7 @@
     { "id": "tests/thread_protocol_sync/test.sh", "runner": "unit", "suites": ["thread_protocol_sync"] },
     { "id": "tests/thread_store/main.swift", "runner": "unit", "suites": ["thread_store"] },
     { "id": "tests/thread_store_records/test.sh", "runner": "unit", "suites": ["thread_store_records"] },
+    { "id": "tests/test_thread_store_runner.py", "runner": "unit", "suites": ["thread_store_records"] },
     { "id": "tests/thread_store_events/test.sh", "runner": "unit", "suites": ["thread_store_events"] },
     { "id": "tests/thread_store_projects/test.sh", "runner": "unit", "suites": ["thread_store_projects"] },
     { "id": "tests/thread_store_recovery/test.sh", "runner": "unit", "suites": ["thread_store_recovery"] },

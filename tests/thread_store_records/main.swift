@@ -107,7 +107,7 @@ let checkpoints = TPTurnCheckpoints(after: "refs/atika/checkpoints/t_one/after",
 let changed = [TPChangedFile(added: 12, path: "swift/Threads/Store/ThreadStore.swift", removed: 3)]
 let turn = makeTurn(id: "turn_one", threadID: "t_one", status: .interrupted,
                     git: git, checkpoints: checkpoints, changedFiles: changed,
-                    stopReason: .cancelled)
+                    stopReason: .cancelled, reasoningEffort: "max")
 _ = try store.apply([.turn(turn)])
 let openedForTurn = try store.open(threadID: "t_one", sinceSeq: nil)
 let storedTurn = openedForTurn.turns.first { $0.id == "turn_one" }
@@ -118,6 +118,7 @@ require(storedTurn?.changedFiles == changed, "the turn's changed files are store
 require(storedTurn?.stopReason == .cancelled, "the stop reason is stored")
 require(storedTurn?.startedBy.kind == .user, "startedBy is stored")
 require(storedTurn?.ranOn.label == "Mac mini", "ranOn says which Mac ran the turn")
+require(storedTurn?.reasoningEffort == "max", "accepted turn effort survives canonical storage")
 ok("Project, Thread and Turn are stored exactly as the contract writes them")
 
 // ------------------------------------------------------ the queried columns

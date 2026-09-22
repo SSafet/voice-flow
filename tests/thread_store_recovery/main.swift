@@ -100,7 +100,7 @@ ok("a launch takes the day's backup when one is due")
 
 // --------------------------------------------------------------- damage
 
-try firstPool.write { db in try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)") }
+try firstPool.writeWithoutTransaction { db in try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)") }
 try firstPool.close()
 
 let sizeBefore = try fixtureFileManager.attributesOfItem(atPath: storeURL.path)[.size] as? Int ?? 0
@@ -165,7 +165,7 @@ let emptyRoot = makeConfigRoot("v1-recovery-empty")
 defer { try? fixtureFileManager.removeItem(at: emptyRoot) }
 let emptyURL = ThreadDatabase.url(configRoot: emptyRoot)
 let seedPool = try ThreadDatabase.open(at: emptyURL)
-try seedPool.write { db in try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)") }
+try seedPool.writeWithoutTransaction { db in try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)") }
 try seedPool.close()
 try damage(emptyURL, atOffset: 0, bytes: 2048, value: 0x00)
 

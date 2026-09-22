@@ -167,13 +167,14 @@ func makeTurn(
     git: TPTurnGit? = nil,
     checkpoints: TPTurnCheckpoints? = nil,
     changedFiles: [TPChangedFile]? = nil,
-    stopReason: TPStopReason? = .endTurn
+    stopReason: TPStopReason? = .endTurn,
+    reasoningEffort: String? = nil
 ) -> TPTurn {
     TPTurn(
         changedFiles: changedFiles, changedFilesTotal: changedFiles?.count, checkpoints: checkpoints,
         createdAt: createdAt, endedAt: endedAt, error: nil, git: git, id: id,
         model: "deepseek/deepseek-v4.1-flash", persona: TPTurnPersona(id: "flora", name: "FLORA"),
-        ranOn: makeRanOn(), reasoningEffort: nil, retryOfTurnID: nil, runtime: .opencode, startedAt: createdAt,
+        ranOn: makeRanOn(), reasoningEffort: reasoningEffort, retryOfTurnID: nil, runtime: .opencode, startedAt: createdAt,
         startedBy: makeStartedBy(), status: status, stopReason: stopReason, threadID: threadID,
         usage: nil)
 }

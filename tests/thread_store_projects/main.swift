@@ -109,6 +109,25 @@ _ = try store.apply([.thread(makeThread(id: "t_worktree", projectID: added.id,
 probe.remotes[moved.standardizedFileURL.path] = "git@github.com:safet/atika-2.git"
 probe.branches[moved.standardizedFileURL.path] = "trunk"
 
+let refusingSink = RecordingEventSink()
+refusingSink.failNext = true
+store.eventSink = refusingSink
+let seqBeforeRelocate = try store.lastSeq(threadID: "t_in_project")
+requireRefusal(.invalidParams, "relocate fails after the project update when its event sink fails") {
+    _ = try registry.relocate(commandID: "cmd_relocate_rollback", projectID: added.id, path: moved.path)
+}
+require(try registry.project(added.id).path == repo.path,
+        "failed relocate rolls back the project path, not only the thread path")
+require(try registry.project(added.id).version == added.version, "failed relocate preserves project version")
+require(try store.thread("t_in_project")?.workspaceRoot.path == repo.path,
+        "failed relocate preserves the thread workspace")
+require(try store.lastSeq(threadID: "t_in_project") == seqBeforeRelocate,
+        "failed relocate preserves event counters")
+require(try pool.read { db in
+    try Int.fetchOne(db, sql: "SELECT count(*) FROM thread_commands WHERE command_id = 'cmd_relocate_rollback'")
+} == 0, "failed relocate leaves no settlement")
+store.eventSink = nil
+
 let relocated = try registry.relocate(commandID: "cmd_relocate", projectID: added.id, path: moved.path)
 require(relocated.id == added.id, "the project keeps its id")
 require(relocated.path == moved.path, "the new path is stored")
@@ -220,6 +239,12 @@ require(firstRemove.archivedAt == repeatRemove.archivedAt,
         "repeating a project command answers with the first result")
 require(repeatRemove.version == firstRemove.version,
         "and does not raise the version a second time")
+_ = try registry.update(commandID: "cmd_later_name", projectID: added.id,
+                        name: "Changed later", archived: nil, remoteAccess: nil)
+let originalRemove = try registry.remove(commandID: "cmd_remove_once", projectID: added.id)
+require(originalRemove.name == firstRemove.name && originalRemove.version == firstRemove.version,
+        "replay answers the original settlement even after a later project edit")
+require(try registry.project(added.id).name == "Changed later", "replay never undoes a newer edit")
 ok("project commands are settled once per commandId")
 
 print("thread store projects: General, adding, available, relocate, working folders, archiving")

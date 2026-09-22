@@ -5,7 +5,7 @@
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_ROOT"
-swift build -c debug -Xswiftc -suppress-warnings >/dev/null
+swift build -c debug --target GRDB -Xswiftc -suppress-warnings >/dev/null
 BIN="$(swift build -c debug --show-bin-path)"
 
 # Measured on this Mac on 2026-09-19 with Swift 6.4: `--show-bin-path` answers
@@ -29,6 +29,7 @@ fi
 swiftc -o /tmp/vf-thread-store \
     -I "$BIN" -Xcc -fmodule-map-file="$GRDB_MODULEMAP" "$GRDB_OBJECT" \
     swift/VoiceFlowPaths.swift swift/Store/Migrations.swift swift/Store/Database.swift \
+    swift/Threads/Store/ThreadStoreSchema.swift \
     tests/thread_store/main.swift \
     -suppress-warnings
 

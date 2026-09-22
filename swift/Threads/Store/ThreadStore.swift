@@ -104,7 +104,7 @@ final class ThreadStore {
         self.now = now
     }
 
-    private var homeID: String { homeIDProvider() }
+    var homeID: String { homeIDProvider() }
 
     // MARK: - writing
 
@@ -115,20 +115,28 @@ final class ThreadStore {
     @discardableResult
     func apply(_ writes: [ThreadWrite]) throws -> [StoredEvent] {
         try pool.write { db in
-            var stored: [StoredEvent] = []
-            for write in writes {
-                stored.append(try store(write, in: db))
-            }
-            if let eventSink {
-                try eventSink.append(stored, in: db)
-            }
-            return stored.map { event in
-                StoredEvent(threadID: event.threadID, seq: event.seq,
-                            origin: StoreHome.resolve(event.origin, homeID: self.homeID),
-                            originSeq: event.originSeq, type: event.type,
-                            turnID: event.turnID, itemID: event.itemID, at: event.at,
-                            payload: event.payload)
-            }
+            try apply(writes, in: db)
+        }
+    }
+
+    /// Joins the caller's transaction, including command settlement and outbox
+    /// writes. Never opens a second pool access from a command's closure.
+    @discardableResult
+    func apply(_ writes: [ThreadWrite], in db: Database) throws -> [StoredEvent] {
+        precondition(db.isInsideTransaction)
+        var stored: [StoredEvent] = []
+        for write in writes {
+            stored.append(try store(write, in: db))
+        }
+        if let eventSink {
+            try eventSink.append(stored, in: db)
+        }
+        return stored.map { event in
+            StoredEvent(threadID: event.threadID, seq: event.seq,
+                        origin: StoreHome.resolve(event.origin, homeID: self.homeID),
+                        originSeq: event.originSeq, type: event.type,
+                        turnID: event.turnID, itemID: event.itemID, at: event.at,
+                        payload: event.payload)
         }
     }
 
@@ -205,23 +213,62 @@ final class ThreadStore {
         return copy(item, text: kept, truncated: true, fullTextAttachmentID: attachment.id)
     }
 
-    /// Writes the whole original text under `thread-attachments/<thread>/` and
-    /// inserts its row in the same transaction, then answers the attachment.
+    /// Each full-text revision is immutable, including those referenced by old
+    /// events. Publish bytes before committing their row, without overwriting
+    /// any existing file. Rollback removes only bytes this transaction created;
+    /// a previously committed revision with the same hash is never removed.
     private func keepWholeText(_ text: String, for item: TPItem,
                                in db: Database) throws -> TPAttachment {
+        precondition(db.isInsideTransaction)
         let data = Data(text.utf8)
-        let attachmentID = "\(item.id)-full"
+        let hash = sha256Hex(data)
+        let attachmentID = "\(item.id)-full-\(hash)"
         let folder = paths.configRoot
             .appendingPathComponent("thread-attachments", isDirectory: true)
             .appendingPathComponent(item.threadID, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let fileURL = folder.appendingPathComponent("\(attachmentID).txt", isDirectory: false)
-        try data.write(to: fileURL)
+        // All publication takes place under SQLite's writer lock, including
+        // writers using another pool. Existing bytes are checked, never fixed
+        // in place: replacing corrupt bytes could change a committed revision.
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            guard try Data(contentsOf: fileURL) == data else {
+                throw ThreadStoreError(code: .invalidParams,
+                                       message: "full-text attachment bytes do not match \(attachmentID)")
+            }
+        } else {
+            let staged = folder.appendingPathComponent(".\(UUID().uuidString).pending")
+            defer { try? FileManager.default.removeItem(at: staged) }
+            try data.write(to: staged, options: .atomic)
+            // The same-folder rename publishes only complete bytes and refuses
+            // an existing destination. A failed write leaves no partial final
+            // file that could block the next attempt with this content hash.
+            try FileManager.default.moveItem(at: staged, to: fileURL)
+            let writer = pool
+            db.afterNextTransaction(onCommit: { _ in }, onRollback: { _ in
+                // Rollback releases SQLite's lock before this callback. Another
+                // pool may have committed the same bytes in that interval.
+                // Enqueue a fresh transaction after GRDB has finished unwinding
+                // the aborted one. Reacquire the writer lock and check every
+                // reference before removing a file we created. On error retain
+                // the unreferenced bytes; data preservation takes precedence.
+                writer.asyncWrite({ db in
+                    let referenced = try Bool.fetchOne(
+                        db, sql: "SELECT 1 FROM attachments WHERE local_path = ? LIMIT 1",
+                        arguments: [fileURL.path]) ?? false
+                    if !referenced { try FileManager.default.removeItem(at: fileURL) }
+                }, completion: { _, _ in })
+            })
+        }
+        if let record = try String.fetchOne(
+            db, sql: "SELECT record FROM attachments WHERE id = ?", arguments: [attachmentID]) {
+            return try JSONDecoder().decode(TPAttachment.self, from: Data(record.utf8))
+        }
         let attachment = TPAttachment(
             bytes: TPAttachmentBytes(artifactID: nil, state: .onHome), captureID: nil,
             context: nil, createdAt: timestamp(), forModel: nil, height: nil,
             id: attachmentID, kind: .file, marks: nil, mime: "text/plain; charset=utf-8",
-            modelText: nil, name: "\(item.id)-full.txt", sha256: sha256Hex(data),
+            modelText: nil, name: "\(item.id)-full.txt", sha256: hash,
             sizeBytes: data.count, threadID: item.threadID, width: nil)
         try insertAttachmentRow(attachment, itemID: item.id, localPath: fileURL.path, in: db)
         return attachment
@@ -314,6 +361,11 @@ final class ThreadStore {
         }
     }
 
+    func upsertProject(_ project: TPProject, in db: Database) throws {
+        precondition(db.isInsideTransaction)
+        try upsertProjectRow(project, in: db)
+    }
+
     private func upsertProjectRow(_ project: TPProject, in db: Database) throws {
         let record = try ThreadRecords.encode(project)
         try db.execute(sql: """
@@ -372,12 +424,16 @@ final class ThreadStore {
 
     func project(_ id: String) throws -> TPProject? {
         try pool.read { db in
-            guard let record = try String.fetchOne(
-                db, sql: "SELECT record FROM projects WHERE id = ?", arguments: [id]) else {
-                return nil
-            }
-            return try ThreadRecords.decodeProject(record, homeID: self.homeID)
+            try project(id, in: db)
         }
+    }
+
+    func project(_ id: String, in db: Database) throws -> TPProject? {
+        guard let record = try String.fetchOne(
+            db, sql: "SELECT record FROM projects WHERE id = ?", arguments: [id]) else {
+            return nil
+        }
+        return try ThreadRecords.decodeProject(record, homeID: self.homeID)
     }
 
     func projects(includeArchived: Bool) throws -> [TPProject] {
@@ -409,7 +465,7 @@ final class ThreadStore {
         }
     }
 
-    private func threads(in db: Database, includeArchived: Bool) throws -> [TPThread] {
+    func threads(in db: Database, includeArchived: Bool) throws -> [TPThread] {
         var sql = "SELECT record FROM threads"
         if !includeArchived {
             sql += " WHERE archived_at IS NULL AND deleted_at IS NULL"
@@ -685,38 +741,46 @@ final class ThreadStore {
 
     // MARK: - the command ledger
 
-    /// One command takes effect once per `commandId`. A repeat with the same
-    /// parameter hash answers the first result; the same id with a different
-    /// hash is a mistake, refused with `invalid_params`. Work that throws is
-    /// not remembered, so it can be sent again.
+    /// Lookup, canonical mutations and settlement share one writer transaction.
+    /// Concurrent callers (even with different pools) see either the committed
+    /// first result or a rollback they may retry. Method, thread and parameters
+    /// must all match for an id to be a repeat.
+    ///
+    /// `run` must use the supplied database for its reads and writes. It must
+    /// not perform runtime/network side effects: commit their durable admission
+    /// here, then execute them through the turn engine after commit. SQLite
+    /// cannot make an external effect exactly-once across process death.
     func settle(commandID: String, threadID: String?, method: String, params: Data,
-                run: () throws -> Data) throws -> CommandSettlement {
+                run: (Database) throws -> Data) throws -> CommandSettlement {
         let hash = sha256Hex(params)
-        if let stored = try pool.read({ db in
-            try Row.fetchOne(db, sql: """
-                SELECT params_hash, result FROM thread_commands WHERE command_id = ?
-                """, arguments: [commandID])
-        }) {
-            let storedHash: String = stored["params_hash"]
-            if storedHash != hash {
-                throw ThreadStoreError(
-                    code: .invalidParams,
-                    message: "commandId \(commandID) already ran with different parameters")
+        return try pool.write { db in
+            if let stored = try Row.fetchOne(db, sql: """
+                SELECT thread_id, method, params_hash, result
+                FROM thread_commands WHERE command_id = ?
+                """, arguments: [commandID]) {
+                let storedHash: String = stored["params_hash"]
+                let storedMethod: String = stored["method"]
+                let storedThread: String? = stored["thread_id"]
+                guard storedHash == hash, storedMethod == method, storedThread == threadID else {
+                    throw ThreadStoreError(
+                        code: .invalidParams,
+                        message: "commandId \(commandID) already ran with different method, thread or parameters")
+                }
+                let result: String = stored["result"]
+                return CommandSettlement(result: Data(result.utf8), repeated: true)
             }
-            let result: String = stored["result"]
-            return CommandSettlement(result: Data(result.utf8), repeated: true)
-        }
-
-        let result = try run()
-        try pool.write { db in
+            let result = try run(db)
+            guard let resultText = String(data: result, encoding: .utf8) else {
+                throw ThreadStoreError(code: .invalidParams, message: "command result must be UTF-8")
+            }
             try db.execute(sql: """
                 INSERT INTO thread_commands
                     (command_id, thread_id, method, params_hash, result, received_at)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """, arguments: [commandID, threadID, method, hash,
-                                 String(decoding: result, as: UTF8.self), timestamp()])
+                                 resultText, timestamp()])
+            return CommandSettlement(result: result, repeated: false)
         }
-        return CommandSettlement(result: result, repeated: false)
     }
 
     // MARK: - deletion
