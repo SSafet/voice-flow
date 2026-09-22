@@ -187,4 +187,40 @@ try index.pool.write { db in
 try service.catchUpNow()
 try require(try rows() == snapshot, "rebuild recovers same ids, kinds, times and picture states")
 try require(try sourceHashes() == before, "index rebuild cannot mutate source bytes")
+
+// Observe committed SQLite rows while the real native writer runs after the
+// initial catch-up. No direct catchUp call or test-only lifecycle hook is used.
+let livePaths = VoiceFlowPaths(environment: [
+    VoiceFlowPaths.configRootEnvironmentKey: root.appendingPathComponent("native-live").path,
+])
+let liveService = try CapturedService(root: livePaths.configRoot)
+func expectIndexedRecording(_ runID: UUID, action: () throws -> Void) throws {
+    let changed = DispatchSemaphore(value: 0)
+    let observation = ValueObservation.tracking { db in
+        try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM item WHERE id = ?)",
+                          arguments: [CapturedItemID.recording(runID.uuidString)]) ?? false
+    }.start(in: liveService.index.pool,
+            scheduling: .async(onQueue: DispatchQueue(label: "captured.integrity.observe")),
+            onError: { _ in changed.signal() },
+            onChange: { found in if found { changed.signal() } })
+    defer { observation.cancel() }
+    try action()
+    try require(changed.wait(timeout: .now() + 15) == .success,
+                "native recording commit must reach the running index")
+    try require(try liveService.index.item(id: CapturedItemID.recording(runID.uuidString)) != nil,
+                "native recording must be durably queryable")
+}
+let existingRun = UUID()
+let pcm = Data(repeating: 0, count: 320)
+try require(PendingAudioStore.save(pcm: pcm, runId: existingRun, sampleRate: 16000, root: livePaths) != nil,
+            "seed WAV must be written")
+try expectIndexedRecording(existingRun) { liveService.start() }
+let newRun = UUID()
+try expectIndexedRecording(newRun) {
+    try require(PendingAudioStore.save(pcm: pcm, runId: newRun, sampleRate: 16000, root: livePaths) != nil,
+                "new WAV must be written after startup catch-up")
+}
+try require(try index.item(id: CapturedItemID.recording(newRun.uuidString)) == nil,
+            "a different root's recording cannot leak into this index")
 print("captured integrity: passed rollback, cursor tail/rewrite, duplicate live replay, path boundary, privacy join, tombstones, failed-import retry, source SHA256 and rebuild checks")
+print("captured native lifecycle: startup catch-up and subsequent WAV commit observed through GRDB")

@@ -236,7 +236,7 @@ compile_and_run workspace_ui -D VOICE_FLOW_QA "${APP_SUPPORT_SOURCES[@]}" tests/
     -framework Accelerate -framework Security -framework ScreenCaptureKit -lsqlite3
 compile_and_run capture_clipboard swift/CaptureClipboard.swift tests/capture_clipboard/main.swift -framework Cocoa
 compile_and_run capture_store swift/VoiceFlowPaths.swift swift/DisplayContext.swift \
-    swift/ScreenCapture.swift swift/Capture.swift tests/capture_store/main.swift \
+    swift/ScreenCapture.swift swift/Captured/CapturedSourceEvents.swift swift/Capture.swift tests/capture_store/main.swift \
     -framework Cocoa -framework ScreenCaptureKit
 compile_and_run player swift/Player.swift tests/player/main.swift
 compile_and_run speech_sanitizer swift/VoiceFlowPaths.swift swift/AgentRuntimeTypes.swift \

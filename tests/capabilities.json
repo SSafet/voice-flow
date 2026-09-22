@@ -1757,6 +1757,72 @@
       "tests": [
         "tests/cloud_sync_bridge/main.swift"
       ]
+    },
+    {
+      "id": "CIX-01",
+      "area": "captured_data",
+      "name": "Store captured records with transactional FTS indexing",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/captured_store/main.swift",
+        "tests/captured_store/test.sh"
+      ]
+    },
+    {
+      "id": "CIX-02",
+      "area": "captured_data",
+      "name": "Map native capture context while excluding private context from OCR",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/captured_context/main.swift",
+        "tests/captured_context/test.sh"
+      ]
+    },
+    {
+      "id": "CIX-03",
+      "area": "captured_data",
+      "name": "Preserve dictation edits and deletions across archive and legacy recovery",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/dictation_store/main.swift",
+        "tests/dictation_store/test.sh"
+      ]
+    },
+    {
+      "id": "CIX-04",
+      "area": "captured_data",
+      "name": "Ingest committed source formats with resumable atomic cursors",
+      "kind": "new",
+      "risk": "high",
+      "tests": [
+        "tests/captured_ingest/main.swift",
+        "tests/captured_ingest/test.sh"
+      ]
+    },
+    {
+      "id": "CIX-05",
+      "area": "captured_data",
+      "name": "Rebuild captured search from source files without changing them",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/captured_index_build/main.swift",
+        "tests/captured_index_build/test.sh"
+      ]
+    },
+    {
+      "id": "CIX-06",
+      "area": "captured_data",
+      "name": "Recover failed ingestion without lost records or resurrected deletions",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/captured_integrity/main.swift",
+        "tests/captured_integrity/test.sh"
+      ]
     }
   ]
 }

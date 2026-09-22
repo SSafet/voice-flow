@@ -310,6 +310,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupCore()
         setupAgent()
         setupHotkeys()
+        setupCapturedDataIndex()
 
         requestInitialPermissionsIfNeeded()
         startHotkeyWithAccessibilityCheck()
@@ -1605,6 +1606,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openLatestWatcherReview() {
+        CapturedService.shared?.catchUpSoon()
         let dir = WorkflowWatcher.baseDir.appendingPathComponent("reviews")
         let newest = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "md" }

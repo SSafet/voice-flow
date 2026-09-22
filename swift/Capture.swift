@@ -152,6 +152,7 @@ final class CaptureStore {
                 return
             }
             Self.pruneBundles(keep: maxStoredBundles)
+            CapturedSourceEvents.didCommit()
             let saved = Self.summary(for: meta, in: activeDir)
             DispatchQueue.main.async { finalized?(saved) }
         }
@@ -189,6 +190,7 @@ final class CaptureStore {
                 vflog("capture: transcript write failed for \(old.id): \(error)")
                 return
             }
+            CapturedSourceEvents.didCommit()
             let saved = Self.summary(for: updated, in: directory)
             DispatchQueue.main.async { finalized?(saved) }
         }
@@ -311,6 +313,7 @@ final class CaptureStore {
             return nil
         }
         pruneShots()
+        CapturedSourceEvents.didCommit()
         return (url.path, width, height)
     }
 
@@ -329,6 +332,7 @@ final class CaptureStore {
             return nil
         }
         pruneShots()
+        CapturedSourceEvents.didCommit()
         return url.path
     }
 

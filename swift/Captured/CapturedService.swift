@@ -20,10 +20,26 @@ final class CapturedService {
     private let lock = NSLock()
     private var hooksInstalled = false
     private let dictations: DictationStore
-    private(set) var lastError: String?
+    private let root: URL
+    private var sourceCommitObserver: NSObjectProtocol?
+    private var storedError: String?
+    var lastError: String? {
+        lock.lock(); defer { lock.unlock() }
+        return storedError
+    }
+
+    private func report(_ error: String?) {
+        lock.lock(); defer { lock.unlock() }
+        storedError = error
+    }
+
+    deinit {
+        if let sourceCommitObserver { NotificationCenter.default.removeObserver(sourceCommitObserver) }
+    }
 
     /// Opens the index and builds the ingest; it reads nothing.
     init(root: URL, dictations: DictationStore? = nil) throws {
+        self.root = root.standardizedFileURL
         self.dictations = dictations ?? DictationStore(root: root)
         let pool = try CapturedDatabase.open(at: CapturedDatabase.url(configRoot: root))
         index = CapturedIndex(pool: pool)
@@ -61,9 +77,9 @@ final class CapturedService {
             guard let self else { return }
             do {
                 try self.catchUpNow()
-                self.lastError = nil
+                self.report(nil)
             } catch {
-                self.lastError = String(describing: error)
+                self.report(String(describing: error))
                 vflog("captured index: catch-up stopped — \(error)")
             }
         }
@@ -88,6 +104,13 @@ final class CapturedService {
         defer { lock.unlock() }
         guard !hooksInstalled else { return }
         hooksInstalled = true
+        sourceCommitObserver = NotificationCenter.default.addObserver(
+            forName: CapturedSourceEvents.committed, object: nil, queue: nil
+        ) { [weak self] notification in
+            guard let self, let sourceRoot = notification.object as? URL,
+                  sourceRoot.standardizedFileURL == self.root else { return }
+            self.catchUpSoon()
+        }
         dictations.addPersistObserver { [weak self] entries in
             guard let self else { return }
             self.queue.async {
@@ -95,9 +118,9 @@ final class CapturedService {
                     // Includes tombstones and folded edits, so live removals
                     // agree with a rebuild rather than lingering in search.
                     try self.catchUpNow()
-                    self.lastError = nil
+                    self.report(nil)
                 } catch {
-                    self.lastError = String(describing: error)
+                    self.report(String(describing: error))
                     vflog("captured index: live dictation failed — \(error)")
                 }
             }

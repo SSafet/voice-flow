@@ -27,12 +27,20 @@ enum PendingAudioStore {
             return nil
         }
         prune(root: root)
+        CapturedSourceEvents.didCommit(root: root.configRoot)
         return url
     }
 
     static func remove(runId: UUID, root: VoiceFlowPaths = .shared) {
         let url = directory(root: root).appendingPathComponent("\(runId.uuidString).wav")
-        try? FileManager.default.removeItem(at: url)
+        do {
+            try FileManager.default.removeItem(at: url)
+            CapturedSourceEvents.didCommit(root: root.configRoot)
+        } catch {
+            if FileManager.default.fileExists(atPath: url.path) {
+                vflog("pending-audio: removal failed for \(runId): \(error)")
+            }
+        }
     }
 
     /// Pending WAVs, newest first.
