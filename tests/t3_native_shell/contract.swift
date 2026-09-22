@@ -123,15 +123,28 @@ enum ShellContractTests {
                 let session = try await auth.exchange(credential: "synthetic-bootstrap")
                 try require(mutation == "valid", "malformed auth result rejected: \(mutation)")
                 try require(session.scopes == ["orchestration:read"], "granted scopes preserved without expansion")
+                var installedSecure: Bool?
                 await session.install { cookie in
                     assert(cookie.isHTTPOnly && cookie.name == "t3_session_28471" && cookie.path == "/")
+                    installedSecure = cookie.isSecure
                 }
+                try require(installedSecure == false, "loopback HTTP cookie must be sent by WebKit")
             } catch let error as T3ShellError {
                 try require(mutation != "valid", "valid upstream cookie bootstrap succeeds: \(error.localizedDescription)")
             }
             if mutation == "wrong-environment" { try require(AuthFixture.paths.count == 1, "credential not disclosed to wrong environment identity") }
             try require(!AuthFixture.paths.contains("/leak"), "credential redirect is never followed")
         }
+        AuthFixture.mutation = "valid"
+        let tlsConfig = URLSessionConfiguration.ephemeral
+        tlsConfig.protocolClasses = [AuthFixture.self]
+        let tlsAuth = T3BrowserAuthentication(origin: try T3ShellOrigin(URL(string: "https://127.0.0.1:28471")!),
+                                              environmentId: "expected", configuration: tlsConfig)
+        defer { tlsAuth.shutdown() }
+        let tlsSession = try await tlsAuth.exchange(credential: "synthetic-bootstrap")
+        var tlsSecure: Bool?
+        await tlsSession.install { tlsSecure = $0.isSecure }
+        try require(tlsSecure == true, "HTTPS cookie remains restricted to secure transport")
         let script = try VoiceFlowShellScript.source(origin: origin)
         if let path = ProcessInfo.processInfo.environment["SHELL_TEST_SCRIPT_OUTPUT"] { try Data(script.utf8).write(to: URL(fileURLWithPath: path)) }
         print("ok - T3 shell origin, cookie bootstrap, preview policy, frozen target and wire contract")

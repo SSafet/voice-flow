@@ -81,7 +81,10 @@ final class T3BrowserAuthentication: NSObject, URLSessionTaskDelegate {
         // T3's current response omits Secure even on TLS. Narrow the local copy
         // before handing it to WebKit; never broaden a Domain cookie.
         guard var properties = cookie.properties else { throw T3ShellError.invalidResponse }
-        properties[.secure] = origin.scheme == "https" ? "TRUE" : "FALSE"
+        // Foundation treats any present Secure value (including "FALSE") as
+        // true. A loopback HTTP cookie must omit it or WebKit never sends it.
+        if origin.scheme == "https" { properties[.secure] = "TRUE" }
+        else { properties.removeValue(forKey: .secure) }
         guard let narrowed = HTTPCookie(properties: properties) else { throw T3ShellError.invalidResponse }
         return Session(cookie: narrowed, expiresAt: expiresAt, scopes: scopes)
     }
