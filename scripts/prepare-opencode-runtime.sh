@@ -3,7 +3,6 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 MANIFEST="$PROJECT_DIR/runtime/opencode/versions.json"
-TOOL_SDK="$PROJECT_DIR/runtime/opencode/tool-sdk.tar.gz"
 DESTINATION="${1:?usage: prepare-opencode-runtime.sh DESTINATION}"
 
 case "$(uname -m)" in
@@ -27,12 +26,6 @@ sha256() {
     /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'
 }
 
-SDK_SHA="$(/usr/bin/plutil -extract archiveSHA256 raw -o - "$PROJECT_DIR/runtime/opencode/tool-sdk.json")"
-if [ "$(sha256 "$TOOL_SDK")" != "$SDK_SHA" ]; then
-    echo "OpenCode tool SDK checksum mismatch" >&2
-    exit 1
-fi
-
 mkdir -p "$DESTINATION"
 TARGET="$DESTINATION/opencode"
 
@@ -48,15 +41,16 @@ if [ -n "$SOURCE" ] && [ "$(sha256 "$SOURCE")" = "$BINARY_SHA" ]; then
 else
     STAGE="$(mktemp -d /tmp/voice-flow-opencode.XXXXXX)"
     trap '/bin/rm -rf "$STAGE"' EXIT
-    ARCHIVE="$STAGE/opencode.zip"
+    ARCHIVE="$STAGE/opencode.tgz"
     /usr/bin/curl -fL --retry 3 --proto '=https' --tlsv1.2 "$URL" -o "$ARCHIVE"
     ACTUAL_ARCHIVE_SHA="$(sha256 "$ARCHIVE")"
     if [ "$ACTUAL_ARCHIVE_SHA" != "$ARCHIVE_SHA" ]; then
         echo "OpenCode archive checksum mismatch for $ARCH" >&2
         exit 1
     fi
-    /usr/bin/ditto -x -k "$ARCHIVE" "$STAGE/extracted"
-    SOURCE="$STAGE/extracted/opencode"
+    mkdir -p "$STAGE/extracted"
+    /usr/bin/tar -xzf "$ARCHIVE" -C "$STAGE/extracted" package/bin/opencode
+    SOURCE="$STAGE/extracted/package/bin/opencode"
     if [ ! -f "$SOURCE" ]; then
         echo "OpenCode archive did not contain the expected binary" >&2
         exit 1
@@ -70,13 +64,11 @@ if [ "$ACTUAL_BINARY_SHA" != "$BINARY_SHA" ]; then
     echo "OpenCode binary checksum mismatch for $ARCH" >&2
     exit 1
 fi
-if [ "$("$TARGET" --version)" != "$VERSION" ]; then
+if [ "$("$TARGET" --version)" != "opencode v$VERSION" ]; then
     echo "OpenCode binary version does not match pinned $VERSION" >&2
     exit 1
 fi
 /bin/cp "$MANIFEST" "$DESTINATION/versions.json"
-/bin/cp "$PROJECT_DIR/runtime/opencode/tool-sdk.json" "$DESTINATION/tool-sdk.json"
-/bin/cp "$PROJECT_DIR/runtime/opencode/tool-sdk.tar.gz" "$DESTINATION/tool-sdk.tar.gz"
 /usr/bin/printf '{"version":"%s","architecture":"%s","sourceBinarySHA256":"%s","installedBinarySHA256":"%s"}\n' \
     "$VERSION" "$ARCH" "$BINARY_SHA" "$ACTUAL_BINARY_SHA" \
     > "$DESTINATION/installed.json"

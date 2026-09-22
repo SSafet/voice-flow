@@ -9,52 +9,19 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
-// Cold tool setup uses the verified local SDK and preserves unrelated npm
-// state. This runs from an empty isolated root, before any native process.
-let dependencySource = try OpenCodeToolDependencies.source()
-let coldFixture = VoiceFlowPaths.shared.directory("cold-dependency-fixture/.opencode")
-let coldPath = coldFixture.path.hasPrefix("/tmp/") ? "/private" + coldFixture.path : coldFixture.path
-try OpenCodeToolDependencies.install(from: dependencySource, into: URL(fileURLWithPath: coldPath))
-expect(FileManager.default.fileExists(atPath: coldFixture.appendingPathComponent("node_modules/@opencode-ai/plugin/dist/tool.js").path),
-       "a canonical temporary path rejected a missing dependency tree")
-let dependencyFixture = VoiceFlowPaths.shared.directory("tool-dependency-fixture/.opencode")
-try Data(#"{"name":"existing","dependencies":{"other-package":"1.0.0"}}"#.utf8)
-    .write(to: dependencyFixture.appendingPathComponent("package.json"))
-try Data(#"{"lockfileVersion":3,"packages":{"":{"dependencies":{"other-package":"1.0.0"}},"node_modules/other-package":{"version":"1.0.0"}}}"#.utf8)
-    .write(to: dependencyFixture.appendingPathComponent("package-lock.json"))
-let otherPackage = dependencyFixture.appendingPathComponent("node_modules/other-package")
-try FileManager.default.createDirectory(at: otherPackage, withIntermediateDirectories: true)
-try Data("keep".utf8).write(to: otherPackage.appendingPathComponent("marker"))
-for _ in 0..<2 { try OpenCodeToolDependencies.install(from: dependencySource, into: dependencyFixture) }
-let packageJSON = try JSONSerialization.jsonObject(with: Data(contentsOf: dependencyFixture.appendingPathComponent("package.json"))) as! [String: Any]
-expect((packageJSON["dependencies"] as? [String: String])?["other-package"] == "1.0.0", "SDK setup changed an unrelated dependency")
-expect((try? String(contentsOf: otherPackage.appendingPathComponent("marker"))) == "keep", "SDK setup removed an unrelated package")
-let linkedSDK = dependencyFixture.appendingPathComponent("node_modules/@opencode-ai/plugin").resolvingSymlinksInPath()
-expect(linkedSDK.path == dependencySource.appendingPathComponent("node_modules/@opencode-ai/plugin").resolvingSymlinksInPath().path, "SDK link does not resolve to the verified dependency")
-try FileManager.default.removeItem(at: dependencySource.appendingPathComponent("node_modules/@opencode-ai/plugin/dist/tool.js"))
-_ = try OpenCodeToolDependencies.source()
-expect(FileManager.default.fileExists(atPath: linkedSDK.appendingPathComponent("dist/tool.js").path), "incomplete SDK cache was not repaired")
-let foreignModules = VoiceFlowPaths.shared.directory("unrelated-node-modules")
-let unsafeFixture = VoiceFlowPaths.shared.directory("unsafe-dependency-fixture/.opencode")
-try FileManager.default.createSymbolicLink(at: unsafeFixture.appendingPathComponent("node_modules"), withDestinationURL: foreignModules)
-do {
-    try OpenCodeToolDependencies.install(from: dependencySource, into: unsafeFixture)
-    expect(false, "SDK setup followed an unrelated node_modules symlink")
-} catch { }
-let foreignContents = try FileManager.default.contentsOfDirectory(atPath: foreignModules.path)
-expect(foreignContents.isEmpty, "SDK setup wrote outside its generated tree")
-let invalidBundle = VoiceFlowPaths.shared.directory("invalid-tool-sdk")
-try Data(#"{"archiveSHA256":"0000000000000000000000000000000000000000000000000000000000000000","pluginVersion":"1.17.11","zodVersion":"4.1.8"}"#.utf8).write(to: invalidBundle.appendingPathComponent("tool-sdk.json"))
-try Data("corrupt".utf8).write(to: invalidBundle.appendingPathComponent("tool-sdk.tar.gz"))
-do {
-    _ = try OpenCodeToolDependencies.source(bundleRoot: invalidBundle)
-    expect(false, "corrupt bundled SDK was accepted")
-} catch { }
+// Native tools use a dependency-free V2 plugin, generated in private config.
+let pluginRoot = VoiceFlowPaths.shared.directory("plugin-fixture")
+let nativePlugin = try AgentToolProjection(endpoint: URL(string: "http://127.0.0.1:9/tools")!,
+                                           token: "fixture-token").project(into: pluginRoot)
+let nativeSource = try String(contentsOf: nativePlugin)
+expect(!nativeSource.contains("@opencode-ai/plugin"), "v1 SDK import survived")
+expect(nativeSource.contains("ctx.tool.transform") && nativeSource.contains("ctx.rpc.register"),
+       "v2 tool/skill registration missing")
 
 final class FakeOpenCodeSupervisor: OpenCodeServing {
     let value = OpenCodeConnection(
         baseURL: URL(string: "http://127.0.0.1:9")!,
-        username: "voice-flow", password: "secret", version: "1.17.11")
+        username: "voice-flow", password: "secret", version: "2.0.12")
     var requestedProfiles: [AgentTrustProfile] = []
 
     func connection(for profile: AgentTrustProfile) async throws -> OpenCodeConnection {
@@ -137,46 +104,26 @@ func makeRequest(turnID: UUID = UUID()) -> AgentTurnRequest {
         model: AgentModelSelection(provider: "openrouter", model: "test/model"), instructions: "OPENCODE_IDENTITY")
 }
 
-// Reducer deduplicates reconnect snapshots and ignores stale/out-of-session data.
+// V2 replay boundaries never duplicate deltas or mix sessions.
 let reducer = OpenCodeEventReducer()
-func messageEvent(_ id: String, role: String, session: String = "session-a") -> [String: Any] {
-    [
-        "type": "message.updated",
-        "properties": ["info": [
-            "id": id, "sessionID": session, "role": role,
-        ]],
-    ]
+func textEvent(_ text: String, session: String = "session-a") -> [String: Any] {
+    ["type": "session.text.ended", "data": ["sessionID": session,
+     "assistantMessageID": "msg_assistant", "ordinal": 0, "text": text]]
 }
-func textEvent(_ text: String, delta: String? = nil, session: String = "session-a",
-               messageID: String = "assistant-1") -> [String: Any] {
-    var properties: [String: Any] = [
-        "part": [
-            "id": "part-1", "sessionID": session, "messageID": messageID,
-            "type": "text", "text": text,
-        ],
-    ]
-    if let delta { properties["delta"] = delta }
-    return ["type": "message.part.updated", "properties": properties]
-}
-_ = reducer.reduce(messageEvent("user-1", role: "user"), sessionID: "session-a")
-expect(reducer.reduce(
-    textEvent("Task prompt", messageID: "user-1"), sessionID: "session-a").isEmpty,
-       "user prompt part must never stream into the Assistant reply")
-_ = reducer.reduce(messageEvent("assistant-1", role: "assistant"), sessionID: "session-a")
-expect(reducer.reduce(textEvent("Hello", delta: "Hello"), sessionID: "session-a").count == 1,
-       "first text snapshot must emit")
-expect(reducer.reduce(textEvent("Hello", delta: "Hello"), sessionID: "session-a").isEmpty,
-       "duplicate reconnect snapshot must not emit")
-expect(reducer.reduce(textEvent("Hel"), sessionID: "session-a").isEmpty,
-       "stale shorter snapshot must not rewind text")
+let delta: [String: Any] = ["id": "evt_delta", "type": "session.text.delta", "data": [
+    "sessionID": "session-a", "assistantMessageID": "msg_assistant", "ordinal": 0, "delta": "Hello"]]
+expect(reducer.reduce(delta, sessionID: "session-a").count == 1, "first delta missing")
+expect(reducer.reduce(delta, sessionID: "session-a").isEmpty, "duplicate delta was replayed")
+expect(reducer.reduce(textEvent("Hello"), sessionID: "session-a").isEmpty, "full boundary duplicated delta")
+expect(reducer.reduce(textEvent("Hel"), sessionID: "session-a").isEmpty, "stale boundary rewound text")
 let suffix = reducer.reduce(textEvent("Hello world"), sessionID: "session-a")
 if case .textDelta(_, let delta)? = suffix.first {
-    expect(delta == " world", "snapshot must emit only unseen suffix")
-} else {
-    expect(false, "extended text snapshot did not emit")
-}
+    expect(delta == " world", "boundary must recover only the missed suffix")
+} else { expect(false, "missed suffix did not recover") }
 expect(reducer.reduce(textEvent("wrong", session: "session-b"), sessionID: "session-a").isEmpty,
-       "events from another session must be ignored")
+       "another session's event was rendered")
+expect(reducer.reduce(["type": "session.inbox.delivered", "data": ["sessionID": "session-a", "text": "prompt"]],
+                      sessionID: "session-a").isEmpty, "user input was rendered as an assistant delta")
 
 let supervisor = FakeOpenCodeSupervisor()
 let client = FakeOpenCodeClient()
@@ -202,7 +149,7 @@ expect(firstDone.wait(timeout: .now() + 3) == .success, "OpenCode runtime did no
 expect(client.created == 1, "missing binding must create one session")
 expect(client.sentSession == "oc-created", "new session id was not used")
 expect(firstResult?.text == "OpenCode", "authoritative final changed")
-expect(firstResult?.runtimeVersion == "1.17.11", "runtime version was not recorded")
+expect(firstResult?.runtimeVersion == "2.0.12", "runtime version was not recorded")
 expect(firstEvents == [
     "started:oc-created", "activity:Using voiceflow_context",
     "delta:Open", "delta:Code", "completed:OpenCode",
@@ -212,7 +159,7 @@ let resumeDone = DispatchSemaphore(value: 0)
 Task {
     _ = try? await runtime.run(
         makeRequest(),
-        binding: RuntimeBinding(externalSessionID: "oc-resume", state: .clean)) { _ in }
+        binding: RuntimeBinding(externalSessionID: "oc-resume", state: .clean, runtimeVersion: "2.0.12")) { _ in }
     resumeDone.signal()
 }
 expect(resumeDone.wait(timeout: .now() + 3) == .success, "resume turn did not finish")
@@ -231,7 +178,7 @@ let staleDone = DispatchSemaphore(value: 0)
 Task {
     _ = try? await runtime.run(
         staleRequest,
-        binding: RuntimeBinding(externalSessionID: "missing-session", state: .clean)) { _ in }
+        binding: RuntimeBinding(externalSessionID: "missing-session", state: .clean, runtimeVersion: "2.0.12")) { _ in }
     staleDone.signal()
 }
 expect(staleDone.wait(timeout: .now() + 3) == .success, "stale binding recovery did not finish")
@@ -244,6 +191,17 @@ expect(client.sentInstructions == "OPENCODE_IDENTITY"
        && client.sentPrompt?.contains(AgentPromptComposer.systemRole) == false,
        "OpenCode missing-session recovery must keep both channels separate")
 client.lock.withLock { client.sessionsExist = true }
+let legacyDone = DispatchSemaphore(value: 0)
+Task {
+    _ = try? await runtime.run(staleRequest,
+        binding: RuntimeBinding(externalSessionID: "v1-still-present", state: .clean,
+                                runtimeVersion: "1.17.11")) { _ in }
+    legacyDone.signal()
+}
+expect(legacyDone.wait(timeout: .now() + 3) == .success, "v1 canonical reseed did not finish")
+expect(client.created == 3 && client.sentSession == "oc-created"
+       && client.sentPrompt?.contains("Canonical prior answer") == true,
+       "v2 reused a v1 binding instead of reseeding canonical history")
 
 client.lock.withLock { client.blockUntilAbort = true }
 let cancelRequest = makeRequest()

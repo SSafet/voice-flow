@@ -552,6 +552,10 @@ private struct AssistantSettingsView: View {
     /// The kill switch says what it is actually doing, including the version
     /// waiting to take over on the next idle roll (surface-invisible-systems).
     private var openCodeUpdateSubtitle: String {
+        if let version = OpenCodeSupervisor.vendoredVersion(),
+           !OpenCodeUpdater.supportsAutomaticUpdates(version) {
+            return "OpenCode \(version) · included with Voice Flow app updates"
+        }
         guard store.openCodeAutoUpdate else {
             return "Off — Voice Flow stays on the version it shipped with"
         }
@@ -646,10 +650,13 @@ private struct AssistantSettingsView: View {
                         SettingRowLabel(title: "OpenCode",
                                         subtitle: "Supervised by Voice Flow; model requests use your key below")
                     }
-                    Toggle(isOn: $store.openCodeAutoUpdate) {
-                        SettingRowLabel(
-                            title: "Keep OpenCode updated",
-                            subtitle: openCodeUpdateSubtitle)
+                    if let version = OpenCodeSupervisor.vendoredVersion(),
+                       !OpenCodeUpdater.supportsAutomaticUpdates(version) {
+                        SettingRowLabel(title: "OpenCode updates", subtitle: openCodeUpdateSubtitle)
+                    } else {
+                        Toggle(isOn: $store.openCodeAutoUpdate) {
+                            SettingRowLabel(title: "Keep OpenCode updated", subtitle: openCodeUpdateSubtitle)
+                        }
                     }
                 }
             } header: {

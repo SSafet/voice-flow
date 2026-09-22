@@ -279,87 +279,129 @@ enum AgentToolDispatcher {
     }
 }
 
+/// V2 native plugin with JSON Schema inputs. The plugin has no imports: the
+/// Promise plugin API accepts this object directly, so a cold start never
+/// installs npm dependencies. Callers write it only into process-private config.
 struct AgentToolProjection {
-    private static let projectionLock = NSLock()
     let endpoint: URL
     let token: String
 
-    func project(into assistant: AssistantDefinition) throws {
-        try project(into: assistant.directory)
+    @discardableResult
+    func project(into directory: URL) throws -> URL {
+        let root = directory.appendingPathComponent("plugins", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let target = root.appendingPathComponent("voiceflow.js")
+        try Data(source().utf8).write(to: target, options: .atomic)
+        return target
     }
 
-    func project(into directory: URL) throws {
-        // Multiple conversations of one assistant intentionally share the
-        // same generated .opencode tree. Serialize the tiny atomic refresh so
-        // concurrent agents cannot remove or move each other's staging dir.
-        Self.projectionLock.lock()
-        defer { Self.projectionLock.unlock() }
-        let root = directory.appendingPathComponent(".opencode/tools")
-        let staging = directory.appendingPathComponent(
-            ".opencode/.tools-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-        do {
-            for (name, source) in sources() {
-                try Data(source.utf8).write(
-                    to: staging.appendingPathComponent("\(name).ts"), options: [.atomic])
-            }
-            if FileManager.default.fileExists(atPath: root.path) {
-                try FileManager.default.removeItem(at: root)
-            }
-            try FileManager.default.moveItem(at: staging, to: root)
-        } catch {
-            try? FileManager.default.removeItem(at: staging)
-            throw error
-        }
-    }
-
-    private func sources() -> [(String, String)] {
-        let schemas: [(String, String, String)] = [
-            ("voiceflow_computer", "Look at or control the user's Mac through Voice Flow. A screenshot returns a bounded absolute image path; call read on that path to see pixels.",
-             "action: tool.schema.enum(['screenshot','cursor_position','left_click','right_click','double_click','mouse_move','drag','type','key','scroll','wait']), coordinate: tool.schema.array(tool.schema.number()).length(2).optional(), start_coordinate: tool.schema.array(tool.schema.number()).length(2).optional(), text: tool.schema.string().optional(), direction: tool.schema.enum(['up','down','left','right']).optional(), amount: tool.schema.number().int().min(1).max(30).optional(), duration: tool.schema.number().min(0).max(30).optional()"),
-            ("voiceflow_context", "Read bounded Voice Flow captures or recent dictations. Results are paginated and newest-first unless stated otherwise.",
-             "operation: tool.schema.enum(['latest_capture','list_captures','recent_dictations']), limit: tool.schema.number().int().min(1).max(40).optional(), cursor: tool.schema.string().optional()"),
-            ("voiceflow_overlay", "Create, update, remove, or list session-scoped Voice Flow overlays.",
-             "operation: tool.schema.enum(['show_guide','update_guide','show_panel','annotate','remove','list']), id: tool.schema.string().max(80).optional(), payload: tool.schema.record(tool.schema.string(), tool.schema.any()).optional()"),
-            ("voiceflow_user", "Report to the user or collect a response within this Voice Flow Assistant run.",
-             "operation: tool.schema.enum(['report','ask','check','wait']), summary: tool.schema.string().max(500).optional(), details: tool.schema.string().max(8000).optional(), question: tool.schema.string().max(2000).optional(), timeout_seconds: tool.schema.number().int().min(5).max(14400).optional()"),
-            ("voiceflow_memory", "Read or atomically update the current assistant's bounded core memory or ledger. Update requires the exact revision returned by read; secrets are rejected.",
-             "operation: tool.schema.enum(['read','update']), kind: tool.schema.enum(['core','ledger']), content: tool.schema.string().optional(), expected_revision: tool.schema.string().optional()"),
-            ("voiceflow_queue", "Read or update the user's small on-screen next-task queue. Only add items the user explicitly asked to queue — never populate it on your own. done/remove need an id from list.",
-             "operation: tool.schema.enum(['list','add','done','remove']), texts: tool.schema.array(tool.schema.string().max(200)).max(10).optional(), text: tool.schema.string().max(200).optional(), id: tool.schema.string().optional()"),
+    func source() -> String {
+        let definitions: [[String: Any]] = [
+            definition("voiceflow_computer", "Look at or control the user's Mac through Voice Flow. A screenshot returns a bounded absolute image path; call read on that path to see pixels.",
+                ["action": choice(["screenshot", "cursor_position", "left_click", "right_click", "double_click", "mouse_move", "drag", "type", "key", "scroll", "wait"]),
+                 "coordinate": ["type": "array", "items": ["type": "number"], "minItems": 2, "maxItems": 2],
+                 "start_coordinate": ["type": "array", "items": ["type": "number"], "minItems": 2, "maxItems": 2],
+                 "text": string(), "direction": choice(["up", "down", "left", "right"]),
+                 "amount": integer(1, 30), "duration": ["type": "number", "minimum": 0, "maximum": 30]], required: ["action"]),
+            definition("voiceflow_context", "Read bounded Voice Flow captures or recent dictations. Results are paginated and newest-first unless stated otherwise.",
+                ["operation": choice(["latest_capture", "list_captures", "recent_dictations"]),
+                 "limit": integer(1, 40), "cursor": string()], required: ["operation"]),
+            definition("voiceflow_overlay", "Create, update, remove, or list session-scoped Voice Flow overlays.",
+                ["operation": choice(["show_guide", "update_guide", "show_panel", "annotate", "remove", "list"]),
+                 "id": string(80), "payload": ["type": "object", "additionalProperties": true]], required: ["operation"]),
+            definition("voiceflow_user", "Report to the user or collect a response within this Voice Flow Assistant run.",
+                ["operation": choice(["report", "ask", "check", "wait"]), "summary": string(500),
+                 "details": string(8000), "question": string(2000), "timeout_seconds": integer(5, 14400)], required: ["operation"]),
+            definition("voiceflow_memory", "Read or atomically update the current assistant's bounded core memory or ledger. Update requires the exact revision returned by read; secrets are rejected.",
+                ["operation": choice(["read", "update"]), "kind": choice(["core", "ledger"]),
+                 "content": string(), "expected_revision": string()], required: ["operation", "kind"]),
+            definition("voiceflow_queue", "Read or update the user's small on-screen next-task queue. Only add items the user explicitly asked to queue — never populate it on your own. done/remove need an id from list.",
+                ["operation": choice(["list", "add", "done", "remove"]),
+                 "texts": ["type": "array", "items": string(200), "maxItems": 10],
+                 "text": string(200), "id": string()], required: ["operation"]),
         ]
-        return schemas.map { name, description, arguments in
-            (name, source(name: name, description: description, arguments: arguments))
-        }
-    }
-
-    private func source(name: String, description: String, arguments: String) -> String {
-        """
-        import { tool } from "@opencode-ai/plugin"
-
-        export default tool({
-          description: \(js(description)),
-          args: { \(arguments) },
-          async execute(args, context) {
-            const response = await fetch(\(js(endpoint.absoluteString)), {
-              method: "POST",
-              headers: { "authorization": "Bearer \(token)", "content-type": "application/json" },
-              body: JSON.stringify({
-                tool: \(js(name)), arguments: args,
-                session_id: context.sessionID, message_id: context.messageID,
-                directory: context.directory
-              })
+        return """
+        // OpenCode 2.0.12 Promise plugin contract; no runtime SDK dependency.
+        export default {
+          id: "voiceflow.native-tools",
+          async setup(ctx) {
+            const sessions = new Map()
+            await ctx.skill.transform(editor => {
+              for (const skill of editor.list()) editor.remove(skill.id)
+              for (const state of sessions.values()) for (const skill of state.skills) editor.add(skill)
             })
-            const text = await response.text()
-            if (!response.ok) throw new Error(`Voice Flow tool failed (${response.status}): ${text}`)
-            return text
+            await ctx.rpc.register({
+              id: "voiceflow",
+              methods: {
+                skills: {
+                  input: { type: "object", properties: {
+                    sessionID: { type: "string" }, generation: { type: "string" }, remove: { type: "boolean" },
+                    skills: { type: "array", items: { type: "object", properties: {
+                      id: { type: "string" }, name: { type: "string" },
+                      description: { type: "string" }, path: { type: "string" }, content: { type: "string" }
+                    }, required: ["id", "name", "description", "path", "content"], additionalProperties: false } }
+                  }, required: ["sessionID", "generation", "skills"], additionalProperties: false },
+                  output: { type: "boolean" }
+                }
+              },
+              events: {}
+            }, {
+              async skills(input) {
+                if (input.remove) {
+                  if (sessions.get(input.sessionID)?.generation !== input.generation) return true
+                  sessions.delete(input.sessionID)
+                } else {
+                  sessions.set(input.sessionID, { generation: input.generation, skills: input.skills })
+                }
+                await ctx.skill.reload()
+                return true
+              }
+            })
+            await ctx.tool.transform(editor => {
+              for (const definition of \(json(definitions))) {
+                editor.add({
+                  ...definition,
+                  options: { codemode: false },
+                  async execute(args, context) {
+                    const response = await fetch(\(json(endpoint.absoluteString)), {
+                      method: "POST",
+                      signal: context.signal,
+                      headers: { "authorization": \(json("Bearer " + token)), "content-type": "application/json" },
+                      body: JSON.stringify({
+                        tool: definition.name, arguments: args,
+                        session_id: context.sessionID, message_id: context.messageID,
+                        directory: ctx.location.directory
+                      })
+                    })
+                    const text = await response.text()
+                    if (!response.ok) throw new Error(`Voice Flow tool failed (${response.status}): ${text}`)
+                    return { content: text }
+                  }
+                })
+              }
+            })
           }
-        })
+        }
         """
     }
 
-    private func js(_ value: String) -> String {
-        let data = try! JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
+    private func definition(_ name: String, _ description: String,
+                            _ properties: [String: Any], required: [String]) -> [String: Any] {
+        ["name": name, "description": description,
+         "input": ["type": "object", "properties": properties,
+                   "required": required, "additionalProperties": false]]
+    }
+    private func choice(_ values: [String]) -> [String: Any] { ["type": "string", "enum": values] }
+    private func string(_ maxLength: Int? = nil) -> [String: Any] {
+        var schema: [String: Any] = ["type": "string"]
+        if let maxLength { schema["maxLength"] = maxLength }
+        return schema
+    }
+    private func integer(_ minimum: Int, _ maximum: Int) -> [String: Any] {
+        ["type": "integer", "minimum": minimum, "maximum": maximum]
+    }
+    private func json(_ value: Any) -> String {
+        let data = try! JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .sortedKeys])
         return String(data: data, encoding: .utf8)!
     }
 }

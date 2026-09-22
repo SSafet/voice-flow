@@ -153,12 +153,13 @@ for (arguments, label) in [
 
 let projection = AgentToolProjection(
     endpoint: URL(string: "http://127.0.0.1:1234/internal/tools")!, token: "token-canary")
-try projection.project(into: assistant)
+try projection.project(into: root)
+let pluginText = try String(contentsOf: root.appendingPathComponent("plugins/voiceflow.js"))
 for name in AgentToolDispatcher.names {
-    let text = try String(contentsOf: root.appendingPathComponent(".opencode/tools/\(name).ts"))
-    expect(text.contains("@opencode-ai/plugin") && text.contains("token-canary"),
-           "missing custom tool projection \(name)")
+    expect(pluginText.contains(name) && pluginText.contains("token-canary"), "missing native tool \(name)")
 }
+expect(pluginText.contains("signal: context.signal") && pluginText.contains("return { content: text }"),
+       "v2 tool cancellation or result contract missing")
 let toolProjectionGroup = DispatchGroup()
 let toolProjectionQueue = DispatchQueue(
     label: "agent-tools-projection-race", attributes: .concurrent)
@@ -168,7 +169,7 @@ for _ in 0..<20 {
     toolProjectionGroup.enter()
     toolProjectionQueue.async {
         defer { toolProjectionGroup.leave() }
-        do { try projection.project(into: assistant) }
+        do { try projection.project(into: root) }
         catch {
             toolProjectionErrorLock.lock()
             toolProjectionErrors.append(error.localizedDescription)

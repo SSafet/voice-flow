@@ -1,25 +1,27 @@
 {
-  "version": "1.17.11",
+  "version": "2.0.12",
   "assets": {
     "arm64": {
-      "url": "https://github.com/anomalyco/opencode/releases/download/v1.17.11/opencode-darwin-arm64.zip",
-      "archiveSHA256": "40723446013dea8252eea4f180d707f75e805af54ee85a14fd7c126513ba8342",
-      "binarySHA256": "996fea55451be04cfa27c0d9dbbf0468cb611cde43075fe3dac799772d0b710f"
+      "url": "https://registry.npmjs.org/@opencode/cli-darwin-arm64/-/cli-darwin-arm64-2.0.12.tgz",
+      "integrity": "sha512-oX4ziMcV3/itJNcpjD+dPyO7STRq/o9UVKpKiQM1yX9PLiUoIdFQSjzkv77zLCW0pHiQCOaEYlI1JJr+BFbFdQ==",
+      "archiveSHA256": "9931969e9f03feed3b3d05f73f392a051cf4d420c85a67168817df3c6667bd17",
+      "binarySHA256": "91a376212e36b10cb1dcad93573dba5ff50dbcec22c7b462e183223fbeb3a8c4"
     },
     "x86_64": {
-      "url": "https://github.com/anomalyco/opencode/releases/download/v1.17.11/opencode-darwin-x64.zip",
-      "archiveSHA256": "7f3e517bb9c7e671e8d311feecf890ccb336a20a0653fb8953b6a117c9750701",
-      "binarySHA256": "712fc97e386f43c2a77186438524766f76d51a9ea3adcff0a07b9992b1c94a31"
+      "url": "https://registry.npmjs.org/@opencode/cli-darwin-x64/-/cli-darwin-x64-2.0.12.tgz",
+      "integrity": "sha512-w2/x2nYzMJmD51Ua3j++BjYCWAls41jyIVv/EdL444h/3sEE/58XJpV/JssEHtYTDd6Weza5pLX/M4lK4KQXaw==",
+      "archiveSHA256": "d245e88e72d98800d24616db5a217dee71cf19a94efcea156d26ab542e84a452",
+      "binarySHA256": "08f094a634c65cb9791ab46b11c3500660f2c83a281dbcd6b225f7890871f7f3"
     }
   },
   "developerFallbacks": {
     "arm64": {
       "path": "/opt/homebrew/bin/opencode",
-      "sha256": "996fea55451be04cfa27c0d9dbbf0468cb611cde43075fe3dac799772d0b710f"
+      "sha256": "91a376212e36b10cb1dcad93573dba5ff50dbcec22c7b462e183223fbeb3a8c4"
     },
     "x86_64": {
       "path": "/usr/local/bin/opencode",
-      "sha256": "712fc97e386f43c2a77186438524766f76d51a9ea3adcff0a07b9992b1c94a31"
+      "sha256": "08f094a634c65cb9791ab46b11c3500660f2c83a281dbcd6b225f7890871f7f3"
     }
   }
 }

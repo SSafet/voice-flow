@@ -115,3 +115,6 @@ expect(FileManager.default.fileExists(atPath: binary.path),
        "pruning removed the version it was told to keep")
 
 print("opencode updater tests passed")
+
+expect(!OpenCodeUpdater.supportsAutomaticUpdates("2.0.12"), "v2 allowed unreviewed auto-updates")
+expect(OpenCodeUpdater.supportsAutomaticUpdates("1.17.11"), "legacy update policy changed")

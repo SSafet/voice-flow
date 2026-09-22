@@ -41,22 +41,26 @@ path. A legacy `codexThreadId` expands into a dirty Codex runtime binding, so
 the next turn safely reseeds from canonical history without losing rollback
 readability.
 
-OpenCode 1.17.11 is checksum-pinned in `runtime/opencode/versions.json`, copied
-into the signed app, and run as one supervised `--pure` loopback server per
-trust profile. Its XDG roots are isolated under the Voice Flow config root,
-auto-update/sharing/subagents are disabled, concurrent cold starts coalesce,
-and stop/cancel terminates the process tree. Long-lived provider credentials
-stay in Keychain: a rotating loopback model-gateway token is all OpenCode sees.
-The pinned tool SDK and Zod are bundled as a verified, architecture-independent
-asset. Generated config trees link to a shared extracted copy before OpenCode
-loads tools; first turns do not depend on npm downloads. See
-`runtime/opencode/README.md` for provenance and reproduction.
+OpenCode 2.0.12 is checksum-pinned in `runtime/opencode/versions.json`, copied
+into the signed app, and run as one supervised authenticated loopback server per
+trust profile. Private home/XDG/temp roots plus `OPENCODE_CONFIG_PROJECT_DISABLE`
+replace v1 `--pure`; hostile project config/plugins remain excluded while native
+tools use the real selected directory. Auto-update/sharing are disabled, cold
+starts coalesce, and stop/cancel terminates the process tree. Provider credentials
+stay in Keychain; a rotating loopback model-gateway token is all OpenCode sees.
+One dependency-free v2 plugin supplies the six first-party tools and selected
+native skills through authenticated RPC. Session-scoped skill IDs/permissions
+keep simultaneous turns separate, and generation-scoped cleanup removes the
+catalog after each turn. No npm download or project-local token file is needed.
+V2 prompt admission is followed by terminal/transcript reconciliation; v1 bindings
+reseed from canonical history. See `runtime/opencode/README.md` for provenance,
+contracts, isolation behavior and verification limits.
 
 Assistant folders remain canonical for persona, bounded `memory/core.md` and
 `memory/ledger.md`, and selected `skills/<name>/SKILL.md`. Voice Flow projects
-only selected skills and five narrow first-party tools into OpenCode:
+only selected skills and six narrow first-party tools into OpenCode:
 `voiceflow_computer`, `voiceflow_context`, `voiceflow_overlay`,
-`voiceflow_user`, and `voiceflow_memory`. These tools use a private rotating
+`voiceflow_user`, `voiceflow_memory`, and `voiceflow_queue`. These tools use a private rotating
 capability endpoint and never enter the public MCP session registry. External
 integrations remain deny-by-default MCP selections.
 

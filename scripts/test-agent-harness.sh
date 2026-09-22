@@ -58,7 +58,7 @@ cleanup() {
         [ -n "$pid" ] && [ "$pid" -gt 1 ] || continue
         command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
         case "$command" in
-            "$BUILD_DIR"*/opencode\ --pure\ serve*) kill "$pid" 2>/dev/null || true ;;
+            "$BUILD_DIR"*/opencode\ serve*) kill "$pid" 2>/dev/null || true ;;
         esac
     done < <(find "$BUILD_DIR" -path '*/runtime/opencode/*/process.pid' -type f 2>/dev/null)
     rm -rf "$BUILD_DIR"

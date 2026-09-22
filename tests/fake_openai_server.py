@@ -104,6 +104,8 @@ class Handler(BaseHTTPRequestHandler):
                 "message_count": len(request.get("messages", [])),
                 "stream": request.get("stream", True),
                 "tool_count": len(request.get("tools", [])),
+                "tool_names": sorted(tool.get("function", {}).get("name", "")
+                                     for tool in request.get("tools", [])),
                 "vf64_email_evidence": b"VF64_EMAIL_EVIDENCE" in raw_body,
                 "vf64_document_evidence": b"VF64_DOCUMENT_EVIDENCE" in raw_body,
                 "vf64_source_instructions": b"VF64_SOURCE_INSTRUCTIONS" in raw_body,
@@ -183,6 +185,18 @@ class Handler(BaseHTTPRequestHandler):
         has_tool_result = any(message.get("role") == "tool" for message in latest_turn)
         wants_memory = "CALL_MEMORY_TOOL" in current_task
         wants_skill = "CALL_SKILL_TOOL" in current_task
+        native_names = {tool.get("function", {}).get("name") for tool in request.get("tools", [])}
+        if "REQUIRE_NATIVE_V2_TOOLS" in current_task:
+            required = {"voiceflow_computer", "voiceflow_context", "voiceflow_overlay",
+                        "voiceflow_user", "voiceflow_memory", "voiceflow_queue",
+                        "shell", "skill"}
+            if not required.issubset(native_names):
+                self.send_error(400, "Cold model request omitted native tools: "
+                                + ", ".join(sorted(required - native_names)))
+                return
+        shell_name = "shell" if "shell" in native_names else "bash"
+        selected_skill = re.search(r"<id>(ses[^<]*/test-skill)</id>", serialized)
+
         wants_permission = "CALL_PERMISSION_TOOL" in current_task
         wants_long_child = "CALL_LONG_CHILD" in current_task
         # Session history is cumulative; only this turn's content may select
@@ -213,7 +227,7 @@ class Handler(BaseHTTPRequestHandler):
             # user/tool exchange may select the final response; otherwise a
             # prior skill result can poison every later turn in the session.
             if wants_skill:
-                chunks = [chunk({"role": "assistant", "content": "SKILL_NONCE_8421"}),
+                chunks = [chunk({"role": "assistant", "content": ("SKILL_NONCE_8421" if "SKILL_NONCE_8421" in latest_serialized else "SKILL_NOT_LOADED")}),
                           final, b"data: [DONE]\n\n"]
             else:
                 chunks = [chunk({"role": "assistant", "content": "TOOL_OK"}),
@@ -233,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
                 "index": 0, "id": "call_skill_1", "type": "function",
                 "function": {
                     "name": "skill",
-                    "arguments": json.dumps({"name": "test-skill"}),
+                    "arguments": json.dumps({"id": selected_skill.group(1)} if selected_skill else {"name": "test-skill"}),
                 },
             }]
             chunks = [chunk({"role": "assistant", "tool_calls": call}),
@@ -242,7 +256,7 @@ class Handler(BaseHTTPRequestHandler):
             call = [{
                 "index": 0, "id": "call_long_child_1", "type": "function",
                 "function": {
-                    "name": "bash",
+                    "name": shell_name,
                     "arguments": json.dumps({
                         "command": (
                             "sh -c 'printf %s $$ > long-child.pid; "
@@ -263,7 +277,7 @@ class Handler(BaseHTTPRequestHandler):
             call = [{
                 "index": 0, "id": "call_permission_1", "type": "function",
                 "function": {
-                    "name": "bash",
+                    "name": shell_name,
                     "arguments": json.dumps({
                         "command": f"printf PERMISSION_OK > {marker}",
                         "description": "Write a deterministic permission marker",
