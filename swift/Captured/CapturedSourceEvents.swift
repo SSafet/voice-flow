@@ -90,9 +90,9 @@ enum CapturedPendingFiles {
         try handle.synchronize()
     }
     /// A failed removal leaves custody in place for explicit reconciliation.
-    static func clear(source: URL, deliveryId: String) throws {
+    static func clear(source: URL, expected: CapturedPendingDelivery) throws {
         let value = try read(source: source)
-        guard value.deliveryId == deliveryId else { throw CocoaError(.fileReadCorruptFile) }
+        guard value == expected else { throw CocoaError(.fileReadCorruptFile) }
         try FileManager.default.removeItem(at: marker(for: source))
     }
 }

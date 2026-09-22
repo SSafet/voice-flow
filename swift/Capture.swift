@@ -265,9 +265,10 @@ final class CaptureStore {
     }
 
     /// Native completion/receipt updates the existing source metadata only.
-    static func updatePendingDelivery(_ value: CapturedPendingDelivery?, in directory: URL, deliveryId: String) throws {
+    static func updatePendingDelivery(_ value: CapturedPendingDelivery?, in directory: URL, deliveryId: String, expected: CapturedPendingDelivery? = nil) throws {
         guard let old = readMeta(in: directory), let custody = old.pendingDelivery,
               custody.isValid, custody.deliveryId == deliveryId, value?.isValid != false,
+              expected == nil || custody == expected,
               value == nil || (value?.deliveryId == deliveryId && value?.reservation == custody.reservation
                 && (custody.completedInput == nil || custody == value)) else { throw CocoaError(.fileReadCorruptFile) }
         let next = CaptureBundleMeta(id: old.id, startedAt: old.startedAt, endedAt: old.endedAt,
