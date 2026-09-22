@@ -47,6 +47,7 @@
         "harness_cli",
         "hotkey_precedence",
         "inbox",
+        "native_account_authority",
         "native_authority_broker",
         "native_mcp_captured",
         "native_mcp_sdk",
@@ -1163,6 +1164,13 @@
       "runner": "unit",
       "suites": [
         "t3_native_input"
+      ]
+    },
+    {
+      "id": "tests/native_account_authority/test.sh",
+      "runner": "unit",
+      "suites": [
+        "native_account_authority"
       ]
     },
     {

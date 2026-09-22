@@ -28,7 +28,8 @@
       "kind": "new",
       "risk": "critical",
       "tests": [
-        "tests/native_authority_broker/test.sh"
+        "tests/native_authority_broker/test.sh",
+        "tests/native_account_authority/test.sh"
       ]
     },
     {
