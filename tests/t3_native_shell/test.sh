@@ -12,7 +12,11 @@ node tests/t3_native_shell/bridge.mjs "$test_dir/bridge.js"
 "${VOICE_FLOW_TEST_PYTHON:-.venv/bin/python}" tests/t3_native_shell/test_package.py
 bash tests/t3_native_shell/process.sh
 swiftc -target "$(uname -m)-apple-macos14" -swift-version 5 -parse-as-library \
-  -emit-module -module-name VoiceFlowT3Shell swift/VoiceFlowPaths.swift swift/Captured/CapturedSourceEvents.swift swift/Shell/*.swift \
+  -emit-module -module-name VoiceFlowT3Shell swift/VoiceFlowPaths.swift swift/Captured/CapturedSourceEvents.swift \
+  swift/Shell/T3ShellPolicy.swift swift/Shell/T3BrowserAuthentication.swift \
+  swift/Shell/T3NativeAuthority.swift swift/Shell/T3EnvironmentProcess.swift \
+  swift/Shell/VoiceFlowShellContract.swift swift/Shell/VoiceFlowShellScript.swift \
+  swift/Shell/ShellInputCustody.swift swift/Shell/T3ShellDownloads.swift swift/Shell/T3ShellWindow.swift \
   -o "$test_dir/VoiceFlowT3Shell.swiftmodule"
 python3 - <<'PY'
 from pathlib import Path

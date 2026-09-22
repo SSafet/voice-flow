@@ -47,6 +47,7 @@
         "harness_cli",
         "hotkey_precedence",
         "inbox",
+        "native_authority_broker",
         "native_mcp_captured",
         "native_mcp_sdk",
         "opencode_http",
@@ -1161,6 +1162,13 @@
       "runner": "unit",
       "suites": [
         "t3_native_input"
+      ]
+    },
+    {
+      "id": "tests/native_authority_broker/test.sh",
+      "runner": "unit",
+      "suites": [
+        "native_authority_broker"
       ]
     },
     {

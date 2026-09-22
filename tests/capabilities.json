@@ -22,6 +22,16 @@
       ]
     },
     {
+      "id": "SHELL-03",
+      "area": "native_shell",
+      "name": "Lease native credentials only to the owned T3 child and revoke pending requests on identity changes",
+      "kind": "new",
+      "risk": "critical",
+      "tests": [
+        "tests/native_authority_broker/test.sh"
+      ]
+    },
+    {
       "id": "AST-01",
       "area": "assistant",
       "name": "Create, select, and delete Assistant conversations",

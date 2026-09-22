@@ -25,9 +25,16 @@ if [[ "$mode" == gui ]]; then bundle="$output/Voice Flow T3 Packaged QA.app"; fi
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp proofs/t3-native-shell/Info.plist "$bundle/Contents/Info.plist"
 "${VOICE_FLOW_TEST_PYTHON:-.venv/bin/python}" scripts/stage-t3-shell-runtime.py --archive "$archive" --sha256 "$digest" --destination "$bundle/Contents/Resources/T3" > "$output/staging-receipt.json"
-sources=(swift/Shell/T3ShellPolicy.swift swift/Shell/T3BrowserAuthentication.swift swift/Shell/T3EnvironmentProcess.swift proofs/t3-native-shell/process-main.swift)
+sources=(swift/Shell/T3ShellPolicy.swift swift/Shell/T3BrowserAuthentication.swift swift/Shell/T3NativeAuthority.swift swift/Shell/T3EnvironmentProcess.swift proofs/t3-native-shell/process-main.swift)
 if [[ "$mode" == gui ]]; then
-  sources=(swift/VoiceFlowPaths.swift swift/Captured/CapturedSourceEvents.swift swift/Shell/*.swift proofs/t3-native-shell/packaged-main.swift)
+  # This fixture owns only the window/process. The Hummingbird authority broker
+  # has a separate dependency-linked proof; it is not started by this host.
+  sources=(swift/VoiceFlowPaths.swift swift/Captured/CapturedSourceEvents.swift
+    swift/Shell/T3ShellPolicy.swift swift/Shell/T3BrowserAuthentication.swift
+    swift/Shell/T3NativeAuthority.swift swift/Shell/T3EnvironmentProcess.swift
+    swift/Shell/VoiceFlowShellContract.swift swift/Shell/VoiceFlowShellScript.swift
+    swift/Shell/ShellInputCustody.swift swift/Shell/T3ShellDownloads.swift
+    swift/Shell/T3ShellWindow.swift proofs/t3-native-shell/packaged-main.swift)
 fi
 swiftc -target "$(uname -m)-apple-macos14" -swift-version 5 -DVOICE_FLOW_QA -parse-as-library \
   swift/QALaunchIsolation.swift "${sources[@]}" \
