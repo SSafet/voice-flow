@@ -1,5 +1,9 @@
 # Voice Flow
 
+## Active platform direction — 22 September 2026
+
+This checkout implements the unified Atika + VoiceFlow platform. Its governing design and master plan live in `../atika/docs/architecture/platform/`; read `13-capability-alignment-and-reuse.md` for Safet's seven categories, every supplied subcategory, observable user/agent outcomes and OSS adoption gate. Evaluate maintained whole projects and supported libraries/SDKs before custom infrastructure, preserving existing behavior and data. Distinguish planned, integrated and validated capability. The daily app stays separate until verified cutover; the older descriptions below are preservation context where the governing platform design replaces them.
+
 A native macOS menu-bar app for **voice dictation**, **text-to-speech**, and an
 **on-device screen agent**. The UI is hand-built AppKit (with a couple of SwiftUI
 windows); dictation transcription runs in a bundled Python backend driven over a
