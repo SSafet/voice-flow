@@ -41,6 +41,11 @@ def native_capability(executable, runtime_root, *, timeout=5):
         readable = [str(runtime_root.resolve()), str(probe), "/System", "/usr/lib", "/Library/Apple", "/bin", "/usr/bin"]
         profile = "(version 1)(deny default)(allow process-exec)(allow sysctl-read)"
         profile += "(allow file-read* " + " ".join("(subpath " + json.dumps(path) + ")" for path in readable) + ")"
+        # Node resolves packaged native modules with realpath, which stats every
+        # parent of the permitted runtime. Grant only ancestor metadata, not
+        # directory listings or sibling file contents outside the private roots.
+        ancestors = {str(parent) for path in [runtime_root.resolve(), probe] for parent in path.parents}
+        profile += "(allow file-read-metadata " + " ".join("(literal " + json.dumps(path) + ")" for path in sorted(ancestors)) + ")"
         profile += "(allow file-read* (literal \"/\") (literal \"/dev/null\") (literal \"/dev/urandom\") (literal \"/dev/random\"))"
         profile += "(allow file-write* (subpath " + json.dumps(str(probe)) + ")(literal \"/dev/null\"))"
         environment = {"HOME": str(probe), "TMPDIR": str(probe), "PATH": "/usr/bin:/bin", "LANG": "C",

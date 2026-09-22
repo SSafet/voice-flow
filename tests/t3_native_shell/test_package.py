@@ -84,12 +84,17 @@ class PackageTests(unittest.TestCase):
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <dirent.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 int main(void) {
  if (getenv("OPENROUTER_API_KEY") || getenv("NODE_OPTIONS") || getenv("DYLD_INSERT_LIBRARIES")) return 1;
  if (!getenv("HOME") || !getenv("T3CODE_HOME")) return 2;
+ struct stat parent;
+ if (lstat(PARENT_PATH, &parent) != 0) return 7;
+ if (opendir(PARENT_PATH) != NULL) return 8;
  if (open(SOURCE_PATH, O_RDONLY) >= 0) return 3;
  if (open(OUTPUT_PATH, O_WRONLY|O_CREAT,0600) >= 0) return 4;
  int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -105,6 +110,7 @@ int main(void) {
 ''')
             executable = runtime / "t3"
             subprocess.run(["/usr/bin/cc", str(source), "-DSOURCE_PATH="+json.dumps(str(sentinel)),
+                            "-DPARENT_PATH="+json.dumps(str(root.resolve())),
                             "-DOUTPUT_PATH="+json.dumps(str(output)), "-o", str(executable)], check=True, capture_output=True)
             with patch.dict(os.environ, {"OPENROUTER_API_KEY":"synthetic-must-not-leak", "NODE_OPTIONS":"--invalid",
                                          "DYLD_INSERT_LIBRARIES":"/synthetic-must-not-leak"}):
