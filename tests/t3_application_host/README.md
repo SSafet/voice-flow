@@ -13,3 +13,23 @@ VOICE_FLOW_DEPENDENCY_ROOT=/Users/safet/repos/voice-flow-platform \
 ```
 
 The final application path additionally needs the matching signed T3 archive declaring `nativeAuthorityRevocation: "sigusr2-v1"`, no-account startup proof, real account/home selection, actual WK composition/input/preview safety, and quit/reconnect checks under the root coordinator. The daily app remains disabled and untouched.
+
+Build the full native QA app with the adopted server and web client using the
+existing installer. Pass a complete CLI archive built from the desired T3 source
+revision, its reviewed checksum, and a new absolute destination outside installed
+applications and live data:
+
+```sh
+VOICE_FLOW_T3_ARCHIVE=/absolute/path/t3-darwin-arm64.tar.gz \
+VOICE_FLOW_T3_ARCHIVE_SHA256=<reviewed-sha256> \
+VOICE_FLOW_QA_APP_DEST='/absolute/private/output/Voice Flow Native QA.app' \
+VF_ADHOC=1 bash scripts/install-agent-harness-qa.sh
+```
+
+The build preserves the archive and pinned OpenCode 2.0.12 signatures, signs the
+outer app, and publishes exclusively. It does not launch the app. Launch its
+`Contents/MacOS/voice-flow` executable directly with `VOICE_FLOW_NATIVE_SHELL=t3`,
+an absolute isolated `VOICE_FLOW_CONFIG_ROOT`, and distinct non-production
+`VOICE_FLOW_QA_PORT` / `VOICE_FLOW_QA_SYNC_PORT`. Finder launches lack that isolation
+environment and are refused before app services start. A complete model turn also
+requires a signed-in test account and its selected native home.

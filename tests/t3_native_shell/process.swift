@@ -183,6 +183,42 @@ private func check(_ value: @autoclosure () -> Bool, _ detail: String) throws {
         try expect(firstConnection.environmentId == restartedConnection.environmentId, "first-use temporary home restarts after Foundation path normalization")
         await firstUse.stop()
 
+        let configuredHome = try home("bundled-opencode-settings")
+        let bundledPath = root.appendingPathComponent("Fixture.app/Contents/Resources/Runtime/OpenCode/opencode")
+        let movedPath = root.appendingPathComponent("Moved.app/Contents/Resources/Runtime/OpenCode/opencode")
+        let settingsFile = configuredHome.appendingPathComponent("userdata/settings.json")
+        func configuredSettings() throws -> [String: Any] {
+            try JSONSerialization.jsonObject(with: Data(contentsOf: settingsFile)) as! [String: Any]
+        }
+        try T3BundledOpenCode.configure(home: configuredHome, executable: bundledPath)
+        var configured = try configuredSettings()
+        var opencode = (configured["providers"] as! [String: Any])["opencode"] as! [String: Any]
+        try expect(opencode["binaryPath"] as? String == bundledPath.path && opencode["enabled"] as? Bool == true,
+                   "fresh isolated T3 home selects bundled OpenCode through provider settings")
+        try T3BundledOpenCode.configure(home: configuredHome, executable: movedPath)
+        configured = try configuredSettings()
+        opencode = (configured["providers"] as! [String: Any])["opencode"] as! [String: Any]
+        try expect(opencode["binaryPath"] as? String == movedPath.path,
+                   "managed provider path follows a relocated signed app")
+        configured["providers"] = ["opencode": ["binaryPath": "/user/chosen/opencode", "enabled": false]]
+        configured["providerInstances"] = [
+            "opencode": ["driver": "opencode", "enabled": false, "config": ["binaryPath": "opencode"]],
+            "custom": ["driver": "opencode", "config": ["binaryPath": "/custom/opencode"]],
+        ]
+        try JSONSerialization.data(withJSONObject: configured).write(to: settingsFile, options: .atomic)
+        try T3BundledOpenCode.configure(home: configuredHome, executable: bundledPath)
+        configured = try configuredSettings()
+        opencode = (configured["providers"] as! [String: Any])["opencode"] as! [String: Any]
+        let instances = configured["providerInstances"] as! [String: [String: Any]]
+        let defaultInstance = instances["opencode"]!
+        let customInstance = instances["custom"]!
+        try expect(opencode["binaryPath"] as? String == "/user/chosen/opencode" && opencode["enabled"] as? Bool == false,
+                   "explicit provider path and disabled state stay intact")
+        try expect((defaultInstance["config"] as! [String: Any])["binaryPath"] as? String == bundledPath.path && defaultInstance["enabled"] as? Bool == false,
+                   "default relative instance path selects bundle without enabling an explicitly disabled instance")
+        try expect((customInstance["config"] as! [String: Any])["binaryPath"] as? String == "/custom/opencode",
+                   "explicit non-default instance path stays intact")
+
         // The resource seal covers every client file, not only index.html's hash.
         try Data("changed".utf8).write(to: runtime.directory.appendingPathComponent("client/app.js"))
         do { _ = try T3BundledEnvironment(bundle: bundle); throw NSError(domain: "tampered client accepted", code: 1) }

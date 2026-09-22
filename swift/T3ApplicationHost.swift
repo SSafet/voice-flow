@@ -33,6 +33,7 @@ final class T3ApplicationHost {
         try life.check()
         guard let app, process == nil else { throw T3NativeAuthorityError.unavailable }
         let runtime = try T3BundledEnvironment()
+        let openCode = try T3BundledOpenCode()
         guard let executable = Bundle.main.executableURL else { throw T3EnvironmentProcessError.invalidArtifact }
         // The verified signed executable is the real native backend version.
         backendRevision = try Self.fileDigest(executable)
@@ -41,7 +42,8 @@ final class T3ApplicationHost {
             .appendingPathComponent(selectedHome?.storeKey ?? "local", isDirectory: true)
         let location = try T3ApplicationLocation.open(root: root)
         let process = try T3EnvironmentProcess(runtime: runtime, home: root.appendingPathComponent("home"),
-                                              workingDirectory: root, port: location.port)
+                                              workingDirectory: root, port: location.port,
+                                              openCode: openCode)
         self.process = process
         process.onExit = { [weak self] _ in self?.invalidate(message: "The local environment stopped. Reconnect from Settings to reopen it; saved history and input are retained.") }
         let broker = T3NativeAuthorityBroker(ownedEnvironment: { [weak self] in

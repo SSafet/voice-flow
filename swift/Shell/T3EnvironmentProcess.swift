@@ -97,6 +97,7 @@ struct T3EnvironmentConnection: CustomStringConvertible {
 @MainActor
 final class T3EnvironmentProcess {
     private let runtime: T3BundledEnvironment
+    private let openCode: T3BundledOpenCode?
     private let home: URL
     private let workingDirectory: URL
     private let port: UInt16
@@ -111,7 +112,8 @@ final class T3EnvironmentProcess {
     private var runtimeAuthorityRevoked = false
     var onExit: ((Int32) -> Void)?
 
-    init(runtime: T3BundledEnvironment, home: URL, workingDirectory: URL, port: UInt16) throws {
+    init(runtime: T3BundledEnvironment, home: URL, workingDirectory: URL, port: UInt16,
+         openCode: T3BundledOpenCode? = nil) throws {
         guard port > 0, home.isFileURL, workingDirectory.isFileURL else { throw T3EnvironmentProcessError.invalidHome }
         let canonical = home.standardizedFileURL.resolvingSymlinksInPath()
         let liveT3 = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".t3").resolvingSymlinksInPath()
@@ -121,6 +123,7 @@ final class T3EnvironmentProcess {
               !canonical.path.hasPrefix(runtime.directory.path + "/"),
               home.standardizedFileURL.path == canonical.path else { throw T3EnvironmentProcessError.invalidHome }
         self.runtime = runtime
+        self.openCode = openCode
         self.home = canonical
         self.workingDirectory = workingDirectory
         self.port = port
@@ -140,6 +143,7 @@ final class T3EnvironmentProcess {
         try acquireHome()
         do {
             try refuseExistingProcess()
+            try openCode?.configure(home: home)
             var random = [UInt8](repeating: 0, count: 32)
             guard SecRandomCopyBytes(kSecRandomDefault, random.count, &random) == errSecSuccess else { throw T3EnvironmentProcessError.randomFailure }
             let credential = random.map { String(format: "%02x", $0) }.joined()
