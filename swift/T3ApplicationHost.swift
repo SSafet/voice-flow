@@ -226,8 +226,10 @@ final class T3ApplicationHost {
             if app?.shellInputWindow === closedShell { app?.shellInputWindow = nil }
             let broker = broker, process = process, account = account, accountTask = accountTask
             self.broker = nil; self.process = nil; self.account = nil
-            await broker?.stop()
+            // The child is the private listener's client. Reap it before
+            // cancelling Hummingbird's accept loop on quit.
             await process?.stop()
+            await broker?.stop()
             await account?.stop()
             if let candidate = try? await accountTask?.value { await candidate.stop() }
         }
