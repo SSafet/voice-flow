@@ -21,9 +21,14 @@ final class CloudSyncController: ObservableObject {
     /// Native runtime composition observes identity retirement; it must discard
     /// prior leases and retain its existing environment until explicitly rebound.
     var onNativeHomeChanged: (() -> Void)?
+    var onNativeHomeWillChange: (@MainActor () async -> Bool)?
+    var onNativeHomeChangeCancelled: (@MainActor () -> Void)?
     @Published private(set) var nativeServingHome: CloudNativeHomeSelection?
     @Published var nativeEnvironmentStatus = "Local history and drafts are available without an account."
     @Published var nativeEnvironmentEnabled = false
+    @Published private(set) var showingLocalHistory = false
+    @Published private(set) var nativeRouteBusy = false
+    var activeNativeHome: CloudNativeHomeSelection? { showingLocalHistory ? nil : selection.nativeHome }
     var onIdentityChanged: (() -> Void)?
     private let bridge = CloudSyncBridge.shared
     private let vault: CloudCredentialVault
@@ -82,10 +87,10 @@ final class CloudSyncController: ObservableObject {
         }
     }
     func selectNativeHome() {
-        guard !busy, let candidate = nativeServingHome, candidate.matches(selection) else { return }
-        busy = true
+        guard !busy, !nativeRouteBusy, let candidate = nativeServingHome, candidate.matches(selection) else { return }
+        busy = true; nativeRouteBusy = true
         Task {
-            defer { busy = false }
+            defer { busy = false; nativeRouteBusy = false }
             do {
                 let owner = try await credentialOwner()
                 let identity = try await owner.identity()
@@ -93,15 +98,47 @@ final class CloudSyncController: ObservableObject {
                 guard candidate.matches(selection), identity.origin == candidate.origin,
                       identity.ownerID == candidate.ownerId, identity.deviceID == candidate.deviceId,
                       offer.serving?.homeId == candidate.homeId else { throw CloudNativeHomeSelection.Failure.changed }
-                var saved = selection; saved.nativeHome = candidate
-                try bridge.saveSelection(saved); selection = saved
-                onNativeHomeChanged?()
+                guard await onNativeHomeWillChange?() ?? true else {
+                    nativeEnvironmentStatus = "The current draft could not be saved. Keep this history open and retry the switch."
+                    return
+                }
+                do {
+                    guard candidate.matches(selection) else { throw CloudNativeHomeSelection.Failure.changed }
+                    var saved = selection; saved.nativeHome = candidate
+                    try bridge.saveSelection(saved); selection = saved
+                    showingLocalHistory = false
+                    onNativeHomeChanged?()
+                } catch { onNativeHomeChangeCancelled?(); throw error }
             } catch { nativeEnvironmentStatus = "The verified home changed or is unavailable. No selection was changed." }
         }
     }
     func reconnectNativeHome() {
-        guard !busy, let selected = selection.nativeHome, selected.matches(selection) else { return }
-        onNativeHomeChanged?()
+        // Reopening saved local data needs no account; execution still checks
+        // the current signed-in identity and obtains a fresh lease per turn.
+        guard !nativeRouteBusy, selection.nativeHome != nil else { return }
+        nativeRouteBusy = true
+        Task {
+            defer { nativeRouteBusy = false }
+            guard await onNativeHomeWillChange?() ?? true else {
+                nativeEnvironmentStatus = "The current draft could not be saved. Keep this history open and retry the switch."
+                return
+            }
+            showingLocalHistory = false
+            onNativeHomeChanged?()
+        }
+    }
+    func openLocalHistory() {
+        guard !nativeRouteBusy else { return }
+        nativeRouteBusy = true
+        Task {
+            defer { nativeRouteBusy = false }
+            guard await onNativeHomeWillChange?() ?? true else {
+                nativeEnvironmentStatus = "The current draft could not be saved. Keep this history open and retry the switch."
+                return
+            }
+            showingLocalHistory = true
+            onNativeHomeChanged?()
+        }
     }
     func setTransport(_ value: String) {
         guard !identityTransition, ["local", "cloud"].contains(value) else { return }

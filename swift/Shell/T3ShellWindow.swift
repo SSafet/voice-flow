@@ -26,6 +26,7 @@ final class T3ShellWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKU
     private var session: T3BrowserAuthentication.Session?
     private var prepared = false
     private var closed = false
+    private var shutdownPrepared = false
     private var renewing = false
     private var authenticationGeneration = 0
     private struct PendingInput {
@@ -164,6 +165,44 @@ final class T3ShellWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKU
                 } catch { self?.finish(input.deliveryId, attempt: attempt, status: .unconfirmed) }
             }
         }
+    }
+
+    /// Keep the interactive document mounted unless its existing draft store
+    /// confirms the latest text is durable. A stalled WebView cannot hold quit
+    /// forever; a timeout leaves the window open for an explicit retry.
+    func prepareForShutdown(timeoutSeconds: Double = 8) async -> Bool {
+        guard !closed, !shutdownPrepared else { return true }
+        guard phase == .ready else { return true }
+        webView.isHidden = true // Prevent new typing between verified save and teardown.
+        let saved = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            var completed = false
+            let finish: @MainActor (Bool) -> Void = { result in
+                guard !completed else { return }
+                completed = true
+                continuation.resume(returning: result)
+            }
+            Task { @MainActor [webView] in
+                do {
+                    let value = try await webView.callAsyncJavaScript(
+                        "return await window.voiceFlowShell?.__prepareForShutdown?.();",
+                        arguments: [:], in: nil, contentWorld: .page)
+                    finish(value as? Bool == true)
+                } catch { finish(false) }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(max(0.1, min(timeoutSeconds, 30)) * 1_000_000_000))
+                finish(false)
+            }
+        }
+        if saved { shutdownPrepared = true }
+        else { webView.isHidden = false }
+        return saved
+    }
+
+    func cancelPreparedShutdown() {
+        guard !closed, shutdownPrepared else { return }
+        shutdownPrepared = false
+        webView.isHidden = false
     }
 
     /// Called on app/account/environment shutdown, not when the user closes the

@@ -217,7 +217,18 @@ final class T3ApplicationHost {
         guard let prior = settings, (try? Self.readSettings()) != prior else { return }
         invalidate(message: "Execution settings changed. Reconnect from Settings to apply them; local drafts are retained.")
     }
-    func stop() async {
+    func prepareForStop() async -> Bool {
+        guard let shell else { return true }
+        guard await shell.prepareForShutdown() else {
+            status("Could not verify the current draft was saved. Keep the window open and retry.")
+            return false
+        }
+        return true
+    }
+    func cancelPreparedStop() { shell?.cancelPreparedShutdown() }
+    @discardableResult
+    func stop() async -> Bool {
+        guard await prepareForStop() else { return false }
         await shutdown.drain { [self] in
             stopping = true
             invalidate(message: "Local environment stopped. Saved history and input are retained.")
@@ -233,6 +244,7 @@ final class T3ApplicationHost {
             await account?.stop()
             if let candidate = try? await accountTask?.value { await candidate.stop() }
         }
+        return true
     }
     private func stopNativeTools() async { await tools?.stop(); tools = nil }
     private func status(_ text: String) { CloudSyncController.shared.nativeEnvironmentStatus = text }

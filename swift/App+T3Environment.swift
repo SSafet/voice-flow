@@ -17,6 +17,8 @@ extension AppDelegate {
             let cloud = CloudSyncController.shared
             cloud.nativeEnvironmentEnabled = true
             cloud.onIdentityChanged = { [weak self] in self?.t3Host?.identityChanged() }
+            cloud.onNativeHomeWillChange = { [weak self] in await self?.t3Host?.prepareForStop() ?? true }
+            cloud.onNativeHomeChangeCancelled = { [weak self] in self?.t3Host?.cancelPreparedStop() }
             cloud.onNativeHomeChanged = { [weak self] in self?.restartT3Environment() }
             restartT3Environment()
         }
@@ -27,7 +29,7 @@ extension AppDelegate {
         previousLaunch?.cancel()
         let prior = t3Host
         prior?.invalidate(message: "Reopening the selected environment…")
-        let next = T3ApplicationHost(app: self, selectedHome: CloudSyncController.shared.selection.nativeHome)
+        let next = T3ApplicationHost(app: self, selectedHome: CloudSyncController.shared.activeNativeHome)
         t3Host = next
         UserSettings.onNativeSettingsWillSave = { [weak next] in
             // Settings controls are main-thread owned. Unexpected off-main
@@ -38,7 +40,18 @@ extension AppDelegate {
         t3LaunchTask = Task { [weak self] in
             // Rapid explicit reconnects must drain the entire predecessor chain.
             await previousLaunch?.value
-            await prior?.stop()
+            if await prior?.stop() == false {
+                // Failed draft verification keeps the previous WebView and its
+                // original route. Never start a second environment over it.
+                if self?.t3Host === next {
+                    self?.t3Host = prior
+                    UserSettings.onNativeSettingsWillSave = { [weak prior] in
+                        if Thread.isMainThread { MainActor.assumeIsolated { prior?.settingsChanged() } }
+                        else { prior?.revokeForSettingsMutation() }
+                    }
+                }
+                return
+            }
             guard !Task.isCancelled else { await next.stop(); return }
             do { try await next.start() }
             catch {

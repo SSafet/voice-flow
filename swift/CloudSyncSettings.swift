@@ -28,18 +28,27 @@ struct CloudSyncSettingsView: View {
             }
             if model.nativeEnvironmentEnabled {
                 Section("Native execution home") {
+                    LabeledContent("Open history", value: model.showingLocalHistory
+                        ? "Local-only" : (model.selection.nativeHome?.label ?? "Local-only"))
                     if let selected = model.selection.nativeHome {
-                        LabeledContent("Local environment", value: selected.label)
+                        LabeledContent("Saved serving home", value: selected.label)
                         Text("History is kept separately for this home, including while signed out.").font(.caption)
                     }
                     Text(model.nativeEnvironmentStatus).font(.callout).textSelection(.enabled)
+                    if model.showingLocalHistory || model.selection.nativeHome == nil {
+                        Button("Reopen local-only history") { model.openLocalHistory() }.disabled(model.nativeRouteBusy)
+                    } else {
+                        Button("Open local-only history") { model.openLocalHistory() }.disabled(model.nativeRouteBusy)
+                    }
+                    if let selected = model.selection.nativeHome {
+                        Button(model.showingLocalHistory ? "Open \(selected.label) history" : "Reconnect selected environment") {
+                            model.reconnectNativeHome()
+                        }.disabled(model.nativeRouteBusy)
+                    }
                     if model.selection.signedIn {
                         Button("Check this Mac’s serving home") { model.refreshNativeHome() }.disabled(model.busy)
                         if let home = model.nativeServingHome {
-                            Button("Use \(home.label)") { model.selectNativeHome() }.disabled(model.busy)
-                        }
-                        if model.selection.nativeHome?.matches(model.selection) == true {
-                            Button("Reconnect selected environment") { model.reconnectNativeHome() }.disabled(model.busy)
+                            Button("Use \(home.label)") { model.selectNativeHome() }.disabled(model.busy || model.nativeRouteBusy)
                         }
                     } else {
                         Text("Sign in below to verify this Mac’s existing home. Local history and drafts remain available.")

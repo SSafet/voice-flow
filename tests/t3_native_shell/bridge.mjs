@@ -34,6 +34,18 @@ bridge.__credentialsChanged();
 remove();
 bridge.__credentialsChanged();
 assert.equal(wakeups, 1);
+assert.equal(await bridge.__prepareForShutdown(), false);
+let saved = 0;
+let failSave = false;
+bridge.onBeforeShutdown(async () => {
+  if (failSave) throw Error('draft storage unavailable');
+  saved++;
+});
+assert.throws(() => bridge.onBeforeShutdown(async () => {}));
+assert.equal(await bridge.__prepareForShutdown(), true);
+assert.equal(saved, 1);
+failSave = true;
+assert.equal(await bridge.__prepareForShutdown(), false);
 for (const context of [
   {window: {top: {}}, location: {origin: 'http://127.0.0.1:28471'}},
   {window: {}, location: {origin: 'http://127.0.0.1:28472'}},
@@ -42,4 +54,4 @@ for (const context of [
   vm.runInNewContext(source, context);
   assert.equal(context.window.voiceFlowShell, undefined);
 }
-console.log('ok - native JS bridge registration, replies, conservative failures and auth wakeup');
+console.log('ok - native JS bridge registration, replies, conservative failures, draft flush and auth wakeup');

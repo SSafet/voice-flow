@@ -10,6 +10,7 @@ enum VoiceFlowShellScript {
           if (window !== window.top || location.origin !== \(encoded)[0]) return;
           const invoke = (type, fields = {}) => window.webkit.messageHandlers.voiceFlowShell.postMessage({version: 1, type, ...fields});
           let inputHandler = null;
+          let beforeShutdown = null;
           const credentialsHandlers = new Set();
           const bridge = {
             version: 1,
@@ -27,6 +28,11 @@ enum VoiceFlowShellScript {
               if (typeof handler !== 'function') throw new TypeError('Credentials handler must be a function.');
               credentialsHandlers.add(handler);
               return () => credentialsHandlers.delete(handler);
+            },
+            onBeforeShutdown: handler => {
+              if (typeof handler !== 'function') throw new TypeError('Shutdown handler must be a function.');
+              if (beforeShutdown !== null) throw new Error('A draft shutdown handler is already registered.');
+              beforeShutdown = handler;
             }
           };
           Object.defineProperties(bridge, {
@@ -39,6 +45,10 @@ enum VoiceFlowShellScript {
             }},
             __credentialsChanged: {value: () => {
               for (const handler of credentialsHandlers) { try { handler(); } catch {} }
+            }},
+            __prepareForShutdown: {value: async () => {
+              if (!beforeShutdown) return false;
+              try { await beforeShutdown(); return true; } catch { return false; }
             }}
           });
           Object.defineProperty(window, 'voiceFlowShell', {value: Object.freeze(bridge), configurable: false, writable: false});

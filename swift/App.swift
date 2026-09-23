@@ -357,17 +357,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if terminationFinished { return .terminateNow }
         if terminationTask != nil { return .terminateLater }
-        flushPushSave()
-        sourceCollector?.stop(); ttsController?.shutdown()
-        localAPIServer?.stop(); syncServer?.stop()
+        let selectedT3 = usesT3Environment
+        if !selectedT3 {
+            flushPushSave()
+            sourceCollector?.stop(); ttsController?.shutdown()
+            localAPIServer?.stop(); syncServer?.stop()
+        }
         t3LaunchTask?.cancel()
         let nativeMCP = mcpServer, foregroundAgent = agent, backgroundSupervisor = agentSupervisor
-        let selectedT3 = usesT3Environment
         terminationTask = Task { @MainActor [weak self] in
             guard let self else { NSApp.reply(toApplicationShouldTerminate: true); return }
             self.t3Host?.invalidate(message: "Stopping the local environment…")
             await self.t3LaunchTask?.value
-            await self.t3Host?.stop()
+            guard await self.t3Host?.stop() != false else {
+                self.terminationTask = nil
+                self.replyBubble.showTransient("Could not save the current draft. Keep the window open and try Quit again.", seconds: 8, isError: true)
+                NSApp.reply(toApplicationShouldTerminate: false)
+                return
+            }
+            if selectedT3 {
+                self.flushPushSave()
+                self.sourceCollector?.stop(); self.ttsController?.shutdown()
+                self.localAPIServer?.stop(); self.syncServer?.stop()
+            }
             await nativeMCP?.stop()
             if !selectedT3 {
                 await foregroundAgent?.shutdown()
