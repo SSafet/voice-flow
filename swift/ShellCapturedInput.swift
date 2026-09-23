@@ -56,8 +56,10 @@ final class ShellCapturedInput {
         _ = try BundleIngester(index: service.index, root: paths.configRoot).ingest(id: meta.id)
         return captureIds
     }
-    func complete(deliveryId: String, text: String, captureIds: [String], attachments: [String], capability: CaptureCapability) async throws -> ShellInput {
-        let input = try await custody.complete(deliveryId, text: text, captureIds: captureIds)
+    func complete(deliveryId: String, text: String, captureIds: [String], attachments: [String],
+                  capability: CaptureCapability, markedCaptures: [ShellMarkedCaptureDraft] = []) async throws -> ShellInput {
+        let input = try await custody.complete(deliveryId, text: text, captureIds: captureIds,
+            markedCaptures: markedCaptures)
         let entry = HistoryEntry(text: text, time: ISO8601DateFormatter().string(from: Date()),
             timestamp: ISO8601DateFormatter().string(from: Date()), id: deliveryId, destination: .kept,
             seen: false, capability: capability, attachments: attachments)

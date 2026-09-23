@@ -25,10 +25,10 @@ fi
 swiftc -parse-as-library -swift-version 5 -target "$(uname -m)-apple-macos14" \
   -o "$work/native-input" "${grdb[@]}" \
   swift/VoiceFlowPaths.swift swift/DisplayContext.swift swift/CaptureRouting.swift \
-  swift/Capture.swift swift/ScreenCapture.swift swift/PendingAudio.swift \
+  swift/Capture.swift swift/ScreenCapture.swift swift/Annotation.swift swift/PendingAudio.swift \
   swift/CloudSyncModels.swift swift/WatcherPolicy.swift swift/WatcherBus.swift \
   swift/AgentSecretPolicy.swift swift/ImageUtils.swift swift/Generated/PlatformContracts.swift \
-  swift/Shell/VoiceFlowShellContract.swift swift/Shell/ShellInputCustody.swift swift/ShellCapturedInput.swift \
+  swift/Shell/VoiceFlowShellContract.swift swift/Shell/ShellInputCustody.swift swift/Shell/ShellCaptureMarks.swift swift/ShellCapturedInput.swift \
   $(find swift/Captured -name '*.swift' | sort) tests/t3_native_input/main.swift \
   -framework Cocoa -framework CoreGraphics -framework ScreenCaptureKit
 "$work/native-input"

@@ -20,6 +20,48 @@ struct ShellFrozenTarget: Codable, Equatable {
     var isValid: Bool { !documentId.isEmpty && documentId.utf8.count <= 128 && target.isValid }
 }
 
+/// Structured user marks for one exact JPEG already held by native custody.
+/// No native path, draft action, or read capability crosses this boundary.
+struct ShellMarkedCapture: Codable, Equatable {
+    let captureId: String
+    let sha256: String
+    let width: Int
+    let height: Int
+    let marks: [TPMark]
+
+    var isValid: Bool {
+        guard !captureId.isEmpty, captureId.utf8.count <= 128,
+              sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+              (1...32_768).contains(width), (1...32_768).contains(height),
+              width * height <= 100_000_000, !marks.isEmpty, marks.count <= 128 else { return false }
+        var points = 0
+        for (index, mark) in marks.enumerated() {
+            guard mark.n == index + 1, (1...512).contains(mark.stroke),
+                  mark.box.count == 4,
+                  mark.box.allSatisfy({ (0...32_768).contains($0) }),
+                  mark.box[2] > 0, mark.box[3] > 0,
+                  mark.box[0] + mark.box[2] <= width,
+                  mark.box[1] + mark.box[3] <= height,
+                  (mark.note?.utf16.count ?? 0) <= 2_000,
+                  (mark.note?.utf8.count ?? 0) <= 8_000,
+                  (mark.underText?.utf16.count ?? 0) <= 200 else { return false }
+            let coordinates = [mark.from, mark.to, mark.center, mark.origin].compactMap { $0 } + (mark.points ?? [])
+            guard coordinates.allSatisfy({ $0.count == 2 && $0.allSatisfy { (-32_768...32_768).contains($0) } }),
+                  (mark.points?.count ?? 0) <= 2_048 else { return false }
+            points += mark.points?.count ?? 0
+            guard points <= 8_192 else { return false }
+            switch mark.kind {
+            case .line, .arrow: guard mark.from != nil && mark.to != nil else { return false }
+            case .pen, .highlight: guard (mark.points?.count ?? 0) >= 2 else { return false }
+            case .badge: guard mark.center != nil && mark.label != nil else { return false }
+            case .text: guard mark.origin != nil && mark.note != nil else { return false }
+            case .rect, .ellipse: break
+            }
+        }
+        return ((try? JSONEncoder().encode(marks).count) ?? Int.max) <= 256_000
+    }
+}
+
 struct ShellInput: Codable, Equatable {
     /// Stable across unconfirmed delivery retries; the web consumer persists deduplication.
     let deliveryId: String
@@ -27,11 +69,21 @@ struct ShellInput: Codable, Equatable {
     let text: String
     /// Opaque native capture IDs. Never arbitrary native paths or read capabilities.
     let captureIds: [String]
+    let markedCaptures: [ShellMarkedCapture]?
+
+    init(deliveryId: String, destination: ShellFrozenTarget, text: String, captureIds: [String],
+         markedCaptures: [ShellMarkedCapture]? = nil) {
+        self.deliveryId = deliveryId; self.destination = destination; self.text = text
+        self.captureIds = captureIds; self.markedCaptures = markedCaptures
+    }
 
     var isValid: Bool {
         !deliveryId.isEmpty && deliveryId.utf8.count <= 128 && destination.isValid
             && text.utf8.count <= 1_048_576 && captureIds.count <= 32 && Set(captureIds).count == captureIds.count
             && captureIds.allSatisfy { !$0.isEmpty && $0.utf8.count <= 128 }
+            && (markedCaptures?.count ?? 0) <= captureIds.count
+            && Set(markedCaptures?.map(\.captureId) ?? []).count == (markedCaptures?.count ?? 0)
+            && (markedCaptures ?? []).allSatisfy { captureIds.contains($0.captureId) && $0.isValid }
     }
 }
 

@@ -2,6 +2,13 @@ import AppKit
 import CryptoKit
 import GRDB
 
+// Annotation.swift normally gets this palette initializer from the app UI.
+extension NSColor {
+    convenience init(r: Int, g: Int, b: Int, a: Int = 255) {
+        self.init(red: CGFloat(r)/255, green: CGFloat(g)/255, blue: CGFloat(b)/255, alpha: CGFloat(a)/255)
+    }
+}
+
 func vflog(_ message: String) {}
 final class PendingInteraction { var sessionId: String? }
 final class UserSettings {
@@ -65,11 +72,48 @@ struct NativeInputTests {
         let originalHash = hash(original)
         try check(original.count > 524_288, "real JPEG spans multiple maximum-sized chunks")
         let pictureId = try native.attachShot(path: shot.path, deliveryId: id)
+        let userItems: [AnnotationItem] = [
+            .stroke(points: [CGPoint(x: 100, y: 900), CGPoint(x: 160, y: 850)],
+                    color: AnnotationColors[0], width: 5),
+            .text(string: "synthetic note", origin: CGPoint(x: 200, y: 700),
+                  color: AnnotationColors[3], fontSize: 16, width: 180, style: .halo)
+        ]
+        let frozenMarks = AnnotationCaptureSnapshot(
+            items: try JSONEncoder().encode(AnnotationSnapshot(items: userItems.map(AnnotationSnapshot.Item.init))),
+            canvasOrigin: .zero, canvasHeight: 1000, visible: true)
+        let marks = try ShellCaptureMarks.project(frozenMarks, on: display, width: shot.width, height: shot.height)
+        try check(marks.count == 2 && marks[0].kind == .pen && marks[0].points == [[100, 900], [160, 850]]
+            && marks[1].kind == .text && marks[1].note == "synthetic note", "user marks map to final JPEG pixels")
+        let shifted = DisplayContext(id: 2, frame: NSRect(x: -800, y: 0, width: 800, height: 600),
+            visibleFrame: .zero, backingScaleFactor: 1, captureIndex: 2)
+        let crossing = AnnotationCaptureSnapshot(items: try JSONEncoder().encode(AnnotationSnapshot(items: [
+            AnnotationSnapshot.Item(.shape(kind: .line, from: CGPoint(x: 790, y: 220),
+                to: CGPoint(x: 820, y: 220), color: AnnotationColors[1], width: 3))
+        ])), canvasOrigin: CGPoint(x: -800, y: 0), canvasHeight: 600, visible: true)
+        let crossingMarks = try ShellCaptureMarks.project(crossing, on: shifted, width: 800, height: 600)
+        try check(crossingMarks.count == 1 && crossingMarks[0].from == [790, 220]
+            && crossingMarks[0].to == [820, 220] && crossingMarks[0].box[0] < 800
+            && crossingMarks[0].box[0] + crossingMarks[0].box[2] == 800,
+            "cross-display line keeps bounded off-frame endpoint and clipped box")
+        let oversized = AnnotationCaptureSnapshot(items: try JSONEncoder().encode(AnnotationSnapshot(items: [
+            AnnotationSnapshot.Item(.text(string: String(repeating: "😀", count: 1001),
+                origin: CGPoint(x: 100, y: 100), color: AnnotationColors[0],
+                fontSize: 16, width: 200, style: .halo))
+        ])), canvasOrigin: .zero, canvasHeight: 1000, visible: true)
+        try refuses("UTF-16 note bound matches the web contract") {
+            _ = try ShellCaptureMarks.project(oversized, on: display, width: shot.width, height: shot.height)
+        }
+        let markedDraft = ShellMarkedCaptureDraft(captureId: pictureId, width: shot.width,
+            height: shot.height, marks: marks)
         let input = try await native.complete(deliveryId: id, text: "retained narration", captureIds: [pictureId],
-            attachments: [shot.path], capability: .snapshot)
+            attachments: [shot.path], capability: .snapshot, markedCaptures: [markedDraft])
+        try check(input.markedCaptures?.first?.sha256 == originalHash && input.markedCaptures?.first?.marks == marks,
+            "marks bind to exact admitted JPEG digest")
         try check(input.destination == frozen && native.custody.owns(input), "immutable native admission")
         let saved = try CapturedPendingFiles.read(source: shotURL)
         try check(saved.completedInput != nil && saved.pictures.first?.sha256 == originalHash, "exact complete metadata persisted before dispatch")
+        try check(try JSONDecoder().decode(ShellInput.self, from: saved.completedInput!) == input,
+            "durable marker retains exact bounded marks")
         try check(try CapturedPendingFiles.read(source: audio) == saved, "all existing sources share exact completed payload")
         let query = CapturedQuery(index: service.index, root: root, indexProgress: { service.progress }, mayRead: { true })
         let readService = CapturedReadService(query: query)
@@ -116,6 +160,11 @@ struct NativeInputTests {
         try check(restarted.custody.pendingIds.isEmpty, "startup does not auto-replay")
         let recovered = try await restarted.recover(deliveryId: id)
         try check(recovered == input && restarted.custody.owns(input), "explicit same-ID recovery verifies hashes")
+        try await refusesAsync("recovery rejects altered marked JPEG geometry") {
+            _ = try await native.custody.complete(id, text: input.text, captureIds: input.captureIds,
+                markedCaptures: [.init(captureId: pictureId, width: shot.width + 1,
+                    height: shot.height, marks: marks)])
+        }
         try refuses("restored delivery still stale after remount") { _ = try restarted.custody.read(request, binding: remounted) }
         try png(salt: 7).write(to: shotURL)
         let changed = ShellCapturedInput(paths: paths, service: service)

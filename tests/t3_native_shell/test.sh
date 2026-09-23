@@ -4,7 +4,7 @@ cd "$(dirname "$0")/../.."
 test_dir=$(mktemp -d "${TMPDIR:-/tmp}/vf-t3-shell-unit.XXXXXX")
 trap 'rm -rf "$test_dir"' EXIT
 swiftc -target "$(uname -m)-apple-macos14" -swift-version 5 -parse-as-library \
-  swift/Shell/VoiceFlowShellContract.swift swift/Shell/T3ShellPolicy.swift \
+  swift/Generated/PlatformContracts.swift swift/Shell/VoiceFlowShellContract.swift swift/Shell/T3ShellPolicy.swift \
   swift/Shell/T3BrowserAuthentication.swift swift/Shell/VoiceFlowShellScript.swift \
   tests/t3_native_shell/contract.swift -o "$test_dir/contracts"
 SHELL_TEST_SCRIPT_OUTPUT="$test_dir/bridge.js" "$test_dir/contracts"
@@ -16,7 +16,7 @@ swiftc -target "$(uname -m)-apple-macos14" -swift-version 5 -parse-as-library \
   -emit-module -module-name VoiceFlowT3Shell swift/VoiceFlowPaths.swift swift/Captured/CapturedSourceEvents.swift \
   swift/Shell/T3ShellPolicy.swift swift/Shell/T3BrowserAuthentication.swift \
   swift/Shell/T3NativeAuthority.swift swift/Shell/T3BundledOpenCode.swift swift/Shell/T3EnvironmentProcess.swift \
-  swift/Shell/VoiceFlowShellContract.swift swift/Shell/VoiceFlowShellScript.swift \
+  swift/Generated/PlatformContracts.swift swift/Shell/VoiceFlowShellContract.swift swift/Shell/VoiceFlowShellScript.swift \
   swift/Shell/ShellInputCustody.swift swift/Shell/T3ShellDownloads.swift swift/Shell/T3ShellWindow.swift \
   -o "$test_dir/VoiceFlowT3Shell.swiftmodule"
 python3 - <<'PY'

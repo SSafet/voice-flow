@@ -71,15 +71,28 @@ extension AppDelegate {
         do { id = try source.custody.reserve(destination) }
         catch { return .init(status: .unavailable) }
         do {
-            let display = DisplayTopology.underMouse ?? DisplayTopology.primary
+            guard let display = DisplayTopology.underMouse ?? DisplayTopology.primary else {
+                throw ShellInputFailure.unavailable
+            }
+            let before = try annotationOverlay?.captureSnapshotForShell()
             let raw = try await screenCapture.captureScreen(on: display)
+            guard DisplayTopology.display(id: display.id) == display,
+                  try annotationOverlay?.captureSnapshotForShell() == before else {
+                throw ShellInputFailure.changedSource
+            }
+            let geometry = display.shotGeometry
+            let marks = try before.map {
+                try ShellCaptureMarks.project($0, on: display, width: geometry.width, height: geometry.height)
+            } ?? []
             let reservation = try source.custody.reservation(id)
             guard let shot = CaptureStore.saveShot(raw, on: display, pendingDelivery: reservation) else {
                 throw ShellInputFailure.unavailable
             }
             let captureId = try source.attachShot(path: shot.path, deliveryId: id)
+            let markedCaptures = marks.isEmpty ? [] : [ShellMarkedCaptureDraft(captureId: captureId,
+                width: shot.width, height: shot.height, marks: marks)]
             let input = try await source.complete(deliveryId: id, text: "", captureIds: [captureId],
-                attachments: [shot.path], capability: .snapshot)
+                attachments: [shot.path], capability: .snapshot, markedCaptures: markedCaptures)
             let receipt = await shell.deliver(input)
             showShellInputReceipt(receipt)
             return .init(status: receipt.status == .accepted ? .completed : .unavailable)

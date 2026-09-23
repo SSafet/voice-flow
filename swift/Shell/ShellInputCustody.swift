@@ -27,6 +27,15 @@ enum ShellInputSource: Equatable {
 
 enum ShellInputFailure: Error { case unavailable, invalid, staleTarget, capacity, changedSource }
 
+/// Before custody reads the JPEG, no caller can claim its digest. Completion
+/// binds these marks to the verified source bytes and final image dimensions.
+struct ShellMarkedCaptureDraft: Equatable {
+    let captureId: String
+    let width: Int
+    let height: Int
+    let marks: [TPMark]
+}
+
 /// Bounded custody of input already collected by native services. Source stores
 /// persist provenance; T3 owns the draft and receipt. This is neither a draft
 /// store nor a send queue: nothing retries, retargets or executes automatically.
@@ -90,20 +99,46 @@ final class ShellInputCustody {
     /// Safe only before any source was produced; never evict unconfirmed custody.
     func abandonEmpty(_ id: String) { if entries[id]?.sources.isEmpty == true { entries.removeValue(forKey: id) } }
 
-    func complete(_ id: String, text: String, captureIds: [String]) async throws -> ShellInput {
+    func complete(_ id: String, text: String, captureIds: [String],
+                  markedCaptures: [ShellMarkedCaptureDraft] = []) async throws -> ShellInput {
         guard var entry = entries[id], !entry.completing, !entry.sources.isEmpty else { throw ShellInputFailure.unavailable }
-        let input = ShellInput(deliveryId: id, destination: entry.destination, text: text, captureIds: captureIds)
-        guard input.isValid, !text.isEmpty || !captureIds.isEmpty, Set(captureIds).count == captureIds.count,
-              Set(captureIds) == entry.captureIds else { throw ShellInputFailure.invalid }
-        if let old = entry.input { guard old == input else { throw ShellInputFailure.invalid }; return old }
+        guard !text.isEmpty || !captureIds.isEmpty, Set(captureIds).count == captureIds.count,
+              Set(captureIds) == entry.captureIds, markedCaptures.count <= captureIds.count,
+              Set(markedCaptures.map(\.captureId)).count == markedCaptures.count,
+              markedCaptures.allSatisfy({ captureIds.contains($0.captureId) }) else { throw ShellInputFailure.invalid }
+        if let old = entry.input {
+            guard old.destination == entry.destination, old.text == text, old.captureIds == captureIds,
+                  (old.markedCaptures ?? []).count == markedCaptures.count,
+                  zip(old.markedCaptures ?? [], markedCaptures).allSatisfy({ pair in
+                      let (saved, draft) = pair
+                      return saved.captureId == draft.captureId && saved.width == draft.width &&
+                          saved.height == draft.height && saved.marks == draft.marks
+                  }) else { throw ShellInputFailure.invalid }
+            return old
+        }
         // At most one read preparation; no parallel unaccounted byte buffers or
         // implicit wait/replay queue. A busy caller retains its source to retry.
         guard !preparing else { throw ShellInputFailure.unavailable }
         preparing = true; entry.completing = true; entries[id] = entry
         defer { preparing = false; entries[id]?.completing = false }
         let pictures = try await snapshots(captureIds)
+        var bound: [ShellMarkedCapture] = []
+        for draft in markedCaptures {
+            guard let (picture, bytes) = pictures[draft.captureId],
+                  let image = CGImageSourceCreateWithData(bytes as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                  let height = properties[kCGImagePropertyPixelHeight] as? Int,
+                  width == draft.width, height == draft.height else { throw ShellInputFailure.changedSource }
+            bound.append(ShellMarkedCapture(captureId: draft.captureId, sha256: picture.sha256,
+                width: width, height: height, marks: draft.marks))
+        }
+        let input = ShellInput(deliveryId: id, destination: entry.destination, text: text, captureIds: captureIds,
+            markedCaptures: bound.isEmpty ? nil : bound)
+        guard input.isValid else { throw ShellInputFailure.invalid }
         let metadata = CapturedPendingDelivery(deliveryId: id, reservation: try Self.encode(entry.destination),
             completedInput: try Self.encode(input), pictures: captureIds.compactMap { pictures[$0]?.0 })
+        guard metadata.isValid else { throw ShellInputFailure.capacity }
         try persist(entry.sources, metadata) // fail closed before first attempted web mutation
         entries[id]?.pictures = pictures; entries[id]?.input = input; entries[id]?.metadata = metadata
         return input
@@ -118,7 +153,10 @@ final class ShellInputCustody {
               input.deliveryId == metadata.deliveryId,
               (try? JSONDecoder().decode(ShellFrozenTarget.self, from: metadata.reservation)) == input.destination,
               Set(input.captureIds) == Set(metadata.pictures.map(\.captureId)),
-              input.captureIds.count == metadata.pictures.count else { throw ShellInputFailure.invalid }
+              input.captureIds.count == metadata.pictures.count,
+              (input.markedCaptures ?? []).allSatisfy({ marked in
+                  metadata.pictures.contains { $0.captureId == marked.captureId && $0.sha256 == marked.sha256 }
+              }) else { throw ShellInputFailure.invalid }
         if let old = entries[input.deliveryId]?.input { guard old == input else { throw ShellInputFailure.invalid }; return old }
         if let existing = entries[input.deliveryId] {
             guard existing.destination == input.destination, !existing.completing else { throw ShellInputFailure.invalid }

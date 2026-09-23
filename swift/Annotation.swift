@@ -113,6 +113,19 @@ struct AnnotationSnapshot: Codable {
     let items: [Item]
 }
 
+/// An immutable view of the user overlay for one native screen capture. The
+/// serialized items include an in-progress stroke, shape, or text editor.
+struct AnnotationCaptureSnapshot: Equatable {
+    let items: Data
+    let canvasOrigin: CGPoint
+    let canvasHeight: CGFloat
+    let visible: Bool
+
+    func decodedItems() throws -> [AnnotationItem] {
+        try JSONDecoder().decode(AnnotationSnapshot.self, from: items).items.map(\.value)
+    }
+}
+
 final class AnnotationStore {
     let url: URL
     init(url: URL = VoiceFlowPaths.shared.file("annotations.json")) { self.url = url }
@@ -177,6 +190,19 @@ final class AnnotationOverlay {
     }
 
     var hasContent: Bool { !(canvas?.items.isEmpty ?? true) }
+
+    /// Read-only capture checkpoint; never changes the overlay or its saved
+    /// annotations. A second checkpoint after ScreenCaptureKit detects edits
+    /// during the asynchronous capture, so metadata cannot describe other pixels.
+    func captureSnapshotForShell() throws -> AnnotationCaptureSnapshot {
+        let visible = panel?.isVisible == true
+        let items = visible ? (canvas?.recoverableItems ?? []) : []
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let encoded = try encoder.encode(AnnotationSnapshot(items: items.map(AnnotationSnapshot.Item.init)))
+        guard encoded.count <= 256_000 else { throw ShellInputFailure.capacity }
+        return AnnotationCaptureSnapshot(items: encoded, canvasOrigin: panel?.frame.origin ?? .zero,
+            canvasHeight: panel?.frame.height ?? 0, visible: visible)
+    }
 
     func toggleEditing() {
         if isEditing { endEditing() } else { beginEditing() }
