@@ -3506,7 +3506,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // The T3 workbench is a real app window. Closing Settings must
             // return key focus to it instead of demoting the app to accessory.
             showDock()
-            t3Host?.show()
+            Task { @MainActor [weak self] in
+                guard let self, self.shellInputWindow?.window.isVisible == true else { return }
+                self.t3Host?.show()
+            }
             return
         }
         NSApp.setActivationPolicy(.accessory)
