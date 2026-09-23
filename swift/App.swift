@@ -3501,9 +3501,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func hideDockIfNoWindows() {
         let settingsVisible = settingsWindow.window?.isVisible == true
         let permissionsVisible = permissionsWindow.window?.isVisible == true
-        if !settingsVisible && !permissionsVisible {
-            NSApp.setActivationPolicy(.accessory)
+        guard !settingsVisible && !permissionsVisible else { return }
+        if usesT3Environment, shellInputWindow?.window.isVisible == true {
+            // The T3 workbench is a real app window. Closing Settings must
+            // return key focus to it instead of demoting the app to accessory.
+            showDock()
+            t3Host?.show()
+            return
         }
+        NSApp.setActivationPolicy(.accessory)
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
