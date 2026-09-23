@@ -240,7 +240,13 @@ final class CloudSyncController: ObservableObject {
     }
     private func makeCredentialOwner(origin: String, credentials: CloudCredentials? = nil) throws -> CloudHTTPClient {
         let epoch = UUID()
-        let owner = try CloudHTTPClient(origin: origin, credentials: credentials, vault: vault, onInvalidation: { [weak self] in
+        #if VOICE_FLOW_QA
+        let allowLoopback = VoiceFlowPaths.shared.isIsolated
+        #else
+        let allowLoopback = false
+        #endif
+        let owner = try CloudHTTPClient(origin: origin, credentials: credentials, vault: vault,
+                                        allowLoopback: allowLoopback, onInvalidation: { [weak self] in
             Task { @MainActor in
                 // A retired actor may have queued its notification before a
                 // new sign-in completed. It cannot invalidate the new owner.
