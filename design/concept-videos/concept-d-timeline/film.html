@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VoiceFlow — Concept D · Timeline</title>
+<link rel="stylesheet" href="film.css">
+</head>
+<body>
+<div id="stage">
+  <div id="wallpaper"></div>
+  <div id="menubar"></div>
+  <div id="windows"></div>
+  <!-- the signature object: one paper surface at the right edge that becomes every VoiceFlow surface -->
+  <div id="paper" class="paper">
+    <div id="v-slip" class="view"></div>
+    <div id="v-reader" class="view"></div>
+    <div id="v-sheet" class="view"></div>
+    <div id="v-strip" class="view"></div>
+    <div id="v-receipt" class="view"></div>
+    <div id="v-chip" class="view"></div>
+    <svg id="trace" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+  <div id="picker" class="paper"></div>
+  <div id="tear" class="paper"></div>
+  <div id="dots"><i></i><i></i><i></i></div>
+  <div id="ripple"></div>
+  <div id="cursor"><svg width="24" height="30" viewBox="0 0 24 30"><path d="M4 2 L4 24 L9.5 19 L13 27.5 L16.5 26 L13 17.5 L20 17.5 Z" fill="#000" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
+  <div id="hud"></div>
+  <div id="caption"><div class="cap-l"></div><div class="cap-s"></div></div>
+  <div id="title"></div>
+  <div id="endcard"></div>
+  <div id="measure"></div>
+</div>
+<script src="../shared/data.js"></script>
+<script src="../shared/kit.js"></script>
+<script src="timeline.js"></script>
+<script src="desktop.js"></script>
+<script src="motion.js"></script>
+<script src="bookmark.js"></script>
+<script src="dictation.js"></script>
+<script src="reader.js"></script>
+<script src="sheet.js"></script>
+<script src="capture.js"></script>
+<script src="film.js"></script>
+</body>
+</html>

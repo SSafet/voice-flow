@@ -44,7 +44,7 @@ dictating. Safet: be far more mindful of the space elements take. For C and D:
   is larger than 16 px except the title card and chapter captions.
 - **Dictation surface ≤ 460 × 100 px** (≈ 2% of the screen) including any command line;
   2 text lines visible (it scrolls inside itself). Alternatives menu adds ≤ 90 px while open.
-- **Reader surface ≤ 540 × 110 px.**
+- **Reader surface ≤ 540 × 128 px** (relaxed from 110 so prev / current (2 lines) / next show as whole lines).
 - **Receipts / one-liners ≤ 360 × 32 px.**
 - **Control center / automations / payload** (deliberately summoned): ≤ 30% of the
   screen area (e.g. 900 × 560), information-dense like a native popover, not a full-screen takeover.
