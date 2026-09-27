@@ -28,11 +28,37 @@ mark session becomes one portable payload any agent can read.
 4. **Legible.** Product text ≥ 15 px (meta ≥ 14 px, the one allowed exception: 13 px
    uppercase letter-spaced labels). Reading text 20–30 px. Secondary text contrast ≥ 7:1,
    never faded grey on dark; placeholder/inactive ≥ 4.5:1.
+   **Concepts C and D override the sizes here — see "Space budget" below.**
 5. **Every spoken word is editable by speaking.** Edit commands are never inserted as text.
 6. **Marks belong to elements, not pixels.** They scroll with content and hide with their window.
 7. **Everything becomes an agent-readable record.** Transcript + marks + screenshots, in order.
 
+## Space budget — Concepts C and D (hard rules, from Safet's review of A and B)
+
+A and B used 26 px text and surfaces that covered a large part of the screen while
+dictating. Safet: be far more mindful of the space elements take. For C and D:
+
+- **Native-scale type.** The film's 1920×1080 frame is a MacBook screen; native macOS UI
+  text is ~13 px there. Product text is **14–15 px**, meta/labels **13 px** (never
+  smaller), the reader's current sentence **16 px max**. Nothing in a VoiceFlow surface
+  is larger than 16 px except the title card and chapter captions.
+- **Dictation surface ≤ 460 × 100 px** (≈ 2% of the screen) including any command line;
+  2 text lines visible (it scrolls inside itself). Alternatives menu adds ≤ 90 px while open.
+- **Reader surface ≤ 540 × 110 px.**
+- **Receipts / one-liners ≤ 360 × 32 px.**
+- **Control center / automations / payload** (deliberately summoned): ≤ 30% of the
+  screen area (e.g. 900 × 560), information-dense like a native popover, not a full-screen takeover.
+- **Capture record while marking:** ≤ 260 × 320 px, or inside the signature object.
+- Validate it: at the key frame of every scene, measure each VoiceFlow surface with
+  `getBoundingClientRect()` in the page and fail your own review if any budget is exceeded.
+  Report the measured maxima.
+
 ## Lessons from past VoiceFlow design reviews (hard rules)
+
+- **Pitfalls found in A/B reviews:** text-carrying surfaces must be ≥ 98% opaque (A and B
+  first shipped see-through); feathered edges must be smooth on every side; priority rows
+  must show the full ask (never truncate it); after Stripe is switched on its detail reads
+  "connected just now", not "not connected yet"; payload filename columns align.
 
 - **Solid dark, not see-through.** VF-16 moved the panel from translucent blur to solid
   dark because it washed out over bright pages (Notion and Pantrella are bright). Any
