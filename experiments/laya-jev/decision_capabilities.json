@@ -1,0 +1,46 @@
+{
+  "checked_on": "2026-10-07",
+  "endpoint": "https://openrouter.ai/api/alpha/decisions",
+  "output_primitives": ["noul: yes/no probability", "choice: fixed labels and probabilities", "score: ordered rubric probabilities and expected score"],
+  "models": {
+    "jev": {
+      "id": "typesafe/jev-1.13",
+      "advertised_context_tokens": 32000,
+      "advertised_input_usd_per_million": 0.042,
+      "advertised_output_usd_per_million": 0,
+      "input": "text and JSON; image controls returned missing, so no verified image support",
+      "advertised_max_questions": null,
+      "weights": "proprietary; no public weights identified in checked vendor documentation",
+      "sources": ["https://openrouter.ai/typesafe/jev-1.13", "https://openrouter.ai/docs/guides/community/jev", "https://docs.typesafe.ai/models"]
+    },
+    "luna": {
+      "id": "openai/gpt-6-luna-decisions",
+      "advertised_context_tokens": 1050000,
+      "advertised_input_usd_per_million": 0.10,
+      "advertised_output_usd_per_million": 0,
+      "input": "text, JSON, images; image-consumption controls passed using flat content parts in state",
+      "advertised_max_questions": 200,
+      "weights": "hosted OpenAI model; no public weights",
+      "audio_video": "OpenAI Decisions input contract excludes audio, files and tools; no native audio/video test performed",
+      "sources": ["https://openrouter.ai/openai/gpt-6-luna-decisions", "https://developers.openai.com/api/reference/resources/decisions/methods/create"]
+    },
+    "decider": {
+      "id": "perplexity/pplx-decider-v1-27b",
+      "advertised_context_tokens": 262144,
+      "advertised_input_usd_per_million": 0.04,
+      "advertised_output_usd_per_million": 0,
+      "input": "text, JSON, images empirically verified; OpenRouter description says images unsupported but live color/OCR controls passed",
+      "advertised_max_questions": 128,
+      "weights": "Apache-2.0 release on Hugging Face; model card identifies Qwen3.8-27B fine-tune",
+      "local_runtime": "Vendor example: Python 3.12+, CUDA; approximately 49 GiB weights plus working memory. Local Decider not downloaded or run in this comparison.",
+      "sources": ["https://openrouter.ai/perplexity/pplx-decider-v1-27b", "https://huggingface.co/perplexity-ai/pplx-decider-v1-27b", "https://huggingface.co/perplexity-ai/pplx-decider-v1-27b/blob/main/inference.py"]
+    }
+  },
+  "integration_notes": [
+    "Image URL is an inline base64 data URL inside state: [{type: text, text: ...}, {type: image_url, image_url: {url: data:image/png;base64,...}}].",
+    "User-message wrappers containing input_image or image_url parts were accepted with HTTP 200 but failed Luna image-consumption controls. Do not equate API acceptance with actual modality support.",
+    "The linked OpenRouter Multimodal Decisions guide at /docs/guides/community/multimodal-decisions returned 404 in both browser and fetch checks.",
+    "All modalities and context limits are route/version-specific. Advertised maximum context is not a tested maximum.",
+    "No native audio/video input was tested. Voice transcripts can be evaluated as text; screenshots or extracted frames can be evaluated as images on verified image routes."
+  ]
+}

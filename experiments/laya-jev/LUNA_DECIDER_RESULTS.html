@@ -1,0 +1,86 @@
+<!doctype html><html lang='en'><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Decision models · October 2026</title>
+<style>body{font:16px/1.55 system-ui;max-width:1120px;margin:48px auto;padding:0 24px;color:#18212b;background:#f8fafc}h1{font-size:36px;line-height:1.15}h2{margin-top:38px}table{border-collapse:collapse;width:100%;margin:20px 0;font-size:15px}td,th{border-bottom:1px solid #ccd5df;padding:11px;text-align:left}th{background:#e8edf3}.lead{font-size:20px;max-width:920px}.callout{background:#e6f3ed;padding:18px 24px;border-left:4px solid #31825a}code{font-size:13px}pre{white-space:pre-wrap;background:#e8edf3;padding:16px}a{color:#185da9}.small{color:#566475;font-size:14px}.scroll{overflow:auto}</style>
+<p class='small'>LIVE OPENROUTER TEST · 7 OCTOBER 2026</p><h1>Jev vs GPT-6 Luna Decisions<br>vs Perplexity Decider V1</h1>
+<p class='lead'>Decider was strongest on this expanded text suite. Jev handled large question batches economically. Luna's strengths here were image decisions and fast retrieval from long inputs; it struggled on several short arithmetic and logic tests.</p>
+<p>519 API requests including setup and modality probes; total reported charge <strong>$0.18348440</strong>. Credentials came from the existing Keychain entry and stayed in process memory. Production Voice Flow code was not changed.</p>
+<h2>Shared text and JSON test</h2><p>102 inputs produce 202 decisions per model. Every model sees the same frozen states, questions and labels. Failed API or schema responses count as unsuccessful; none occurred in the scored runs. No retries were needed.</p>
+<div class="scroll"><table><tr><th>Model</th><th>Correct</th><th>Median / P95 request</th><th>Wrong at ≥90% probability</th><th>Core charge</th></tr>
+<tr><td>Jev 1.13</td><td>196/202 · 97.0%</td><td>323 / 427 ms</td><td>0</td><td>$0.001787</td></tr>
+<tr><td>GPT-6 Luna Decisions</td><td>182/202 · 90.1%</td><td>294 / 491 ms</td><td>4</td><td>$0.003425</td></tr>
+<tr><td>Decider V1 27B</td><td>201/202 · 99.5%</td><td>313 / 464 ms</td><td>0</td><td>$0.001220</td></tr>
+</table></div>
+<div class="scroll"><table><tr><th>Test category</th><th>Jev 1.13</th><th>GPT-6 Luna Decisions</th><th>Decider V1 27B</th></tr>
+<tr><td>legacy_triage</td><td>30/30</td><td>30/30</td><td>30/30</td></tr>
+<tr><td>legacy_continuity</td><td>8/8</td><td>8/8</td><td>8/8</td></tr>
+<tr><td>legacy_intent</td><td>8/8</td><td>8/8</td><td>8/8</td></tr>
+<tr><td>permissions</td><td>22/24</td><td>22/24</td><td>23/24</td></tr>
+<tr><td>policy_and_arithmetic</td><td>36/36</td><td>25/36</td><td>36/36</td></tr>
+<tr><td>evidence_and_abstention</td><td>24/24</td><td>21/24</td><td>24/24</td></tr>
+<tr><td>negation_and_injection</td><td>28/32</td><td>28/32</td><td>32/32</td></tr>
+<tr><td>capture_routing</td><td>16/16</td><td>16/16</td><td>16/16</td></tr>
+<tr><td>structured_state</td><td>16/16</td><td>16/16</td><td>16/16</td></tr>
+<tr><td>ordinal_boundaries</td><td>8/8</td><td>8/8</td><td>8/8</td></tr>
+</table></div>
+<p>All three passed the original 46-decision smoke test. The expanded cases separated them: Luna got only 1/12 refund arithmetic questions right, while Jev and Decider got 12/12. Jev failed an embedded classifier-override example in both English and Bulgarian. Decider’s one core error was allowing “email the report to Eva” when the user had only said “send the report to her,” leaving the recipient unresolved.</p>
+<p>Bulgarian subset: Jev 37/39; Luna 37/39; Decider 39/39. Instructions remained English. These paired cases do not establish broad multilingual quality. Reversing question and choice order changed none of the 36 compared labels for any model, including Luna’s wrong arithmetic labels.</p>
+<h2>Modalities: tested behavior versus documentation</h2>
+<div class="scroll"><table><tr><th>Model</th><th>OpenRouter inputs verified</th><th>Advertised context</th><th>Input $/M</th><th>Question batch tested</th></tr>
+<tr><td>Jev 1.13</td><td>Text, JSON</td><td>32,000</td><td>0.042</td><td>128</td></tr>
+<tr><td>GPT-6 Luna Decisions</td><td>Text, JSON, images</td><td>1,050,000</td><td>0.1</td><td>200</td></tr>
+<tr><td>Decider V1 27B</td><td>Text, JSON, images</td><td>262,144</td><td>0.04</td><td>128</td></tr>
+</table></div>
+<p>All three return typed probabilities, labels and ordinal scores; advertised output-token price is zero. These calls do not generate prose or execute tools. No direct audio/video ingestion was tested. For Voice Flow, audio first needs transcription; screenshots can go directly to the two verified image routes.</p>
+<div class="scroll"><table><tr><th>Vision model</th><th>Correct</th><th>Median / P95 request</th><th>Charge</th></tr>
+<tr><td>GPT-6 Luna Decisions</td><td>35/35 · 100.0%</td><td>316 / 1157 ms</td><td>$0.001086</td></tr>
+<tr><td>Decider V1 27B</td><td>35/35 · 100.0%</td><td>421 / 536 ms</td><td>$0.000543</td></tr>
+</table></div>
+<p>The 23 vision inputs cover four colors, four OCR words, four charts, two image-order cases, four invoices, four synthetic microphone-status screens, and a no-image control. Identical text with changed pixels verifies that the image affects the decision. Jev’s separate image controls consistently reported missing evidence; those are unsupported-modality probes, not a vision-quality score.</p>
+<div class="callout"><strong>Documentation discrepancy:</strong> Decider’s OpenRouter description says images are unsupported, but the live route passed every image control and all 35 vision decisions. The linked OpenRouter multimodal guide returned 404. Use the verified flat content-part format below; nested chat messages returned HTTP 200 but failed image-consumption controls.</div>
+<pre>{
+  &quot;model&quot;: &quot;openai/gpt-6-luna-decisions&quot;,
+  &quot;state&quot;: [
+    {
+      &quot;type&quot;: &quot;text&quot;,
+      &quot;text&quot;: &quot;Inspect this screenshot.&quot;
+    },
+    {
+      &quot;type&quot;: &quot;image_url&quot;,
+      &quot;image_url&quot;: {
+        &quot;url&quot;: &quot;data:image/png;base64,...&quot;
+      }
+    }
+  ],
+  &quot;questions&quot;: {
+    &quot;mic_on&quot;: {
+      &quot;type&quot;: &quot;noul&quot;,
+      &quot;instructions&quot;: &quot;Is the microphone shown as ON?&quot;
+    }
+  }
+}</pre>
+<h2>Context and batching change latency and cost</h2><p>Retrieval tests place a randomly selected lane in a unique target record at the start, middle or end among many distinct distractors. All models passed 24/24 shared retrieval decisions. Luna and Decider both passed the 12 extra decisions on the longest states; Jev was excluded because these exceed its advertised window. This tests retrieval, not reasoning over every record.</p>
+<div class="scroll"><table><tr><th>Test</th><th>Model</th><th>Reported input tokens</th><th>Request time</th><th>Reported cost</th></tr>
+<tr><td>context-6500-start-teal</td><td>GPT-6 Luna Decisions</td><td>98,459</td><td>0.706 s</td><td>$0.0098459</td></tr>
+<tr><td>context-6500-start-teal</td><td>Decider V1 27B</td><td>274,313</td><td>12.888 s</td><td>$0.0109725</td></tr>
+<tr><td>batch-128</td><td>GPT-6 Luna Decisions</td><td>21,253</td><td>0.973 s</td><td>$0.0021253</td></tr>
+<tr><td>batch-128</td><td>Decider V1 27B</td><td>159,872</td><td>2.813 s</td><td>$0.0063949</td></tr>
+<tr><td>batch-128</td><td>Jev 1.13</td><td>4,738</td><td>0.525 s</td><td>$0.0001990</td></tr>
+<tr><td>batch-200</td><td>GPT-6 Luna Decisions</td><td>33,205</td><td>0.969 s</td><td>$0.0033205</td></tr>
+</table></div>
+<p>Across all six longest-context requests, median latency was 0.692 s for Luna and 12.578 s for Decider. The identical states produced roughly 98K billed input tokens for Luna and 274K for Decider with two questions. Usage counts can aggregate repeated state across questions: they are billing measurements, not a direct measurement of usable context. Maximum advertised windows were not exhaustively tested.</p>
+<p>At 128 questions, Jev cost about 11× less than Luna and 32× less than Decider in this example. All 128 answers were correct for each; Luna also passed 200/200. Each also matched the correct label in eight separate tests with 8, 32, 64 and 128 choices. One batch at each size is a capability check, not a throughput benchmark.</p>
+<h2>Practical choice</h2><p><strong>Start with Decider for a quality-focused pilot</strong> on narrow decisions, then validate against real labeled Voice Flow examples. Keep Jev as a useful baseline, especially when many questions share the same state. Luna is worth considering for long-input or image-heavy paths, but its short arithmetic and logic errors here argue against a blanket replacement.</p>
+<p>Decider publishes Apache-2.0 weights and an inference example; its model card identifies a Qwen3.8-27B fine-tune. The vendor example calls for Python 3.12+ and CUDA, with roughly 49 GiB of weights plus working memory. That gives you a downloadable starting checkpoint for adaptation; this experiment neither downloads those weights nor verifies a full training recipe or scaling procedure. Jev and Luna were tested as hosted models.</p>
+<h2>How to rerun</h2><pre>cd /Users/safet/repos/voice-flow/experiments/laya-jev
+./compare-decisions.sh --quick       # small integration smoke
+./compare-decisions.sh               # full text, capacity and vision pack
+./compare-decisions.sh --models luna decider --suite vision
+uv run --locked python -m unittest test_probe.py test_comprehensive.py</pre>
+<p>Each run gets a timestamped output folder with an HTML report, frozen cases, SHA-256 hashes, expected answers, raw provider responses, costs, versions and per-attempt timing. Use the same output folder to resume only if code and inputs are unchanged. The $0.50 reported-cost stop acts between requests; it is not a provider-enforced hard cap.</p>
+<h2>Evidence and limitations</h2><p>This is a synthetic, authored diagnostic suite, not a representative benchmark. Translations, paired states and multi-question cases are correlated. No thresholds were tuned against these results; high-probability error counts do not establish production calibration. Core network timing came from one pass on this Mac; some image-format exploration overlapped a portion of it. Small latency differences should not be treated as a stable ranking. The full vision run followed the main run.</p>
+<p><a href="results/luna-decider-main/report.html">Full text/capacity report and all failures</a> · <a href="results/luna-decider-vision/report.html">Vision report and raw evidence</a> · <a href="decision_capabilities.json">Capability snapshot and source links</a> · <a href="results/vision-encodings/responses.json">Image-format probes</a> · <a href="results/vision-text-only-models/responses.json">Jev/Decider modality probes</a></p>
+<div class="scroll"><table><tr><th>Model</th><th>Returned version</th></tr>
+<tr><td>Jev 1.13</td><td>typesafe/jev-1.13-20260917</td></tr>
+<tr><td>GPT-6 Luna Decisions</td><td>openai/gpt-6-luna-decisions-20261006</td></tr>
+<tr><td>Decider V1 27B</td><td>perplexity/pplx-decider-v1-27b-20261001</td></tr>
+</table></div>
+<p>Sources checked 7 October 2026: <a href="https://openrouter.ai/typesafe/jev-1.13">Jev OpenRouter</a> · <a href="https://openrouter.ai/openai/gpt-6-luna-decisions">Luna OpenRouter</a> · <a href="https://openrouter.ai/perplexity/pplx-decider-v1-27b">Decider OpenRouter</a> · <a href="https://developers.openai.com/api/reference/resources/decisions/methods/create">OpenAI Decisions input contract</a> · <a href="https://huggingface.co/perplexity-ai/pplx-decider-v1-27b">Decider weights and vendor inference example</a></p></html>
