@@ -138,6 +138,8 @@ final class DesktopSource: WatcherSource {
     private var savedPlanes: [CGDirectDisplayID: LumaPlane] = [:]
     private var tickPlanes: [CGDirectDisplayID: LumaPlane] = [:]
     private var lastFrameAt: Date?
+    private var lastWrittenFrameAt: Date?
+    private var artifactError: String?
     private var latestCamJpeg: Data?
     private var lastSavedCamJpeg: Data?
     private let camDiffThreshold: Double = 0.03
@@ -282,8 +284,15 @@ final class DesktopSource: WatcherSource {
             guard let self else { return await MainActor.run { done(nil) } }
             let url = self.browserURLCollectionEnabled ? Self.browserURL(app: app) : nil
             let focus = Self.focusedElement()
-            let image = try? await self.screenCapture.captureImage(on: display,
-                                                                   excludeOwnWindows: true)
+            let image: CGImage?
+            let captureError: String?
+            do {
+                image = try await self.screenCapture.captureImage(on: display, excludeOwnWindows: true)
+                captureError = nil
+            } catch {
+                image = nil
+                captureError = "screen capture failed: \(error.localizedDescription)"
+            }
             let plane = image.flatMap { LumaPlane.make(from: $0) }
             await MainActor.run {
                 // Stopped, rolled to a new day, or overtaken by the stall
@@ -292,7 +301,7 @@ final class DesktopSource: WatcherSource {
                 self.record(image: image, plane: plane, display: display,
                             app: app, bundle: bundle, window: window, url: url,
                             focus: focus, secure: secure, deltas: deltas, bus: bus)
-                done(image == nil ? "capture failed" : nil)
+                done(captureError)
             }
         }
     }
@@ -356,9 +365,19 @@ final class DesktopSource: WatcherSource {
                 if let plane { savedPlanes[display.id] = plane }
                 lastFrameAt = now
                 framesToday += 1
-                line["frame"] = bus.artifact(prefix: "frame", ext: "jpg", at: now) {
+                line["frame"] = bus.artifact(prefix: "frame", ext: "jpg", at: now, onWritten: { [weak self] succeeded in
+                    guard let self else { return }
+                    if succeeded {
+                        self.lastWrittenFrameAt = now
+                        self.artifactError = nil
+                    } else {
+                        self.artifactError = "screenshot artifact encode or write failed"
+                        self.savedPlanes.removeAll()
+                        self.lastFrameAt = nil
+                    }
+                }, encode: {
                     ImageUtils.jpeg(from: image, maxDimension: 1568, quality: 0.5)
-                }
+                })
             }
             // Displays that went away should not pin their planes in memory.
             let live = Set(DisplayTopology.displays.map(\.id))
@@ -428,6 +447,28 @@ final class DesktopSource: WatcherSource {
         default:
             vflog("watcher: camera permission denied — enable in System Settings → Privacy → Camera")
         }
+    }
+
+    func recorderHealth(error: String?) -> [String: Any] {
+        let state: String
+        var failure = error ?? artifactError
+        if requiresScreenPermissionPreflight && !CGPreflightScreenCaptureAccess() {
+            failure = "screen recording permission unavailable"
+            state = "failed"
+        } else {
+            switch WatcherPolicy.tickDecision(
+                screenLocked: Self.screenIsLocked(),
+                secondsSinceLastInput: Self.secondsSinceLastInput(), idleCutoff: idleCutoff) {
+            case .pause(let reason): state = reason
+            case .capture:
+                state = failure != nil ? "failed" : (lastWrittenFrameAt == nil ? "starting" : "recording")
+            }
+        }
+        return ["op": "recorder_status", "state": state,
+                "last_error": failure.map { $0 as Any } ?? NSNull(),
+                "last_frame_at": lastWrittenFrameAt.map {
+                    ISO8601DateFormatter().string(from: $0) as Any
+                } ?? NSNull()]
     }
 
     // ── counters ───────────────────────────────────────────────────────
@@ -572,6 +613,7 @@ final class WorkflowWatcher {
     static var baseDir: URL { DayBus.baseDir }
 
     private let scheduler: SourceScheduler
+    private let desktop: DesktopSource
     private var statusTimer: Timer?
     var onEvent: ((String, [String: Any], Date) -> Void)? {
         didSet { scheduler.bus.onAppend = onEvent }
@@ -583,13 +625,19 @@ final class WorkflowWatcher {
          browserURLCollectionEnabled: Bool = true,
          requiresScreenPermissionPreflight: Bool = false) {
         scheduler = SourceScheduler(retentionEnabled: retentionEnabled)
-        scheduler.register(DesktopSource(
+        desktop = DesktopSource(
             screenCapture: screenCapture,
             browserURLCollectionEnabled: browserURLCollectionEnabled,
-            requiresScreenPermissionPreflight: requiresScreenPermissionPreflight))
+            requiresScreenPermissionPreflight: requiresScreenPermissionPreflight)
+        scheduler.register(desktop)
     }
 
-    func flush() { scheduler.bus.flush() }
+    @discardableResult
+    func flush() -> Bool { scheduler.bus.flush() }
+
+    func recorderHealth() -> [String: Any] {
+        desktop.recorderHealth(error: scheduler.sourceError("desktop"))
+    }
 
     func start() {
         guard !scheduler.isRunning else { return }

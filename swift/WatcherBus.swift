@@ -40,7 +40,12 @@ final class DayBus {
     init(retentionEnabled: Bool = true) { self.retentionEnabled = retentionEnabled }
 
     /// Drain archive writes before a headless recorder exits.
-    func flush() { writeQueue.sync {} }
+    @discardableResult
+    func flush(timeout: TimeInterval = 2) -> Bool {
+        let drained = DispatchSemaphore(value: 0)
+        writeQueue.async { drained.signal() }
+        return drained.wait(timeout: .now() + timeout) == .success
+    }
 
     private let writeQueue = DispatchQueue(label: "voiceflow.watcher.bus", qos: .utility)
     private var currentDay = ""
@@ -101,12 +106,19 @@ final class DayBus {
     /// representation you have and let it do the expensive part.
     @discardableResult
     func artifact(prefix: String, ext: String, at date: Date = Date(),
+                  onWritten: ((Bool) -> Void)? = nil,
                   encode: @escaping () -> Data?) -> String {
         let name = "\(prefix)-\(Self.fileTimeFormatter.string(from: date)).\(ext)"
         let url = dayDir(at: date).appendingPathComponent(name)
         writeQueue.async {
-            guard let data = encode() else { return }
-            try? data.write(to: url, options: .atomic)
+            guard let data = encode() else {
+                DispatchQueue.main.async { onWritten?(false) }
+                return
+            }
+            let succeeded: Bool
+            do { try data.write(to: url, options: .atomic); succeeded = true }
+            catch { succeeded = false }
+            DispatchQueue.main.async { onWritten?(succeeded) }
         }
         return name
     }
@@ -332,6 +344,15 @@ final class SourceScheduler {
     }
 
     // ── observability ──────────────────────────────────────────────────
+
+    func sourceError(_ name: String) -> String? {
+        guard let slot = slots[name] else { return nil }
+        if let since = slot.inFlightSince,
+           Date().timeIntervalSince(since) >= max(20, slot.appliedInterval * 4) {
+            return "capture stalled"
+        }
+        return slot.lastError
+    }
 
     /// One line for the menu bar.
     func statusLine() -> String {
