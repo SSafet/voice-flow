@@ -4,6 +4,10 @@ import Cocoa
 // kill the whole app (no crash report); ignore it so writes fail with EPIPE.
 signal(SIGPIPE, SIG_IGN)
 
+if CommandLine.arguments.contains("--watcher-only") {
+    exit(WatcherOnly.run())
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

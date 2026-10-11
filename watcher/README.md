@@ -64,3 +64,7 @@ LaunchAgent — it must be loaded).
 
 Note: `install.sh` reloads the LaunchAgent on every build; if that happens to
 land exactly at 21:37 it can cut short a running review. Rare enough to ignore.
+
+## Desktop recorder-only mode
+
+`/Applications/Voice\ Flow.app/Contents/MacOS/voice-flow --watcher-only` runs the existing desktop source without the main app, voice backends, agent supervisor, overlays or hotkeys. It enables the watcher only in memory, leaves saved settings untouched, and disables camera, action/text collection, browser AppleScript and retention pruning. Screen Recording must already be granted; `--watcher-only --check-permissions` reports readiness without starting capture or creating stores. A recorder lock rejects duplicates. SIGTERM or Ctrl-C stops collection and drains queued archive writes. Idle and lock pauses still apply. No automatic login startup is installed by this mode.

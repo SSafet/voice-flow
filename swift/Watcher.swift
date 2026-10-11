@@ -112,6 +112,8 @@ final class DesktopSource: WatcherSource {
     var isEnabled: Bool { UserSettings.shared.workflowWatcherEnabled }
 
     private let screenCapture: ScreenCapture
+    private let browserURLCollectionEnabled: Bool
+    private let requiresScreenPermissionPreflight: Bool
     private let coalescer = InputCoalescer()
     private let camera = CameraGrabber()
 
@@ -159,8 +161,11 @@ final class DesktopSource: WatcherSource {
         (.scrollWheel, "scroll"), (.leftMouseDragged, "drag"), (.flagsChanged, "mods"),
     ]
 
-    init(screenCapture: ScreenCapture) {
+    init(screenCapture: ScreenCapture, browserURLCollectionEnabled: Bool = true,
+         requiresScreenPermissionPreflight: Bool = false) {
         self.screenCapture = screenCapture
+        self.browserURLCollectionEnabled = browserURLCollectionEnabled
+        self.requiresScreenPermissionPreflight = requiresScreenPermissionPreflight
     }
 
     // ── lifecycle ──────────────────────────────────────────────────────
@@ -242,6 +247,10 @@ final class DesktopSource: WatcherSource {
     // ── the tick ───────────────────────────────────────────────────────
 
     func tick(bus: DayBus, done: @escaping (String?) -> Void) {
+        if requiresScreenPermissionPreflight && !CGPreflightScreenCaptureAccess() {
+            done("screen recording permission unavailable")
+            return
+        }
         switch WatcherPolicy.tickDecision(
             screenLocked: Self.screenIsLocked(),
             secondsSinceLastInput: Self.secondsSinceLastInput(), idleCutoff: idleCutoff) {
@@ -271,7 +280,7 @@ final class DesktopSource: WatcherSource {
 
         Task.detached { [weak self] in
             guard let self else { return await MainActor.run { done(nil) } }
-            let url = Self.browserURL(app: app)
+            let url = self.browserURLCollectionEnabled ? Self.browserURL(app: app) : nil
             let focus = Self.focusedElement()
             let image = try? await self.screenCapture.captureImage(on: display,
                                                                    excludeOwnWindows: true)
@@ -562,7 +571,7 @@ final class WorkflowWatcher {
 
     static var baseDir: URL { DayBus.baseDir }
 
-    private let scheduler = SourceScheduler()
+    private let scheduler: SourceScheduler
     private var statusTimer: Timer?
     var onEvent: ((String, [String: Any], Date) -> Void)? {
         didSet { scheduler.bus.onAppend = onEvent }
@@ -570,9 +579,17 @@ final class WorkflowWatcher {
 
     var isRunning: Bool { scheduler.isRunning }
 
-    init(screenCapture: ScreenCapture) {
-        scheduler.register(DesktopSource(screenCapture: screenCapture))
+    init(screenCapture: ScreenCapture, retentionEnabled: Bool = true,
+         browserURLCollectionEnabled: Bool = true,
+         requiresScreenPermissionPreflight: Bool = false) {
+        scheduler = SourceScheduler(retentionEnabled: retentionEnabled)
+        scheduler.register(DesktopSource(
+            screenCapture: screenCapture,
+            browserURLCollectionEnabled: browserURLCollectionEnabled,
+            requiresScreenPermissionPreflight: requiresScreenPermissionPreflight))
     }
+
+    func flush() { scheduler.bus.flush() }
 
     func start() {
         guard !scheduler.isRunning else { return }

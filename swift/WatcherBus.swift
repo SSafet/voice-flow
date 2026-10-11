@@ -35,6 +35,13 @@ final class DayBus {
         dayRollObservers.append(observer)
     }
 
+    private let retentionEnabled: Bool
+
+    init(retentionEnabled: Bool = true) { self.retentionEnabled = retentionEnabled }
+
+    /// Drain archive writes before a headless recorder exits.
+    func flush() { writeQueue.sync {} }
+
     private let writeQueue = DispatchQueue(label: "voiceflow.watcher.bus", qos: .utility)
     private var currentDay = ""
     var onAppend: ((String, [String: Any], Date) -> Void)?
@@ -107,6 +114,7 @@ final class DayBus {
     /// Retention is the bus's job, not any one source's: every source writes
     /// into the same folder, so a per-source policy could never delete it.
     func prune() {
+        guard retentionEnabled else { return }
         let keep = max(3, UserSettings.shared.watcherKeepDays)
         // Off the main thread: a day folder holds thousands of JPEGs, and
         // shortening retention can delete twenty of them at once. Nothing here
@@ -192,7 +200,11 @@ extension WatcherSource {
 
 final class SourceScheduler {
 
-    let bus = DayBus()
+    let bus: DayBus
+
+    init(retentionEnabled: Bool = true) {
+        bus = DayBus(retentionEnabled: retentionEnabled)
+    }
     private(set) var isRunning = false
 
     private struct Slot {
