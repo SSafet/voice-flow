@@ -452,6 +452,9 @@ final class DesktopSource: WatcherSource {
     func recorderHealth(error: String?) -> [String: Any] {
         let state: String
         var failure = error ?? artifactError
+        if failure == nil, UserSettings.shared.watcherActionsEnabled, let actionError = coalescer.health {
+            failure = "Input events unavailable: \(actionError); screen capture continues"
+        }
         if requiresScreenPermissionPreflight && !CGPreflightScreenCaptureAccess() {
             failure = "screen recording permission unavailable"
             state = "failed"

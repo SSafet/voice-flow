@@ -46,7 +46,7 @@ enum WatcherOnly {
         let settings = UserSettings.shared
         settings.load()
         settings.workflowWatcherEnabled = true
-        settings.watcherActionsEnabled = false
+        settings.watcherActionsEnabled = managed && CommandLine.arguments.contains("--include-actions")
         settings.watcherCameraId = ""
 
         let app = NSApplication.shared
@@ -75,7 +75,7 @@ enum WatcherOnly {
         if managed { WatcherParentLifetime.watch(fd: STDIN_FILENO, onEOF: stop) }
         watcher.start()
         FileHandle.standardError.write(Data(
-            "watcher-only: desktop recording started; camera, actions, browser automation and pruning disabled.\n".utf8))
+            "watcher-only: desktop recording started; input events \(settings.watcherActionsEnabled ? "enabled (typing counts only)" : "disabled"); camera, browser automation and pruning disabled.\n".utf8))
         emit(watcher.recorderHealth())
         let heartbeat = managed ? Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
             emit(watcher.recorderHealth())

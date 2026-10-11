@@ -317,7 +317,9 @@ final class InputCoalescer {
         // string of digits carries almost no behavioural meaning anyway.
         let digitsOnly = textCount <= 12 && !textBuffer.isEmpty
             && textBuffer.allSatisfy { $0.isNumber || $0 == " " || $0 == "-" }
-        if textRedacted || probeResult != .allow || digitsOnly {
+        if CommandLine.arguments.contains("--controller-managed")
+            || CommandLine.arguments.contains("--actions-shape-only")
+            || textRedacted || probeResult != .allow || digitsOnly {
             fields["redacted"] = true
         } else {
             fields["text"] = textBuffer
