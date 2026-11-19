@@ -21,7 +21,7 @@ Human attention is the bottleneck of parallel agentic coding, and every existing
 
 ## What we deliberately don't compete on
 
-- **Raw dictation.** Commoditized: Superwhisper ($8.49/mo, local models), VoiceInk ($25 lifetime, open source), Wispr Flow ($15/mo). Context-aware formatting is already table stakes there.
+- **Raw dictation.** Commoditized: Superwhisper ($8.49/mo, local models), VoiceInk ($25 lifetime, open source), Wispr Flow ($15/mo). Context-aware formatting is already table stakes there. *(Superseded 11 October 2026: Trine, Voice Flow's successor, is now a speech-to-text and text-to-speech app, and Safet rejects treating English dictation as an unwinnable commodity for him; do not repeat this line as settled. The prices are July 2026 observations.)*
 - **Basic voice input to an agent.** Claude Code ships first-party `/voice` (Mar 2026); Superwhisper pipes voice into Claude Code since Apr 2026. Voice-in is a feature, not a product.
 
 ## The three pillars (all shipped today)
