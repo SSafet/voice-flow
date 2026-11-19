@@ -170,6 +170,7 @@ routing adapter; it is not the visible navigation.
   newest first — `AgentsNowSnapshot` in `swift/AgentsNavigation.swift`).
   "All clear" appears only when all three are empty; the Now badge still
   counts asks/blocks only. **Assistants** includes the SYSTEM agents;
+  In standalone mode the `.automations` destination still exists for deep links and lights the Setup item.
   **Automations** is a separate workspace destination. The automation
   search field and filter chips appear only from 6 automations up.
   `AgentsView.refresh()` memoizes: on a read surface (destination, thread,
@@ -295,7 +296,7 @@ Codex registers the same server with `codex mcp add voice-flow --url http://127.
 Tool handlers live in `AppDelegate.handleMCPTool` (`App.swift`); they run on
 background HTTP threads and hop to main for UI.
 
-**Sessions**: each Claude Code instance gets an `Mcp-Session-Id` on
+**Sessions**: each Claude Code or Codex instance gets an `Mcp-Session-Id` on
 initialize (`MCPSessionRegistry` in `MCP.swift`), but **connecting is not
 engaging**: a session stays invisible (no picker dot, no ⌃⌥ slot, not
 voice-target-eligible) until its first user-facing tool call —
@@ -304,7 +305,7 @@ voice-target-eligible) until its first user-facing tool call —
 claims the voice target only when no engaged session holds it — an active
 target is never stolen. Sessions name themselves via `set_session_name`
 (silent, no UI; server instructions + a one-time nudge on the first
-*engaging* tool result push Claude to call it; unnamed sessions show as
+*engaging* tool result push Claude or Codex to call it; unnamed sessions show as
 "Claude #N"). `DELETE /mcp` closes one; sessions silent for 2 h are pruned
 as ghosts (a live one self-heals — its next request is re-adopted by
 `touch()`). **Unread messages outlive everything**: a session that ends or
@@ -378,7 +379,7 @@ A continuous capture writes every deduped frame live via `CaptureStore`
 `meta.json` when transcription lands (bundles pruned to 40; ad-hoc shots in
 `captures/shots/`). On continuous-capture end the bundle follows its frozen
 contextual route; the menu bar keeps the manual **Copy Capture Prompt**
-fallback. Claude Code can also pull bundles through the MCP tools.
+fallback. Claude Code or Codex can also pull bundles through the MCP tools.
 
 ## Workflow watcher (`~/.config/voice-flow/watcher/`)
 
@@ -442,7 +443,7 @@ synthetic integration check documented in that proof file.
   explicit Assistant preamble and removes empty scaffold drafts.
 - `pushes.json` — the live per-session push stacks (`sessionPushes`), saved on
   every mutation so unread messages survive app restarts as ghost entries.
-- `inbox.json` — queued contextual-capture messages for Claude (`MessageInbox`).
+- `inbox.json` — queued contextual-capture messages for Claude or Codex (`MessageInbox`).
 - `system-agents.json` — per-agent overrides for the three system agents
   (`SystemAgentStore`); only what differs from the shipped default is written,
   and the file is re-read on change, so a hand edit works like the panel.

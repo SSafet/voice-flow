@@ -17,7 +17,7 @@
 | `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel, its tabs, and the header; routes assistant state into `AgentsView` rather than rendering a chat itself. |
 | `ReplyBubble.swift` | `ReplyBubble` | Facade over the pill's grown surface (no window of its own) — forwards messages/asks/streaming to `FloatingIndicator`. |
 | `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
-| `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of contextual-capture messages for Claude (check/wait semantics). |
+| `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of contextual-capture messages for Claude or Codex (check/wait semantics). |
 | `Queue.swift` | `NextQueue`, `QueueItem` | The next queue: file-backed what's-next list, its overlay projection, and the transition-moment resurfacing policy. |
 | `Watcher.swift` | `WorkflowWatcher` | Ambient 5 s screen/app log feeding the nightly workflow review. |
 | `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
