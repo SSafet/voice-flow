@@ -20,6 +20,7 @@ subprocess pipe.
 ```bash
 uv sync                 # once — creates .venv with the Python backend deps
 ./install.sh            # compiles swift/*.swift → "/Applications/Voice Flow.app", codesigns
+./install.sh --relaunch # same, then restarts a running Voice Flow on the new build
 open "/Applications/Voice Flow.app"
 ./uninstall.sh          # remove
 ./scripts/test-agent-harness.sh --unit     # deterministic compile + unit/contracts
@@ -30,7 +31,10 @@ open "/Applications/Voice Flow.app"
 
 `install.sh` compiles every file in `swift/` into one binary and prefers a stable
 **Developer ID** signing identity so macOS keeps TCC / Keychain grants across
-rebuilds (falls back to ad-hoc, which resets permissions each build).
+rebuilds (falls back to ad-hoc, which resets permissions each build). It
+builds and signs a staging bundle next to the destination and swaps it in
+with two renames, so a running app is never killed (it keeps the previous
+build until relaunched) and a failed build leaves the installed app intact.
 
 `--nightly` adds a two-hour three-agent soak. `--release` runs the complete
 gate plus the four-hour soak and emits audited evidence for every ID in
@@ -84,6 +88,22 @@ swiftc swift/*.swift -framework Cocoa -framework AVFoundation -framework CoreGra
   -framework ScreenCaptureKit -sdk "$(xcrun --show-sdk-path)" -O -suppress-warnings -o /tmp/vf
 ```
 
+## Runtimes
+
+Three runtimes answer assistant turns and automations (`AgentRuntimeKind`):
+**Codex** (ChatGPT subscription; one long-lived `codex app-server` per
+owner — the assistant and the automations executor — ended on quit; `codex
+exec` only for the continuity router and as a fallback), **Claude
+Code** (Claude subscription; `claude -p` per turn, sessions resumed by id,
+model from `claude_code_model`, effort from the shared ladder, permission
+mode from the trust profile: observe → plan, workspace → acceptEdits,
+unattended → bypassPermissions), and **OpenCode** (OpenRouter key, kernel
+sandbox below). Codex and Claude Code rely on their CLIs' own sandboxes and
+permission systems, like Codex always has; their CLIs must be signed in
+(`codex login`, `claude` → /login) — Settings → Assistant shows the state.
+
+Agent containment (the kernel sandbox, egress proxy, app-side OpenCode updates and the dial): docs/architecture/agent-containment.md (read before changing containment).
+
 ## Data workspace (VF-64)
 
 The main ChatPanel now uses a persistent workspace sidebar: Now, Inbox, Threads,
@@ -117,8 +137,8 @@ Design and proof map: `design/vf64/implementation-and-proof.md`.
 
 The app's main window is **`ChatPanel`** (`swift/Panel.swift`) — a borderless
 floating panel anchored to the little pill (`FloatingIndicator`). Its persistent
-sidebar is **Now · Inbox · Threads · Data · Assistants · Automations · Speech ·
-Settings** (`WorkspaceDestination`). `ChatTab` remains an internal Inbox/Agents
+sidebar is **Now · Inbox · Queue · Threads · Data · Assistants · Automations ·
+Speech · Settings** (`WorkspaceDestination`). `ChatTab` remains an internal Inbox/Agents
 routing adapter; it is not the visible navigation.
 
 - **Inbox** — everything the user said, with a destination: the dictation
@@ -133,7 +153,15 @@ routing adapter; it is not the visible navigation.
   shared setting), and Send/Stop on the right — and it stays up while the
   turn runs, so a draft typed meanwhile is kept. Model choices are per
   runtime: `codex_model` (from `~/.codex/models_cache.json`),
-  `claude_code_model`, `agent_model` (OpenRouter). `ChatPanel` no longer owns a chat of its own; it routes
+  `claude_code_model` (the CLI's aliases fable · opus · sonnet · haiku; the
+  version each alias ran last is learned from every turn's `system/init`
+  event into `claude-models.json` — `ClaudeModelCatalog` — and shown as
+  "Fable · claude-fable-5-1"; the file also records the CLI binary's
+  identity, and when the CLI changes the app re-resolves every alias in
+  the background with one minimal turn each, logs it to app.log, and
+  relabels the open picker), `agent_model` (OpenRouter). The composer's
+  pick is stored on the conversation (`preferredModels`); the Settings
+  value is the default and shows as "Default (…)". `ChatPanel` no longer owns a chat of its own; it routes
   (`openAssistantConversation`, `setActivity`, `addNote` → a 6 s strip).
   `AgentsDestination.navigation` retains **Now · Threads · Setup** for standalone
   callers; the primary panel uses the workspace sidebar. The panel starts on **Now**,
@@ -146,7 +174,10 @@ routing adapter; it is not the visible navigation.
   search field and filter chips appear only from 6 automations up.
   `AgentsView.refresh()` memoizes: on a read surface (destination, thread,
   search) identical row inputs skip the rebuild (`RefreshInputs`), so the
-  ~20 refresh call sites cost nothing when nothing changed.
+  ~20 refresh call sites cost nothing when nothing changed. When a thread
+  does rebuild, its message rows persist across rebuilds keyed by message
+  id (`threadRowCache` / `ThreadMessageRow`, updated in place; scoped to
+  the open thread) — a 31-message thread rebuilds in ~12 ms instead of ~40.
   The panel header's voice-replies / computer-control / Clear icons act on
   the assistant conversation and show only while it is on screen
   (`ChatPanel.updateHeaderScope`); Search, Annotate, and Close remain in the
@@ -204,6 +235,10 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
 - A plain Dictate whose leading wake name resolves to FLORA runs a bounded
   binary continuity preflight (`AssistantContinuityClassifier`): reuse only
   the current FLORA conversation or create a fresh one, never select history.
+  A conversation an automation owns (each run resumes that thread) or one the
+  user completed is ineligible for an ambient wake turn — `acceptsWakeTurns`
+  is false, so the preflight returns *new* without a model call. Typing into
+  an open thread stays explicit and still goes there.
   FLORA then appears as the stable local `assistant:flora` picker session.
   Closed-panel turns show only working/new-message receipts and unread state;
   the prompt and reply grow only after the user explicitly selects FLORA.
@@ -216,7 +251,9 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   collapses after ~4s, on any other hotkey, or click-anywhere), and `grown`
   (`showGrown`: amber title, selectable text, ask hint line, speaker/trash/✕
   icon cluster, live dots in the bottom band; streamed replies grow it live).
-  Pushes queue **per session** (`sessionPushes`, a stack capped at 8;
+  Pushes queue **per session** (`sessionPushes`; each `SessionPush` carries
+  a `seen`/`spoken`/`done` consumption cursor — a stack holds ≤8 ACTIVE
+  pushes, overflow ages into done history, whole thread capped at 40;
   tool calls arriving with no `Mcp-Session-Id` are folded into a shared
   "anonymous" registry session so even degraded clients get a picker dot;
   consecutive identical re-sends collapse into one entry) and NEVER take
@@ -226,7 +263,8 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   by switching onto the session — ⌃⌥1–9 grows its whole stack (older pushes
   dim, newest bright; persists until ✕ while unseen, 5 s re-preview when
   already seen; `deliverPush`/`showPushStack` in `App.swift`) — or anytime
-  in the panel's Agents tab, where each session is a persistent thread. Audio never auto-plays:
+  in the panel's Agents tab, where each session is a persistent thread.
+  Audio never auto-plays:
   re-selecting the already-active session reads its stack aloud
   (`double_select_speak` setting, toggle in Settings → Assistant), and the
   grown view's speaker icon does the same. `ReplyBubble` is now only a facade forwarding to the pill: ✕
@@ -242,48 +280,21 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   before the reply finishes. The read-aloud hotkey doubles as *stop speech*;
   starting any recording barges in and silences playback.
 - Escape commits a pending annotation text note, then exits annotate mode; it
-  stays the panic button while the agent is acting. Annotate mode
-  (`AnnotationOverlay`, `swift/Annotation.swift`) is keyboard-driven so the
-  mouse stays on the thing being marked: tools P draw · H highlight · L line ·
-  A arrow · R rectangle · C circle · N number stamp · T text · E eraser (Shift
-  constrains lines to 45°, rect→square, ellipse→circle); colours 1–6 (red,
-  amber, green, blue, magenta, white); one size dial S/M/L (`[` / `]`) that
-  sets pen width, highlighter width, shape stroke, badge diameter, and text
-  size together; ⌘Z / ⇧⌘Z undo/redo handled by the canvas itself (the Edit
-  menu only reaches it when the app is active), ⌫ undoes the last mark, ⌘⌫
-  clears and is itself undoable. The toolbar is a draggable HUD strip with the
-  key printed under each control; while editing, an amber frame outlines each
-  display and a ring at the cursor previews the active colour and width. A
-  note being written sits in an opaque box (`AnnotationTextChrome`): drag it
-  by the header, resize it by the corner handle, A− / A+ or ⌘[ / ⌘] walk a
-  text-size ladder from 8 to 48 pt (the dial's S/M/L = 10/16/28), ✓ or Escape
-  commits; the box is see-through with a white line. Notes read on top of
-  anything through one of two backings (`AnnotationTextStyle`, per note,
-  sticky like colour and size, persisted): the default **halo** is a soft
-  blurred shadow in the contrast colour (white, dark for white text) drawn by
-  `AnnotationTextLayoutManager` under every glyph — a hard outline is not an
-  option because below ~14 pt any visible stroke fills the one-pixel gaps in
-  and between letters — and **plate** is a dark rounded plate behind the
-  paragraph for the busiest backgrounds. Switch with the header's Aa button,
-  ⌘B while typing, or B on the canvas. The live editor and the committed
-  renderer share the layout manager and the same inset, so a note does not
-  shift on commit. Annotation text editors own
-  isolated undo managers that are cleared before detaching; canvas Undo/Redo
-  routes to live text while typing and to completed marks otherwise. Marks,
-  in-flight strokes, and text drafts save atomically to `annotations.json` on
-  change and restore as click-through marks on launch. Clear discards drafts too.
+  stays the panic button while the agent is acting.
 
-## MCP server — Voice Flow as Codex's interaction layer
+Annotate mode key map (tools, colours, size dial, undo, text notes, persistence): docs/architecture/annotation-keys.md (read before changing annotate mode).
+
+## MCP server — Voice Flow as Claude Code's interaction layer
 
 `LocalAPIServer` (port 8792) also serves **MCP over Streamable HTTP** at
 `http://127.0.0.1:8792/mcp` (`MCPServer` in `swift/MCP.swift`; registered once
-via `codex mcp add voice-flow --url http://127.0.0.1:8792/mcp` —
+via `claude mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp` —
 Settings → Assistant shows connection status and copies that command;
 `MCPServer.lastActivity` tracks the most recent client request).
 Tool handlers live in `AppDelegate.handleMCPTool` (`App.swift`); they run on
 background HTTP threads and hop to main for UI.
 
-**Sessions**: each Codex instance gets an `Mcp-Session-Id` on
+**Sessions**: each Claude Code instance gets an `Mcp-Session-Id` on
 initialize (`MCPSessionRegistry` in `MCP.swift`), but **connecting is not
 engaging**: a session stays invisible (no picker dot, no ⌃⌥ slot, not
 voice-target-eligible) until its first user-facing tool call —
@@ -292,14 +303,20 @@ voice-target-eligible) until its first user-facing tool call —
 claims the voice target only when no engaged session holds it — an active
 target is never stolen. Sessions name themselves via `set_session_name`
 (silent, no UI; server instructions + a one-time nudge on the first
-*engaging* tool result push Codex to call it; unnamed sessions show as
+*engaging* tool result push Claude to call it; unnamed sessions show as
 "Claude #N"). `DELETE /mcp` closes one; sessions silent for 2 h are pruned
 as ghosts (a live one self-heals — its next request is re-adopted by
 `touch()`). **Unread messages outlive everything**: a session that ends or
-expires with unseen pushes stays in the picker as a readable ghost entry
-(label derived from its newest push), and stacks persist in `pushes.json`
-across app restarts; a 60 s sweep clears only read residue of dead sessions
-and repaints the number dot / unread ring. Capture hotkeys feed only the
+expires with active (not-done) pushes stays in the picker as a readable
+ghost entry (sticky label kept from when it was alive, else derived from
+its newest push), and stacks persist in `pushes.json` across app restarts;
+the 60 s sweep never deletes an unread, pending, or connected stack — it
+drops empty queues, prunes orphan overlays/labels, re-targets off dead
+entries, and repaints the number dot / unread ring. Fully-consumed
+disconnected stacks (every push done) are history under Threads → Done and
+are bounded to the newest 40 (`pruneConsumedHistory`); the sweep rewrites
+`pushes.json` only when it actually dropped something.
+Capture hotkeys feed only the
 **visibly open conversation** (`ChatPanel.conversationFocus`, or the grown
 pill's concrete push session); `AppDelegate.targetSessionId`, changed via
 `setTargetSession`, switchable with **⌃⌥1–9** or the menu bar's "Voice
@@ -360,7 +377,7 @@ A continuous capture writes every deduped frame live via `CaptureStore`
 `meta.json` when transcription lands (bundles pruned to 40; ad-hoc shots in
 `captures/shots/`). On continuous-capture end the bundle follows its frozen
 contextual route; the menu bar keeps the manual **Copy Capture Prompt**
-fallback. Codex can also pull bundles through the MCP tools.
+fallback. Claude Code can also pull bundles through the MCP tools.
 
 ## Workflow watcher (`~/.config/voice-flow/watcher/`)
 
@@ -424,8 +441,28 @@ synthetic integration check documented in that proof file.
   explicit Assistant preamble and removes empty scaffold drafts.
 - `pushes.json` — the live per-session push stacks (`sessionPushes`), saved on
   every mutation so unread messages survive app restarts as ghost entries.
-- `inbox.json` — queued contextual-capture messages for Codex (`MessageInbox`).
+- `inbox.json` — queued contextual-capture messages for Claude (`MessageInbox`).
+- `system-agents.json` — per-agent overrides for the three system agents
+  (`SystemAgentStore`); only what differs from the shipped default is written,
+  and the file is re-read on change, so a hand edit works like the panel.
 - `overlays/*.json` — live on-screen elements (`OverlayManager`); `_schema.md` documents the format.
+- `queue/queue.json` — the **next queue** (`NextQueue`, `swift/Queue.swift`): the
+  user's small "what's next" list, rendered as a `system`-flagged overlay panel
+  that resurfaces briefly at transition moments (app-switch burst, idle-return,
+  content change, slow clock; positions rotate top-right/center/left). When the
+  queue is empty it nudges once per sitting ("Empty — what's next?", up for
+  `show_seconds`, then gone on its own); only the explicit menu "show" keeps
+  the Empty panel up. The file is the API — FLORA (codex: direct
+  edit via writable root; OpenCode: `voiceflow_queue` tool), Claude sessions,
+  and the user edit it directly; `queue/_schema.md` documents it, and
+  `queue/config.json` overrides the surfacing tunables. Never auto-populate it:
+  the user plans it himself. Settings → Assistant toggle (`queue_enabled`);
+  ✕ on a filled panel backs off 10 min; the Empty nudge, closed or timed
+  out, stays down for the rest of that sitting — it returns only after the
+  user has been away ≥ `idle_resume_minutes` (or on relaunch), never on the
+  30-min clock (`emptyNagSuppressed`; the log showed 315 dismissals of the
+  old persistent panel against two fills in a month). The whole feature is a side-attachment —
+  delete `swift/Queue.swift` plus ~20 wiring lines to remove it.
 - `watcher/` — ambient workflow log (`WorkflowWatcher`): per-day `activity.jsonl` + deduped frames, plus `ANALYZE.md` / `ledger.md` / `reviews/` for the nightly review.
 - `agent-jobs.sqlite` — durable agent jobs, runs, leases, retries, costs, and trigger dedupe.
 - `agent-security.jsonl` — redacted permission/security decisions for private agent tools.
