@@ -291,6 +291,7 @@ Annotate mode key map (tools, colours, size dial, undo, text notes, persistence)
 via `claude mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp` —
 Settings → Assistant shows connection status and copies that command;
 `MCPServer.lastActivity` tracks the most recent client request).
+Codex registers the same server with `codex mcp add voice-flow --url http://127.0.0.1:8792/mcp` (syntax checked 2026-11-19).
 Tool handlers live in `AppDelegate.handleMCPTool` (`App.swift`); they run on
 background HTTP threads and hop to main for UI.
 
