@@ -5,6 +5,16 @@ A native macOS menu-bar app for **voice dictation**, **text-to-speech**, and an
 windows); dictation transcription runs in a bundled Python backend driven over a
 subprocess pipe.
 
+## Conventions
+
+- **Minimal, surgical edits.** This is a personal daily-use app; scope changes
+  tightly and avoid touching unrelated subsystems (dictation capture, the agent
+  loop, hotkeys, permissions).
+- All UI is dark (`Theme` palette). Prefer the existing `Theme.*` colors and
+  reuse `HoverCardView` / `FlippedView` for lists.
+- `TTSController`, `TTSRequest`, voices/presets are the single TTS engine — drive
+  it through `ChatPanel`'s TTS passthroughs, not by duplicating controls.
+
 ## Build & run
 
 ```bash
@@ -202,7 +212,7 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   modes — `pill` (collapsed 52×18; middle dot grows to 9px and carries the
   active session number), `flash` (one-line receipts/errors,
   `flashMessage`), `picker` (`showPicker`: "sessions" + a numbered dot per
-  session, active lit / pending amber, active name trailing; ⌃⌥1–6 or menu;
+  session, active lit / pending amber, active name trailing; ⌃⌥1–9 or menu;
   collapses after ~4s, on any other hotkey, or click-anywhere), and `grown`
   (`showGrown`: amber title, selectable text, ask hint line, speaker/trash/✕
   icon cluster, live dots in the bottom band; streamed replies grow it live).
@@ -213,17 +223,19 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   the screen on arrival, no matter whose session: the user gets a one-line
   receipt ("name · new message — ⌃⌥N") plus the small pulsing unread ring
   around the number dot (`setUnreadIndicator`) until viewed. Reading happens
-  by switching onto the session — ⌃⌥1–6 grows its whole stack (older pushes
+  by switching onto the session — ⌃⌥1–9 grows its whole stack (older pushes
   dim, newest bright; persists until ✕ while unseen, 5 s re-preview when
   already seen; `deliverPush`/`showPushStack` in `App.swift`) — or anytime
-  in the panel's persistent Messages tab. Audio never auto-plays:
+  in the panel's Agents tab, where each session is a persistent thread. Audio never auto-plays:
   re-selecting the already-active session reads its stack aloud
   (`double_select_speak` setting, toggle in Settings → Assistant), and the
   grown view's speaker icon does the same. `ReplyBubble` is now only a facade forwarding to the pill: ✕
   closes-and-keeps (asks stay pending, stacks survive; a "N sessions
-  waiting" receipt flashes if others queued meanwhile), trash deletes
-  stack AND session (cancels a waiting ask, drops the picker dot — a live
-  session re-adopts on its next call), speaker reads aloud.
+  waiting" receipt flashes if others queued meanwhile), trash consumes
+  the stack (`markStackDone`: done history, still readable in the panel's
+  Agents thread until ✓-completed there) and disconnects the session
+  (cancels a waiting ask, drops the picker dot — a live session re-adopts
+  on its next call), speaker reads aloud.
 - With voice replies on (speaker toggle), `AgentReplySpeaker` (`swift/TTS.swift`)
   cuts the streaming reply at sentence boundaries into
   `TTSController.beginLiveSpeech/feedLiveSpeech/endLiveSpeech`, so speech starts
@@ -245,9 +257,17 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   note being written sits in an opaque box (`AnnotationTextChrome`): drag it
   by the header, resize it by the corner handle, A− / A+ or ⌘[ / ⌘] walk a
   text-size ladder from 8 to 48 pt (the dial's S/M/L = 10/16/28), ✓ or Escape
-  commits; the box is see-through with a white line, and glyphs carry a
-  hairline white outline (dark for white text) so notes read on top of
-  anything, committed notes included. Annotation text editors own
+  commits; the box is see-through with a white line. Notes read on top of
+  anything through one of two backings (`AnnotationTextStyle`, per note,
+  sticky like colour and size, persisted): the default **halo** is a soft
+  blurred shadow in the contrast colour (white, dark for white text) drawn by
+  `AnnotationTextLayoutManager` under every glyph — a hard outline is not an
+  option because below ~14 pt any visible stroke fills the one-pixel gaps in
+  and between letters — and **plate** is a dark rounded plate behind the
+  paragraph for the busiest backgrounds. Switch with the header's Aa button,
+  ⌘B while typing, or B on the canvas. The live editor and the committed
+  renderer share the layout manager and the same inset, so a note does not
+  shift on commit. Annotation text editors own
   isolated undo managers that are cleared before detaching; canvas Undo/Redo
   routes to live text while typing and to completed marks otherwise. Marks,
   in-flight strokes, and text drafts save atomically to `annotations.json` on
@@ -257,7 +277,7 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
 
 `LocalAPIServer` (port 8792) also serves **MCP over Streamable HTTP** at
 `http://127.0.0.1:8792/mcp` (`MCPServer` in `swift/MCP.swift`; registered once
-via `codex mcp add -s user -t http voice-flow http://127.0.0.1:8792/mcp` —
+via `codex mcp add voice-flow --url http://127.0.0.1:8792/mcp` —
 Settings → Assistant shows connection status and copies that command;
 `MCPServer.lastActivity` tracks the most recent client request).
 Tool handlers live in `AppDelegate.handleMCPTool` (`App.swift`); they run on
@@ -273,7 +293,7 @@ claims the voice target only when no engaged session holds it — an active
 target is never stolen. Sessions name themselves via `set_session_name`
 (silent, no UI; server instructions + a one-time nudge on the first
 *engaging* tool result push Codex to call it; unnamed sessions show as
-"Codex #N"). `DELETE /mcp` closes one; sessions silent for 2 h are pruned
+"Claude #N"). `DELETE /mcp` closes one; sessions silent for 2 h are pruned
 as ghosts (a live one self-heals — its next request is re-adopted by
 `touch()`). **Unread messages outlive everything**: a session that ends or
 expires with unseen pushes stays in the picker as a readable ghost entry
@@ -282,7 +302,7 @@ across app restarts; a 60 s sweep clears only read residue of dead sessions
 and repaints the number dot / unread ring. Capture hotkeys feed only the
 **visibly open conversation** (`ChatPanel.conversationFocus`, or the grown
 pill's concrete push session); `AppDelegate.targetSessionId`, changed via
-`setTargetSession`, switchable with **⌃⌥1–6** or the menu bar's "Voice
+`setTargetSession`, switchable with **⌃⌥1–9** or the menu bar's "Voice
 Goes To" submenu, does not route a capture by itself. The submenu lists the
 same `pickerSessions()` order/numbering. Switching grows the pill into the session's
 push stack (or the one-line picker when it has none); the middle dot
@@ -312,7 +332,7 @@ in three groups (plus `set_session_name` above):
   (`swift/Inbox.swift`, `inbox.json`) and surfaced by the piggyback nudge
   on its next *voice-flow* call. The reply channel agents are steered to —
   mid-task or after their turn ends — is backgrounding `vf listen --attach
-  <session-id>` (the `communicate-with-user` skill's script): the task
+  <session-id>` (the `communicate-with-user` skill's script — that script is not installed on this Mac, checked 2026-11-19; `wait_for_message` is the working fallback): the task
   completes with the user's words and re-invokes the agent.
 - `get_latest_capture` / `list_captures` / `get_recent_dictations`,
   `take_screenshot` (fixed ≤1440-px geometry via `CaptureStore.shotGeometry`,
@@ -357,7 +377,7 @@ a body camera is picked in Settings → Watcher (`watcher_camera_id`,
 `CameraGrabber`) — a motion-deduped ≤960-px `cam-*.jpg` of the user. Day
 folders are pruned to the newest 30. A LaunchAgent
 (`~/Library/LaunchAgents/com.voiceflow.watcher-analyze.plist`, 21:37 nightly)
-runs headless Codex against `watcher/ANALYZE.md`, which aggregates the
+runs headless Claude Code (`claude -p`, under `sandbox-exec`) against `watcher/ANALYZE.md`, which aggregates the
 log by script (never raw into context), maintains the observations ledger
 (`ledger.md`, patterns suggested only after 3+ sightings on 2+ days), writes
 `reviews/<day>.md`, and surfaces suggestions via the MCP overlay tools. The
@@ -395,7 +415,8 @@ synthetic integration check documented in that proof file.
 - `dictations.json` — dictation history (`[HistoryEntry]`, JSON), written by
   `DictationsView` on each new dictation (render cap 60, store cap 200). Survives restarts.
 - `messages.json` — every agent push (`[AgentMessageEntry]`: time, session,
-  text, isAsk), written by `MessagesView` (same caps). The Messages tab's store.
+  text, isAsk), written by `MessagesView` (same caps). Write-only archive — no
+  tab renders it.
 - `assistant-sessions.json` — versioned in-app Assistant conversations: ordered
   user/assistant/note messages, per-runtime bindings/cursors, preferred runtime,
   titles, and turn state. Restored on launch so Assistant sessions remain selectable/resumable;
@@ -412,53 +433,4 @@ synthetic integration check documented in that proof file.
 - `app.log` — `vflog` output.
 - OpenAI / agent API keys live in the **Keychain** (`KeychainStore`), not on disk.
 
-## Module map (`swift/`)
-
-| File | Key types | Responsibility |
-|------|-----------|----------------|
-| `main.swift` | — | Entry point: `NSApplication` + `AppDelegate`. |
-| `App.swift` | `AppDelegate` | Owns & wires everything: components, hotkeys, capability-first capture/delivery, TTS flow, agent session, windows. Its members are internal (not `private`) where the three extension files below need them. |
-| `App+MCPTools.swift` | `extension AppDelegate` | `handleMCPTool` and every MCP tool handler (talking, overlays, captures); runs on HTTP threads, hops to main for UI. |
-| `App+AgentsDataSource.swift` | `extension AppDelegate: AgentsDataSource` | The panel's window onto sessions, threads, assistants, automations, system agents: rows, details, actions. |
-| `App+QA.swift` | `extension AppDelegate` (QA build only) | The `/__qa/*` control endpoints the signed test build serves for `tests/e2e_agent_harness.py`. |
-| `CaptureRouting.swift` | `CaptureRun`, `CaptureRouter`, `CaptureCorrelation` | Immutable per-run capability/route state and UUID-based async callback correlation. |
-| `CaptureClipboard.swift` | `CaptureClipboard` | One-item plain/HTML/RTFD serialization for copying capture text with embedded image evidence. |
-| `WindowPlacement.swift` | `PanelAnchor`, `AnchoredPanelPlacement` | Same-display pill→ChatPanel geometry with visible-frame clamping. |
-| `Core.swift` | `UserSettings`, `KeychainStore`, `HotkeyManager`, `AudioRecorder`, `BackendBridge`, `Paster`, `HotkeySpec` | Audio capture, Python STT bridge (subprocess), paste/stream into the frontmost app, settings, global hotkeys. |
-| `UI.swift` | `Theme`, `MenuBarManager`, `FloatingIndicator`, `FloatingTranscriptPanel`, `MessagesView`, `DictationsView`, `TTSView`, `HoverCardView`, `KeyRecorderButton` | Menu bar, pill, live transcript overlay, and the Messages/Dictations/Speech tab surfaces. |
-| `Panel.swift` | `ChatPanel`, `KeyablePanel`, `ChatTab` | The primary floating panel, its tabs, and the header; routes assistant state into `AgentsView` rather than rendering a chat itself. |
-| `ReplyBubble.swift` | `ReplyBubble` | Facade over the pill's grown surface (no window of its own) — forwards messages/asks/streaming to `FloatingIndicator`. |
-| `Capture.swift` | `CaptureStore`, `CaptureSummary`, `CaptureBundleMeta` | Capture bundles on disk (session frames + transcript) and ad-hoc screenshot saving. |
-| `Inbox.swift` | `MessageInbox`, `InboxMessage` | Persistent queue of contextual-capture messages for Codex (check/wait semantics). |
-| `Watcher.swift` | `WorkflowWatcher` | Ambient 5 s screen/app log feeding the nightly workflow review. |
-| `Overlay.swift` | `OverlayManager`, `OverlayDoc`, `OverlayShape`, `OverlayBlock` | File-backed on-screen elements: guides, info panels, annotation shapes; watches `overlays/*.json`. |
-| `MCP.swift` | `MCPServer` | MCP Streamable-HTTP endpoint + tool catalog for Codex. |
-| `Agent.swift` | `AgentSession`, `ComputerControl` | LLM loop that reasons over screenshots and issues screen-control tool calls. |
-| `AgentRuntime*.swift`, `CodexAgentRuntime.swift`, `OpenCodeAgentRuntime.swift` | `AgentRuntime`, `AgentTurnRequest`, `RuntimeBinding` | Runtime-neutral turn contract, canonical event/result types, and Codex/OpenCode adapters. |
-| `OpenCodeSupervisor.swift`, `OpenCodeHTTPClient.swift` | `OpenCodeSupervisor`, `OpenCodeConnection`, `OpenCodeHTTPClient` | Pinned authenticated server lifecycle, isolated config, SSE/HTTP normalization, cancellation, restart, and process-tree cleanup. |
-| `ModelGateway.swift` | `ModelGatewayServer`, `ModelGatewayCredentials` | Loopback OpenAI-compatible credential boundary, model/budget/token limits, and redaction. |
-| `AgentTools.swift`, `AgentToolServer.swift`, `AgentPermissionPolicy.swift` | `AgentToolDispatcher`, `AgentToolSessionRegistry`, `AgentPermissionPolicy` | Five private tool families, strict schemas/session capabilities, projection, permissions, and audit. |
-| `AgentCapabilities.swift`, `AgentPromptComposer.swift` | `AgentMemoryStore`, `AgentSkillStore`, `AgentPromptComposer` | Bounded memory revisions, selected-skill validation/projection, and runtime-parity prompt layers. |
-| `AgentJobStore.swift`, `AgentSupervisor.swift`, `AgentRuntimeJobExecutor.swift` | `AgentJobStore`, `AgentSupervisor`, `AgentRuntimeJobExecutor` | SQLite jobs/runs/events, leases, fair concurrency, retries, budgets, triggers, and durable background execution. |
-| `AgentsView.swift` | `AgentsView` | Assistant threads, runtime selector, durable job status, create/cancel/delete controls. |
-| `VoiceFlowPaths.swift`, `QAControl.swift` | `VoiceFlowPaths`, `QAEventRecorder` | Config-root isolation plus the compile-time-absent QA authority/event plane. |
-| `AssistantContinuity.swift` | `AssistantContinuityClassifier`, `LocalAssistantSessionAdapter` | Ephemeral current-vs-new wake routing and the stable local picker identity for FLORA. |
-| `AssistantHistory.swift` | `AssistantHistoryStore`, `AssistantConversation`, `AssistantHistoryMessage` | Atomic local history and resume metadata for selectable in-app Assistant sessions. |
-| `Composer.swift` | `ComposerView`, `ComposerControls` | The one message input, styled as a session bar and pinned under the thread (never inside the scroll): image chips, auto-growing text, and a bottom row — left: access mode (Observe · Workspace · Full access = the capability dial), + attach images, mic (dictate into this thread), snap; right: spinner + live status, runtime (Codex · OpenCode · Claude Code), model (Codex's own catalog / Sonnet-Opus-Haiku / OpenRouter), reasoning effort, and Send that becomes Stop while a turn runs. It stays up during the turn so a draft is kept. Assistant threads configure the bar; MCP threads get the plain one. Do not hand-build another. |
-| `Codex.swift` | `CodexExecBackend` | `codex exec --json` per-turn backend: the continuity router's one-shot classifier and the fallback when the app-server cannot start. |
-| `CodexAppServer.swift` | `CodexAppServerBackend`, `CodexAppServerProtocol`, `ProcessTree` | The default Codex backend: one long-lived `codex app-server` JSON-RPC process — thread/start + thread/resume, turn/start, streamed `item/agentMessage/delta`, request-based interrupt. A dead thread starts fresh with the canonical handoff. |
-| `ClaudeCode.swift` | `ClaudeCodeAgentRuntime`, `ClaudeCodeProtocol` | Claude-subscription turns via `claude -p` with stream-json in/out (session id per conversation, `--resume`, base64 images on stdin, `--permission-mode` from the trust profile, `--effort` from the shared ladder). |
-| `Annotation.swift` | `AnnotationOverlay` | Draw-on-screen overlay (pen + multiline text notes with size presets). |
-| `Settings.swift` | `SettingsStore`, `SettingsWindowController`, `PermissionsWindowController`, `KeyRecorderView` | SwiftUI settings & permissions windows. |
-| `ScreenCapture.swift` | `ScreenCapture`, `CaptureScheduler`, `ImageUtils` | ScreenCaptureKit screenshots for the agent. |
-| `TTS.swift` | `TTSController`, `TTSRequest`, `TTSStatusSnapshot`, `AgentReplySpeaker`, `LocalAPIServer`, `OpenAITTSVoices` | Text-to-speech engine (incl. live-fed streaming speech) + a localhost HTTP control API. |
-
-## Conventions
-
-- **Minimal, surgical edits.** This is a personal daily-use app; scope changes
-  tightly and avoid touching unrelated subsystems (dictation capture, the agent
-  loop, hotkeys, permissions).
-- All UI is dark (`Theme` palette). Prefer the existing `Theme.*` colors and
-  reuse `HoverCardView` / `FlippedView` for lists.
-- `TTSController`, `TTSRequest`, voices/presets are the single TTS engine — drive
-  it through `ChatPanel`'s TTS passthroughs, not by duplicating controls.
+Module map: docs/architecture/module-map.md (read before cross-module changes).

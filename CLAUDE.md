@@ -62,8 +62,10 @@ swiftc swift/*.swift -framework Cocoa -framework AVFoundation -framework CoreGra
 ## Primary surface: the ChatPanel
 
 The app's main window is **`ChatPanel`** (`swift/Panel.swift`) — a borderless
-floating panel anchored to the little pill (`FloatingIndicator`). It has two
-tabs (`ChatTab`, default **Agents** on open):
+floating panel anchored to the little pill (`FloatingIndicator`). Its persistent
+sidebar is **Now · Inbox · Queue · Threads · Data · Assistants · Automations ·
+Speech · Settings** (`WorkspaceDestination`). `ChatTab` is an internal routing
+adapter, not the visible navigation:
 
 - **Inbox** — everything the user said, with a destination: the dictation
   history (`DictationsView` in `swift/UI.swift`), filtered by destination chips.
@@ -164,7 +166,7 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   modes — `pill` (collapsed 52×18; middle dot grows to 9px and carries the
   active session number), `flash` (one-line receipts/errors,
   `flashMessage`), `picker` (`showPicker`: "sessions" + a numbered dot per
-  session, active lit / pending amber, active name trailing; ⌃⌥1–6 or menu;
+  session, active lit / pending amber, active name trailing; ⌃⌥1–9 or menu;
   collapses after ~4s, on any other hotkey, or click-anywhere), and `grown`
   (`showGrown`: amber title, selectable text, ask hint line, speaker/trash/✕
   icon cluster, live dots in the bottom band; streamed replies grow it live).
@@ -177,7 +179,7 @@ The agent is meant to be driven by hotkeys, with the ChatPanel closed:
   the screen on arrival, no matter whose session: the user gets a one-line
   receipt ("name · new message — ⌃⌥N") plus the small pulsing unread ring
   around the number dot (`setUnreadIndicator`) until viewed. Reading happens
-  by switching onto the session — ⌃⌥1–6 grows its whole stack (older pushes
+  by switching onto the session — ⌃⌥1–9 grows its whole stack (older pushes
   dim, newest bright; persists until ✕ while unseen, 5 s re-preview when
   already seen; `deliverPush`/`showPushStack` in `App.swift`) — or anytime
   in the panel's Agents tab, where each session is a persistent thread.
@@ -259,7 +261,7 @@ are bounded to the newest 40 (`pruneConsumedHistory`); the sweep rewrites
 Capture hotkeys feed only the
 **visibly open conversation** (`ChatPanel.conversationFocus`, or the grown
 pill's concrete push session); `AppDelegate.targetSessionId`, changed via
-`setTargetSession`, switchable with **⌃⌥1–6** or the menu bar's "Voice
+`setTargetSession`, switchable with **⌃⌥1–9** or the menu bar's "Voice
 Goes To" submenu, does not route a capture by itself. The submenu lists the
 same `pickerSessions()` order/numbering. Switching grows the pill into the session's
 push stack (or the one-line picker when it has none); the middle dot
@@ -289,7 +291,7 @@ in three groups (plus `set_session_name` above):
   (`swift/Inbox.swift`, `inbox.json`) and surfaced by the piggyback nudge
   on its next *voice-flow* call. The reply channel agents are steered to —
   mid-task or after their turn ends — is backgrounding `vf listen --attach
-  <session-id>` (the `communicate-with-user` skill's script): the task
+  <session-id>` (the `communicate-with-user` skill's script — that script is not installed on this Mac, checked 2026-11-19; `wait_for_message` is the working fallback): the task
   completes with the user's words and re-invokes the agent.
 - `get_latest_capture` / `list_captures` / `get_recent_dictations`,
   `take_screenshot` (fixed ≤1440-px geometry via `CaptureStore.shotGeometry`,
